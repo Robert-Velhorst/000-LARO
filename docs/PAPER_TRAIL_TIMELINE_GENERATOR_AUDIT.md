@@ -2,8 +2,11 @@
 
 Date: 2026-07-22
 
-Source: `Noodzakelijk-Online/024-Paper-trail-visualizer`, branch
-`feat/document-timeline-generator`, commit `2508587`.
+Sources:
+
+- `Noodzakelijk-Online/024-Paper-trail-visualizer`, `main`, commit `d6e3237`.
+- `Noodzakelijk-Online/024-Paper-trail-visualizer`,
+  `feat/document-timeline-generator`, commit `2508587`.
 
 The branch has no common Git ancestor with the predecessor repository's main
 branch. It is a separate Python/Flask prototype, not an incremental change to
@@ -18,6 +21,11 @@ the React metro-map implementation.
 | Extract actions associated with dates | Show the dated, source-linked actions retained for the selected document |
 | Explore entity relationships | Combine participant focus with explicit and confidence-labelled document relationships |
 | Refresh analysis when evidence changes | Use LARO's persisted imports, analysis state, automatic query invalidation, and controlled refresh |
+| Divide a case into story phases | Present neutral, date-ordered phases whose summaries and counts resolve to source document IDs |
+| Identify key moments | Rank source documents using dated actions and verified links, without guessing intent or legal outcome |
+| Trace causal or influence chains | Expose connected document chains with explicit/inferred link counts and aggregate confidence |
+| Subway-style document history | Render dated document stations on legal, communication, financial, employment, and termination routes |
+| Inspect inputs and outputs | Inspect incoming and outgoing links, evidence basis, confidence, and the original source document |
 
 ## Not ported
 
@@ -34,9 +42,20 @@ the React metro-map implementation.
   approved roots and managed evidence storage.
 - Generated PyVis/Jinja HTML is a second unaudited presentation runtime and does
   not enforce LARO's owner-scoped source-opening contract.
+- The React prototype's browser connectors are placeholders that log actions or
+  return sample records. LARO retains its real, owner-scoped Google and local
+  evidence collectors instead.
+- Heuristic "justice score", "injustice probability", emotional-impact, and
+  cover-up labels are not ported. They present legal conclusions without a
+  reviewable evidentiary standard. LARO keeps facts, suggestions, confidence,
+  and source provenance separate.
+- Demo timelines, in-memory import/export state, and duplicate React/Vite UI
+  infrastructure are superseded by LARO's persisted case model and renderer.
 
 ## Retirement conclusion
 
-LARO does not import, execute, or depend on this branch. Its useful interaction
-ideas are represented by the production reconstruction contract and renderer;
-the prototype branch is not required for operation or future migrations.
+LARO does not import, execute, or depend on either predecessor branch. Every
+useful production-safe concept is represented by LARO's document intelligence,
+case reconstruction contract, and renderer. The predecessor repository is not
+required for operation or future migrations and can be retired after this
+LARO change is present on `main`.

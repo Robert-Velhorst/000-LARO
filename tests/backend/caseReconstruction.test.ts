@@ -97,6 +97,19 @@ describe("case document reconstruction", () => {
       expect.objectContaining({ from: "decision", to: "attachment", relationship: "attachment_of", evidence: "explicit", confidence: 1 }),
       expect.objectContaining({ from: "decision", to: "objection", relationship: "references", evidence: "explicit" }),
     ]));
+    expect(result.phases).toEqual([
+      expect.objectContaining({ label: "Opening record", documentIds: ["decision", "objection"], eventCount: 2 }),
+      expect.objectContaining({ label: "Later record", documentIds: ["attachment", "unanalyzed"] }),
+    ]);
+    expect(result.chains[0]).toMatchObject({
+      documentIds: expect.arrayContaining(["decision", "objection", "attachment"]),
+      explicitLinkCount: 2,
+    });
+    expect(result.keyMoments[0]).toMatchObject({
+      documentId: "decision",
+      verifiedLinkCount: 2,
+      eventCount: 1,
+    });
     expect(result.warnings.join(" ")).toContain("not been analyzed");
   });
 });

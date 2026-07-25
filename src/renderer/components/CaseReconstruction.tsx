@@ -58,6 +58,34 @@ type Reconstruction = {
   nodes: ReconstructionNode[];
   edges: ReconstructionEdge[];
   routes: Array<{ id: RouteId; label: string; documentCount: number; eventCount: number }>;
+  phases: Array<{
+    id: string;
+    label: string;
+    startDate: string;
+    endDate: string;
+    documentIds: string[];
+    documentCount: number;
+    eventCount: number;
+    summary: string;
+  }>;
+  chains: Array<{
+    id: string;
+    documentIds: string[];
+    edgeIds: string[];
+    startDate: string;
+    endDate: string;
+    explicitLinkCount: number;
+    inferredLinkCount: number;
+    confidence: number;
+  }>;
+  keyMoments: Array<{
+    documentId: string;
+    date: string;
+    title: string;
+    reason: string;
+    verifiedLinkCount: number;
+    eventCount: number;
+  }>;
   warnings: string[];
 };
 
@@ -306,6 +334,56 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
         ))}
         <span className="flex items-center gap-2"><span className="w-6 border-t-2 border-dashed border-slate-500" /> Suggested relationship</span>
       </div>
+
+      {reconstruction.phases?.length ? (
+        <section className="border-y border-border/60 py-4" aria-labelledby="reconstruction-story-title">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h3 id="reconstruction-story-title" className="text-sm font-semibold">Documented story</h3>
+              <p className="mt-1 text-xs text-muted-foreground">Neutral phases derived from document order. Select a phase or key moment to focus the source map.</p>
+            </div>
+            <span className="text-xs text-muted-foreground">{reconstruction.chains?.length ?? 0} connected chain{reconstruction.chains?.length === 1 ? "" : "s"}</span>
+          </div>
+          <div className="mt-3 grid gap-2 md:grid-cols-3">
+            {reconstruction.phases.map((phase) => (
+              <button
+                key={phase.id}
+                type="button"
+                className="border border-border/70 p-3 text-left hover:bg-muted/40"
+                onClick={() => {
+                  setRouteFilter("all");
+                  setFocusFilter("all");
+                  setSelectedId(phase.documentIds[0] ?? null);
+                  setTraceSelected(false);
+                }}
+              >
+                <span className="block text-xs text-muted-foreground">{formatDate(phase.startDate)}{phase.endDate !== phase.startDate ? ` - ${formatDate(phase.endDate)}` : ""}</span>
+                <span className="mt-1 block text-sm font-medium">{phase.label}</span>
+                <span className="mt-1 block text-xs leading-5 text-muted-foreground">{phase.summary}</span>
+              </button>
+            ))}
+          </div>
+          {reconstruction.keyMoments?.length ? (
+            <div className="mt-4">
+              <h4 className="text-xs font-medium uppercase text-muted-foreground">Source-backed key moments</h4>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {reconstruction.keyMoments.map((moment) => (
+                  <button
+                    key={moment.documentId}
+                    type="button"
+                    className="border border-border/70 px-3 py-2 text-left hover:bg-muted/40"
+                    title={moment.reason}
+                    onClick={() => setSelectedId(moment.documentId)}
+                  >
+                    <span className="block text-xs font-medium">{moment.title}</span>
+                    <span className="block text-[11px] text-muted-foreground">{formatDate(moment.date)} - {moment.reason}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {!visibleNodes.length ? (
         <div className="border border-dashed border-border p-8 text-center">
