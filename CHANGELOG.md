@@ -14,6 +14,10 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   credential and refreshing status immediately.
 
 ### Added
+- Added an evidence-grounded case assistant that ranks completed document
+  analyses, validates model-returned document IDs, exposes clickable source
+  controls, and provides a deterministic retrieval summary when the optional
+  model provider is unavailable or produces invalid citations.
 - Completed the safe Paper Trail Visualizer port with neutral document-story
   phases, source-backed key moments, and connected-chain summaries. The
   predecessor's mock browser collectors and unsupported justice-probability

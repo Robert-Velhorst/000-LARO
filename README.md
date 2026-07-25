@@ -42,6 +42,10 @@ The Electron main process starts the Express/tRPC server and React renderer toge
 - Extract readable text and create review-only suggestions for events, claims, evidence links, contradictions, deadlines, obligations, and missing evidence.
 - Analyze TXT, CSV, HTML, EML, PDF, DOCX, and JPEG/PNG/GIF/WebP/BMP image evidence locally in the desktop runtime; Dutch and English image OCR feeds the same versioned summaries, parties, dates, amounts, claims, obligations, legal issues, risks, and source spans. Scanned PDFs must first be converted to images.
 - Run local citation extraction automatically for supported Gmail, Drive, and folder imports; optional deep analysis is accepted only when every finding cites a real extracted source segment.
+- Ask case questions against the most relevant completed document analyses. Answers
+  must preserve valid document IDs, expose direct source controls, and fall back
+  to deterministic evidence matches when the optional model provider is
+  unavailable or returns invalid citations.
 - Analyze one or all pending stored case documents from the Analysis workspace;
   documents uploaded through the normal Evidence flow do not need to be
   uploaded again.
