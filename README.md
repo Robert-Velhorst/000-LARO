@@ -59,6 +59,9 @@ The Electron main process starts the Express/tRPC server and React renderer toge
   each station retains a direct source-document control.
 - Focus the reconstruction on one source-derived participant or legal topic and
   inspect every dated action retained for the selected document.
+- Read the evidence as neutral date-ordered story phases, jump to source-backed
+  key moments, and inspect connected chains with separate verified and inferred
+  link counts. These views never infer motive or a legal outcome.
 - Browse source-linked legal events horizontally or vertically, source documents,
   and operational case activity from one Timeline workspace.
 - Generate source-linked case summaries, lawyer briefings, red-line drafts, and approval-bound case bundles.

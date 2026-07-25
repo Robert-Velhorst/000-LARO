@@ -68,6 +68,37 @@ export type ReconstructionEdge = {
   basis: string[];
 };
 
+export type ReconstructionPhase = {
+  id: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  documentIds: string[];
+  documentCount: number;
+  eventCount: number;
+  summary: string;
+};
+
+export type ReconstructionChain = {
+  id: string;
+  documentIds: string[];
+  edgeIds: string[];
+  startDate: string;
+  endDate: string;
+  explicitLinkCount: number;
+  inferredLinkCount: number;
+  confidence: number;
+};
+
+export type ReconstructionKeyMoment = {
+  documentId: string;
+  date: string;
+  title: string;
+  reason: string;
+  verifiedLinkCount: number;
+  eventCount: number;
+};
+
 export type CaseReconstruction = {
   schemaVersion: 2;
   nodes: ReconstructionNode[];
@@ -78,6 +109,9 @@ export type CaseReconstruction = {
     documentCount: number;
     eventCount: number;
   }>;
+  phases: ReconstructionPhase[];
+  chains: ReconstructionChain[];
+  keyMoments: ReconstructionKeyMoment[];
   warnings: string[];
 };
 
@@ -341,6 +375,106 @@ function inferredEdges(
   return output;
 }
 
+function buildPhases(nodes: ReconstructionNode[]): ReconstructionPhase[] {
+  const dated = nodes.filter((node) => node.date !== "Undated");
+  if (!dated.length) return [];
+  const phaseCount = dated.length < 4 ? 1 : dated.length < 9 ? 2 : 3;
+  const labels = phaseCount === 1
+    ? ["Documented period"]
+    : phaseCount === 2
+      ? ["Opening record", "Later record"]
+      : ["Opening record", "Developing record", "Recent record"];
+
+  return labels.flatMap((label, index) => {
+    const start = Math.floor((index * dated.length) / phaseCount);
+    const end = Math.floor(((index + 1) * dated.length) / phaseCount);
+    const phaseNodes = dated.slice(start, end);
+    if (!phaseNodes.length) return [];
+    const eventCount = phaseNodes.reduce((sum, node) => sum + node.eventCount, 0);
+    const routeLabels = [...new Set(phaseNodes.map((node) => ROUTE_LABELS[node.route]))];
+    return [{
+      id: `phase-${index + 1}`,
+      label,
+      startDate: phaseNodes[0].date,
+      endDate: phaseNodes[phaseNodes.length - 1].date,
+      documentIds: phaseNodes.map((node) => node.id),
+      documentCount: phaseNodes.length,
+      eventCount,
+      summary: `${phaseNodes.length} source document${phaseNodes.length === 1 ? "" : "s"} across ${routeLabels.join(", ")}`
+        + `${eventCount ? `, containing ${eventCount} dated action${eventCount === 1 ? "" : "s"}` : ""}.`,
+    }];
+  });
+}
+
+function buildChains(nodes: ReconstructionNode[], edges: ReconstructionEdge[]): ReconstructionChain[] {
+  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
+  const adjacency = new Map<string, Set<string>>();
+  for (const edge of edges) {
+    const left = adjacency.get(edge.from) ?? new Set<string>();
+    const right = adjacency.get(edge.to) ?? new Set<string>();
+    left.add(edge.to);
+    right.add(edge.from);
+    adjacency.set(edge.from, left);
+    adjacency.set(edge.to, right);
+  }
+  const visited = new Set<string>();
+  const chains: ReconstructionChain[] = [];
+  for (const node of nodes) {
+    if (visited.has(node.id) || !adjacency.has(node.id)) continue;
+    const pending = [node.id];
+    const documentIds: string[] = [];
+    while (pending.length) {
+      const current = pending.pop()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      documentIds.push(current);
+      for (const neighbor of adjacency.get(current) ?? []) {
+        if (!visited.has(neighbor)) pending.push(neighbor);
+      }
+    }
+    const documentSet = new Set(documentIds);
+    const chainEdges = edges.filter((edge) => documentSet.has(edge.from) && documentSet.has(edge.to));
+    const sortedDocuments = documentIds
+      .map((id) => nodeMap.get(id)!)
+      .sort((left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id));
+    chains.push({
+      id: `chain-${chains.length + 1}`,
+      documentIds: sortedDocuments.map((item) => item.id),
+      edgeIds: chainEdges.map((edge) => edge.id),
+      startDate: sortedDocuments.find((item) => item.date !== "Undated")?.date ?? "Undated",
+      endDate: [...sortedDocuments].reverse().find((item) => item.date !== "Undated")?.date ?? "Undated",
+      explicitLinkCount: chainEdges.filter((edge) => edge.evidence === "explicit").length,
+      inferredLinkCount: chainEdges.filter((edge) => edge.evidence === "inferred").length,
+      confidence: Number((chainEdges.reduce((sum, edge) => sum + edge.confidence, 0) / chainEdges.length).toFixed(2)),
+    });
+  }
+  return chains.sort((left, right) => right.documentIds.length - left.documentIds.length || left.id.localeCompare(right.id));
+}
+
+function buildKeyMoments(nodes: ReconstructionNode[], edges: ReconstructionEdge[]): ReconstructionKeyMoment[] {
+  return nodes
+    .map((node) => {
+      const verifiedLinkCount = edges.filter((edge) =>
+        edge.evidence === "explicit" && (edge.from === node.id || edge.to === node.id)).length;
+      const reasons = [
+        node.eventCount ? `${node.eventCount} source-linked dated action${node.eventCount === 1 ? "" : "s"}` : null,
+        verifiedLinkCount ? `${verifiedLinkCount} verified document link${verifiedLinkCount === 1 ? "" : "s"}` : null,
+      ].filter((item): item is string => Boolean(item));
+      return { node, score: node.eventCount * 3 + verifiedLinkCount * 2, verifiedLinkCount, reasons };
+    })
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score || left.node.date.localeCompare(right.node.date))
+    .slice(0, 8)
+    .map(({ node, verifiedLinkCount, reasons }) => ({
+      documentId: node.id,
+      date: node.date,
+      title: node.title,
+      reason: reasons.join(" and "),
+      verifiedLinkCount,
+      eventCount: node.eventCount,
+    }));
+}
+
 export function buildCaseReconstruction(options: {
   documents: ReconstructionDocument[];
   events: ReconstructionEvent[];
@@ -412,5 +546,14 @@ export function buildCaseReconstruction(options: {
       : null,
   ].filter((item): item is string => Boolean(item));
 
-  return { schemaVersion: 2, nodes, edges, routes, warnings };
+  return {
+    schemaVersion: 2,
+    nodes,
+    edges,
+    routes,
+    phases: buildPhases(nodes),
+    chains: buildChains(nodes, edges),
+    keyMoments: buildKeyMoments(nodes, edges),
+    warnings,
+  };
 }

@@ -14,6 +14,10 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   credential and refreshing status immediately.
 
 ### Added
+- Completed the safe Paper Trail Visualizer port with neutral document-story
+  phases, source-backed key moments, and connected-chain summaries. The
+  predecessor's mock browser collectors and unsupported justice-probability
+  claims remain intentionally excluded.
 - Extended the source-linked document reconstruction with participant and legal-
   topic focus, plus the dated actions retained for each selected station. This
   ports the useful focused-analysis concepts from the predecessor's unrelated
