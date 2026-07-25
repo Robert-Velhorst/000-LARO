@@ -3,16 +3,28 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { MessageSquare, X, Send, Minimize2, Maximize2 } from "lucide-react";
+import { CircleHelp, Loader2, MessageSquare, X, Send, Minimize2, Maximize2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
+import { getElectronAPI } from "@/lib/electronApiShim";
+
+interface MessageCitation {
+  evidenceId: string;
+  title: string;
+  documentType: string;
+  confidence: number;
+  summary: string;
+  matchedTerms: string[];
+}
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+  citations?: MessageCitation[];
+  notice?: string | null;
 }
 
 export default function ChatWidget({ embedded = false }: { embedded?: boolean }) {
@@ -43,6 +55,8 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
     },
   });
   const askAssistantMutation = trpc.assistant.ask.useMutation();
+  const sourceMutation = trpc.evidenceFiles.getDownloadUrl.useMutation();
+  const sourceOpenedMutation = trpc.evidenceFiles.recordSourceOpened.useMutation();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -53,7 +67,7 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
   }, [messages]);
 
   const handleSend = async () => {
-    if (!message.trim()) return;
+    if (!message.trim() || askAssistantMutation.isPending) return;
 
     const outgoingMessage = message;
     const newMessage: Message = {
@@ -100,6 +114,8 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
           role: "assistant",
           content: result.answer,
           timestamp: new Date(),
+          citations: result.citations,
+          notice: result.notice,
         };
         setMessages(prev => [...prev, response]);
       } catch {
@@ -111,6 +127,17 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
         };
         setMessages(prev => [...prev, fallback]);
       }
+    }
+  };
+
+  const openSource = async (citation: MessageCitation) => {
+    try {
+      const source = await sourceMutation.mutateAsync({ id: citation.evidenceId });
+      if (!source.url) throw new Error(source.message || "The source file is not available.");
+      await getElectronAPI().openExternal(source.url);
+      await sourceOpenedMutation.mutateAsync({ id: citation.evidenceId });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The source document could not be opened.");
     }
   };
 
@@ -235,7 +262,33 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
                           : "bg-muted text-foreground"
                       }`}
                     >
-                      <p className="text-sm">{msg.content}</p>
+                      <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
+                      {msg.notice ? (
+                        <p className="mt-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
+                          {msg.notice}
+                        </p>
+                      ) : null}
+                      {msg.citations?.length ? (
+                        <div className="mt-3 space-y-1.5 border-t border-border/60 pt-2" aria-label="Answer sources">
+                          {msg.citations.map((citation) => (
+                            <button
+                              key={citation.evidenceId}
+                              type="button"
+                              className="flex w-full items-start gap-2 border border-border/70 bg-background/70 p-2 text-left hover:bg-background"
+                              title={`Open source document ${citation.title}`}
+                              onClick={() => void openSource(citation)}
+                            >
+                              <CircleHelp className="mt-0.5 h-4 w-4 shrink-0 text-orange-500" />
+                              <span className="min-w-0">
+                                <span className="block truncate text-xs font-medium">{citation.title}</span>
+                                <span className="block text-[11px] text-muted-foreground">
+                                  {citation.documentType} - {citation.confidence}% analysis confidence
+                                </span>
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
                       <p className={`text-xs mt-1 ${msg.role === "user" ? "text-orange-100" : "text-muted-foreground"}`}>
                         {msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </p>
@@ -261,13 +314,15 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
                     size="icon"
                     aria-label="Send message"
                     className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700"
-                    disabled={!message.trim()}
+                    disabled={!message.trim() || askAssistantMutation.isPending}
                   >
-                    <Send className="h-4 w-4" />
+                    {askAssistantMutation.isPending
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : <Send className="h-4 w-4" />}
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">
-                  Press Enter to send, Shift+Enter for new line. Case detail context is used automatically when available.
+                  Case answers use analyzed documents when a case is selected. Verify the linked sources before relying on them.
                 </p>
               </div>
             </>

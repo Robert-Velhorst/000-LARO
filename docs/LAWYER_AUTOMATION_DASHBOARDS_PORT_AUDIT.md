@@ -1,8 +1,10 @@
 # Lawyer Automation Dashboards Port Audit
 
-Date: 2026-07-20
+Date: 2026-07-26
 
 Source: `Noodzakelijk-Online/lawyer-automation-dashboards` at `9e87b36`
+
+Follow-up source: restored `000 - Laro V8.zip` snapshot (533 archive entries)
 
 ## Conclusion
 
@@ -65,6 +67,29 @@ The hardened LARO implementation now:
 - orders official records first and then uses stable name/ID ordering;
 - exposes paged results, truthful counts, loading/error states, and an
   `Official NOvA only` control in the mounted directory.
+
+The restored V8 snapshot also exposed one useful concept that current LARO had
+not completed: case question answering. Its prototype implementation used only
+case metadata and could automatically email a lawyer above a model-confidence
+threshold. That behavior was not copied.
+
+The hardened case assistant now:
+
+- retrieves only completed analyses for a case the authenticated user may
+  access;
+- ranks summaries, cited findings, dated events, and source excerpts against
+  the question, with a broad-case-overview mode;
+- sends a bounded source context to the optional model provider and requires
+  one or more valid supplied document IDs in the response;
+- rejects missing or invented source IDs and falls back to deterministic
+  evidence matches instead of presenting an ungrounded answer;
+- returns clickable source controls and records successful source dispatch;
+- never sends email, changes a case, or performs outreach.
+
+The restored snapshot was a flattened amalgamation of prototypes rather than a
+coherent newer checkout. Its tracked secret-bearing environment file, demo
+identity, random analytics, mock provider success states, unencrypted token
+writes, and approval-free automated outreach remain excluded.
 
 Real-database regression coverage proves non-overlapping pages, accurate totals,
 combined filters, literal wildcard handling, malformed experience handling, and
