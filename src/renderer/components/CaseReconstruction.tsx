@@ -146,6 +146,8 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
   const [minimumConfidence, setMinimumConfidence] = useState(52);
   const [routeFilter, setRouteFilter] = useState<RouteId | "all">("all");
   const [focusFilter, setFocusFilter] = useState("all");
+  const [phaseFilter, setPhaseFilter] = useState("all");
+  const [chainFilter, setChainFilter] = useState("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [traceSelected, setTraceSelected] = useState(false);
   const [zoom, setZoom] = useState(1);
@@ -207,11 +209,19 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
   }, [reconstruction]);
   const visibleNodes = useMemo(() => reconstruction?.nodes.filter((node) => {
     if (routeFilter !== "all" && node.route !== routeFilter) return false;
+    if (phaseFilter !== "all") {
+      const phase = reconstruction.phases?.find((item) => item.id === phaseFilter);
+      if (phase && !phase.documentIds.includes(node.id)) return false;
+    }
+    if (chainFilter !== "all") {
+      const chain = reconstruction.chains?.find((item) => item.id === chainFilter);
+      if (chain && !chain.documentIds.includes(node.id)) return false;
+    }
     if (focusFilter === "all") return true;
     const [kind, ...parts] = focusFilter.split(":");
     const value = parts.join(":");
     return kind === "participant" ? node.participants.includes(value) : node.topics.includes(value);
-  }) ?? [], [reconstruction, routeFilter, focusFilter]);
+  }) ?? [], [reconstruction, routeFilter, focusFilter, phaseFilter, chainFilter]);
   const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes]);
   const visibleEdges = useMemo(() => reconstruction?.edges.filter((edge) =>
     visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to) &&
@@ -351,10 +361,13 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
               <button
                 key={phase.id}
                 type="button"
-                className="border border-border/70 p-3 text-left hover:bg-muted/40"
+                className={`border p-3 text-left hover:bg-muted/40 ${phaseFilter === phase.id ? "border-foreground bg-muted/40" : "border-border/70"}`}
+                aria-pressed={phaseFilter === phase.id}
                 onClick={() => {
                   setRouteFilter("all");
                   setFocusFilter("all");
+                  setChainFilter("all");
+                  setPhaseFilter((current) => current === phase.id ? "all" : phase.id);
                   setSelectedId(phase.documentIds[0] ?? null);
                   setTraceSelected(false);
                 }}
@@ -365,6 +378,38 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
               </button>
             ))}
           </div>
+          {reconstruction.chains?.length ? (
+            <div className="mt-4">
+              <h4 className="text-xs font-medium uppercase text-muted-foreground">Connected document chains</h4>
+              <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                {reconstruction.chains.map((chain, index) => (
+                  <button
+                    key={chain.id}
+                    type="button"
+                    className={`border p-3 text-left hover:bg-muted/40 ${chainFilter === chain.id ? "border-foreground bg-muted/40" : "border-border/70"}`}
+                    aria-pressed={chainFilter === chain.id}
+                    onClick={() => {
+                      setRouteFilter("all");
+                      setFocusFilter("all");
+                      setPhaseFilter("all");
+                      setChainFilter((current) => current === chain.id ? "all" : chain.id);
+                      setSelectedId(chain.documentIds[0] ?? null);
+                      setTraceSelected(false);
+                    }}
+                  >
+                    <span className="flex flex-wrap items-center justify-between gap-2 text-sm font-medium">
+                      <span>Chain {index + 1} - {chain.documentIds.length} documents</span>
+                      <Badge variant="outline">{Math.round(chain.confidence * 100)}% average confidence</Badge>
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {formatDate(chain.startDate)}{chain.endDate !== chain.startDate ? ` - ${formatDate(chain.endDate)}` : ""}
+                      {" - "}{chain.explicitLinkCount} verified, {chain.inferredLinkCount} suggested
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {visibleKeyMoments.length ? (
             <div className="mt-4">
               <h4 className="text-xs font-medium uppercase text-muted-foreground">Source-backed key moments</h4>
@@ -375,7 +420,13 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
                     type="button"
                     className="border border-border/70 px-3 py-2 text-left hover:bg-muted/40"
                     title={moment.reason}
-                    onClick={() => setSelectedId(moment.documentId)}
+                    onClick={() => {
+                      setRouteFilter("all");
+                      setFocusFilter("all");
+                      setPhaseFilter("all");
+                      setChainFilter("all");
+                      setSelectedId(moment.documentId);
+                    }}
                   >
                     <span className="block text-xs font-medium">{moment.title}</span>
                     <span className="block text-[11px] text-muted-foreground">{formatDate(moment.date)} - {moment.reason}</span>
@@ -391,7 +442,12 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
         <div className="border border-dashed border-border p-8 text-center">
           <Focus className="mx-auto h-8 w-8 text-muted-foreground" />
           <h3 className="mt-3 font-medium">No documents match this focus</h3>
-          <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => { setRouteFilter("all"); setFocusFilter("all"); }}>Clear filters</Button>
+          <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => {
+            setRouteFilter("all");
+            setFocusFilter("all");
+            setPhaseFilter("all");
+            setChainFilter("all");
+          }}>Clear filters</Button>
         </div>
       ) : view === "map" ? (
         <ReconstructionMap
