@@ -217,6 +217,8 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
     visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to) &&
     (showInferred || edge.evidence === "explicit") && edge.confidence * 100 >= minimumConfidence) ?? [],
   [reconstruction, visibleNodeIds, showInferred, minimumConfidence]);
+  const visibleKeyMoments = useMemo(() => reconstruction?.keyMoments?.filter((moment) =>
+    visibleNodeIds.has(moment.documentId)) ?? [], [reconstruction, visibleNodeIds]);
   const tracedIds = useMemo(() => traceSelected ? connectedIds(selectedId, visibleEdges) : new Set<string>(),
     [traceSelected, selectedId, visibleEdges]);
   const selectedNode = reconstruction?.nodes.find((node) => node.id === selectedId) ?? null;
@@ -363,11 +365,11 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
               </button>
             ))}
           </div>
-          {reconstruction.keyMoments?.length ? (
+          {visibleKeyMoments.length ? (
             <div className="mt-4">
               <h4 className="text-xs font-medium uppercase text-muted-foreground">Source-backed key moments</h4>
               <div className="mt-2 flex flex-wrap gap-2">
-                {reconstruction.keyMoments.map((moment) => (
+                {visibleKeyMoments.map((moment) => (
                   <button
                     key={moment.documentId}
                     type="button"
