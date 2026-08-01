@@ -345,5 +345,8 @@ try {
     if ($startedNgrok -and -not $ngrokProcess.HasExited) {
         Stop-Process -Id $ngrokProcess.Id -Force -ErrorAction SilentlyContinue
     }
+    if ($startedNgrok) {
+        Remove-Item -LiteralPath $runtimePath -Force -ErrorAction SilentlyContinue
+    }
     throw
 }

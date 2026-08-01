@@ -371,6 +371,7 @@ describe('production readiness regressions', () => {
     expect(ngrokLauncher).toContain('Reconfigure Google before deployment');
     expect(ngrokLauncher).toContain('@("compose", "-p", $ComposeProjectName, "up", "-d")');
     expect(ngrokLauncher).toContain('composeProjectName = $ComposeProjectName');
+    expect(ngrokLauncher).toContain('Remove-Item -LiteralPath $runtimePath -Force -ErrorAction SilentlyContinue');
     expect(ngrokStopper).toContain('docker compose -p $ComposeProjectName stop laro-server');
     expect(providerSetup).toContain('Read-Host "SMTP password or Gmail app password" -AsSecureString');
     expect(providerSetup).toContain('ConvertFrom-SecureString -SecureString $Value');
