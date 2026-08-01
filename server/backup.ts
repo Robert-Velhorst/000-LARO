@@ -14,6 +14,26 @@ function currentDbPath(): string {
   return process.env.DATABASE_URL || "laro.sqlite";
 }
 
+export function cleanupBackupDatabaseSidecars(databasePath: string): void {
+  const source = path.resolve(databasePath);
+  for (const extension of ["-wal", "-shm"]) {
+    try {
+      if (fs.existsSync(source + extension)) fs.unlinkSync(source + extension);
+    } catch {
+      // The validation result remains authoritative; cleanup is best effort.
+    }
+  }
+}
+
+export function prepareBackupDatabaseRead(databasePath: string): void {
+  const source = path.resolve(databasePath);
+  const walPath = source + "-wal";
+  if (fs.existsSync(walPath) && fs.statSync(walPath).size > 0) {
+    throw new Error("Backup database has an untracked non-empty SQLite WAL sidecar.");
+  }
+  cleanupBackupDatabaseSidecars(source);
+}
+
 /** Create and verify a consistent online backup of the live database. */
 export async function backupDatabase(destPath: string): Promise<{ path: string; bytes: number }> {
   const db = await getDb();
@@ -39,9 +59,11 @@ export async function backupDatabase(destPath: string): Promise<{ path: string; 
 export function validateBackup(srcPath: string): { valid: boolean; reason?: string; tables?: string[] } {
   const source = path.resolve(srcPath);
   if (!fs.existsSync(source)) return { valid: false, reason: "File does not exist" };
+  const isLiveDatabase = source === path.resolve(currentDbPath());
 
   let probe: InstanceType<typeof Database> | null = null;
   try {
+    if (!isLiveDatabase) prepareBackupDatabaseRead(source);
     probe = new Database(source, { readonly: true, fileMustExist: true });
     const integrity = probe.pragma("quick_check") as Array<{ quick_check: string }>;
     if (integrity.length !== 1 || integrity[0]?.quick_check !== "ok") {
@@ -64,6 +86,7 @@ export function validateBackup(srcPath: string): { valid: boolean; reason?: stri
     return { valid: false, reason: error instanceof Error ? error.message : String(error) };
   } finally {
     try { probe?.close(); } catch { /* best effort */ }
+    if (!isLiveDatabase) cleanupBackupDatabaseSidecars(source);
   }
 }
 

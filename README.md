@@ -192,14 +192,14 @@ See [Operator Runbook](docs/OPERATOR_RUNBOOK.md), [Security](docs/SECURITY.md), 
 
 ## Verification
 
-The current production-readiness candidate was verified locally on 2026-07-21.
+The current production-readiness candidate was verified locally on 2026-08-01.
 GitHub Actions repeats the Node and browser checks on the supported Node 22 toolchain:
 
 - `npm run gate`: all blocking gates passed.
 - Server, Electron main-process, and shipped renderer TypeScript checks passed; no shipped runtime module disables type checking; ESLint passed.
 - Traceability reported 117 rows, 92 cited, and 0 broken references.
 - Runtime no-excuses scan reported 0 suspect findings; account safety reported 0 high-severity findings.
-- Vitest reported 55 passing files and 354 passing tests, including controlled
+- Vitest reported 59 passing files and 368 passing tests, including controlled
   NOvA parsing/filter, unknown-metric scoring, and review-gated
   media/organization discovery, tenant isolation, case-draft persistence, and
   target-database readiness tests, with no skipped or todo tests.
@@ -239,7 +239,7 @@ desktop server to that registered OAuth callback port instead.
 - A packaged launch from a directory containing hostile development `.env` values still reported production mode, database readiness, and a random `127.0.0.1` port.
 - Every protected-main commit must pass the Node, Python, renderer-accessibility,
   and Windows packaging workflows. Use the latest successful
-  [GitHub Actions runs](https://github.com/Noodzakelijk-Online/000-LARO/actions)
+  [GitHub Actions runs](https://github.com/Robert-Velhorst/000-LARO/actions)
   for commit-specific evidence instead of relying on a hash from an older build.
 - The Windows workflow publishes `LARO-Desktop-Windows` with the portable
   executable and its `.sha256` sidecar. It also verifies the production gate,

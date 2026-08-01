@@ -85,6 +85,11 @@ suite('recovery-ready backup sets', () => {
     )).toBe(originalEvidence);
     expect(validation.tables).toContain('evidence');
     expect(fs.readdirSync(app.tmpDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    expect(fs.existsSync(`${destination}-wal`)).toBe(false);
+    expect(fs.existsSync(`${destination}-shm`)).toBe(false);
+    expect(fs.readdirSync(app.tmpDir).filter(
+      (name) => name.startsWith('complete.sqlite.') && name.includes('.tmp-'),
+    )).toEqual([]);
   });
 
   it('refuses to overwrite any member of an existing backup set', async () => {
@@ -110,6 +115,14 @@ suite('recovery-ready backup sets', () => {
     expect(validateBackupSet(databaseTamper)).toMatchObject({
       valid: false,
       reason: expect.stringContaining('database hash or size'),
+    });
+
+    const sidecarTamper = path.join(app.tmpDir, 'sidecar-tamper.sqlite');
+    await createBackupSet(sidecarTamper, { desktopSecretsPath: secretsPath });
+    fs.writeFileSync(`${sidecarTamper}-wal`, 'untracked transaction bytes');
+    expect(validateBackupSet(sidecarTamper)).toMatchObject({
+      valid: false,
+      reason: expect.stringContaining('untracked non-empty SQLite WAL sidecar'),
     });
 
     const secretTamper = path.join(app.tmpDir, 'secret-tamper.sqlite');
