@@ -79,6 +79,20 @@ function Unprotect-Secret {
     }
 }
 
+function Assert-GoogleProviderConfig {
+    param(
+        [Parameter(Mandatory)] [string]$ClientId,
+        [Parameter(Mandatory)] [string]$ClientSecret
+    )
+
+    if ($ClientId -notmatch "^[0-9]+-[a-z0-9-]+\.apps\.googleusercontent\.com$") {
+        throw "Protected Google provider configuration contains an invalid web OAuth client ID."
+    }
+    if ($ClientSecret -notmatch "^[A-Za-z0-9_-]{16,128}$") {
+        throw "Protected Google provider configuration contains an invalid client secret. Reconfigure Google before deployment."
+    }
+}
+
 function Import-ProtectedProviderConfig {
     if (-not (Test-Path -LiteralPath $providerConfigPath)) { return }
 
@@ -90,8 +104,11 @@ function Import-ProtectedProviderConfig {
         if (-not $config.google.clientId -or -not $config.google.clientSecretProtected) {
             throw "Protected Google provider configuration is incomplete."
         }
+        $googleClientSecret = Unprotect-Secret -ProtectedValue $config.google.clientSecretProtected
+        Assert-GoogleProviderConfig -ClientId $config.google.clientId -ClientSecret $googleClientSecret
         $env:GOOGLE_CLIENT_ID = $config.google.clientId
-        $env:GOOGLE_CLIENT_SECRET = Unprotect-Secret -ProtectedValue $config.google.clientSecretProtected
+        $env:GOOGLE_CLIENT_SECRET = $googleClientSecret
+        $googleClientSecret = $null
     }
     if ($config.outboundEmail) {
         if (

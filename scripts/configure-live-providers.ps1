@@ -52,6 +52,21 @@ function Protect-Secret {
     return ConvertFrom-SecureString -SecureString $Value
 }
 
+function Assert-GoogleClientSecret {
+    param([Parameter(Mandatory)] [Security.SecureString]$Value)
+
+    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
+    try {
+        $plainText = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+        if ($plainText -notmatch "^[A-Za-z0-9_-]{16,128}$") {
+            throw "Google client secret must be the token from Google Cloud, not a URL, path, or placeholder."
+        }
+    } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+        $plainText = $null
+    }
+}
+
 function Normalize-SmtpPassword {
     param(
         [Parameter(Mandatory)] [Security.SecureString]$Value,
@@ -150,6 +165,7 @@ if ($Google) {
     if (-not $GoogleClientSecret -or $GoogleClientSecret.Length -lt 16) {
         throw "Google client secret is missing or too short."
     }
+    Assert-GoogleClientSecret -Value $GoogleClientSecret
     $config.google = [ordered]@{
         clientId = $GoogleClientId
         clientSecretProtected = Protect-Secret -Value $GoogleClientSecret
