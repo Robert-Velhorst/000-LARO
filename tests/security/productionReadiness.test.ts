@@ -363,12 +363,15 @@ describe('production readiness regressions', () => {
     expect(ngrokLauncher).toContain('Unprotect-Secret -ProtectedValue');
     expect(ngrokStopper).toContain('$process.ProcessName -ne "ngrok"');
     expect(ngrokStopper).toContain('$processDetails.CommandLine -notmatch "laro-api"');
-    expect(ngrokStopper).toContain('docker compose stop laro-server');
+    expect(ngrokStopper).not.toContain('docker compose stop laro-server');
     expect(providerSetup).toContain('Read-Host "Google web OAuth client secret" -AsSecureString');
     expect(providerSetup).toContain('Assert-GoogleClientSecret -Value $GoogleClientSecret');
     expect(providerSetup).toContain('not a URL, path, or placeholder');
     expect(ngrokLauncher).toContain('Assert-GoogleProviderConfig');
     expect(ngrokLauncher).toContain('Reconfigure Google before deployment');
+    expect(ngrokLauncher).toContain('@("compose", "-p", $ComposeProjectName, "up", "-d")');
+    expect(ngrokLauncher).toContain('composeProjectName = $ComposeProjectName');
+    expect(ngrokStopper).toContain('docker compose -p $ComposeProjectName stop laro-server');
     expect(providerSetup).toContain('Read-Host "SMTP password or Gmail app password" -AsSecureString');
     expect(providerSetup).toContain('ConvertFrom-SecureString -SecureString $Value');
     expect(providerSetup).toContain('/inheritance:r');
