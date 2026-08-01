@@ -118,8 +118,11 @@ invoke the launcher with `-GatewayUrl`, `-PathPrefix`, and optionally
 `-InternalUrl`.
 
 The assigned direct URL may change after the ngrok process stops. Treat it as
-an operational fallback, not as a stable production hostname. Before Google
-OAuth acceptance, register the current callback exactly as:
+an operational fallback, not as a stable production hostname. The account must
+have an available assigned domain; if its only dev domain is already online,
+ngrok rejects the direct tunnel rather than replacing or pooling with that
+endpoint. In that case, install the gateway path rule or assign another domain.
+Before Google OAuth acceptance, register the current callback exactly as:
 
 ```text
 https://<assigned-domain>/api/oauth/gmail/callback
