@@ -360,6 +360,11 @@ describe('production readiness regressions', () => {
     expect(ngrokLauncher).toContain('[switch]$DirectPublicTunnel');
     expect(ngrokLauncher).toContain('LARO_NGROK_MODE');
     expect(ngrokLauncher).toContain('DirectPublicTunnel cannot be combined');
+    expect(ngrokLauncher).toContain('Get-NgrokFailureMessage');
+    expect(ngrokLauncher).toContain('ngrok exited before registering an HTTPS tunnel: $failureMessage');
+    expect(ngrokLauncher.lastIndexOf('-Name "LARO_NGROK_MODE"')).toBeGreaterThan(
+      ngrokLauncher.indexOf('Wait-ForJsonEndpoint -Uri "$publicBaseUrl/api/health"'),
+    );
     expect(ngrokLauncher).toContain('$publicBaseUrl = $publicOrigin');
     expect(ngrokLauncher).toContain('mode = if ($useDirectTunnel) { "direct" } else { "gateway" }');
     expect(ngrokLauncher).toContain('LARO_NGROK_GATEWAY_URL');

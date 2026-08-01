@@ -14,7 +14,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $envPath = Join-Path $root ".env"
 $runtimePath = Join-Path $root ".laro-ngrok.json"
 $providerConfigPath = Join-Path $root ".laro-provider-config.json"
-$ngrokLogPath = Join-Path $env:TEMP "laro-ngrok.log"
+$ngrokLogPath = Join-Path $env:TEMP "laro-ngrok-$PID.log"
 
 function Set-EnvValue {
     param(
@@ -149,6 +149,23 @@ function Wait-ForJsonEndpoint {
     }
 }
 
+function Get-NgrokFailureMessage {
+    if (-not (Test-Path -LiteralPath $ngrokLogPath)) { return "" }
+
+    try {
+        $failure = Get-Content -LiteralPath $ngrokLogPath |
+            ForEach-Object {
+                try { $_ | ConvertFrom-Json } catch { $null }
+            } |
+            Where-Object { $_.err -and $_.lvl -in "eror", "crit" } |
+            Select-Object -Last 1
+        if (-not $failure) { return "" }
+        return (($failure.err -split "`r?`n", 2)[0]).Trim()
+    } catch {
+        return ""
+    }
+}
+
 function Wait-ForHttpsTunnel {
     param(
         [Parameter(Mandatory)] [Diagnostics.Process]$Process,
@@ -158,6 +175,10 @@ function Wait-ForHttpsTunnel {
 
     for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
         if ($Process.HasExited) {
+            $failureMessage = Get-NgrokFailureMessage
+            if ($failureMessage) {
+                throw "ngrok exited before registering an HTTPS tunnel: $failureMessage"
+            }
             throw "ngrok exited before registering an HTTPS tunnel."
         }
         try {
@@ -230,7 +251,6 @@ if ($useDirectTunnel) {
     if ($GatewayUrl -or $PathPrefix -or $InternalUrl) {
         throw "DirectPublicTunnel cannot be combined with GatewayUrl, PathPrefix, or InternalUrl."
     }
-    Set-EnvValue -Path $envPath -Name "LARO_NGROK_MODE" -Value "direct"
 } else {
     if (-not $GatewayUrl) { $GatewayUrl = Get-EnvValue -Path $envPath -Name "LARO_NGROK_GATEWAY_URL" }
     if (-not $PathPrefix) { $PathPrefix = Get-EnvValue -Path $envPath -Name "LARO_NGROK_PATH_PREFIX" }
@@ -269,7 +289,6 @@ if ($useDirectTunnel) {
         throw "InternalUrl must be an HTTPS ngrok internal endpoint."
     }
 
-    Set-EnvValue -Path $envPath -Name "LARO_NGROK_MODE" -Value "gateway"
     Set-EnvValue -Path $envPath -Name "LARO_NGROK_GATEWAY_URL" -Value $publicOrigin
     Set-EnvValue -Path $envPath -Name "LARO_NGROK_PATH_PREFIX" -Value $normalizedPrefix
     Set-EnvValue -Path $envPath -Name "LARO_NGROK_INTERNAL_URL" -Value $InternalUrl
@@ -365,6 +384,11 @@ try {
             throw "LARO public health verification did not report healthy."
         }
     }
+
+    Set-EnvValue `
+        -Path $envPath `
+        -Name "LARO_NGROK_MODE" `
+        -Value $(if ($useDirectTunnel) { "direct" } else { "gateway" })
 
     [ordered]@{
         mode = if ($useDirectTunnel) { "direct" } else { "gateway" }

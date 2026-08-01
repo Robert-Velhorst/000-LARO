@@ -317,7 +317,10 @@ matching origin and OAuth settings, verifies the public health response, and
 persists direct mode for later `-SkipBuild` starts. An account-assigned direct
 URL can change after a tunnel restart; update the Google OAuth redirect URI to
 `https://<assigned-domain>/api/oauth/gmail/callback` before accepting Google
-connectivity. Use the gateway mode above for a stable production URL.
+connectivity. The assigned domain must also be available; accounts whose only
+dev domain already hosts another endpoint still require a gateway path rule or
+an additional assigned domain. Use the gateway mode above for a stable
+production URL.
 
 Keep `LARO_COMPOSE_PROJECT_NAME` stable across checkout-folder moves. The
 launcher passes it explicitly to Docker Compose so restarts reuse the intended
