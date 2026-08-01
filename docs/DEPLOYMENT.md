@@ -98,6 +98,33 @@ https://<ngrok-domain>/laro/api/oauth/gmail/callback
 The assigned free dev domain remains stable. No additional paid domain is
 required for this path-routed configuration.
 
+### Direct ngrok fallback
+
+If the existing gateway policy cannot be edited, LARO can use a separate ngrok
+HTTPS tunnel without changing or replacing the application already hosted on
+the gateway domain:
+
+```powershell
+.\scripts\start-ngrok-api.ps1 `
+  -ComposeProjectName laro `
+  -DirectPublicTunnel
+```
+
+The launcher selects the assigned HTTPS origin only after ngrok registers the
+tunnel, injects that exact origin into Docker, verifies both local and public
+health, and records `mode: direct` in `.laro-ngrok.json`. Direct mode is saved
+in the ignored `.env`, so `-SkipBuild` reuses it. To return to gateway mode,
+invoke the launcher with `-GatewayUrl`, `-PathPrefix`, and optionally
+`-InternalUrl`.
+
+The assigned direct URL may change after the ngrok process stops. Treat it as
+an operational fallback, not as a stable production hostname. Before Google
+OAuth acceptance, register the current callback exactly as:
+
+```text
+https://<assigned-domain>/api/oauth/gmail/callback
+```
+
 Remote Socket.IO clients must use the same prefix, for example
 `path: "/laro/socket.io"`. Direct desktop operation continues to use the
 default `/socket.io` path because it has no public prefix.
