@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import Database from "better-sqlite3";
+import { cleanupBackupDatabaseSidecars, prepareBackupDatabaseRead } from "./backup";
 import { collectManagedStorageKeys } from "./managedStorage";
 import { sanitizeStorageKey } from "./storage";
 
@@ -127,7 +128,9 @@ function sameFiles(left: LocalStorageFileManifest[], right: LocalStorageFileMani
 }
 
 function managedStorageKeys(databasePath: string): string[] {
-  const database = new Database(path.resolve(databasePath), { readonly: true, fileMustExist: true });
+  const resolvedDatabasePath = path.resolve(databasePath);
+  prepareBackupDatabaseRead(resolvedDatabasePath);
+  const database = new Database(resolvedDatabasePath, { readonly: true, fileMustExist: true });
   try {
     return collectManagedStorageKeys(database, {})
       .map((key) => {
@@ -141,6 +144,7 @@ function managedStorageKeys(databasePath: string): string[] {
       .sort(compareText);
   } finally {
     database.close();
+    cleanupBackupDatabaseSidecars(resolvedDatabasePath);
   }
 }
 

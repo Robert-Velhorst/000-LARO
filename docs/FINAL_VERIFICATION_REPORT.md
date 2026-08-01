@@ -1,7 +1,7 @@
 # Final Verification Report
 
-Date: 2026-07-21
-Verification target: protected `main` commit `21fc0135ec06568b05c12866faf38fa017a6c041`
+Date: 2026-08-01
+Verification target: protected `main` commit `5dd3c7612a1730f2e9b7db02b7be47db25ef1359`
 
 This report separates reproducible repository evidence from target-environment
 acceptance. It supersedes the 2026-07-06 phase snapshot.
@@ -18,7 +18,7 @@ acceptance. It supersedes the 2026-07-06 phase snapshot.
 | Renderer accessibility | 15 routes x 2 viewports; 0 serious/critical axe violations, unnamed controls, overflows, request failures, page errors, or console errors |
 | Isolated backup/delete/restore/reopen drill | Pass |
 | Target database readiness | SQLite integrity, declared foreign keys, 237 legacy relationship guards, invariants, reconciliation, duplicates, and demo markers clean |
-| Vitest | 53 files, 340 tests passed, 0 todo |
+| Vitest | 59 files, 368 tests passed, 0 todo |
 | Python unittest discovery | 222 tests passed |
 | Runtime dependency audit | 0 known vulnerabilities |
 | Renderer, main, and server production builds | Pass |
@@ -27,15 +27,21 @@ acceptance. It supersedes the 2026-07-06 phase snapshot.
 | Packaged document intelligence and Outreach | Seven migrations present, including persisted keyword-pull jobs and the legacy-import archive; PDF, DOCX, native parser dependencies, and review-gated Outreach tables present; integrated server booted successfully |
 | Desktop scanner contract | Scoped 15-minute token; real bytes/hash; owner/MIME enforcement |
 | Branch CI policy | Node, Python, and renderer-accessibility checks run before merge |
-| Protected-main baseline CI | Actions run `29819449370`; Node, Python, and renderer-accessibility jobs passed |
-| Windows package baseline | Actions run `29819449360`; gate, build, ABI check, package, single-instance profile lock, checksum, and artifact upload passed |
+| Protected-main baseline CI | Actions run `30693140677`; Node, Python, and renderer-accessibility jobs passed |
+| Windows package baseline | Actions run `30693140665`; gate, build, ABI check, package, single-instance profile lock, checksum, and artifact upload passed |
 | Packaged matching assets | Seven aligned legal categories; invalid legacy dataset absent |
 | Dependency graph | One canonical Node workspace; 0 open Dependabot alerts |
 
-`npm run readiness:production` passed with strong target-like secrets and an
-explicit clean target database. The readiness command restores the Node SQLite
-ABI itself after Electron packaging, runs the data-readiness gate, and preserves
-complete stdout/stderr for any failed step.
+`npm run readiness:production` passed both with strong target-like secrets and
+with the current API deployment's standalone secrets plus an integrity-checked
+snapshot of its clean target database. The readiness command restores the Node
+SQLite ABI itself after Electron packaging, runs the data-readiness gate, and
+preserves complete stdout/stderr for any failed step.
+
+A manifest-bound target recovery set was then created and validated against the
+current standalone JWT secret. Validation covered 54 tables and complete local
+evidence storage; publication and validation left no untracked SQLite temporary,
+WAL, or shared-memory sidecars.
 
 ## Packaged UI evidence
 
@@ -119,13 +125,22 @@ dark-theme recommendation contrast defect found during this pass was corrected
 and visually rechecked.
 
 The current protected-main portable artifact is GitHub Actions artifact
-`8490999899` from run `29819449360`. Its executable is 151,837,682 bytes with
-SHA-256 `758e15fdecc83d03f66d83d0933c4224476b123c001039eb62b30be95b4a568b`;
+`8816485204` from run `30693140665`. Its executable is 151,891,123 bytes with
+SHA-256 `14a27ff42c06d5cf1aa8897c605943b38ccc7d2e67675b7d27aeaa0e3714050c`;
 the downloaded executable matches its packaged checksum sidecar. The workflow
 passed the production gate, build, Electron ABI/database-binding check,
 portable packaging, packaged single-instance profile lock, artifact staging,
 and upload. Windows reports `NotSigned`, matching the selected unsigned
 internal distribution policy.
+
+The API-only Docker deployment was rebuilt on Node 22 from the current release
+line while retaining its explicitly named data volume. Local `/api/live`,
+`/api/ready`, and `/api/health` checks pass, the reported version is `1.3.0`,
+and SMTP authentication succeeds without sending a message. Google remains
+unconfigured because the previously stored value was not a Google client
+secret. The ngrok `/laro` gateway currently falls through to another service,
+so no public-API acceptance is claimed until that route is repaired and
+reverified.
 
 Packaged clean-profile evidence for this release line also verified fresh local
 secrets and databases, all seven packaged migrations, healthy version `1.3.0`
