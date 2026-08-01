@@ -4,6 +4,7 @@ param(
     [string]$PathPrefix = "",
     [string]$InternalUrl = "",
     [string]$ComposeProjectName = "",
+    [switch]$DirectPublicTunnel,
     [switch]$SkipBuild,
     [switch]$SkipPublicCheck
 )
@@ -151,7 +152,7 @@ function Wait-ForJsonEndpoint {
 function Wait-ForHttpsTunnel {
     param(
         [Parameter(Mandatory)] [Diagnostics.Process]$Process,
-        [Parameter(Mandatory)] [string]$ExpectedUrl,
+        [string]$ExpectedUrl = "",
         [int]$Attempts = 60
     )
 
@@ -162,7 +163,11 @@ function Wait-ForHttpsTunnel {
         try {
             $state = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
             $httpsTunnel = @($state.tunnels) |
-                Where-Object { $_.public_url.TrimEnd("/") -eq $ExpectedUrl.TrimEnd("/") } |
+                Where-Object {
+                    $_.name -eq "laro-api" -and
+                    $_.public_url -match "^https://" -and
+                    (-not $ExpectedUrl -or $_.public_url.TrimEnd("/") -eq $ExpectedUrl.TrimEnd("/"))
+                } |
                 Select-Object -First 1
             if ($httpsTunnel) { return $httpsTunnel }
         } catch {
@@ -213,48 +218,65 @@ if ($ComposeProjectName -notmatch "^[a-z0-9][a-z0-9_-]*$") {
 }
 Set-EnvValue -Path $envPath -Name "LARO_COMPOSE_PROJECT_NAME" -Value $ComposeProjectName
 
-if (-not $GatewayUrl) { $GatewayUrl = Get-EnvValue -Path $envPath -Name "LARO_NGROK_GATEWAY_URL" }
-if (-not $PathPrefix) { $PathPrefix = Get-EnvValue -Path $envPath -Name "LARO_NGROK_PATH_PREFIX" }
-if (-not $InternalUrl) { $InternalUrl = Get-EnvValue -Path $envPath -Name "LARO_NGROK_INTERNAL_URL" }
-if (-not $GatewayUrl) { throw "GatewayUrl is required (for example, https://example.ngrok-free.dev)." }
-if (-not $PathPrefix) { $PathPrefix = "/laro" }
-if (-not $InternalUrl) { $InternalUrl = "https://laro.internal" }
+$storedMode = Get-EnvValue -Path $envPath -Name "LARO_NGROK_MODE"
+$useDirectTunnel = [bool]$DirectPublicTunnel -or (
+    -not $GatewayUrl -and $storedMode -eq "direct"
+)
+$publicOrigin = ""
+$normalizedPrefix = ""
+$publicBaseUrl = ""
 
-$gatewayUri = [Uri]$GatewayUrl
-if (
-    $gatewayUri.Scheme -ne "https" -or
-    -not $gatewayUri.Host -or
-    $gatewayUri.UserInfo -or
-    $gatewayUri.AbsolutePath -ne "/" -or
-    $gatewayUri.Query -or
-    $gatewayUri.Fragment
-) {
-    throw "GatewayUrl must be an HTTPS origin."
+if ($useDirectTunnel) {
+    if ($GatewayUrl -or $PathPrefix -or $InternalUrl) {
+        throw "DirectPublicTunnel cannot be combined with GatewayUrl, PathPrefix, or InternalUrl."
+    }
+    Set-EnvValue -Path $envPath -Name "LARO_NGROK_MODE" -Value "direct"
+} else {
+    if (-not $GatewayUrl) { $GatewayUrl = Get-EnvValue -Path $envPath -Name "LARO_NGROK_GATEWAY_URL" }
+    if (-not $PathPrefix) { $PathPrefix = Get-EnvValue -Path $envPath -Name "LARO_NGROK_PATH_PREFIX" }
+    if (-not $InternalUrl) { $InternalUrl = Get-EnvValue -Path $envPath -Name "LARO_NGROK_INTERNAL_URL" }
+    if (-not $GatewayUrl) { throw "GatewayUrl is required unless DirectPublicTunnel is selected." }
+    if (-not $PathPrefix) { $PathPrefix = "/laro" }
+    if (-not $InternalUrl) { $InternalUrl = "https://laro.internal" }
+
+    $gatewayUri = [Uri]$GatewayUrl
+    if (
+        $gatewayUri.Scheme -ne "https" -or
+        -not $gatewayUri.Host -or
+        $gatewayUri.UserInfo -or
+        $gatewayUri.AbsolutePath -ne "/" -or
+        $gatewayUri.Query -or
+        $gatewayUri.Fragment
+    ) {
+        throw "GatewayUrl must be an HTTPS origin."
+    }
+    $publicOrigin = $gatewayUri.GetLeftPart([UriPartial]::Authority).TrimEnd("/")
+    $prefixValue = $PathPrefix.Trim().Trim("/")
+    $invalidPrefixSegment = @($prefixValue -split "/") |
+        Where-Object { $_ -eq "." -or $_ -eq ".." } |
+        Select-Object -First 1
+    if (
+        -not $prefixValue -or
+        $prefixValue -notmatch "^[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*$" -or
+        $invalidPrefixSegment
+    ) {
+        throw "PathPrefix must contain a URL-safe path such as /laro."
+    }
+    $normalizedPrefix = "/$prefixValue"
+    $publicBaseUrl = "$publicOrigin$normalizedPrefix"
+    $InternalUrl = $InternalUrl.Trim().TrimEnd("/")
+    if ($InternalUrl -notmatch "^https://[a-z0-9.-]+\.internal$") {
+        throw "InternalUrl must be an HTTPS ngrok internal endpoint."
+    }
+
+    Set-EnvValue -Path $envPath -Name "LARO_NGROK_MODE" -Value "gateway"
+    Set-EnvValue -Path $envPath -Name "LARO_NGROK_GATEWAY_URL" -Value $publicOrigin
+    Set-EnvValue -Path $envPath -Name "LARO_NGROK_PATH_PREFIX" -Value $normalizedPrefix
+    Set-EnvValue -Path $envPath -Name "LARO_NGROK_INTERNAL_URL" -Value $InternalUrl
 }
-$publicOrigin = $gatewayUri.GetLeftPart([UriPartial]::Authority).TrimEnd("/")
-$prefixValue = $PathPrefix.Trim().Trim("/")
-$invalidPrefixSegment = @($prefixValue -split "/") |
-    Where-Object { $_ -eq "." -or $_ -eq ".." } |
-    Select-Object -First 1
-if (
-    -not $prefixValue -or
-    $prefixValue -notmatch "^[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*$" -or
-    $invalidPrefixSegment
-) {
-    throw "PathPrefix must contain a URL-safe path such as /laro."
-}
-$normalizedPrefix = "/$prefixValue"
-$publicBaseUrl = "$publicOrigin$normalizedPrefix"
+
 $packageMetadata = Get-Content -LiteralPath (Join-Path $root "package.json") -Raw | ConvertFrom-Json
 $env:LARO_APP_VERSION = $packageMetadata.version
-$InternalUrl = $InternalUrl.Trim().TrimEnd("/")
-if ($InternalUrl -notmatch "^https://[a-z0-9.-]+\.internal$") {
-    throw "InternalUrl must be an HTTPS ngrok internal endpoint."
-}
-
-Set-EnvValue -Path $envPath -Name "LARO_NGROK_GATEWAY_URL" -Value $publicOrigin
-Set-EnvValue -Path $envPath -Name "LARO_NGROK_PATH_PREFIX" -Value $normalizedPrefix
-Set-EnvValue -Path $envPath -Name "LARO_NGROK_INTERNAL_URL" -Value $InternalUrl
 
 $ngrokExecutable = (Get-Command ngrok).Source
 $ngrokArguments = @(
@@ -263,9 +285,9 @@ $ngrokArguments = @(
     "--inspect=true",
     "--log=$ngrokLogPath",
     "--log-format=json",
-    "--name=laro-api",
-    "--url=$InternalUrl"
+    "--name=laro-api"
 )
+if (-not $useDirectTunnel) { $ngrokArguments += "--url=$InternalUrl" }
 
 $ngrokProcess = $null
 $httpsTunnel = $null
@@ -274,7 +296,11 @@ $startedNgrok = $false
 try {
     $existingState = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 3
     $httpsTunnel = @($existingState.tunnels) |
-        Where-Object { $_.public_url.TrimEnd("/") -eq $InternalUrl } |
+        Where-Object {
+            $_.name -eq "laro-api" -and
+            $_.public_url -match "^https://" -and
+            ($useDirectTunnel -or $_.public_url.TrimEnd("/") -eq $InternalUrl)
+        } |
         Select-Object -First 1
 } catch {
     $httpsTunnel = $null
@@ -299,7 +325,25 @@ if ($httpsTunnel) {
 
 try {
     if (-not $httpsTunnel) {
-        $httpsTunnel = Wait-ForHttpsTunnel -Process $ngrokProcess -ExpectedUrl $InternalUrl
+        $httpsTunnel = Wait-ForHttpsTunnel `
+            -Process $ngrokProcess `
+            -ExpectedUrl $(if ($useDirectTunnel) { "" } else { $InternalUrl })
+    }
+    if ($useDirectTunnel) {
+        $directUri = [Uri]$httpsTunnel.public_url
+        if (
+            $directUri.Scheme -ne "https" -or
+            -not $directUri.Host -or
+            $directUri.UserInfo -or
+            $directUri.AbsolutePath -ne "/" -or
+            $directUri.Query -or
+            $directUri.Fragment
+        ) {
+            throw "ngrok returned an invalid direct public HTTPS origin."
+        }
+        $publicOrigin = $directUri.GetLeftPart([UriPartial]::Authority).TrimEnd("/")
+        $publicBaseUrl = $publicOrigin
+        $normalizedPrefix = ""
     }
     $env:LARO_PUBLIC_ORIGIN = $publicOrigin
     $env:LARO_PUBLIC_BASE_URL = $publicBaseUrl
@@ -323,9 +367,11 @@ try {
     }
 
     [ordered]@{
+        mode = if ($useDirectTunnel) { "direct" } else { "gateway" }
         publicUrl = $publicBaseUrl
         healthUrl = "$publicBaseUrl/api/health"
-        internalUrl = $httpsTunnel.public_url
+        tunnelUrl = $httpsTunnel.public_url
+        internalUrl = if ($useDirectTunnel) { $null } else { $InternalUrl }
         ngrokPid = $ngrokProcess.Id
         composeProjectName = $ComposeProjectName
         startedAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -333,12 +379,16 @@ try {
         publicVerified = [bool]$publicHealth
     } | ConvertTo-Json | Set-Content -LiteralPath $runtimePath -Encoding utf8
 
-    Write-Host "LARO API is healthy on its ngrok internal endpoint: $InternalUrl"
+    if ($useDirectTunnel) {
+        Write-Host "LARO API is healthy on its direct ngrok endpoint: $publicBaseUrl"
+    } else {
+        Write-Host "LARO API is healthy on its ngrok internal endpoint: $InternalUrl"
+    }
     if ($publicHealth) {
         Write-Host "Public API: $publicBaseUrl"
         Write-Host "Health: $publicBaseUrl/api/health"
     } else {
-        Write-Host "Public check skipped until the gateway path policy is installed."
+        Write-Host "Public check skipped by request."
     }
     Write-Host "Runtime metadata: $runtimePath"
 } catch {

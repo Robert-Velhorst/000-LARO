@@ -303,6 +303,22 @@ publish the Electron interface. Register
 OAuth client. See [Deployment](docs/DEPLOYMENT.md) for the exact traffic-policy,
 secret-handling, and verification requirements.
 
+When the shared gateway cannot be changed yet, start a separate direct tunnel
+without altering the existing application or its traffic policy:
+
+```powershell
+.\scripts\start-ngrok-api.ps1 `
+  -ComposeProjectName laro `
+  -DirectPublicTunnel
+```
+
+The launcher obtains the assigned HTTPS origin, restarts the container with
+matching origin and OAuth settings, verifies the public health response, and
+persists direct mode for later `-SkipBuild` starts. An account-assigned direct
+URL can change after a tunnel restart; update the Google OAuth redirect URI to
+`https://<assigned-domain>/api/oauth/gmail/callback` before accepting Google
+connectivity. Use the gateway mode above for a stable production URL.
+
 Keep `LARO_COMPOSE_PROJECT_NAME` stable across checkout-folder moves. The
 launcher passes it explicitly to Docker Compose so restarts reuse the intended
 `laro-data` volume instead of silently creating an empty volume under a new
