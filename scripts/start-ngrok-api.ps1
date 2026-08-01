@@ -3,6 +3,7 @@ param(
     [string]$GatewayUrl = "",
     [string]$PathPrefix = "",
     [string]$InternalUrl = "",
+    [string]$ComposeProjectName = "",
     [switch]$SkipBuild,
     [switch]$SkipPublicCheck
 )
@@ -202,6 +203,16 @@ foreach ($name in "JWT_SECRET", "COOKIE_SECRET") {
 Set-EnvValue -Path $envPath -Name "NODE_ENV" -Value "production"
 Import-ProtectedProviderConfig
 
+$configuredComposeProject = Get-EnvValue -Path $envPath -Name "LARO_COMPOSE_PROJECT_NAME"
+if (-not $ComposeProjectName) {
+    $ComposeProjectName = if ($configuredComposeProject) { $configuredComposeProject } else { "laro" }
+}
+$ComposeProjectName = $ComposeProjectName.Trim().ToLowerInvariant()
+if ($ComposeProjectName -notmatch "^[a-z0-9][a-z0-9_-]*$") {
+    throw "ComposeProjectName must use lowercase letters, digits, dashes, or underscores."
+}
+Set-EnvValue -Path $envPath -Name "LARO_COMPOSE_PROJECT_NAME" -Value $ComposeProjectName
+
 if (-not $GatewayUrl) { $GatewayUrl = Get-EnvValue -Path $envPath -Name "LARO_NGROK_GATEWAY_URL" }
 if (-not $PathPrefix) { $PathPrefix = Get-EnvValue -Path $envPath -Name "LARO_NGROK_PATH_PREFIX" }
 if (-not $InternalUrl) { $InternalUrl = Get-EnvValue -Path $envPath -Name "LARO_NGROK_INTERNAL_URL" }
@@ -294,7 +305,7 @@ try {
     $env:LARO_PUBLIC_BASE_URL = $publicBaseUrl
     $env:LARO_PUBLIC_PATH_PREFIX = $normalizedPrefix
 
-    $composeArguments = @("compose", "up", "-d")
+    $composeArguments = @("compose", "-p", $ComposeProjectName, "up", "-d")
     if (-not $SkipBuild) { $composeArguments += "--build" }
     & docker @composeArguments
     if ($LASTEXITCODE -ne 0) { throw "Docker Compose failed to start LARO." }
@@ -316,6 +327,7 @@ try {
         healthUrl = "$publicBaseUrl/api/health"
         internalUrl = $httpsTunnel.public_url
         ngrokPid = $ngrokProcess.Id
+        composeProjectName = $ComposeProjectName
         startedAt = (Get-Date).ToUniversalTime().ToString("o")
         version = $localHealth.version
         publicVerified = [bool]$publicHealth

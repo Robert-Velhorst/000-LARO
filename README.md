@@ -286,6 +286,7 @@ Agent Endpoint:
 
 ```powershell
 .\scripts\start-ngrok-api.ps1 `
+  -ComposeProjectName laro `
   -GatewayUrl https://example.ngrok-free.dev `
   -PathPrefix /laro
 
@@ -301,6 +302,11 @@ publish the Electron interface. Register
 `https://example.ngrok-free.dev/laro/api/oauth/gmail/callback` on the Google web
 OAuth client. See [Deployment](docs/DEPLOYMENT.md) for the exact traffic-policy,
 secret-handling, and verification requirements.
+
+Keep `LARO_COMPOSE_PROJECT_NAME` stable across checkout-folder moves. The
+launcher passes it explicitly to Docker Compose so restarts reuse the intended
+`laro-data` volume instead of silently creating an empty volume under a new
+folder-derived project name.
 
 On Windows, configure live Google and SMTP secrets through DPAPI-protected,
 non-echoing prompts instead of placing them in `.env`:

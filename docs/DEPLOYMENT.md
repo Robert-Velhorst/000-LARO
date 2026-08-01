@@ -59,6 +59,7 @@ another application, LARO uses a private `laro.internal` endpoint and an exact
 ```powershell
 # First run builds the image. A configured ngrok account is required.
 .\scripts\start-ngrok-api.ps1 `
+  -ComposeProjectName laro `
   -GatewayUrl https://example.ngrok-free.dev `
   -PathPrefix /laro
 ```
@@ -66,6 +67,9 @@ another application, LARO uses a private `laro.internal` endpoint and an exact
 The command creates strong standalone `JWT_SECRET` and `COOKIE_SECRET` values
 in the ignored local `.env` when they are absent. It never commits or prints
 them. Provider credentials remain owner-supplied secrets in that ignored file.
+It also persists `LARO_COMPOSE_PROJECT_NAME`; keep that value unchanged when
+moving or refreshing the checkout so Docker Compose reuses the intended named
+database volume.
 Runtime URL/PID metadata is written to ignored `.laro-ngrok.json`. Install
 `ngrok/laro-path-policy.yml` on the existing public Agent Endpoint once; the
 launcher then verifies `https://<dev-domain>/laro/api/health` on every start.
