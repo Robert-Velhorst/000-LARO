@@ -1,6 +1,6 @@
 # Dependency and Package Audit
 
-Current as of 2026-07-15.
+Current as of 2026-08-01.
 
 The repository has one active Node workspace at the root. The obsolete duplicate
 manifest and lockfile formerly stored under `assets/` were removed; `assets/`
@@ -51,3 +51,8 @@ document-intelligence runtime has its own Python dependencies in
 - Tagged artifacts must be version-matched, acceptance-approved, and accompanied
   by a SHA-256 checksum. Configured signing modes must also be
   Authenticode-valid; owner-selected unsigned builds remain untrusted by Windows.
+
+The 2026-08-01 audit updated only patched transitive lockfile resolutions for
+`brace-expansion` and `tar`. Both `npm audit` and `npm audit --omit=dev` then
+reported zero known vulnerabilities; the application gate and recovery drills
+passed with the resulting lockfile.

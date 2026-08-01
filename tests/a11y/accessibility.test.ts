@@ -20,6 +20,10 @@ describe('Phase 049 — contrast (WCAG)', () => {
     expect(hasGoodContrast('#999999', '#ffffff', true)).toBe(false); // still < 3? guard both
     expect(hasGoodContrast('#000000', '#ffffff', true)).toBe(true);
   });
+  it('fails closed for unsupported color values', () => {
+    expect(hasGoodContrast('not-a-color', '#ffffff')).toBe(false);
+    expect(hasGoodContrast('#ffffff', 'transparent')).toBe(false);
+  });
 });
 
 describe('Phase 049 — id generation', () => {

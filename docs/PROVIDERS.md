@@ -1,6 +1,6 @@
 # External Provider Status
 
-Date: 2026-07-21
+Date: 2026-08-01
 
 | Provider | Purpose | Required configuration | Current status |
 |---|---|---|---|
@@ -13,7 +13,7 @@ Date: 2026-07-21
 | Telegram | Message evidence | `TELEGRAM_BOT_TOKEN` | Available when configured |
 | Trello | Board evidence | API credentials plus secure token persistence | Disabled; secure token persistence is not implemented |
 | Slack | Message evidence | not applicable | Unavailable |
-| Rechtspraak | Court-record context and matching taxonomy | bundled datasets/public API | Bundled taxonomy and 5,400-case keyword analysis active; live lookup remains partial |
+| Rechtspraak | Recently published court-decision discovery | public RSS search | Available; structured XML parsing, bounded requests, ECLI metadata, and direct source links |
 
 Google requests only Gmail read, Drive read, and account-email identity scopes.
 It does not request Gmail send or label-write access. Outlook OAuth does not
@@ -26,6 +26,11 @@ disconnect removes the shared Gmail/Drive credential and source connection
 records for that owner only after Google confirms revocation. If Google is
 unreachable or returns a non-terminal failure, LARO retains the encrypted
 credential so the owner can retry instead of silently leaving an active grant.
+
+Rechtspraak lookup uses the official HTTPS RSS search for published decisions.
+Returned entries are discovery leads, not a complete litigation-history register.
+LARO keeps the decision date, ECLI, summary, court, and source link together and
+does not treat an empty query or a lexical relevance score as a legal conclusion.
 
 For the Windows ngrok API deployment, `scripts/configure-live-providers.ps1`
 stores Google and authenticated SMTP secrets with DPAPI `CurrentUser`

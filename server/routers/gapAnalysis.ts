@@ -412,9 +412,9 @@ export const gapAnalysisRouter = router({
   searchCourtRecords: protectedProcedure
     .input(
       z.object({
-        companyName: z.string(),
+        companyName: z.string().trim().min(3).max(200),
         searchType: z.enum(["company_history", "precedents"]).default("company_history"),
-        legalIssue: z.string().optional(),
+        legalIssue: z.string().trim().min(3).max(500).optional(),
       })
     )
     .mutation(async ({ input }) => {
@@ -429,7 +429,7 @@ export const gapAnalysisRouter = router({
    * Get opponent's complete litigation history
    */
   getOpponentHistory: protectedProcedure
-    .input(z.object({ companyName: z.string() }))
+    .input(z.object({ companyName: z.string().trim().min(3).max(200) }))
     .query(async ({ input }) => {
       return await rechtspraakIntegrationService.getOpponentHistory(input.companyName);
     }),
