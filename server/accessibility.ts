@@ -219,16 +219,16 @@ export function hasGoodContrast(
 function calculateContrastRatio(color1: string, color2: string): number {
   const lum1 = getRelativeLuminance(color1);
   const lum2 = getRelativeLuminance(color2);
+  if (lum1 === null || lum2 === null) return 0;
   const lighter = Math.max(lum1, lum2);
   const darker = Math.min(lum1, lum2);
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-function getRelativeLuminance(color: string): number {
-  // Simplified luminance calculation
-  // In production, use a proper color library
+function getRelativeLuminance(color: string): number | null {
+  // WCAG 2.1 sRGB luminance conversion for six-digit hexadecimal colors.
   const rgb = hexToRgb(color);
-  if (!rgb) return 0;
+  if (!rgb) return null;
 
   const [r, g, b] = [rgb.r, rgb.g, rgb.b].map((val) => {
     val = val / 255;

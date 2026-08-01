@@ -14,11 +14,12 @@ import {
   CheckCircle,
   XCircle,
   Gavel,
-  TrendingDown,
-  TrendingUp,
+  Database,
+  ListChecks,
   Calendar,
   MapPin,
   Briefcase,
+  ExternalLink,
 } from "lucide-react";
 
 interface PublicRecordsPanelProps {
@@ -257,7 +258,7 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
             <CardHeader>
               <CardTitle>Court Records Search (Rechtspraak.nl)</CardTitle>
               <CardDescription>
-                Search for opponent's litigation history and precedent cases
+                Search recently published decisions and open the original Rechtspraak.nl source
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -284,42 +285,28 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
               {opponentHistory && (
                 <div className="mt-4 space-y-4">
                   <div className="grid grid-cols-3 gap-4">
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm">Total Cases</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <p className="text-2xl font-bold">{opponentHistory.totalCases}</p>
-                      </CardContent>
-                    </Card>
+                    <div className="rounded-md border border-border/60 p-3">
+                      <p className="text-sm font-semibold">Published results</p>
+                      <p className="mt-2 text-2xl font-bold">{opponentHistory.totalCases}</p>
+                    </div>
 
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm flex items-center gap-1">
-                          <TrendingUp className="w-4 h-4 text-green-500" />
-                          Won Cases
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <p className="text-2xl font-bold text-green-500">
-                          {opponentHistory.wonCases}
-                        </p>
-                      </CardContent>
-                    </Card>
+                    <div className="rounded-md border border-border/60 p-3">
+                      <p className="flex items-center gap-1 text-sm font-semibold">
+                          <ListChecks className="h-4 w-4" />
+                          Classified outcomes
+                      </p>
+                      <p className="mt-2 text-2xl font-bold">
+                        {opponentHistory.wonCases + opponentHistory.lostCases}
+                      </p>
+                    </div>
 
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-sm flex items-center gap-1">
-                          <TrendingDown className="w-4 h-4 text-red-500" />
-                          Lost Cases
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <p className="text-2xl font-bold text-red-500">
-                          {opponentHistory.lostCases}
-                        </p>
-                      </CardContent>
-                    </Card>
+                    <div className="rounded-md border border-border/60 p-3">
+                      <p className="flex items-center gap-1 text-sm font-semibold">
+                          <Database className="h-4 w-4" />
+                          Source coverage
+                      </p>
+                      <p className="mt-2 text-2xl font-bold">RSS</p>
+                    </div>
                   </div>
 
                   {/* Litigation Patterns */}
@@ -382,6 +369,17 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                               {decision.summary && (
                                 <p className="text-sm text-muted-foreground">{decision.summary}</p>
                               )}
+                              {decision.sourceUrl && (
+                                <a
+                                  href={decision.sourceUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                                >
+                                  Open source decision
+                                  <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                                </a>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -398,10 +396,15 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                     <Alert>
                       <CheckCircle className="h-4 w-4" />
                       <AlertDescription>
-                        Found {courtRecordsSearch.data.totalResults} court decisions
+                        Returned {courtRecordsSearch.data.totalResults} recently published decisions
                         {courtRecordsSearch.data.legalSignificance && (
                           <div className="mt-2 text-sm">
                             {courtRecordsSearch.data.legalSignificance}
+                          </div>
+                        )}
+                        {courtRecordsSearch.data.coverageNotice && (
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            {courtRecordsSearch.data.coverageNotice}
                           </div>
                         )}
                       </AlertDescription>

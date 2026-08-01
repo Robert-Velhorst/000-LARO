@@ -14,11 +14,12 @@
  * - Extract case outcomes and legal reasoning
  * 
  * Technical Details:
- * - RESTful webservice with XML output
- * - Two-step process: 1) Query ECLI index, 2) Retrieve documents
+ * - Official Rechtspraak.nl RSS search with structured XML parsing
  * - Rate limit: 10 requests per second
  * - Free and public service
  */
+
+import { load } from "cheerio";
 
 interface ECLIMetadata {
   ecli: string; // European Case Law Identifier (e.g., ECLI:NL:RBAMS:2024:1234)
@@ -40,6 +41,7 @@ export interface CourtDecision {
   legalArea?: string;
   summary?: string;
   fullText?: string;
+  sourceUrl?: string;
   outcome?: "granted" | "denied" | "partial" | "unknown";
   relevanceScore?: number; // 0-100, how relevant to current case
 }
@@ -50,10 +52,76 @@ export interface RechtspraakSearchResult {
   decisions: CourtDecision[];
   error?: string;
   legalSignificance?: string;
+  coverageNotice?: string;
 }
 
-class RechtspraakIntegrationService {
-  private readonly BASE_URL = "http://data.rechtspraak.nl/uitspraken";
+const ECLI_PATTERN = /ECLI:NL:[A-Z0-9]+:\d{4}:[A-Z0-9.]+/i;
+const MAX_FEED_BYTES = 5 * 1024 * 1024;
+const MAX_RESULTS = 50;
+const REQUEST_TIMEOUT_MS = 15_000;
+
+function firstText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function parseDecisionTitle(title: string, ecli: string): {
+  court: string;
+  date: string;
+  caseNumber?: string;
+} {
+  const remainder = title.slice(title.indexOf(ecli) + ecli.length).trim();
+  const match = remainder.match(/^(.+?),\s*(\d{2})-(\d{2})-(\d{4})(?:,\s*(.+))?$/);
+  if (!match) {
+    return { court: "Unknown", date: "Unknown" };
+  }
+
+  return {
+    court: match[1].trim(),
+    date: `${match[4]}-${match[3]}-${match[2]}`,
+    caseNumber: match[5]?.trim() || undefined,
+  };
+}
+
+/** Parse the bounded RSS response without relying on cross-entry regular expressions. */
+export function parseRechtspraakRss(xmlText: string, limit = MAX_RESULTS): CourtDecision[] {
+  if (Buffer.byteLength(xmlText, "utf8") > MAX_FEED_BYTES) {
+    throw new Error("Rechtspraak response exceeded the 5 MB safety limit");
+  }
+
+  const requestedLimit = Number.isFinite(limit) ? Math.trunc(limit) : MAX_RESULTS;
+  const boundedLimit = Math.max(1, Math.min(requestedLimit, MAX_RESULTS));
+  const $ = load(xmlText, { xml: true });
+  const decisions: CourtDecision[] = [];
+  const seen = new Set<string>();
+
+  $("item").each((_, element) => {
+    if (decisions.length >= boundedLimit) return false;
+
+    const item = $(element);
+    const title = firstText(item.children("title").first().text());
+    const ecli = title.match(ECLI_PATTERN)?.[0]?.toUpperCase();
+    if (!ecli || seen.has(ecli)) return;
+
+    const sourceUrl = firstText(item.children("link").first().text());
+    const summary = firstText(item.children("description").first().text());
+    const parsedTitle = parseDecisionTitle(title, ecli);
+    seen.add(ecli);
+    decisions.push({
+      ecli,
+      title: title || ecli,
+      court: parsedTitle.court,
+      date: parsedTitle.date,
+      caseNumber: parsedTitle.caseNumber,
+      summary: summary || undefined,
+      sourceUrl: /^https:\/\//i.test(sourceUrl) ? sourceUrl : undefined,
+    });
+  });
+
+  return decisions;
+}
+
+export class RechtspraakIntegrationService {
+  private readonly BASE_URL = "https://uitspraken.rechtspraak.nl/rss/";
   private readonly RATE_LIMIT_MS = 100; // 10 requests per second = 100ms between requests
   private lastRequestTime = 0;
 
@@ -64,15 +132,13 @@ class RechtspraakIntegrationService {
     try {
       await this.enforceRateLimit();
 
-      // Build search query
-      // Note: The actual API uses RSS/XML format with query parameters
-      // For now, we'll implement a simplified version that can be enhanced
-      const searchUrl = `${this.BASE_URL}/rss?zoekterm=${encodeURIComponent(companyName)}&max=${limit}`;
+      const searchUrl = this.buildSearchUrl(companyName);
 
       const response = await fetch(searchUrl, {
         headers: {
-          Accept: "application/xml, text/xml",
+          Accept: "application/rss+xml, application/xml;q=0.9",
         },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       if (!response.ok) {
@@ -80,13 +146,14 @@ class RechtspraakIntegrationService {
       }
 
       const xmlText = await response.text();
-      const decisions = await this.parseRSSFeed(xmlText);
+      const decisions = parseRechtspraakRss(xmlText, limit);
 
       return {
         success: true,
         totalResults: decisions.length,
         decisions: decisions.slice(0, limit),
         legalSignificance: this.determineLegalSignificance(companyName, decisions),
+        coverageNotice: this.coverageNotice(),
       };
     } catch (error) {
       console.error("[Rechtspraak Integration] Error:", error);
@@ -110,13 +177,13 @@ class RechtspraakIntegrationService {
     try {
       await this.enforceRateLimit();
 
-      // Search for cases in specific legal area
-      const searchUrl = `${this.BASE_URL}/rss?zoekterm=${encodeURIComponent(legalIssue)}&rechtsgebied=${encodeURIComponent(legalArea)}&max=${limit}`;
+      const searchUrl = this.buildSearchUrl(legalIssue);
 
       const response = await fetch(searchUrl, {
         headers: {
-          Accept: "application/xml, text/xml",
+          Accept: "application/rss+xml, application/xml;q=0.9",
         },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       if (!response.ok) {
@@ -124,7 +191,7 @@ class RechtspraakIntegrationService {
       }
 
       const xmlText = await response.text();
-      const decisions = await this.parseRSSFeed(xmlText);
+      const decisions = parseRechtspraakRss(xmlText, limit);
 
       // Calculate relevance scores
       const scoredDecisions = decisions.map((decision) => ({
@@ -139,7 +206,12 @@ class RechtspraakIntegrationService {
         success: true,
         totalResults: scoredDecisions.length,
         decisions: scoredDecisions.slice(0, limit),
-        legalSignificance: `Found ${scoredDecisions.length} precedent cases for ${legalIssue}`,
+        legalSignificance:
+          `Returned ${scoredDecisions.length} recently published decisions matching "${legalIssue}". ` +
+          "Relevance scores are lexical triage only; verify each source before relying on it.",
+        coverageNotice:
+          `${this.coverageNotice()} The requested legal area (${legalArea}) is context only; ` +
+          "this search was filtered by the legal-issue text.",
       };
     } catch (error) {
       console.error("[Rechtspraak Integration] Error:", error);
@@ -190,70 +262,15 @@ class RechtspraakIntegrationService {
     };
   }
 
-  /**
-   * Parse RSS/XML feed from rechtspraak.nl
-   */
-  private async parseRSSFeed(xmlText: string): Promise<CourtDecision[]> {
-    // Simplified XML parsing - in production, use a proper XML parser
-    const decisions: CourtDecision[] = [];
-
-    try {
-      // Extract ECLI numbers from XML
-      const ecliMatches = xmlText.match(/ECLI:NL:[A-Z]+:\d+:\d+/g);
-      if (!ecliMatches) {
-        return decisions;
-      }
-
-      // For each ECLI, extract metadata
-      // Note: This is a simplified implementation
-      // In production, use proper XML parsing library
-      for (const ecli of ecliMatches.slice(0, 10)) {
-        // Extract basic info from XML (simplified)
-        const titleMatch = xmlText.match(new RegExp(`<title>([^<]+)</title>.*?${ecli}`, "s"));
-        const dateMatch = xmlText.match(new RegExp(`${ecli}.*?<pubDate>([^<]+)</pubDate>`, "s"));
-
-        decisions.push({
-          ecli,
-          title: titleMatch ? titleMatch[1] : "Unknown",
-          court: this.extractCourtFromECLI(ecli),
-          date: dateMatch ? this.parseDate(dateMatch[1]) : "Unknown",
-          summary: "Full decision available via ECLI lookup",
-        });
-      }
-    } catch (error) {
-      console.error("[Rechtspraak Integration] XML parsing error:", error);
-    }
-
-    return decisions;
+  private buildSearchUrl(searchTerm: string): string {
+    const url = new URL(this.BASE_URL);
+    url.searchParams.set("zoekterm", searchTerm.trim());
+    url.searchParams.set("zoektermveld", "AlleVelden");
+    return url.toString();
   }
 
-  /**
-   * Extract court name from ECLI
-   */
-  private extractCourtFromECLI(ecli: string): string {
-    const courtCode = ecli.split(":")[2];
-    const courtMap: Record<string, string> = {
-      RBAMS: "Rechtbank Amsterdam",
-      RBROT: "Rechtbank Rotterdam",
-      RBDHA: "Rechtbank Den Haag",
-      RBMNE: "Rechtbank Midden-Nederland",
-      GHDHA: "Gerechtshof Den Haag",
-      GHAMS: "Gerechtshof Amsterdam",
-      HR: "Hoge Raad",
-    };
-    return courtMap[courtCode] || courtCode;
-  }
-
-  /**
-   * Parse date from RSS feed
-   */
-  private parseDate(dateString: string): string {
-    try {
-      const date = new Date(dateString);
-      return date.toISOString().split("T")[0];
-    } catch {
-      return "Unknown";
-    }
+  private coverageNotice(): string {
+    return "Results come from the Rechtspraak.nl RSS search of published decisions and are not a complete litigation-history register.";
   }
 
   /**
@@ -296,7 +313,7 @@ class RechtspraakIntegrationService {
     // Check for repeat litigation
     if (decisions.length >= 3) {
       patterns.push(
-        `Company has been involved in ${decisions.length} court cases - pattern of litigation`
+        `The query returned ${decisions.length} published decisions. Confirm that they concern the same legal entity before treating this as a pattern.`
       );
     }
 
@@ -306,15 +323,7 @@ class RechtspraakIntegrationService {
     );
     if (employmentCases.length >= 2) {
       patterns.push(
-        `${employmentCases.length} employment-related disputes - history of employee conflicts`
-      );
-    }
-
-    // Check for lost cases
-    const lostCases = decisions.filter((d) => d.outcome === "denied");
-    if (lostCases.length >= 2) {
-      patterns.push(
-        `Lost ${lostCases.length} cases - demonstrates pattern of unlawful behavior`
+        `${employmentCases.length} results mention employment-related disputes; review the linked decisions before drawing conclusions.`
       );
     }
 
@@ -326,32 +335,13 @@ class RechtspraakIntegrationService {
    */
   private determineLegalSignificance(companyName: string, decisions: CourtDecision[]): string {
     if (decisions.length === 0) {
-      return `No court records found for ${companyName} - opponent has clean litigation history.`;
+      return `No matching published decisions were returned for ${companyName}. This does not prove that no litigation exists.`;
     }
 
-    const findings: string[] = [];
-
-    findings.push(
-      `${companyName} has been involved in ${decisions.length} court cases - demonstrates litigation history`
+    return (
+      `Returned ${decisions.length} recently published decisions matching "${companyName}". ` +
+      "Verify party identity and read the linked sources before drawing conclusions."
     );
-
-    const employmentCases = decisions.filter(
-      (d) => d.legalArea === "Arbeidsrecht" || d.title.toLowerCase().includes("ontslag")
-    );
-    if (employmentCases.length > 0) {
-      findings.push(
-        `${employmentCases.length} employment disputes found - relevant precedent for current case`
-      );
-    }
-
-    const lostCases = decisions.filter((d) => d.outcome === "denied");
-    if (lostCases.length > 0) {
-      findings.push(
-        `Opponent lost ${lostCases.length} cases - pattern of unlawful behavior established`
-      );
-    }
-
-    return findings.join(". ");
   }
 
   /**
