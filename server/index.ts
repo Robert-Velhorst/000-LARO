@@ -151,6 +151,20 @@ app.get('/api/health', async (_req, res) => {
 
 // ─── OAuth2 routes ────────────────────────────────────────────────────────────
 
+if (ENV.SERVER_ONLY) {
+  app.get('/', (_req, res) => {
+    res.status(200).json({
+      service: 'LARO API',
+      status: 'available',
+      version: APP_VERSION,
+      endpoints: {
+        health: 'api/health',
+        rpc: 'api/trpc',
+      },
+    });
+  });
+}
+
 // Mount OAuth2 callback routes
 app.use(oauth2CallbacksRouter);
 
