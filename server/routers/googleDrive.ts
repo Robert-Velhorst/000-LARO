@@ -21,6 +21,7 @@ import { AUDIT_ACTIONS, createAuditLog } from "../audit";
 
 async function ingestDriveEvidence(options: {
   userId: string;
+  accountId?: string;
   caseId: string;
   fileId: string;
   title: string;
@@ -28,7 +29,12 @@ async function ingestDriveEvidence(options: {
   metadata?: Record<string, unknown>;
 }) {
   await assertCaseOwnership(options.caseId, options.userId);
-  const fileData = await downloadAndUploadGoogleDriveFile(options.fileId, options.caseId, options.userId);
+  const fileData = await downloadAndUploadGoogleDriveFile(
+    options.fileId,
+    options.caseId,
+    options.userId,
+    options.accountId,
+  );
   const evidenceId = await createEvidenceFile(options.userId, {
     caseId: options.caseId,
     type: determineEvidenceType(fileData.mimeType),
@@ -43,6 +49,7 @@ async function ingestDriveEvidence(options: {
       ...options.metadata,
       storageKey: fileData.key,
       driveFileId: options.fileId,
+      driveAccountId: options.accountId,
       sourceMimeType: fileData.sourceMimeType,
       importedAt: new Date().toISOString(),
       modifiedTime: fileData.modifiedTime,
@@ -272,11 +279,12 @@ export const googleDriveRouter = router({
     .input(
       z.object({
         parentId: z.string().optional(),
+        accountId: z.string().optional(),
       })
     )
     .query(async ({ ctx, input }) => {
       try {
-        const folders = await listGoogleDriveFolders(ctx.user.id, input.parentId);
+        const folders = await listGoogleDriveFolders(ctx.user.id, input.parentId, input.accountId);
         return { folders };
       } catch (error) {
         throw new TRPCError({
@@ -294,11 +302,12 @@ export const googleDriveRouter = router({
       z.object({
         folderId: z.string(),
         recursive: z.boolean().default(false),
+        accountId: z.string().optional(),
       })
     )
     .query(async ({ ctx, input }) => {
       try {
-        const files = await getAllFilesInFolder(ctx.user.id, input.folderId, input.recursive);
+        const files = await getAllFilesInFolder(ctx.user.id, input.folderId, input.recursive, input.accountId);
         return { files, count: files.length };
       } catch (error) {
         throw new TRPCError({
@@ -316,11 +325,12 @@ export const googleDriveRouter = router({
       z.object({
         query: z.string(),
         folderId: z.string().optional(),
+        accountId: z.string().optional(),
       })
     )
     .query(async ({ ctx, input }) => {
       try {
-        const files = await searchGoogleDriveFiles(ctx.user.id, input.query, input.folderId);
+        const files = await searchGoogleDriveFiles(ctx.user.id, input.query, input.folderId, input.accountId);
         return { files };
       } catch (error) {
         throw new TRPCError({
@@ -337,6 +347,7 @@ export const googleDriveRouter = router({
     .input(
       z.object({
         caseId: z.string(),
+        accountId: z.string().optional(),
         fileIds: z.array(z.string()),
         fileNames: z.array(z.string()),
       })
@@ -354,6 +365,7 @@ export const googleDriveRouter = router({
         try {
           const result = await ingestDriveEvidence({
             userId: ctx.user.id,
+            accountId: input.accountId,
             caseId: input.caseId,
             fileId,
             title: fileName,
@@ -385,6 +397,7 @@ export const googleDriveRouter = router({
         folderName: z.string(),
         recursive: z.boolean().default(false),
         keywords: z.array(z.string()).optional(),
+        accountId: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -394,7 +407,7 @@ export const googleDriveRouter = router({
 
       try {
         // Get all files in folder
-        const files = await getAllFilesInFolder(ctx.user.id, input.folderId, input.recursive);
+        const files = await getAllFilesInFolder(ctx.user.id, input.folderId, input.recursive, input.accountId);
 
         let filesToImport = files;
 
@@ -435,11 +448,16 @@ export const googleDriveRouter = router({
 
             const result = await ingestDriveEvidence({
               userId: ctx.user.id,
+              accountId: input.accountId,
               caseId: input.caseId,
               fileId: file.id!,
               title: file.name || "Untitled",
               description: `Imported from Google Drive folder: ${input.folderName}`,
-              metadata: { folderId: input.folderId, folderName: input.folderName },
+              metadata: {
+                folderId: input.folderId,
+                folderName: input.folderName,
+                driveAccountId: input.accountId,
+              },
             });
 
             imported.push(file.name || "Unknown");

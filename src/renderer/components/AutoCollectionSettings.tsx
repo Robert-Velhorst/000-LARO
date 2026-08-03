@@ -23,6 +23,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
   const [dateRangeStart, setDateRangeStart] = useState<string>("");
   const [dateRangeEnd, setDateRangeEnd] = useState<string>("");
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
+  const [selectedDriveAccountId, setSelectedDriveAccountId] = useState("");
   const [autoDownloadAttachments, setAutoDownloadAttachments] = useState(true);
   const [autoDownloadGoogleDriveFiles, setAutoDownloadGoogleDriveFiles] = useState(true);
   const [selectedDriveFolderIds, setSelectedDriveFolderIds] = useState<string[]>([]);
@@ -38,7 +39,8 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
   // Fetch connected email accounts
   const { data: accountsData } = trpc.emailAccounts.list.useQuery();
   
-  const emailAccounts = accountsData ? (accountsData as any).accounts || [] : [];
+  const emailAccounts = accountsData ?? [];
+  const googleAccounts = emailAccounts.filter((account) => account.provider === "gmail");
 
   // Mutations
   const upsertMutation = trpc.autoCollection.upsertSettings.useMutation({
@@ -85,6 +87,16 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
         ? JSON.parse(s.emailAccountIds)
         : (Array.isArray(s.emailAccountIds) ? s.emailAccountIds : []);
       setSelectedAccountIds(parsedAccountIds);
+      if (s.metadata) {
+        try {
+          const metadata = JSON.parse(s.metadata);
+          setSelectedDriveAccountId(
+            typeof metadata.googleDriveAccountId === "string" ? metadata.googleDriveAccountId : "",
+          );
+        } catch {
+          setSelectedDriveAccountId("");
+        }
+      }
       
       setAutoDownloadAttachments(s.autoDownloadAttachments ?? true);
       setAutoDownloadGoogleDriveFiles(s.autoDownloadGoogleDriveFiles ?? true);
@@ -134,6 +146,8 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
       dateRangeStart: dateRangeStart ? new Date(dateRangeStart) : undefined,
       dateRangeEnd: dateRangeEnd ? new Date(dateRangeEnd) : undefined,
       emailAccountIds: selectedAccountIds,
+      googleDriveAccountId: selectedDriveAccountId || undefined,
+      googleDriveFolderIds: selectedDriveFolderIds,
       autoDownloadAttachments,
       autoDownloadGoogleDriveFiles,
     });
@@ -156,9 +170,10 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
     setSelectedDriveFolderNames(newFolderNames);
   };
 
-  const handleFoldersSelected = (folderIds: string[], folderNames: string[]) => {
+  const handleFoldersSelected = (folderIds: string[], folderNames: string[], accountId: string) => {
     setSelectedDriveFolderIds(folderIds);
     setSelectedDriveFolderNames(folderNames);
+    setSelectedDriveAccountId(accountId);
     setShowFolderBrowser(false);
     toast.success(`Selected ${folderIds.length} folder(s)`);
   };
@@ -183,6 +198,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
           </Button>
           <GoogleDriveFolderBrowser
             caseId={caseId}
+            initialAccountId={selectedDriveAccountId}
             onFoldersSelected={handleFoldersSelected}
             multiSelect={true}
           />
@@ -311,7 +327,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                     </p>
                   ) : (
                     <div className="space-y-2">
-                      {emailAccounts.map((account: any) => (
+                      {emailAccounts.map((account) => (
                         <div key={account.id} className="flex items-center gap-3">
                           <Switch
                             checked={selectedAccountIds.includes(account.id)}
@@ -342,6 +358,12 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                   <p className="text-xs text-muted-foreground">
                     Select specific folders in Google Drive to monitor for evidence
                   </p>
+
+                  {selectedDriveAccountId && (
+                    <Badge variant="outline">
+                      {googleAccounts.find((account) => account.id === selectedDriveAccountId)?.email || "Selected Google account"}
+                    </Badge>
+                  )}
                   
                   <div className="flex flex-wrap gap-2">
                     {selectedDriveFolderIds.map((folderId, index) => (
@@ -364,6 +386,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                   <Button
                     variant="outline"
                     onClick={() => setShowFolderBrowser(true)}
+                    disabled={googleAccounts.length === 0}
                   >
                     <Folder className="h-4 w-4 mr-2" />
                     Browse Google Drive

@@ -15,11 +15,16 @@ import {
   getActiveKeywordPullJob,
 } from "../autoCollectionService";
 import { assertCaseOwnership } from "../_core/authz";
+import { getDb } from "../db";
+import { emailAccounts } from "../schema";
+import { and, eq } from "drizzle-orm";
 
 const keywordPullInput = z.object({
   caseId: z.string(),
   keywords: z.array(z.string().min(1)).min(1),
   matchMode: z.enum(["all", "any"]).optional().default("any"),
+  gmailAccountIds: z.array(z.string()).optional(),
+  driveAccountId: z.string().optional(),
   driveFolderIds: z.array(z.string()).optional(),
   localFolderPaths: z.array(z.string()).optional(),
   dateStart: z.coerce.date().optional(),
@@ -44,6 +49,8 @@ export const autoCollectionRouter = router({
         dateRangeStart: z.date().optional(),
         dateRangeEnd: z.date().optional(),
         emailAccountIds: z.array(z.string()),
+        googleDriveAccountId: z.string().optional(),
+        googleDriveFolderIds: z.array(z.string()).optional(),
         autoDownloadAttachments: z.boolean(),
         autoDownloadGoogleDriveFiles: z.boolean(),
       })
@@ -51,6 +58,19 @@ export const autoCollectionRouter = router({
     .mutation(async ({ input, ctx }) => {
       const userId = ctx.user.id;
       await assertCaseOwnership(input.caseId, userId);
+      if (input.googleDriveAccountId) {
+        const db = await getDb();
+        const [account] = db
+          ? await db.select({ id: emailAccounts.id }).from(emailAccounts).where(and(
+            eq(emailAccounts.id, input.googleDriveAccountId),
+            eq(emailAccounts.userId, userId),
+            eq(emailAccounts.provider, "gmail"),
+          )).limit(1)
+          : [];
+        if (!account) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Selected Google Drive account is unavailable." });
+        }
+      }
       await upsertAutoCollectionSettings({
         ...input,
         userId,
@@ -112,6 +132,8 @@ export const autoCollectionRouter = router({
           userId: ctx.user.id,
           keywords: input.keywords,
           matchMode: input.matchMode,
+          gmailAccountIds: input.gmailAccountIds,
+          driveAccountId: input.driveAccountId,
           driveFolderIds: input.driveFolderIds,
           localFolderPaths: input.localFolderPaths,
           dateStart: input.dateStart,

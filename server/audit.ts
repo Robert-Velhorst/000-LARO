@@ -106,6 +106,7 @@ export const AUDIT_ACTIONS = {
   OUTREACH_INITIATED: "outreach.initiated",
   OUTREACH_FOLLOW_UP: "outreach.follow_up",
   OUTREACH_STATUS_CHANGED: "outreach.status_changed",
+  OUTREACH_DISPATCH_RESOLVED: "outreach.dispatch_resolved",
   
   // System actions
   USER_LOGIN: "user.login",

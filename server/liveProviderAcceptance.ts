@@ -125,7 +125,11 @@ export async function collectLiveProviderAcceptance(
   let driveRootFolderCount = 0;
   if (googleAccount?.userId) {
     try {
-      const folders = await dependencies.listDriveFolders(googleAccount.userId);
+      const folders = await dependencies.listDriveFolders(
+        googleAccount.userId,
+        undefined,
+        googleAccount.id,
+      );
       driveRootFolderCount = folders.length;
       driveRead = true;
     } catch {
@@ -167,6 +171,9 @@ export async function collectLiveProviderAcceptance(
       .where(eq(auditLogs.userId, googleAccount.userId))
     : [];
   const auditCount = (action: string) => ownerAudits.filter((entry) => entry.action === action).length;
+  const selectedConnectionAudits = ownerAudits.filter((entry) =>
+    entry.action === AUDIT_ACTIONS.PROVIDER_CONNECTED && entry.entityId === googleAccount?.id,
+  );
   const googleSourceOpenAudits = ownerAudits.filter((entry) =>
     entry.action === AUDIT_ACTIONS.EVIDENCE_SOURCE_OPENED &&
     Boolean(entry.entityId && googleEvidenceIds.has(entry.entityId)),
@@ -185,8 +192,8 @@ export async function collectLiveProviderAcceptance(
       oauthTokensDecryptable ? "database:google-token-vault-decryptable" : false,
     ),
     oauthConsent: check(
-      auditCount(AUDIT_ACTIONS.PROVIDER_CONNECTED) > 0 && Boolean(googleAccount?.refreshToken),
-      auditCount(AUDIT_ACTIONS.PROVIDER_CONNECTED) > 0 ? "audit:provider.connected" : false,
+      selectedConnectionAudits.length > 0 && Boolean(googleAccount?.refreshToken),
+      selectedConnectionAudits.length > 0 ? "audit:selected-provider.connected" : false,
       googleAccount?.refreshToken ? "database:google-refresh-grant-stored" : false,
     ),
     gmailRead: check(gmailRead, gmailRead ? "google-api:gmail-profile-read" : false),

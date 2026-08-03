@@ -7,6 +7,9 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Made every Google Drive browse, preview, search, import, keyword-pull, and
+  provider-acceptance operation account-specific. Multi-account owners must
+  select the Drive account instead of silently using the first stored token.
 - Updated the Socket.IO parser lock to 4.2.7 to resolve its zero-attachment
   memory-exhaustion advisory in both the server and client dependency paths.
 - Updated the direct PostCSS build dependency to 8.5.25 to resolve the current
@@ -18,6 +21,10 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   credential and refreshing status immediately.
 
 ### Added
+- Added an admin operations view for the outreach emergency stop, provider
+  configuration state, and uncertain-delivery recovery. Recovery requires a
+  provider-verified note, uses an atomic guard update, records an audit event,
+  and never retransmits automatically.
 - Added a non-destructive live-provider acceptance probe that authenticates to Gmail,
   Drive, and outbound email without sending, reconciles target evidence and
   audit records, emits no private values, and leaves owner approval untouched.

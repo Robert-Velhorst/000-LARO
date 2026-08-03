@@ -39,6 +39,7 @@ interface AutoCollectionConfig {
   dateRangeStart?: Date;
   dateRangeEnd?: Date;
   emailAccountIds: string[];
+  googleDriveAccountId?: string;
   googleDriveFolderIds?: string[];
   autoDownloadAttachments: boolean;
   autoDownloadGoogleDriveFiles: boolean;
@@ -89,6 +90,13 @@ export async function upsertAutoCollectionSettings(config: AutoCollectionConfig)
   }
 
   const existing = await getAutoCollectionSettings(config.caseId);
+  const metadata = existing?.metadata
+    ? (() => {
+        try { return JSON.parse(existing.metadata); } catch { return {}; }
+      })()
+    : {};
+  if (config.googleDriveAccountId) metadata.googleDriveAccountId = config.googleDriveAccountId;
+  else delete metadata.googleDriveAccountId;
 
   const settingsData = {
     caseId: config.caseId,
@@ -98,6 +106,7 @@ export async function upsertAutoCollectionSettings(config: AutoCollectionConfig)
     dateRangeStart: config.dateRangeStart,
     dateRangeEnd: config.dateRangeEnd,
     emailAccountIds: JSON.stringify(config.emailAccountIds),
+    metadata: JSON.stringify(metadata),
     googleDriveFolderIds: config.googleDriveFolderIds ? JSON.stringify(config.googleDriveFolderIds) : null,
     autoDownloadAttachments: config.autoDownloadAttachments,
     autoDownloadGoogleDriveFiles: config.autoDownloadGoogleDriveFiles,
@@ -653,10 +662,13 @@ async function getFreshGmailAccessToken(userId: string, accountId?: string): Pro
       eq(emailAccounts.provider, 'gmail'),
       ...(accountId ? [eq(emailAccounts.id, accountId)] : []),
     ))
-    .limit(1);
+    .limit(2);
 
+  if (!accountId && rows.length > 1) {
+    throw new Error('Multiple Google accounts are connected. Select the account to use.');
+  }
   const account = rows[0];
-  if (!account || !account.accessToken) return null;
+  if (!account || account.status !== 'connected' || !account.accessToken) return null;
 
   let accessToken = decryptToken(account.accessToken);
 
@@ -968,6 +980,7 @@ async function pullFromDrive(
   matchMode: 'all' | 'any',
   folderIds: string[],
   errors: string[],
+  accountId?: string,
   dateStart?: Date,
   dateEnd?: Date,
   onProgress?: PullProgressReporter,
@@ -976,7 +989,7 @@ async function pullFromDrive(
   if (!db) return { files: 0 };
 
   // Verify the user has Drive access via Gmail OAuth.
-  const cred = await getFreshGmailAccessToken(userId);
+  const cred = await getFreshGmailAccessToken(userId, accountId);
   if (!cred) return { files: 0 };
 
   const folders = folderIds.length > 0 ? folderIds : ['root'];
@@ -984,7 +997,7 @@ async function pullFromDrive(
 
   for (const folderId of folders) {
     try {
-      const files = await getAllFilesInFolder(userId, folderId, true);
+      const files = await getAllFilesInFolder(userId, folderId, true, cred.accountId);
       const candidates = files.filter((file) => {
         if (!file.name || !file.id || !matchesKeywords(file.name, keywords, matchMode)) return false;
         const modified = (file as any).modifiedTime ? new Date((file as any).modifiedTime) : null;
@@ -1015,7 +1028,7 @@ async function pullFromDrive(
           });
           if (already) continue;
 
-          const fileData = await downloadAndUploadGoogleDriveFile(file.id, caseId, userId);
+          const fileData = await downloadAndUploadGoogleDriveFile(file.id, caseId, userId, cred.accountId);
           const evidenceId = await createEvidenceFile(userId, {
             caseId,
             type: determineEvidenceType(fileData.mimeType),
@@ -1029,6 +1042,7 @@ async function pullFromDrive(
             metadata: JSON.stringify({
               storageKey: fileData.key,
               driveFileId: file.id,
+              driveAccountId: cred.accountId,
               folderId,
               sourceMimeType: fileData.sourceMimeType,
               autoCollected: true,
@@ -1294,6 +1308,7 @@ export async function pullEvidenceByKeywords(params: {
   keywords: string[];
   matchMode?: 'all' | 'any';
   gmailAccountIds?: string[];
+  driveAccountId?: string;
   driveFolderIds?: string[];
   localFolderPaths?: string[];
   dateStart?: Date;
@@ -1344,7 +1359,7 @@ export async function pullEvidenceByKeywords(params: {
       errors.push(`Gmail pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { messages: 0, attachments: 0 };
     }),
-    (params.includeDrive === false ? Promise.resolve({ files: 0 }) : pullFromDrive(params.caseId, params.userId, params.keywords, matchMode, driveFolderIds, errors, params.dateStart, params.dateEnd, params.onProgress)).catch((err) => {
+    (params.includeDrive === false ? Promise.resolve({ files: 0 }) : pullFromDrive(params.caseId, params.userId, params.keywords, matchMode, driveFolderIds, errors, params.driveAccountId, params.dateStart, params.dateEnd, params.onProgress)).catch((err) => {
       errors.push(`Drive pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { files: 0 };
     }),
@@ -1581,12 +1596,21 @@ export async function runAutoCollection(caseId: string): Promise<{
   const keywords = JSON.parse(settings.keywords || '[]') as string[];
   const accountIds = JSON.parse(settings.emailAccountIds || '[]') as string[];
   const driveFolderIds = JSON.parse(settings.googleDriveFolderIds || '[]') as string[];
+  const driveAccountId = (() => {
+    try {
+      const metadata = settings.metadata ? JSON.parse(settings.metadata) : {};
+      return typeof metadata.googleDriveAccountId === 'string' ? metadata.googleDriveAccountId : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
   const result = await pullEvidenceByKeywords({
     caseId,
     userId: settings.userId,
     keywords,
     matchMode: settings.keywordMatchMode === 'all' ? 'all' : 'any',
     gmailAccountIds: accountIds,
+    driveAccountId,
     driveFolderIds,
     dateStart: settings.dateRangeStart || undefined,
     dateEnd: settings.dateRangeEnd || undefined,

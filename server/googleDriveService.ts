@@ -14,27 +14,39 @@ import { decryptToken, encryptToken, refreshGmailToken } from './emailOAuth';
 /**
  * Get an authenticated Drive client for a user
  */
-async function getDriveClient(userId: string) {
+async function getDriveClient(userId: string, accountId?: string) {
   const db = await getDb();
   if (!db) throw new Error('Database not available');
 
-  // Find a Google account for this user
-  const account = await db
+  const accounts = await db
     .select()
     .from(emailAccounts)
-    .where(and(eq(emailAccounts.userId, userId), eq(emailAccounts.provider, 'gmail')))
-    .limit(1);
+    .where(and(
+      eq(emailAccounts.userId, userId),
+      eq(emailAccounts.provider, 'gmail'),
+      ...(accountId ? [eq(emailAccounts.id, accountId)] : []),
+    ))
+    .limit(2);
 
-  if (!account[0]) {
-    throw new Error(`No Google account connected for user ${userId}`);
+  if (accounts.length === 0) {
+    throw new Error(accountId ? 'Selected Google account is not connected.' : 'No Google account is connected.');
+  }
+  if (!accountId && accounts.length > 1) {
+    throw new Error('Multiple Google accounts are connected. Select the Drive account to use.');
   }
 
-  const emailAccount = account[0];
+  const emailAccount = accounts[0];
+  if (emailAccount.status !== 'connected' || !emailAccount.accessToken) {
+    throw new Error('Selected Google account is not connected.');
+  }
   let accessToken = decryptToken(emailAccount.accessToken!);
 
   // Refresh token if expired
   const now = new Date();
   if (emailAccount.tokenExpiry && new Date(emailAccount.tokenExpiry) <= now) {
+    if (!emailAccount.refreshToken) {
+      throw new Error('Selected Google account requires reconnection.');
+    }
     const refreshToken = decryptToken(emailAccount.refreshToken!);
     const newTokens = await refreshGmailToken(refreshToken);
     
@@ -61,9 +73,9 @@ async function getDriveClient(userId: string) {
  * For now, we'll try to find the user associated with the folder if possible,
  * or use a fallback mechanism.
  */
-export async function getGoogleDriveFileMetadata(folderId: string, userId: string) {
+export async function getGoogleDriveFileMetadata(folderId: string, userId: string, accountId?: string) {
   if (!userId) throw new Error('Google Drive metadata lookup requires an explicit user');
-  const drive = await getDriveClient(userId);
+  const drive = await getDriveClient(userId, accountId);
   
   const response = await drive.files.list({
     q: `'${folderId}' in parents and trashed = false`,
@@ -76,7 +88,7 @@ export async function getGoogleDriveFileMetadata(folderId: string, userId: strin
 /**
  * Download a file from Google Drive and upload it to local/S3 storage
  */
-export async function downloadAndUploadGoogleDriveFile(fileId: string, caseId: string, userId?: string) {
+export async function downloadAndUploadGoogleDriveFile(fileId: string, caseId: string, userId?: string, accountId?: string) {
   const db = await getDb();
   if (!db) throw new Error('Database not available');
 
@@ -89,7 +101,7 @@ export async function downloadAndUploadGoogleDriveFile(fileId: string, caseId: s
     targetUserId = caseData[0].userId;
   }
 
-  const drive = await getDriveClient(targetUserId);
+  const drive = await getDriveClient(targetUserId, accountId);
 
   // 1. Get metadata to know the filename
   const fileMetadata = await drive.files.get({
@@ -142,8 +154,8 @@ export async function downloadAndUploadGoogleDriveFile(fileId: string, caseId: s
  * List folders in Google Drive (root or specific parent)
  * Used for folder browsing UI
  */
-export async function listGoogleDriveFolders(userId: string, parentId?: string) {
-  const drive = await getDriveClient(userId);
+export async function listGoogleDriveFolders(userId: string, parentId?: string, accountId?: string) {
+  const drive = await getDriveClient(userId, accountId);
   
   let query = "mimeType='application/vnd.google-apps.folder' and trashed=false";
   
@@ -168,9 +180,10 @@ export async function listGoogleDriveFolders(userId: string, parentId?: string) 
 export async function getAllFilesInFolder(
   userId: string, 
   folderId: string, 
-  recursive: boolean = false
+  recursive: boolean = false,
+  accountId?: string,
 ): Promise<Array<{ id: string; name: string; mimeType?: string | null; size?: string | null; webViewLink?: string | null }>> {
-  const drive = await getDriveClient(userId);
+  const drive = await getDriveClient(userId, accountId);
   
   const allFiles: Array<{ id: string; name: string; mimeType?: string | null; size?: string | null; webViewLink?: string | null; modifiedTime?: string | null }> = [];
 
@@ -206,9 +219,10 @@ export async function getAllFilesInFolder(
 export async function searchGoogleDriveFiles(
   userId: string, 
   query: string,
-  inFolder?: string
+  inFolder?: string,
+  accountId?: string,
 ) {
-  const drive = await getDriveClient(userId);
+  const drive = await getDriveClient(userId, accountId);
   
   let searchQuery = `name contains '${query}' and trashed = false and mimeType != 'application/vnd.google-apps.folder'`;
   

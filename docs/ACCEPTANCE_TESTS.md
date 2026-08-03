@@ -1,6 +1,6 @@
 # Acceptance Test Matrix
 
-Current as of 2026-07-22. Automated criteria exercise real tRPC procedures and
+Current as of 2026-08-03. Automated criteria exercise real tRPC procedures and
 temporary SQLite databases; they do not contact external people or accounts.
 
 | ID | Criterion | Evidence | Status |
@@ -27,6 +27,8 @@ temporary SQLite databases; they do not contact external people or accounts.
 | AC20 | Migrate exactly one Flask owner into Electron without cross-owner records, provenance loss, secret transfer, duplicate imports, or live-send activation | `test_flask_to_desktop_migration.py` and `tests/backend/legacyImports.test.ts` | Automated |
 | AC21 | Reconstruct every owned case document as a source-linked station while distinguishing explicit links from confidence-labelled suggestions | `tests/backend/caseReconstruction.test.ts`, document-intelligence and production-readiness suites | Automated |
 | AC22 | Focus a reconstruction by source-derived participant or legal topic and retain the selected document's dated actions | `tests/backend/caseReconstruction.test.ts`, renderer accessibility suite | Automated |
+| AC23 | Bind every Drive operation to the selected owner's Google account | `tests/backend/googleDriveAccountSelection.test.ts`; `tests/security/liveProviderAcceptance.test.ts` | Automated |
+| AC24 | Resolve uncertain delivery without automatic retransmission | `tests/backend/realSend.test.ts` | Automated |
 
 ## Target-Environment Acceptance
 

@@ -169,6 +169,12 @@ suite("live provider acceptance evidence", () => {
 
     const selectedAccount = await collectLiveProviderAcceptance({
       ...providerDependencies,
+      listDriveFolders: async (selectedUserId, parentId, selectedAccountId) => {
+        expect(selectedUserId).toBe(userId);
+        expect(parentId).toBeUndefined();
+        expect(selectedAccountId).toBe("GOOGLE_ACCEPTANCE");
+        return [{ id: "folder" }] as any;
+      },
       targetUserId: userId,
       targetGoogleAccountId: "GOOGLE_ACCEPTANCE",
     });

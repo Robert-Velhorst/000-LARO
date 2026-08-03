@@ -113,6 +113,29 @@ export const adminRouter = router({
     return report;
   }),
 
+  uncertainOutreachDispatches: adminProcedure.query(async () => {
+    const { listUncertainOutreachDispatches } = await import("../outreachSend");
+    return listUncertainOutreachDispatches();
+  }),
+  resolveUncertainOutreachDispatch: adminProcedure
+    .input(z.object({
+      outreachId: z.string().min(1),
+      outcome: z.enum(["delivered", "not_delivered"]),
+      providerVerified: z.literal(true),
+      providerReference: z.string().trim().max(200).optional(),
+      note: z.string().trim().min(10).max(1000),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const { resolveUncertainOutreachDispatch } = await import("../outreachSend");
+      return resolveUncertainOutreachDispatch({
+        operatorUserId: ctx.user.id,
+        outreachId: input.outreachId,
+        outcome: input.outcome,
+        providerReference: input.providerReference,
+        note: input.note,
+      });
+    }),
+
   // Phase 101 — support/debug bundle: a redacted diagnostic snapshot an operator
   // can attach to a support ticket. Contains NO secret values and NO user PII —
   // only system state, table counts, invariant results, flags, and job status.
