@@ -103,7 +103,7 @@ npm run dev
 `npm run setup` creates `.env` from `.env.example` only when `.env` does not already exist. It never overwrites existing configuration. The packaged desktop app atomically creates durable local JWT and cookie secrets in its Electron user-data directory; standalone production server operation requires strong values in `.env`. Keep `laro-secrets.json` with its matching database backup because it also protects encrypted provider tokens. A desktop single-instance lock prevents concurrent processes from opening that shared profile; a later launch restores and focuses the existing window. Electron browser permissions are denied by default because LARO uses reviewed native IPC for local-file selection and external links instead of browser device APIs.
 
 API-only deployments do not expose unrestricted registration. Their first
-account requires a one-time `STANDALONE_SIGNUP_TOKEN` of at least 32 random
+account requires a one-time `STANDALONE_SIGNUP_TOKEN` of 32-256 random
 characters and becomes the administrator. After that owner exists, standalone
 enrollment stays closed even when the token remains configured. Packaged desktop
 signup is unchanged.
@@ -205,7 +205,7 @@ GitHub Actions repeats the Node and browser checks on the supported Node 22 tool
 - Server, Electron main-process, and shipped renderer TypeScript checks passed; no shipped runtime module disables type checking; ESLint passed.
 - Traceability reported 117 rows, 92 cited, and 0 broken references.
 - Runtime no-excuses scan reported 0 suspect findings; account safety reported 0 high-severity findings.
-- Vitest reported 60 passing files and 373 passing tests, including controlled
+- Vitest reported 60 passing files and 374 passing tests, including controlled
   NOvA parsing/filter, unknown-metric scoring, and review-gated
   media/organization discovery, tenant isolation, case-draft persistence, and
   target-database readiness tests, with no skipped or todo tests.

@@ -89,8 +89,9 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ### Fixed
 - Closed unrestricted signup on public API-only deployments: a new database now
   requires a one-time strong bootstrap token for its first administrator and
-  permanently closes enrollment after that owner exists. Desktop signup remains
-  unchanged.
+  atomically closes enrollment after that owner exists. Desktop signup remains
+  unchanged, and token validation now uses the same documented length range at
+  startup and at the API boundary.
 - Isolated the backup/restore drill from target production JWT, cookie, S3, and
   local-storage settings so production readiness tests its own fixture instead
   of rejecting or redirecting it.

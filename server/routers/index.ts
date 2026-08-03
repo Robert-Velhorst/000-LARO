@@ -188,14 +188,31 @@ export const appRouter = router({
         const hashedPassword = await bcrypt.hash(input.password, 10);
         const userId = `USER${Date.now()}`;
 
-        await db.insert(users).values({
+        const user = {
           id: userId,
           email: input.email,
           password: hashedPassword,
           name: input.name,
           role: ENV.SERVER_ONLY ? "admin" : "user",
           createdAt: new Date(),
-        });
+        };
+
+        if (ENV.SERVER_ONLY) {
+          const claimed = db.transaction((tx) => {
+            const [currentCount] = tx.select({ value: count() }).from(users).all();
+            if (Number(currentCount?.value || 0) !== 0) return false;
+            tx.insert(users).values(user).run();
+            return true;
+          });
+          if (!claimed) {
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "Standalone account enrollment is closed.",
+            });
+          }
+        } else {
+          await db.insert(users).values(user);
+        }
 
         const token = jwt.sign({ userId }, ENV.JWT_SECRET, { expiresIn: SESSION_EXPIRES_IN });
         const cookieOptions = getSessionCookieOptions(ctx.req);

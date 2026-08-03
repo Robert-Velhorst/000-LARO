@@ -1,6 +1,7 @@
 import crypto from "crypto";
 
-const MIN_BOOTSTRAP_TOKEN_LENGTH = 32;
+export const MIN_BOOTSTRAP_TOKEN_LENGTH = 32;
+export const MAX_BOOTSTRAP_TOKEN_LENGTH = 256;
 
 function safeTokenMatch(expected: string, supplied: string): boolean {
   const expectedBytes = Buffer.from(expected, "utf8");
@@ -20,6 +21,10 @@ export function standaloneSignupAllowed(options: {
 
   const expected = options.expectedBootstrapToken?.trim() || "";
   const supplied = options.suppliedBootstrapToken?.trim() || "";
-  if (expected.length < MIN_BOOTSTRAP_TOKEN_LENGTH || !supplied) return false;
+  if (
+    expected.length < MIN_BOOTSTRAP_TOKEN_LENGTH ||
+    expected.length > MAX_BOOTSTRAP_TOKEN_LENGTH ||
+    !supplied
+  ) return false;
   return safeTokenMatch(expected, supplied);
 }

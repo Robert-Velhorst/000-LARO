@@ -30,12 +30,12 @@ Descriptive words (mock/stub/placeholder/fake) needing human judgement. Triage o
 | `server/routers/enhancedConnections.ts` | 102 | `// Honest unavailability — no fake auth URL.` |
 | `server/routers/extendedRouters.ts` | 6 | `* run. No fake success (Phase 014).` |
 | `server/routers/extendedRouters.ts` | 211 | `// provider is configured there is nothing to sync (honest, not a fake OK).` |
-| `server/routers/index.ts` | 375 | `// stub): computes genuine clarifications the user must resolve BEFORE outreach` |
+| `server/routers/index.ts` | 392 | `// stub): computes genuine clarifications the user must resolve BEFORE outreach` |
 | `server/routers/matching.ts` | 22 | `*  - If no lawyers are seeded/entered, the result is genuinely empty (no fakes).` |
 | `server/storage.ts` | 10 | `*    fake `/local/<key>` URL. That silent data loss is fixed.` |
-| `server/_core/env.ts` | 93 | `* Insecure placeholder values that must never be used to sign real sessions.` |
-| `server/_core/env.ts` | 97 | `* in production and the secrets are still the shipped placeholders (or empty),` |
-| `server/_core/env.ts` | 105 | `* to the insecure placeholder. Returns a list of non-fatal warnings (e.g.` |
+| `server/_core/env.ts` | 95 | `* Insecure placeholder values that must never be used to sign real sessions.` |
+| `server/_core/env.ts` | 99 | `* in production and the secrets are still the shipped placeholders (or empty),` |
+| `server/_core/env.ts` | 107 | `* to the insecure placeholder. Returns a list of non-fatal warnings (e.g.` |
 
 ## Markers in tests / scripts / renderer (190) — reported, not failing
 

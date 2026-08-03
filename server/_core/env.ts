@@ -1,3 +1,5 @@
+import { MAX_BOOTSTRAP_TOKEN_LENGTH } from "../signupPolicy";
+
 /**
  * Environment configuration
  * Single source of truth for all env vars with safe defaults
@@ -120,6 +122,12 @@ export function assertSecurityConfig(): string[] {
       ENV.STANDALONE_SIGNUP_TOKEN.trim().length < 32
     ) {
       failures.push('STANDALONE_SIGNUP_TOKEN must contain at least 32 characters when configured');
+    }
+    if (
+      ENV.SERVER_ONLY &&
+      ENV.STANDALONE_SIGNUP_TOKEN.trim().length > MAX_BOOTSTRAP_TOKEN_LENGTH
+    ) {
+      failures.push(`STANDALONE_SIGNUP_TOKEN must contain at most ${MAX_BOOTSTRAP_TOKEN_LENGTH} characters`);
     }
     if (failures.length > 0) {
       throw new ConfigError(

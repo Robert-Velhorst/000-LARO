@@ -60,17 +60,29 @@ suite("standalone signup integration", () => {
     expect(await app.db.select().from(app.schema.users)).toHaveLength(0);
   });
 
-  it("creates exactly one token-authorised standalone administrator", async () => {
-    await expect(app.makeCaller(null).auth.signup({
-      email: "owner@example.com",
-      password: "owner-password-123",
-      name: "Owner",
-      bootstrapToken: BOOTSTRAP_TOKEN,
-    })).resolves.toMatchObject({ success: true });
+  it("atomically creates one administrator from concurrent valid claims", async () => {
+    const claims = await Promise.allSettled([
+      app.makeCaller(null).auth.signup({
+        email: "owner@example.com",
+        password: "owner-password-123",
+        name: "Owner",
+        bootstrapToken: BOOTSTRAP_TOKEN,
+      }),
+      app.makeCaller(null).auth.signup({
+        email: "other-owner@example.com",
+        password: "other-owner-password-123",
+        name: "Other Owner",
+        bootstrapToken: BOOTSTRAP_TOKEN,
+      }),
+    ]);
+
+    expect(claims.filter((claim) => claim.status === "fulfilled")).toHaveLength(1);
+    expect(claims.filter((claim) => claim.status === "rejected")).toHaveLength(1);
 
     const users = await app.db.select().from(app.schema.users);
     expect(users).toHaveLength(1);
-    expect(users[0]).toMatchObject({ email: "owner@example.com", role: "admin" });
+    expect(users[0].role).toBe("admin");
+    expect(["owner@example.com", "other-owner@example.com"]).toContain(users[0].email);
 
     await expect(app.makeCaller(null).auth.signup({
       email: "second@example.com",

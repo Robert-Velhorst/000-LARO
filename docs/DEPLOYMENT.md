@@ -72,7 +72,7 @@ moving or refreshing the checkout so Docker Compose reuses the intended named
 database volume.
 
 Before creating the first account on a new API-only database, set a random
-`STANDALONE_SIGNUP_TOKEN` of at least 32 characters in the ignored `.env` and
+`STANDALONE_SIGNUP_TOKEN` of 32-256 characters in the ignored `.env` and
 include it as `bootstrapToken` in the first `auth.signup` mutation. That first
 account is created as the administrator. Standalone enrollment then closes and
 rejects every later signup, even if the token is still present. Remove the token
