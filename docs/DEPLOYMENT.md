@@ -80,6 +80,8 @@ from `.env` after bootstrap. Electron desktop signup does not use this token.
 Runtime URL/PID metadata is written to ignored `.laro-ngrok.json`. Install
 `ngrok/laro-path-policy.yml` on the existing public Agent Endpoint once; the
 launcher then verifies `https://<dev-domain>/laro/api/health` on every start.
+Opening `https://<dev-domain>/laro` returns a small JSON service-status document;
+the API-only deployment intentionally does not serve the desktop renderer.
 The validated gateway settings are retained in the ignored `.env`, so later
 starts need no arguments. The launcher also reuses a healthy LARO tunnel.
 

@@ -87,6 +87,9 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   compact source controls that open the owning document.
 
 ### Fixed
+- Made the advertised API-only base URL return a versioned service-status
+  document instead of a generic 404, while leaving desktop renderer routing
+  unchanged.
 - Closed unrestricted signup on public API-only deployments: a new database now
   requires a one-time strong bootstrap token for its first administrator and
   atomically closes enrollment after that owner exists. Desktop signup remains
