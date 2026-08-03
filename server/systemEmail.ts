@@ -22,6 +22,7 @@ export interface SystemEmail {
 export interface SystemEmailResult {
   delivered: boolean;
   provider: "sendgrid" | "smtp" | "console" | "unconfigured";
+  providerMessageId?: string;
 }
 
 function fromAddress(): string {
@@ -46,7 +47,7 @@ function createSmtpTransport() {
   });
 }
 
-async function sendViaSendGrid(email: SystemEmail): Promise<void> {
+async function sendViaSendGrid(email: SystemEmail): Promise<string | undefined> {
   const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
     method: "POST",
     headers: {
@@ -67,18 +68,28 @@ async function sendViaSendGrid(email: SystemEmail): Promise<void> {
     const detail = await res.text().catch(() => "");
     throw new Error(`SendGrid send failed (${res.status}): ${detail}`);
   }
+  return res.headers.get("x-message-id") || undefined;
 }
 
-async function sendViaSmtp(email: SystemEmail): Promise<void> {
+async function sendViaSmtp(email: SystemEmail): Promise<string | undefined> {
   const transport = createSmtpTransport();
   try {
-    await transport.sendMail({
+    const result = await transport.sendMail({
       from: fromAddress(),
       to: email.to,
       subject: email.subject,
       text: email.text,
       html: email.html,
     });
+    const accepted = (result.accepted || []).map((entry) => (
+      typeof entry === "string"
+        ? entry.toLowerCase()
+        : entry.address.toLowerCase()
+    ));
+    if (!accepted.some((entry) => entry.includes(email.to.trim().toLowerCase()))) {
+      throw new Error("SMTP provider did not accept the intended recipient");
+    }
+    return result.messageId || undefined;
   } finally {
     transport.close();
   }
@@ -110,12 +121,12 @@ export async function verifyOutboundEmailConnection(): Promise<{
 export async function sendSystemEmail(email: SystemEmail): Promise<SystemEmailResult> {
   const configuration = resolveOutboundEmailConfiguration();
   if (configuration.provider === "sendgrid" && configuration.configured) {
-    await sendViaSendGrid(email);
-    return { delivered: true, provider: "sendgrid" };
+    const providerMessageId = await sendViaSendGrid(email);
+    return { delivered: true, provider: "sendgrid", providerMessageId };
   }
   if (configuration.provider === "smtp" && configuration.configured) {
-    await sendViaSmtp(email);
-    return { delivered: true, provider: "smtp" };
+    const providerMessageId = await sendViaSmtp(email);
+    return { delivered: true, provider: "smtp", providerMessageId };
   }
 
   if (ENV.isProd) {

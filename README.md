@@ -81,6 +81,7 @@ The Electron main process starts the Express/tRPC server and React renderer toge
 - Prepare and approve outreach drafts without sending them automatically.
 - Send an approved desktop-runtime lawyer outreach only when the global emergency stop is released, `outreach.send.enabled` is enabled, the caller owns the case, a real email provider is configured, and the idempotency guard has not already recorded the send.
 - Resolve an ambiguous provider outcome from the admin operations view only after checking provider activity. Confirmed delivery finalizes the send-once guard without retransmission; confirmed non-delivery safely permits a controlled retry, and both decisions are audited.
+- Prove the target environment's outbound path with an explicit owner self-test that verifies one Gmail inbox copy, exercises duplicate prevention, stores only signed redacted acceptance evidence, and removes its temporary case/outreach records.
 
 ## Prerequisites
 
@@ -207,7 +208,7 @@ GitHub Actions repeats the Node and browser checks on the supported Node 22 tool
 - Server, Electron main-process, and shipped renderer TypeScript checks passed; no shipped runtime module disables type checking; ESLint passed.
 - Traceability reported 117 rows, 92 cited, and 0 broken references.
 - Runtime no-excuses scan reported 0 suspect findings; account safety reported 0 high-severity findings.
-- Vitest reported 62 passing files and 385 passing tests, including controlled
+- Vitest reported 63 passing files and 387 passing tests, including controlled
   NOvA parsing/filter, unknown-metric scoring, and review-gated
   media/organization discovery, tenant isolation, case-draft persistence, and
   target-database readiness tests, with no skipped or todo tests.

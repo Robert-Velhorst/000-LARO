@@ -96,6 +96,7 @@ export const AUDIT_ACTIONS = {
   PROVIDER_DISCONNECTED: "provider.disconnected",
   PROVIDER_DISCONNECT_REVOKED: "provider.disconnect_revoked",
   PROVIDER_DISCONNECT_FAILED: "provider.disconnect_failed",
+  PROVIDER_ACCEPTANCE_RECORDED: "provider.acceptance_recorded",
 
   // Evidence actions
   EVIDENCE_EXPORTED: "evidence.exported",

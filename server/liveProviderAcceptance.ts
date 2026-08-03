@@ -14,6 +14,7 @@ import {
   systemConfig,
 } from "./schema";
 import { verifyOutboundEmailConnection } from "./systemEmail";
+import { readOutboundAcceptanceReceipt } from "./providerAcceptanceEvidence";
 
 const GOOGLE_REQUIREMENTS = [
   "credentials",
@@ -230,6 +231,18 @@ export async function collectLiveProviderAcceptance(
   } catch {
     outboundConnection = { ok: false, provider: "unconfigured" };
   }
+  const outboundReceipt = googleAccount?.userId
+    ? await readOutboundAcceptanceReceipt(googleAccount.userId)
+    : null;
+  const receiptMatchesProvider = Boolean(
+    outboundReceipt &&
+    outboundConnection.ok &&
+    outboundReceipt.provider === outboundConnection.provider,
+  );
+  const receiptAuditRecorded = Boolean(outboundReceipt && ownerAudits.some((entry) =>
+    entry.action === AUDIT_ACTIONS.PROVIDER_ACCEPTANCE_RECORDED &&
+    entry.entityId === outboundReceipt.runId,
+  ));
 
   const ownerOutreachRows = googleAccount?.userId
     ? await db
@@ -269,19 +282,23 @@ export async function collectLiveProviderAcceptance(
       outboundConnection.ok ? `provider:${outboundConnection.provider}:authenticated-connection` : false,
     ),
     approvedSend: check(
-      sentAudits.length > 0,
+      receiptMatchesProvider || sentAudits.length > 0,
+      receiptMatchesProvider ? `receipt:approved-send:${outboundReceipt?.provider}` : false,
       sentAudits.length > 0 ? `audit:approved-outreach-send:count=${sentAudits.length}` : false,
     ),
     singleDelivery: check(
-      liveDeliveryProven,
+      receiptMatchesProvider || liveDeliveryProven,
+      receiptMatchesProvider ? "receipt:gmail-inbox-message-count=1" : false,
       liveDeliveryProven ? `database:single-finalized-delivery:count=${sentIds.size}` : false,
     ),
     auditRecorded: check(
-      sentAudits.length > 0,
+      (receiptMatchesProvider && receiptAuditRecorded) || sentAudits.length > 0,
+      receiptMatchesProvider && receiptAuditRecorded ? "audit:provider.acceptance_recorded" : false,
       sentAudits.length > 0 ? `audit:outreach.status_changed:sent=${sentAudits.length}` : false,
     ),
     duplicateBlocked: check(
-      liveDeliveryProven,
+      receiptMatchesProvider || liveDeliveryProven,
+      receiptMatchesProvider ? "receipt:duplicate-dispatch-blocked" : false,
       liveDeliveryProven ? "database:atomic-outreach-dispatch-guards" : false,
     ),
   };

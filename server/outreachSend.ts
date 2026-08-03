@@ -38,10 +38,20 @@ export interface SendResult {
   sent: boolean;
   alreadySent?: boolean;
   provider?: string;
+  providerMessageId?: string;
   to?: string;
 }
 
-export type EmailSender = (email: { to: string; subject: string; text: string }) => Promise<{ delivered: boolean; provider: string }>;
+export type EmailSender = (email: { to: string; subject: string; text: string }) => Promise<{
+  delivered: boolean;
+  provider: string;
+  providerMessageId?: string;
+}>;
+
+export interface ApprovedOutreachMessageOverride {
+  subject: string;
+  text: string;
+}
 
 const SENT_GUARD_PREFIX = "sent:";
 
@@ -242,6 +252,7 @@ export async function sendApprovedOutreach(
   userId: string,
   outreachId: string,
   sender: EmailSender = defaultSender,
+  messageOverride?: ApprovedOutreachMessageOverride,
 ): Promise<SendResult> {
   // Gate 1 — global emergency stop.
   await assertNotEmergencyStopped();
@@ -296,12 +307,13 @@ export async function sendApprovedOutreach(
   }
 
   const [caseRow] = await db.select().from(casesTable).where(eq(casesTable.id, row.caseId)).limit(1);
-  const subject = `Legal assistance enquiry — ${(caseRow as any)?.caseType || "case"}`;
-  const text =
+  const subject = messageOverride?.subject || `Legal assistance enquiry — ${(caseRow as any)?.caseType || "case"}`;
+  const text = messageOverride?.text || (
     `Hello ${(lawyer as any)?.name || "there"},\n\n` +
     `A prospective client is seeking assistance with a ${(caseRow as any)?.caseType || "legal"} matter. ` +
     `They would like to know if you are able to help.\n\n` +
-    `(Sent via LARO after explicit user approval. This is not legal advice.)`;
+    `(Sent via LARO after explicit user approval. This is not legal advice.)`
+  );
 
   // Transmit. If no provider is configured, delivered=false → fail honestly.
   const dispatchId = nanoid();
@@ -365,7 +377,13 @@ export async function sendApprovedOutreach(
     throw error;
   }
 
-  return { outreachId, sent: true, provider: result.provider, to };
+  return {
+    outreachId,
+    sent: true,
+    provider: result.provider,
+    providerMessageId: result.providerMessageId,
+    to,
+  };
 }
 
 export type LawyerResponse = "Interested" | "Declined" | "NoResponse";

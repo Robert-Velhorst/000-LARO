@@ -9,7 +9,7 @@
 | env not tracked | OK | No real .env variants are tracked (only .env.example). |
 | env gitignored | OK | .env is gitignored. |
 | installer excludes .env | OK | No .env in build.files/extraResources (Phase 030 guard holds). |
-| no hardcoded secrets | OK | Scanned 146 runtime files; no secret patterns. |
+| no hardcoded secrets | OK | Scanned 148 runtime files; no secret patterns. |
 
 ## Operator cleanup checklist (before distributing / going live)
 - Rotate any provider keys used during development; never ship a dev `.env`.
