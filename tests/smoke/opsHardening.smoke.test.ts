@@ -8,7 +8,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { checkRateLimit, RATE_LIMITS } from '../../server/rateLimit';
+import { checkRateLimit, getRateLimitIdentifier, RATE_LIMITS } from '../../server/rateLimit';
 import { runJob, getJobStatus } from '../../server/cronScheduler';
 
 const ROOT = join(__dirname, '..', '..');
@@ -27,7 +27,18 @@ describe('Phase 018 — rate limiter enforces the window', () => {
   it('defines named limit configs used by the routers', () => {
     expect(RATE_LIMITS.caseCreate.maxRequests).toBeGreaterThan(0);
     expect(RATE_LIMITS.auth.maxRequests).toBeGreaterThan(0);
+    expect(RATE_LIMITS.passwordResetRequest.maxRequests).toBeGreaterThan(0);
+    expect(RATE_LIMITS.passwordResetVerify.maxRequests).toBeGreaterThan(0);
     expect(RATE_LIMITS.lawyerSearch.maxRequests).toBeGreaterThan(0);
+  });
+
+  it('uses the proxy-appended client address instead of a spoofed left edge', () => {
+    expect(getRateLimitIdentifier({
+      req: {
+        headers: { 'x-forwarded-for': '203.0.113.250, 198.51.100.42' },
+        socket: { remoteAddress: '127.0.0.1' },
+      },
+    })).toBe('ip:198.51.100.42');
   });
 });
 

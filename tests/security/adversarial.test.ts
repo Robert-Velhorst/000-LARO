@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { bootTestApp, sqliteAvailable, type TestApp } from '../helpers/app';
 import { buildUser } from '../factories';
+import { RATE_LIMITS } from '../../server/rateLimit';
 
 const suite = sqliteAvailable ? describe : describe.skip;
 
@@ -26,6 +27,34 @@ suite('Phase 045 — adversarial', () => {
     await expect(anon.cases.create({
       clientName: 'x', clientEmail: 'x@x.com', caseType: 'Employment', urgency: 'High',
     })).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await expect(anon.lawyerRating.get({ lawyerId: 'LAWYER_PRIVATE' }))
+      .rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await expect(anon.lawyerRating.topRated({ limit: 10 }))
+      .rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+
+  it('rate-limits reset-message requests and reset-code guesses', async () => {
+    const anon = app.makeCaller(null);
+    const missingEmail = 'missing-reset-user@example.com';
+
+    for (let i = 0; i < RATE_LIMITS.passwordResetRequest.maxRequests; i++) {
+      await expect(anon.auth.requestPasswordReset({ email: missingEmail }))
+        .resolves.toEqual({ success: true });
+    }
+    await expect(anon.auth.requestPasswordReset({ email: missingEmail }))
+      .rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+
+    const attempt = (code: string) => anon.auth.resetPassword({
+      email: missingEmail,
+      code,
+      newPassword: 'replacement-password-123',
+    });
+    for (let i = 0; i < RATE_LIMITS.passwordResetVerify.maxRequests; i++) {
+      await expect(attempt(String(i).padStart(6, '0')))
+        .rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    }
+    await expect(attempt('999999'))
+      .rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 
   it('rejects malformed input via schema validation', async () => {

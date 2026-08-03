@@ -112,6 +112,7 @@ export const AUDIT_ACTIONS = {
   // System actions
   USER_LOGIN: "user.login",
   USER_LOGOUT: "user.logout",
+  USER_PASSWORD_RESET: "user.password_reset",
   SETTINGS_CHANGED: "settings.changed",
   SCRAPER_RUN: "scraper.run",
 } as const;

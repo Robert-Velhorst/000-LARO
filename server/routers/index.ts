@@ -73,6 +73,7 @@ import {
   MAX_EVIDENCE_FILE_BYTES,
 } from "../../shared/evidenceFiles";
 import { standaloneSignupAllowed } from "../signupPolicy";
+import { hashPasswordResetCode } from "../passwordResetSecurity";
 
 export const appRouter = router({
   system: systemRouter,
@@ -164,6 +165,7 @@ export const appRouter = router({
         bootstrapToken: z.string().max(256).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        enforceRateLimit(ctx, "signup", RATE_LIMITS.auth);
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
 
@@ -299,7 +301,8 @@ export const appRouter = router({
     // addresses have accounts (no user enumeration).
     requestPasswordReset: publicProcedure
       .input(z.object({ email: z.string().email() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        enforceRateLimit(ctx, "passwordResetRequest", RATE_LIMITS.passwordResetRequest);
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
 
@@ -312,7 +315,7 @@ export const appRouter = router({
         // (OAuth-only accounts have nothing to reset).
         if (user && user.password) {
           const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
-          const codeHash = crypto.createHash("sha256").update(code).digest("hex");
+          const codeHash = hashPasswordResetCode(code);
           const expiresAt = Date.now() + TTL_MINUTES * 60 * 1000;
 
           await db
@@ -341,7 +344,8 @@ export const appRouter = router({
           newPassword: z.string().min(8),
         })
       )
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        enforceRateLimit(ctx, "passwordResetVerify", RATE_LIMITS.passwordResetVerify);
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
 
@@ -357,7 +361,7 @@ export const appRouter = router({
         if (!user || !user.resetCodeHash || !user.resetCodeExpiresAt) throw invalid;
         if (Date.now() > Number(user.resetCodeExpiresAt)) throw invalid;
 
-        const candidateHash = crypto.createHash("sha256").update(input.code).digest("hex");
+        const candidateHash = hashPasswordResetCode(input.code);
         const a = Buffer.from(candidateHash);
         const b = Buffer.from(user.resetCodeHash);
         if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw invalid;
@@ -367,6 +371,17 @@ export const appRouter = router({
           .update(users)
           .set({ password: hashedPassword, resetCodeHash: null, resetCodeExpiresAt: null })
           .where(eq(users.id, user.id));
+
+        const { revokeUserSessions } = await import("../sessionRevocation");
+        await revokeUserSessions(user.id);
+        const cookieOptions = getSessionCookieOptions(ctx.req);
+        ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+        await createAuditLog({
+          userId: user.id,
+          action: AUDIT_ACTIONS.USER_PASSWORD_RESET,
+          entityType: "user",
+          entityId: user.id,
+        });
 
         return { success: true } as const;
       }),

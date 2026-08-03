@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { eq, and, gte, desc } from 'drizzle-orm';
 import { getDb } from '../db';
-import { publicProcedure, router } from '../_core/trpc';
+import { protectedProcedure, router } from '../_core/trpc';
 import { lawyerRatings, lawyerInteractions, ratingCalculationLogs, lawyers } from '../schema';
 import { nanoid } from 'nanoid';
 import { invokeLLM } from '../llm';
@@ -521,10 +521,10 @@ export async function recalculateAllRatings() {
 }
 
 export const lawyerRatingRouter = router({
-  get: publicProcedure
+  get: protectedProcedure
     .input(z.object({ lawyerId: z.string() }))
     .query(async ({ input }) => getLawyerRating(input.lawyerId)),
-  topRated: publicProcedure
+  topRated: protectedProcedure
     .input(z.object({ limit: z.number().optional().default(10) }))
     .query(async ({ input }) => getTopRatedLawyers(input.limit)),
 });
