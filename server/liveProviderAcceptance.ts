@@ -1,4 +1,4 @@
-import { and, count, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { AUDIT_ACTIONS } from "./audit";
 import { ENV } from "./_core/env";
 import { getDb } from "./db";
@@ -44,6 +44,7 @@ export interface LiveProviderAcceptanceDependencies {
   testGmail: typeof testGmailConnection;
   verifyOutbound: typeof verifyOutboundEmailConnection;
   targetUserId?: string;
+  targetGoogleAccountId?: string;
 }
 
 const DEFAULT_DEPENDENCIES: LiveProviderAcceptanceDependencies = {
@@ -85,15 +86,27 @@ export async function collectLiveProviderAcceptance(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const googleAccounts = await db
-    .select()
-    .from(emailAccounts)
-    .where(dependencies.targetUserId
+  const googleAccountFilter = dependencies.targetGoogleAccountId
+    ? dependencies.targetUserId
+      ? and(
+        eq(emailAccounts.provider, "gmail"),
+        eq(emailAccounts.id, dependencies.targetGoogleAccountId),
+        eq(emailAccounts.userId, dependencies.targetUserId),
+      )
+      : and(
+        eq(emailAccounts.provider, "gmail"),
+        eq(emailAccounts.id, dependencies.targetGoogleAccountId),
+      )
+    : dependencies.targetUserId
       ? and(
         eq(emailAccounts.provider, "gmail"),
         eq(emailAccounts.userId, dependencies.targetUserId),
       )
-      : eq(emailAccounts.provider, "gmail"))
+      : eq(emailAccounts.provider, "gmail");
+  const googleAccounts = await db
+    .select()
+    .from(emailAccounts)
+    .where(googleAccountFilter)
     .limit(2);
   const googleAccount = googleAccounts.length === 1 ? googleAccounts[0] : undefined;
 
@@ -136,15 +149,16 @@ export async function collectLiveProviderAcceptance(
     }
   }
 
-  const [googleEvidenceCount] = googleAccount?.userId
+  const googleEvidenceRows = googleAccount?.userId
     ? await db
-      .select({ value: count() })
+      .select({ id: evidence.id })
       .from(evidence)
       .where(and(
         eq(evidence.userId, googleAccount.userId),
         inArray(evidence.source, ["gmail", "google_drive"]),
       ))
-    : [{ value: 0 }];
+    : [];
+  const googleEvidenceIds = new Set(googleEvidenceRows.map((row) => row.id));
 
   const ownerAudits = googleAccount?.userId
     ? await db
@@ -153,6 +167,10 @@ export async function collectLiveProviderAcceptance(
       .where(eq(auditLogs.userId, googleAccount.userId))
     : [];
   const auditCount = (action: string) => ownerAudits.filter((entry) => entry.action === action).length;
+  const googleSourceOpenAudits = ownerAudits.filter((entry) =>
+    entry.action === AUDIT_ACTIONS.EVIDENCE_SOURCE_OPENED &&
+    Boolean(entry.entityId && googleEvidenceIds.has(entry.entityId)),
+  );
 
   const googleChecks = {
     credentials: check(
@@ -177,15 +195,15 @@ export async function collectLiveProviderAcceptance(
       driveRead ? `google-api:drive-root-read:folders=${driveRootFolderCount}` : false,
     ),
     evidencePersisted: check(
-      Number(googleEvidenceCount?.value || 0) > 0,
-      Number(googleEvidenceCount?.value || 0) > 0
-        ? `database:google-evidence-count=${googleEvidenceCount.value}`
+      googleEvidenceRows.length > 0,
+      googleEvidenceRows.length > 0
+        ? `database:google-evidence-count=${googleEvidenceRows.length}`
         : false,
     ),
     sourceLinkOpened: check(
-      auditCount(AUDIT_ACTIONS.EVIDENCE_SOURCE_OPENED) > 0,
-      auditCount(AUDIT_ACTIONS.EVIDENCE_SOURCE_OPENED) > 0
-        ? `audit:evidence.source_opened:count=${auditCount(AUDIT_ACTIONS.EVIDENCE_SOURCE_OPENED)}`
+      googleSourceOpenAudits.length > 0,
+      googleSourceOpenAudits.length > 0
+        ? `audit:google-evidence.source_opened:count=${googleSourceOpenAudits.length}`
         : false,
     ),
     disconnectRevoked: check(
@@ -287,7 +305,16 @@ export async function collectLiveProviderAcceptance(
 }
 
 if (require.main === module) {
-  collectLiveProviderAcceptance()
+  const option = (name: string): string | undefined => {
+    const index = process.argv.indexOf(name);
+    if (index >= 0) return process.argv[index + 1];
+    return process.argv.find((argument) => argument.startsWith(`${name}=`))?.slice(name.length + 1);
+  };
+  collectLiveProviderAcceptance({
+    ...DEFAULT_DEPENDENCIES,
+    targetUserId: option("--user-id"),
+    targetGoogleAccountId: option("--google-account-id"),
+  })
     .then((result) => console.log(JSON.stringify(result, null, 2)))
     .catch((error) => {
       console.error(error instanceof Error ? error.message : String(error));

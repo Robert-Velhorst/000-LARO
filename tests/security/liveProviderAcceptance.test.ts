@@ -147,5 +147,74 @@ suite("live provider acceptance evidence", () => {
     expect(serialized).not.toContain("private-owner@example.com");
     expect(serialized).not.toContain("private-access-token");
     expect(serialized).not.toContain("private-refresh-token");
+
+    await app.db.insert(app.schema.emailAccounts).values({
+      id: "GOOGLE_ACCEPTANCE_SECOND",
+      userId,
+      provider: "gmail",
+      email: "private-second@example.com",
+      accessToken: encryptToken("private-second-access-token"),
+      refreshToken: encryptToken("private-second-refresh-token"),
+      status: "connected",
+      connectedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const ambiguousOwner = await collectLiveProviderAcceptance({
+      ...providerDependencies,
+      targetUserId: userId,
+    });
+    expect(ambiguousOwner.providers.google.status).toBe("pending");
+
+    const selectedAccount = await collectLiveProviderAcceptance({
+      ...providerDependencies,
+      targetUserId: userId,
+      targetGoogleAccountId: "GOOGLE_ACCEPTANCE",
+    });
+    expect(selectedAccount.summary).toEqual({ status: "passed", pendingChecks: [] });
+    expect(JSON.stringify(selectedAccount)).not.toContain("private-second@example.com");
+  });
+
+  it("does not accept a source-open audit for unrelated non-Google evidence", async () => {
+    const userId = "USER_UNRELATED_SOURCE_OPEN";
+    const caseId = "CASE_UNRELATED_SOURCE_OPEN";
+    const now = new Date();
+    await app.db.insert(app.schema.users).values(buildUser({ id: userId }));
+    await app.db.insert(app.schema.cases).values(buildCase({ id: caseId, userId }));
+    await app.db.insert(app.schema.evidence).values([
+      buildEvidence({ id: "GOOGLE_EVIDENCE_NOT_OPENED", caseId, userId, source: "gmail" }),
+      buildEvidence({ id: "LOCAL_EVIDENCE_OPENED", caseId, userId, source: "manual_upload" }),
+    ]);
+    await app.db.insert(app.schema.emailAccounts).values({
+      id: "GOOGLE_UNRELATED_SOURCE_OPEN",
+      userId,
+      provider: "gmail",
+      email: "private-unrelated@example.com",
+      accessToken: encryptToken("private-unrelated-access-token"),
+      refreshToken: encryptToken("private-unrelated-refresh-token"),
+      status: "connected",
+      connectedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await app.db.insert(app.schema.auditLogs).values({
+      id: "AUDIT_UNRELATED_SOURCE_OPEN",
+      userId,
+      action: "evidence.source_opened",
+      entityType: "evidence",
+      entityId: "LOCAL_EVIDENCE_OPENED",
+      createdAt: now,
+    });
+
+    const result = await collectLiveProviderAcceptance({
+      listDriveFolders: async () => [],
+      testGmail: async () => ({ ok: true, email: "private-unrelated@example.com" }),
+      verifyOutbound: async () => ({ ok: false, provider: "unconfigured" }),
+      targetUserId: userId,
+    });
+
+    expect(result.providers.google.checks.evidencePersisted.passed).toBe(true);
+    expect(result.providers.google.checks.sourceLinkOpened).toEqual({ passed: false, evidence: [] });
   });
 });

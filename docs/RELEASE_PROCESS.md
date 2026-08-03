@@ -89,6 +89,14 @@ npm run release:prepare -- --providers google,outboundEmail
 npm run acceptance:providers
 ```
 
+When more than one Google account exists, select the acceptance subject
+explicitly. The account must belong to the supplied owner when both arguments
+are present:
+
+```powershell
+npm run acceptance:providers -- --user-id <owner-id> --google-account-id <account-id>
+```
+
 The command records the exact mandatory checks and current brand-asset hashes in
 `release-acceptance.draft.json`. It does not read credentials, approve a gate, or
 overwrite the canonical record. Complete each live check with representative
@@ -105,7 +113,7 @@ Its JSON output contains counts and evidence identifiers only. For the API-only
 container, run the compiled equivalent:
 
 ```powershell
-docker exec <laro-container> node /app/dist/server/server/liveProviderAcceptance.js
+docker exec <laro-container> node /app/dist/server/server/liveProviderAcceptance.js --user-id <owner-id> --google-account-id <account-id>
 ```
 
 The probe sends no message, creates no case/evidence/outreach record, never
