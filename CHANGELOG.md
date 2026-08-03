@@ -21,6 +21,10 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   credential and refreshing status immediately.
 
 ### Added
+- Added a resumable live outbound-provider acceptance command. It sends only to
+  the selected owner's matching Google account after an exact confirmation,
+  verifies one inbox copy and the send-once guard, stores a signed redacted
+  receipt, restores the send flag, and removes its transient business rows.
 - Added an admin operations view for the outreach emergency stop, provider
   configuration state, and uncertain-delivery recovery. Recovery requires a
   provider-verified note, uses an atomic guard update, records an audit event,

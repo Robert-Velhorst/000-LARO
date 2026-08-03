@@ -37,6 +37,32 @@ confirmed non-delivery removes only that guard and leaves the draft Approved.
 Both outcomes write `outreach.dispatch_resolved`; concurrent or stale decisions
 fail closed.
 
+### Live outbound acceptance
+
+Run this only for an owner-controlled connected Google mailbox. The recipient
+and confirmation must be identical to that account's email address:
+
+```powershell
+npm.cmd run acceptance:outbound-live -- `
+  --user-id <owner-user-id> `
+  --google-account-id <connected-google-account-id> `
+  --recipient <owner-email> `
+  --confirm-send-to <owner-email> `
+  --run-id <stable-operator-run-id>
+```
+
+In the API container, invoke the compiled file at
+`/app/dist/server/server/liveOutboundAcceptance.js` with the same arguments.
+The command refuses a mismatched recipient, an engaged emergency stop, an
+environment override that keeps sending off, or an unconnected account. It
+creates and approves deterministic acceptance-only rows, sends one labelled
+message through the guarded outreach path, observes exactly one matching Gmail
+inbox message, retries the send to prove the duplicate guard, then stores a
+signed redacted receipt and audit event before deleting all temporary business
+rows. A rerun with the same receipt does not send again and finishes interrupted
+cleanup. Preserve the `COOKIE_SECRET`: rotating it intentionally invalidates the
+receipt and requires a new acceptance run.
+
 ## Data Operations
 
 - Integrity: `admin.invariants`
