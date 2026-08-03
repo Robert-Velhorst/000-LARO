@@ -14,7 +14,11 @@ import {
   systemConfig,
 } from "./schema";
 import { verifyOutboundEmailConnection } from "./systemEmail";
-import { readOutboundAcceptanceReceipt } from "./providerAcceptanceEvidence";
+import {
+  hashAcceptanceRecipient,
+  readGoogleEvidenceAcceptanceReceipt,
+  readOutboundAcceptanceReceipt,
+} from "./providerAcceptanceEvidence";
 
 const GOOGLE_REQUIREMENTS = [
   "credentials",
@@ -179,6 +183,20 @@ export async function collectLiveProviderAcceptance(
     entry.action === AUDIT_ACTIONS.EVIDENCE_SOURCE_OPENED &&
     Boolean(entry.entityId && googleEvidenceIds.has(entry.entityId)),
   );
+  const googleReceipt = googleAccount?.userId
+    ? await readGoogleEvidenceAcceptanceReceipt(googleAccount.userId)
+    : null;
+  const googleReceiptMatchesAccount = Boolean(
+    googleReceipt &&
+    googleAccount?.email &&
+    googleReceipt.accountEmailHash === hashAcceptanceRecipient(googleAccount.email),
+  );
+  const googleReceiptAuditRecorded = Boolean(googleReceipt && ownerAudits.some((entry) =>
+    entry.action === AUDIT_ACTIONS.PROVIDER_ACCEPTANCE_RECORDED &&
+    entry.entityId === googleReceipt.runId &&
+    parsedAuditDetails(entry.details).provider === "google",
+  ));
+  const googleReceiptProven = googleReceiptMatchesAccount && googleReceiptAuditRecorded;
 
   const googleChecks = {
     credentials: check(
@@ -203,13 +221,15 @@ export async function collectLiveProviderAcceptance(
       driveRead ? `google-api:drive-root-read:folders=${driveRootFolderCount}` : false,
     ),
     evidencePersisted: check(
-      googleEvidenceRows.length > 0,
+      googleReceiptProven || googleEvidenceRows.length > 0,
+      googleReceiptProven ? "receipt:google-evidence-persisted-and-read" : false,
       googleEvidenceRows.length > 0
         ? `database:google-evidence-count=${googleEvidenceRows.length}`
         : false,
     ),
     sourceLinkOpened: check(
-      googleSourceOpenAudits.length > 0,
+      googleReceiptProven || googleSourceOpenAudits.length > 0,
+      googleReceiptProven ? "receipt:google-source-opened-and-hash-matched" : false,
       googleSourceOpenAudits.length > 0
         ? `audit:google-evidence.source_opened:count=${googleSourceOpenAudits.length}`
         : false,
@@ -241,7 +261,8 @@ export async function collectLiveProviderAcceptance(
   );
   const receiptAuditRecorded = Boolean(outboundReceipt && ownerAudits.some((entry) =>
     entry.action === AUDIT_ACTIONS.PROVIDER_ACCEPTANCE_RECORDED &&
-    entry.entityId === outboundReceipt.runId,
+    entry.entityId === outboundReceipt.runId &&
+    parsedAuditDetails(entry.details).provider === outboundReceipt.provider,
   ));
 
   const ownerOutreachRows = googleAccount?.userId

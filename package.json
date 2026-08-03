@@ -52,6 +52,7 @@
     "release:check": "node scripts/release-acceptance.mjs",
     "acceptance:providers": "tsx server/liveProviderAcceptance.ts",
     "acceptance:outbound-live": "tsx server/liveOutboundAcceptance.ts",
+    "acceptance:google-evidence-live": "tsx server/liveGoogleEvidenceAcceptance.ts",
     "traceability": "node scripts/traceability.mjs --write",
     "gate": "node scripts/stabilization-gate.mjs",
     "verify": "npm run gate",

@@ -63,6 +63,34 @@ rows. A rerun with the same receipt does not send again and finishes interrupted
 cleanup. Preserve the `COOKIE_SECRET`: rotating it intentionally invalidates the
 receipt and requires a new acceptance run.
 
+### Live Google evidence acceptance
+
+Run this after the outbound owner self-test, using that receipt's run ID. This
+command sends no message. It searches the selected Gmail account for the exact
+labelled self-test message, imports it through the production collector, runs
+deterministic email analysis, retrieves the stored bytes through a five-minute
+signed HTTP link, verifies the SHA-256 hash, and records the source-open audit:
+
+```powershell
+npm.cmd run acceptance:google-evidence-live -- `
+  --user-id <owner-user-id> `
+  --google-account-id <connected-google-account-id> `
+  --recipient <owner-email> `
+  --confirm-account <owner-email> `
+  --outbound-run-id <completed-outbound-run-id> `
+  --run-id <stable-google-acceptance-run-id>
+```
+
+In the API container, invoke
+`/app/dist/server/server/liveGoogleEvidenceAcceptance.js` with the same
+arguments. The command requires a valid matching outbound receipt, refuses an
+account mismatch or emergency stop, and retains no Gmail subject, message ID,
+email address, temporary case, evidence row, analysis row, collection log, or
+stored source bytes. It keeps only a signed redacted receipt and acceptance
+audit. Rerunning an accepted operation performs interrupted cleanup without
+reading Gmail again. Preserve `COOKIE_SECRET`, because it authenticates both
+provider acceptance receipts.
+
 ## Data Operations
 
 - Integrity: `admin.invariants`

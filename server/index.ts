@@ -43,6 +43,8 @@ import { getDb } from './db';
 import { assertSecurityConfig, ENV } from './_core/env';
 import { listenHttpServer } from './listen';
 import { APP_VERSION } from './_core/version';
+import { EvidenceAccessError, readSignedEvidenceDownload } from './evidenceAccess';
+import { sanitizeFilename } from './storage';
 import { initializeRealtimeServer } from './realtime';
 import {
   normalizePublicPathPrefix,
@@ -147,6 +149,29 @@ app.get('/api/health', async (_req, res) => {
     version: APP_VERSION,
     timestamp: new Date().toISOString(),
   });
+});
+
+app.get('/api/evidence-content/:id', async (req, res) => {
+  try {
+    const source = await readSignedEvidenceDownload({
+      evidenceId: req.params.id,
+      expires: typeof req.query.expires === 'string' ? req.query.expires : undefined,
+      signature: typeof req.query.signature === 'string' ? req.query.signature : undefined,
+    });
+    const fileName = encodeURIComponent(sanitizeFilename(source.fileName));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('Content-Type', source.mimeType);
+    res.setHeader('Content-Length', String(source.bytes.length));
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
+    res.status(200).send(source.bytes);
+  } catch (error) {
+    const status = error instanceof EvidenceAccessError ? error.status : 500;
+    res.status(status).json({
+      error: status === 500 ? 'Evidence source could not be read' : (error as Error).message,
+    });
+  }
 });
 
 // ─── OAuth2 routes ────────────────────────────────────────────────────────────

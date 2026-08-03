@@ -7,6 +7,10 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Replaced API-only evidence `file://` links with short-lived signed HTTP links
+  that enforce authenticated issuance, expiry, signature validation, and
+  content-hash integrity without exposing container paths. Desktop-local links
+  remain bound to the local server, while API links use the configured gateway.
 - Made every Google Drive browse, preview, search, import, keyword-pull, and
   provider-acceptance operation account-specific. Multi-account owners must
   select the Drive account instead of silently using the first stored token.
@@ -21,6 +25,10 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   credential and refreshing status immediately.
 
 ### Added
+- Added a resumable live Google evidence acceptance command. It reuses the
+  owner-only outbound test message, proves real Gmail persistence, deterministic
+  content analysis, signed source retrieval, hash equality, and source-open
+  auditing, then stores a signed redacted receipt and removes all transient data.
 - Added a resumable live outbound-provider acceptance command. It sends only to
   the selected owner's matching Google account after an exact confirmation,
   verifies one inbox copy and the send-once guard, stores a signed redacted

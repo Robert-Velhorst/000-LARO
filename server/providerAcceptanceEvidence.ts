@@ -8,6 +8,7 @@ import { auditLogs, systemConfig } from "./schema";
 import { nanoid } from "nanoid";
 
 const OUTBOUND_RECEIPT_PREFIX = "acceptance:outbound-email:";
+const GOOGLE_EVIDENCE_RECEIPT_PREFIX = "acceptance:google-evidence:";
 
 export interface OutboundAcceptanceReceipt {
   schemaVersion: 1;
@@ -25,8 +26,32 @@ export interface OutboundAcceptanceReceipt {
 
 type UnsignedOutboundReceipt = Omit<OutboundAcceptanceReceipt, "signature">;
 
+export interface GoogleEvidenceAcceptanceReceipt {
+  schemaVersion: 1;
+  userId: string;
+  runId: string;
+  provider: "google";
+  source: "gmail";
+  accountEmailHash: string;
+  sourceIdHash: string;
+  evidencePersisted: true;
+  sourceContentRead: true;
+  contentHashMatched: true;
+  analysisCompleted: true;
+  sourceOpenedAudit: true;
+  verifiedAt: string;
+  appVersion: string;
+  signature: string;
+}
+
+type UnsignedGoogleEvidenceReceipt = Omit<GoogleEvidenceAcceptanceReceipt, "signature">;
+
 function receiptKey(userId: string): string {
   return `${OUTBOUND_RECEIPT_PREFIX}${userId}`;
+}
+
+function googleReceiptKey(userId: string): string {
+  return `${GOOGLE_EVIDENCE_RECEIPT_PREFIX}${userId}`;
 }
 
 function canonicalReceipt(receipt: UnsignedOutboundReceipt): string {
@@ -55,8 +80,44 @@ function isValidSignature(receipt: OutboundAcceptanceReceipt): boolean {
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+function canonicalGoogleReceipt(receipt: UnsignedGoogleEvidenceReceipt): string {
+  return JSON.stringify({
+    schemaVersion: receipt.schemaVersion,
+    userId: receipt.userId,
+    runId: receipt.runId,
+    provider: receipt.provider,
+    source: receipt.source,
+    accountEmailHash: receipt.accountEmailHash,
+    sourceIdHash: receipt.sourceIdHash,
+    evidencePersisted: receipt.evidencePersisted,
+    sourceContentRead: receipt.sourceContentRead,
+    contentHashMatched: receipt.contentHashMatched,
+    analysisCompleted: receipt.analysisCompleted,
+    sourceOpenedAudit: receipt.sourceOpenedAudit,
+    verifiedAt: receipt.verifiedAt,
+    appVersion: receipt.appVersion,
+  });
+}
+
+function signGoogleReceipt(receipt: UnsignedGoogleEvidenceReceipt): string {
+  return createHmac("sha256", ENV.COOKIE_SECRET)
+    .update(`google-evidence\n${canonicalGoogleReceipt(receipt)}`)
+    .digest("hex");
+}
+
+function isValidGoogleSignature(receipt: GoogleEvidenceAcceptanceReceipt): boolean {
+  if (!/^[a-f0-9]{64}$/.test(receipt.signature)) return false;
+  const expected = Buffer.from(signGoogleReceipt(receipt), "hex");
+  const actual = Buffer.from(receipt.signature, "hex");
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
 export function hashAcceptanceRecipient(recipient: string): string {
   return createHash("sha256").update(recipient.trim().toLowerCase()).digest("hex");
+}
+
+export function hashAcceptanceSourceId(sourceId: string): string {
+  return createHash("sha256").update(sourceId).digest("hex");
 }
 
 export async function recordOutboundAcceptanceReceipt(input: {
@@ -140,6 +201,108 @@ export async function readOutboundAcceptanceReceipt(
     }
     const receipt = parsed as OutboundAcceptanceReceipt;
     return isValidSignature(receipt) ? receipt : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function recordGoogleEvidenceAcceptanceReceipt(input: {
+  userId: string;
+  runId: string;
+  accountEmail: string;
+  sourceId: string;
+  verifiedAt?: Date;
+}): Promise<GoogleEvidenceAcceptanceReceipt> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const unsigned: UnsignedGoogleEvidenceReceipt = {
+    schemaVersion: 1,
+    userId: input.userId,
+    runId: input.runId,
+    provider: "google",
+    source: "gmail",
+    accountEmailHash: hashAcceptanceRecipient(input.accountEmail),
+    sourceIdHash: hashAcceptanceSourceId(input.sourceId),
+    evidencePersisted: true,
+    sourceContentRead: true,
+    contentHashMatched: true,
+    analysisCompleted: true,
+    sourceOpenedAudit: true,
+    verifiedAt: (input.verifiedAt ?? new Date()).toISOString(),
+    appVersion: APP_VERSION,
+  };
+  const receipt: GoogleEvidenceAcceptanceReceipt = {
+    ...unsigned,
+    signature: signGoogleReceipt(unsigned),
+  };
+  const recordedAt = new Date();
+  db.transaction((tx: any) => {
+    tx.insert(systemConfig).values({
+      configKey: googleReceiptKey(input.userId),
+      configValue: JSON.stringify(receipt),
+      updatedAt: recordedAt,
+    }).onConflictDoUpdate({
+      target: systemConfig.configKey,
+      set: { configValue: JSON.stringify(receipt), updatedAt: recordedAt },
+    }).run();
+    tx.insert(auditLogs).values({
+      id: nanoid(),
+      userId: input.userId,
+      action: AUDIT_ACTIONS.PROVIDER_ACCEPTANCE_RECORDED,
+      entityType: "provider_acceptance",
+      entityId: input.runId,
+      details: JSON.stringify({
+        provider: "google",
+        source: "gmail",
+        accountEmailHash: receipt.accountEmailHash,
+        sourceIdHash: receipt.sourceIdHash,
+        evidencePersisted: true,
+        sourceContentRead: true,
+        contentHashMatched: true,
+        analysisCompleted: true,
+        sourceOpenedAudit: true,
+        appVersion: receipt.appVersion,
+      }),
+      createdAt: recordedAt,
+    }).run();
+  });
+  return receipt;
+}
+
+export async function readGoogleEvidenceAcceptanceReceipt(
+  userId: string,
+): Promise<GoogleEvidenceAcceptanceReceipt | null> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [row] = await db.select({ value: systemConfig.configValue })
+    .from(systemConfig)
+    .where(eq(systemConfig.configKey, googleReceiptKey(userId)))
+    .limit(1);
+  if (!row?.value) return null;
+  try {
+    const parsed = JSON.parse(row.value) as Partial<GoogleEvidenceAcceptanceReceipt>;
+    if (
+      parsed.schemaVersion !== 1 ||
+      parsed.userId !== userId ||
+      typeof parsed.runId !== "string" ||
+      parsed.provider !== "google" ||
+      parsed.source !== "gmail" ||
+      !/^[a-f0-9]{64}$/.test(parsed.accountEmailHash || "") ||
+      !/^[a-f0-9]{64}$/.test(parsed.sourceIdHash || "") ||
+      parsed.evidencePersisted !== true ||
+      parsed.sourceContentRead !== true ||
+      parsed.contentHashMatched !== true ||
+      parsed.analysisCompleted !== true ||
+      parsed.sourceOpenedAudit !== true ||
+      typeof parsed.verifiedAt !== "string" ||
+      !Number.isFinite(Date.parse(parsed.verifiedAt)) ||
+      typeof parsed.appVersion !== "string" ||
+      typeof parsed.signature !== "string"
+    ) {
+      return null;
+    }
+    const receipt = parsed as GoogleEvidenceAcceptanceReceipt;
+    return isValidGoogleSignature(receipt) ? receipt : null;
   } catch {
     return null;
   }
