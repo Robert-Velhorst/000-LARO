@@ -74,6 +74,22 @@ export const RATE_LIMITS = {
     windowMs: 15 * 60 * 1000, // 15 minutes
     message: "Too many authentication attempts. Please try again later.",
   },
+
+  // Sending reset messages is intentionally tighter than general auth. This
+  // limits mailbox abuse while still allowing a user to request a replacement
+  // code when delivery is delayed.
+  passwordResetRequest: {
+    maxRequests: 3,
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    message: "Too many password reset requests. Please try again later.",
+  },
+
+  // A six-digit reset code must never be an unbounded online guessing oracle.
+  passwordResetVerify: {
+    maxRequests: 10,
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    message: "Too many password reset attempts. Please try again later.",
+  },
   
   // Case creation
   caseCreate: {
@@ -136,9 +152,15 @@ export function getRateLimitIdentifier(ctx: { user?: { id: string }; req: any })
   
   // Fallback to IP address for unauthenticated requests
   const forwarded = ctx.req.headers['x-forwarded-for'];
-  const ip = forwarded
-    ? (typeof forwarded === 'string' ? forwarded.split(',')[0] : forwarded[0])
-    : ctx.req.socket.remoteAddress;
+  const forwardedChain = (Array.isArray(forwarded) ? forwarded : [forwarded])
+    .filter((value): value is string => typeof value === 'string')
+    .flatMap((value) => value.split(','))
+    .map((value) => value.trim())
+    .filter(Boolean);
+  // The nearest trusted reverse proxy appends the immediate peer at the right
+  // edge. Prefer that value so a client-supplied leftmost entry cannot rotate
+  // rate-limit identities while traffic is routed through ngrok.
+  const ip = forwardedChain.at(-1) || ctx.req.socket.remoteAddress;
   
   return `ip:${ip || 'unknown'}`;
 }
