@@ -70,6 +70,13 @@ them. Provider credentials remain owner-supplied secrets in that ignored file.
 It also persists `LARO_COMPOSE_PROJECT_NAME`; keep that value unchanged when
 moving or refreshing the checkout so Docker Compose reuses the intended named
 database volume.
+
+Before creating the first account on a new API-only database, set a random
+`STANDALONE_SIGNUP_TOKEN` of 32-256 characters in the ignored `.env` and
+include it as `bootstrapToken` in the first `auth.signup` mutation. That first
+account is created as the administrator. Standalone enrollment then closes and
+rejects every later signup, even if the token is still present. Remove the token
+from `.env` after bootstrap. Electron desktop signup does not use this token.
 Runtime URL/PID metadata is written to ignored `.laro-ngrok.json`. Install
 `ngrok/laro-path-policy.yml` on the existing public Agent Endpoint once; the
 launcher then verifies `https://<dev-domain>/laro/api/health` on every start.

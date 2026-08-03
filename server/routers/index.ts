@@ -62,7 +62,7 @@ import { ENV } from "../_core/env";
 import { sendPasswordResetEmail } from "../systemEmail";
 import { getUser, getDb } from "../db";
 import { users, cases } from "../schema";
-import { and, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { invokeLLM } from "../llm";
 import { answerCaseQuestion } from "../caseAssistant";
@@ -72,6 +72,7 @@ import {
   MAX_EVIDENCE_BASE64_CHARS,
   MAX_EVIDENCE_FILE_BYTES,
 } from "../../shared/evidenceFiles";
+import { standaloneSignupAllowed } from "../signupPolicy";
 
 export const appRouter = router({
   system: systemRouter,
@@ -160,10 +161,24 @@ export const appRouter = router({
         email: z.string().email(),
         password: z.string().min(8),
         name: z.string().min(2),
+        bootstrapToken: z.string().max(256).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+
+        const [userCount] = await db.select({ value: count() }).from(users);
+        if (!standaloneSignupAllowed({
+          serverOnly: ENV.SERVER_ONLY,
+          existingUserCount: Number(userCount?.value || 0),
+          expectedBootstrapToken: ENV.STANDALONE_SIGNUP_TOKEN,
+          suppliedBootstrapToken: input.bootstrapToken,
+        })) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Standalone account enrollment is closed.",
+          });
+        }
 
         const existing = await db.select().from(users).where(eq(users.email, input.email)).limit(1);
         if (existing.length > 0) {
@@ -173,14 +188,31 @@ export const appRouter = router({
         const hashedPassword = await bcrypt.hash(input.password, 10);
         const userId = `USER${Date.now()}`;
 
-        await db.insert(users).values({
+        const user = {
           id: userId,
           email: input.email,
           password: hashedPassword,
           name: input.name,
-          role: "user",
+          role: ENV.SERVER_ONLY ? "admin" : "user",
           createdAt: new Date(),
-        });
+        };
+
+        if (ENV.SERVER_ONLY) {
+          const claimed = db.transaction((tx) => {
+            const [currentCount] = tx.select({ value: count() }).from(users).all();
+            if (Number(currentCount?.value || 0) !== 0) return false;
+            tx.insert(users).values(user).run();
+            return true;
+          });
+          if (!claimed) {
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "Standalone account enrollment is closed.",
+            });
+          }
+        } else {
+          await db.insert(users).values(user);
+        }
 
         const token = jwt.sign({ userId }, ENV.JWT_SECRET, { expiresIn: SESSION_EXPIRES_IN });
         const cookieOptions = getSessionCookieOptions(ctx.req);
