@@ -120,6 +120,7 @@ npm run test:a11y:browser # 15-route Playwright/axe renderer audit
 npm run build            # renderer, main process, and server builds
 npm run dist:win         # Windows package
 npm run release:prepare  # non-approved brand/provider acceptance draft
+npm run acceptance:providers # non-destructive provider evidence report
 ```
 
 ## Legacy Flask Review
@@ -205,7 +206,7 @@ GitHub Actions repeats the Node and browser checks on the supported Node 22 tool
 - Server, Electron main-process, and shipped renderer TypeScript checks passed; no shipped runtime module disables type checking; ESLint passed.
 - Traceability reported 117 rows, 92 cited, and 0 broken references.
 - Runtime no-excuses scan reported 0 suspect findings; account safety reported 0 high-severity findings.
-- Vitest reported 60 passing files and 374 passing tests, including controlled
+- Vitest reported 61 passing files and 379 passing tests, including controlled
   NOvA parsing/filter, unknown-metric scoring, and review-gated
   media/organization discovery, tenant isolation, case-draft persistence, and
   target-database readiness tests, with no skipped or todo tests.
@@ -220,7 +221,8 @@ asks Windows for an available loopback port. Setting
 `OAUTH_REDIRECT_BASE_URL` to an explicit `localhost` or `127.0.0.1` port pins the
 desktop server to that registered OAuth callback port instead.
 - `npm audit` reported 0 known vulnerabilities after updating the direct
-  PostCSS build dependency to the patched 8.5.25 release.
+  PostCSS build dependency to 8.5.25 and the transitive Socket.IO parser to
+  4.2.7.
 - Production preflight and operator-readiness diagnostics reported no blockers.
   The isolated backup/delete/restore/reopen drill and target-database integrity,
   foreign-key, relationship-guard, invariant, reconciliation, duplicate, and

@@ -7,6 +7,8 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Updated the Socket.IO parser lock to 4.2.7 to resolve its zero-attachment
+  memory-exhaustion advisory in both the server and client dependency paths.
 - Updated the direct PostCSS build dependency to 8.5.25 to resolve the current
   upstream security advisory without changing the shipped renderer contract.
 - Reduced Google OAuth to Gmail/Drive read access plus account email, removed
@@ -16,6 +18,9 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   credential and refreshing status immediately.
 
 ### Added
+- Added a non-destructive live-provider acceptance probe that authenticates to Gmail,
+  Drive, and outbound email without sending, reconciles target evidence and
+  audit records, emits no private values, and leaves owner approval untouched.
 - Added an evidence-grounded case assistant that ranks completed document
   analyses, validates model-returned document IDs, exposes clickable source
   controls, and provides a deterministic retrieval summary when the optional
@@ -87,6 +92,9 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   compact source controls that open the owning document.
 
 ### Fixed
+- Made approved outreach delivery reserve its idempotency guard atomically,
+  commit the sent state and audit row together, reject concurrent sends before
+  provider invocation, and fail closed on ambiguous provider exceptions.
 - Made the advertised API-only base URL return a versioned service-status
   document instead of a generic 404, while leaving desktop renderer routing
   unchanged.

@@ -477,6 +477,14 @@ describe('production readiness regressions', () => {
     expect(readiness).toContain('[result.stdout, result.stderr]');
   });
 
+  it('keeps full and runtime dependency audits in the blocking stabilization gate', () => {
+    const gate = readFileSync(join(ROOT, 'scripts/stabilization-gate.mjs'), 'utf8');
+    expect(gate).toContain('"dependency audit"');
+    expect(gate).toContain('[NPM_CLI, "audit", "--audit-level=moderate"]');
+    expect(gate).toContain('"runtime dependency audit"');
+    expect(gate).toContain('[NPM_CLI, "audit", "--omit=dev", "--audit-level=moderate"]');
+  });
+
   it('denies unneeded Electron browser permissions before creating windows', () => {
     const main = readFileSync(join(ROOT, 'src-main/index.ts'), 'utf8');
     const permissions = readFileSync(join(ROOT, 'src-main/sessionPermissions.ts'), 'utf8');

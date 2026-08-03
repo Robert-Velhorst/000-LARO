@@ -86,6 +86,15 @@ Prepare a non-approved local draft for only the providers intended for release:
 
 ```powershell
 npm run release:prepare -- --providers google,outboundEmail
+npm run acceptance:providers
+```
+
+When more than one Google account exists, select the acceptance subject
+explicitly. The account must belong to the supplied owner when both arguments
+are present:
+
+```powershell
+npm run acceptance:providers -- --user-id <owner-id> --google-account-id <account-id>
 ```
 
 The command records the exact mandatory checks and current brand-asset hashes in
@@ -95,6 +104,23 @@ non-sensitive data, add auditable evidence references, obtain owner approval,
 then move the reviewed values into `release-acceptance.json` through a pull
 request. A pending canonical record is valid for normal development but blocks
 every tagged release.
+
+`npm run acceptance:providers` performs a non-destructive target check. It authenticates
+to the configured Gmail, Drive, and outbound-email providers without sending a
+message, then inspects source-linked evidence, source-open audit events, Google
+revocation evidence, approved outreach audit rows, and atomic delivery guards.
+Its JSON output contains counts and evidence identifiers only. For the API-only
+container, run the compiled equivalent:
+
+```powershell
+docker exec <laro-container> node /app/dist/server/server/liveProviderAcceptance.js --user-id <owner-id> --google-account-id <account-id>
+```
+
+The probe sends no message, creates no case/evidence/outreach record, never
+updates `release-acceptance.json`, and never converts a pending check into an
+owner approval. A normal OAuth access-token refresh may update the encrypted
+token vault. Missing representative case activity remains visible as pending
+rather than being inferred from configuration or unit tests.
 
 An approved `liveProviders` gate must use the supported provider identifiers
 `google`, `outboundEmail`, `inboundEmail`, `s3`, `forgeLlm`, or `telegram`.
