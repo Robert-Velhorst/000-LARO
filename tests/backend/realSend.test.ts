@@ -116,6 +116,67 @@ suite('Real outreach send (011/026/017)', () => {
       (await import('drizzle-orm')).eq(app.schema.systemConfig.configKey, `sent:${uncertainId}`)
     );
     expect(guard.configValue).toMatch(/^uncertain:/);
+
+    await expect(app.makeCaller(U).admin.uncertainOutreachDispatches()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const ADMIN = { id: 'ADMIN_SEND_RECOVERY', name: 'Operator', role: 'admin', email: 'operator@example.com' };
+    const pending = await app.makeCaller(ADMIN).admin.uncertainOutreachDispatches();
+    expect(pending).toContainEqual(expect.objectContaining({ outreachId: uncertainId, outreachStatus: 'Approved' }));
+    await app.makeCaller(ADMIN).admin.resolveUncertainOutreachDispatch({
+      outreachId: uncertainId,
+      outcome: 'not_delivered',
+      providerVerified: true,
+      note: 'SMTP provider logs confirm that the message was not accepted.',
+    });
+
+    const retryResult = await sendApprovedOutreach(U.id, uncertainId, retrySender);
+    expect(retryResult.sent).toBe(true);
+    expect(retryCalls).toBe(1);
+    await setFlag('outreach.send.enabled', false);
+  });
+
+  it('lets an admin confirm an ambiguous provider delivery without retransmitting', async () => {
+    const { setFlag } = await import('../../server/featureFlags');
+    await setFlag('outreach.send.enabled', true);
+    await app.db.insert(app.schema.cases).values(buildCase({ id: 'CASE_SEND_CONFIRMED', userId: U.id }));
+    await app.makeCaller(U).workflow.prepareDrafts({ caseId: 'CASE_SEND_CONFIRMED' });
+    const queue = await app.makeCaller(U).workflow.reviewQueue({ caseId: 'CASE_SEND_CONFIRMED' });
+    const confirmedId = queue[0].id;
+    await app.makeCaller(U).workflow.approveDraft({ outreachId: confirmedId });
+
+    const { sendApprovedOutreach } = await import('../../server/outreachSend');
+    await expect(sendApprovedOutreach(U.id, confirmedId, async () => {
+      throw new Error('Connection ended after the provider accepted DATA');
+    })).rejects.toThrow('Connection ended');
+
+    const ADMIN = { id: 'ADMIN_SEND_RECOVERY', name: 'Operator', role: 'admin', email: 'operator@example.com' };
+    const resolved = await app.makeCaller(ADMIN).admin.resolveUncertainOutreachDispatch({
+      outreachId: confirmedId,
+      outcome: 'delivered',
+      providerVerified: true,
+      providerReference: 'provider-message-123',
+      note: 'Provider activity confirms exactly one accepted message.',
+    });
+    expect(resolved).toMatchObject({ outcome: 'delivered', canRetry: false, status: 'Sent' });
+
+    let retransmissions = 0;
+    const repeat = await sendApprovedOutreach(U.id, confirmedId, async () => {
+      retransmissions += 1;
+      return { delivered: true, provider: 'fake' };
+    });
+    expect(repeat.alreadySent).toBe(true);
+    expect(retransmissions).toBe(0);
+
+    const { and, eq } = await import('drizzle-orm');
+    const audits = await app.db.select().from(app.schema.auditLogs).where(and(
+      eq(app.schema.auditLogs.entityId, confirmedId),
+      eq(app.schema.auditLogs.action, 'outreach.dispatch_resolved'),
+    ));
+    expect(audits).toHaveLength(1);
+    expect(JSON.parse(audits[0].details)).toMatchObject({
+      outcome: 'delivered',
+      providerVerified: true,
+      providerReference: 'provider-message-123',
+    });
     await setFlag('outreach.send.enabled', false);
   });
 
@@ -147,13 +208,14 @@ suite('Real outreach send (011/026/017)', () => {
     expect(caseRow.status).toBe('Matched');
 
     const metrics = await app.makeCaller(U).outreachAnalytics.getOverallMetrics();
-    expect(metrics.sent).toBe(1);
+    expect(metrics.sent).toBe(3);
     expect(metrics.responses).toBe(1);
     expect(metrics.interested).toBe(1);
-    expect(metrics.overallResponseRate).toBe(100);
+    expect(metrics.overallResponseRate).toBeCloseTo(100 / 3);
 
     const lawyers = await app.makeCaller(U).outreachAnalytics.getResponseRateByLawyer({ limit: 10 });
-    expect(lawyers[0]).toMatchObject({ lawyerId: 'LW_SEND', responses: 1, responseRate: 100 });
+    expect(lawyers[0]).toMatchObject({ lawyerId: 'LW_SEND', responses: 1 });
+    expect(lawyers[0].responseRate).toBeCloseTo(100 / 3);
   });
 
   it('fails honestly (no fake success) when no provider is configured', async () => {

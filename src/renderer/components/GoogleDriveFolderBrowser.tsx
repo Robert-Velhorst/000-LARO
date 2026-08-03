@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Loader2, 
   Folder, 
@@ -22,7 +23,8 @@ import { toast } from "sonner";
 
 interface GoogleDriveFolderBrowserProps {
   caseId: string;
-  onFoldersSelected?: (folderIds: string[], folderNames: string[]) => void;
+  initialAccountId?: string;
+  onFoldersSelected?: (folderIds: string[], folderNames: string[], accountId: string) => void;
   multiSelect?: boolean;
 }
 
@@ -35,6 +37,7 @@ interface DriveFolder {
 
 export function GoogleDriveFolderBrowser({ 
   caseId, 
+  initialAccountId,
   onFoldersSelected,
   multiSelect = true 
 }: GoogleDriveFolderBrowserProps) {
@@ -44,20 +47,33 @@ export function GoogleDriveFolderBrowser({
   const [parentId, setParentId] = useState<string | undefined>(undefined);
   const [searchQuery, setSearchQuery] = useState("");
   const [previewFolderId, setPreviewFolderId] = useState<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState(initialAccountId || "");
 
   // Check connection status
   const { data: connectionData, isLoading: isCheckingConnection } = trpc.googleDrive.checkConnection.useQuery();
+  const connectedAccounts = connectionData?.accounts ?? [];
+
+  useEffect(() => {
+    if (connectedAccounts.length === 0) return;
+    setSelectedAccountId((current) => {
+      if (connectedAccounts.some((account) => account.id === current)) return current;
+      if (initialAccountId && connectedAccounts.some((account) => account.id === initialAccountId)) {
+        return initialAccountId;
+      }
+      return connectedAccounts.length === 1 ? connectedAccounts[0].id : "";
+    });
+  }, [connectionData, initialAccountId]);
 
   // List folders
   const { data: foldersData, isLoading: isLoadingFolders } = trpc.googleDrive.listFolders.useQuery(
-    { parentId },
-    { enabled: !!connectionData?.connected }
+    { parentId, accountId: selectedAccountId || undefined },
+    { enabled: !!connectionData?.connected && !!selectedAccountId }
   );
 
   // Get file preview
   const { data: previewData, isLoading: isLoadingPreview } = trpc.googleDrive.getFilesInFolder.useQuery(
-    { folderId: previewFolderId!, recursive: false },
-    { enabled: !!previewFolderId }
+    { folderId: previewFolderId!, recursive: false, accountId: selectedAccountId || undefined },
+    { enabled: !!previewFolderId && !!selectedAccountId }
   );
 
   // Import mutation
@@ -129,10 +145,15 @@ export function GoogleDriveFolderBrowser({
       folderId,
       folderName,
       recursive: true,
+      accountId: selectedAccountId,
     });
   };
 
   const handleConfirmSelection = () => {
+    if (!selectedAccountId) {
+      toast.error("Select the Google account to use");
+      return;
+    }
     if (selectedFolders.size === 0) {
       toast.error("Please select at least one folder");
       return;
@@ -142,7 +163,7 @@ export function GoogleDriveFolderBrowser({
     const folderNames = folderIds.map(id => selectedFolderNames.get(id) || "Unknown");
 
     if (onFoldersSelected) {
-      onFoldersSelected(folderIds, folderNames);
+      onFoldersSelected(folderIds, folderNames, selectedAccountId);
     }
   };
 
@@ -197,6 +218,32 @@ export function GoogleDriveFolderBrowser({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="drive-account">Google account</Label>
+            <Select
+              value={selectedAccountId}
+              onValueChange={(accountId) => {
+                setSelectedAccountId(accountId);
+                setParentId(undefined);
+                setCurrentPath([]);
+                setPreviewFolderId(null);
+                setSelectedFolders(new Set());
+                setSelectedFolderNames(new Map());
+              }}
+            >
+              <SelectTrigger id="drive-account" className="max-w-md">
+                <SelectValue placeholder="Select a Google account" />
+              </SelectTrigger>
+              <SelectContent>
+                {connectedAccounts.map((account) => (
+                  <SelectItem key={account.id} value={account.id}>
+                    {account.email || account.displayName || "Google account"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           {/* Breadcrumb Navigation */}
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <button

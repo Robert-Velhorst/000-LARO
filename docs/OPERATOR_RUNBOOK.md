@@ -20,6 +20,23 @@ and job state, including the last run, success, and error timestamps.
 - Rate limits are process-local; deploy a single API replica unless a shared
   limiter is introduced.
 
+### Ambiguous email delivery
+
+When the email provider disconnects after accepting message data, LARO keeps an
+`uncertain` send-once guard and blocks every retry. In **Admin > Operations**:
+
+1. Check the provider's message or activity log for that outreach.
+2. Choose **Mark delivered** only when one accepted message is visible.
+3. Choose **Allow retry** only when the provider confirms no delivery.
+4. Enter the provider reference when available, record the verification basis,
+   and confirm the provider check.
+
+The resolution compares the exact uncertain guard atomically. Confirmed
+delivery moves an Approved outreach to Sent without invoking the provider;
+confirmed non-delivery removes only that guard and leaves the draft Approved.
+Both outcomes write `outreach.dispatch_resolved`; concurrent or stale decisions
+fail closed.
+
 ## Data Operations
 
 - Integrity: `admin.invariants`

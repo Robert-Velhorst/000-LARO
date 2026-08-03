@@ -25,7 +25,7 @@ The Electron main process starts the Express/tRPC server and React renderer toge
 - Persist cases, parties, identifiers, status, risk, deadlines, obligations, open loops, claims, positions, and audit history.
 - Upload or stage PDF, DOCX, HTML, text, email-shaped, and Drive-shaped records while retaining source metadata and content hashes.
 - Keep case-neutral documents in an inbox until a user reviews deterministic case suggestions and explicitly links them.
-- Pull selected Gmail and Google Drive records through real read-only OAuth when credentials are configured.
+- Pull selected Gmail and Google Drive records through real read-only OAuth when credentials are configured; multi-account owners explicitly choose which Drive account each folder belongs to.
 - Run desktop keyword pulls as persisted, resumable jobs with live source phase,
   extracted-word and item counts, percentage, and estimated seconds remaining.
 - Deduplicate imported evidence while preserving source URIs and locally retrievable files.
@@ -80,6 +80,7 @@ The Electron main process starts the Express/tRPC server and React renderer toge
 - Track outreach totals, progress, responses, acceptance, and pending work per case.
 - Prepare and approve outreach drafts without sending them automatically.
 - Send an approved desktop-runtime lawyer outreach only when the global emergency stop is released, `outreach.send.enabled` is enabled, the caller owns the case, a real email provider is configured, and the idempotency guard has not already recorded the send.
+- Resolve an ambiguous provider outcome from the admin operations view only after checking provider activity. Confirmed delivery finalizes the send-once guard without retransmission; confirmed non-delivery safely permits a controlled retry, and both decisions are audited.
 
 ## Prerequisites
 
@@ -206,7 +207,7 @@ GitHub Actions repeats the Node and browser checks on the supported Node 22 tool
 - Server, Electron main-process, and shipped renderer TypeScript checks passed; no shipped runtime module disables type checking; ESLint passed.
 - Traceability reported 117 rows, 92 cited, and 0 broken references.
 - Runtime no-excuses scan reported 0 suspect findings; account safety reported 0 high-severity findings.
-- Vitest reported 61 passing files and 379 passing tests, including controlled
+- Vitest reported 62 passing files and 385 passing tests, including controlled
   NOvA parsing/filter, unknown-metric scoring, and review-gated
   media/organization discovery, tenant isolation, case-draft persistence, and
   target-database readiness tests, with no skipped or todo tests.
