@@ -17,11 +17,17 @@
  * provider and never contact a real lawyer.
  */
 import { getDb } from "./db";
-import { outreachStatus, cases as casesTable, lawyers as lawyersTable } from "./schema";
-import { eq } from "drizzle-orm";
+import {
+  auditLogs,
+  outreachStatus,
+  cases as casesTable,
+  lawyers as lawyersTable,
+  systemConfig,
+} from "./schema";
+import { and, eq } from "drizzle-orm";
+import { nanoid } from "nanoid";
 import { getFlag } from "./featureFlags";
 import { assertNotEmergencyStopped } from "./systemState";
-import { getSystemSwitch, setSystemSwitch } from "./systemState";
 import { assertOutreachTransition } from "./stateMachines";
 import { createAuditLog, AUDIT_ACTIONS } from "./audit";
 import { assertCaseOwnership } from "./_core/authz";
@@ -36,6 +42,51 @@ export interface SendResult {
 }
 
 export type EmailSender = (email: { to: string; subject: string; text: string }) => Promise<{ delivered: boolean; provider: string }>;
+
+const SENT_GUARD_PREFIX = "sent:";
+
+function readDispatchGuard(db: any, guardKey: string): string | null {
+  const [guard] = db
+    .select({ value: systemConfig.configValue })
+    .from(systemConfig)
+    .where(eq(systemConfig.configKey, guardKey))
+    .all();
+  return guard?.value ?? null;
+}
+
+function claimDispatch(db: any, guardKey: string, dispatchId: string): boolean {
+  return db.transaction((tx: any) => {
+    const result = tx
+      .insert(systemConfig)
+      .values({
+        configKey: guardKey,
+        configValue: `dispatching:${dispatchId}`,
+        updatedAt: new Date(),
+      })
+      .onConflictDoNothing()
+      .run();
+    return Number(result.changes || 0) === 1;
+  });
+}
+
+function releaseUndeliveredClaim(db: any, guardKey: string, dispatchState: string): void {
+  db.delete(systemConfig)
+    .where(and(
+      eq(systemConfig.configKey, guardKey),
+      eq(systemConfig.configValue, dispatchState),
+    ))
+    .run();
+}
+
+function markDispatchUncertain(db: any, guardKey: string, dispatchState: string): void {
+  db.update(systemConfig)
+    .set({ configValue: `uncertain:${dispatchState.slice("dispatching:".length)}`, updatedAt: new Date() })
+    .where(and(
+      eq(systemConfig.configKey, guardKey),
+      eq(systemConfig.configValue, dispatchState),
+    ))
+    .run();
+}
 
 const defaultSender: EmailSender = async (email) => {
   const { sendSystemEmail } = await import("./systemEmail");
@@ -75,9 +126,19 @@ export async function sendApprovedOutreach(
   await assertCaseOwnership(row.caseId, userId);
 
   // Gate 4 — idempotency: already sent? Return without re-sending.
-  const guardKey = `sent:${outreachId}`;
-  if (row.status === "Sent" || (await getSystemSwitch(guardKey))) {
+  const guardKey = `${SENT_GUARD_PREFIX}${outreachId}`;
+  const existingGuard = readDispatchGuard(db, guardKey);
+  if (row.status === "Sent" || existingGuard === "sent" || existingGuard === "true") {
     return { outreachId, sent: true, alreadySent: true };
+  }
+  if (existingGuard) {
+    const { TRPCError } = await import("@trpc/server");
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: existingGuard.startsWith("uncertain:")
+        ? "Delivery outcome is uncertain. An operator must verify the provider before retrying."
+        : "Delivery is already in progress. Wait for it to finish before retrying.",
+    });
   }
 
   // Gate 5 — must be human-approved.
@@ -103,23 +164,66 @@ export async function sendApprovedOutreach(
     `(Sent via LARO after explicit user approval. This is not legal advice.)`;
 
   // Transmit. If no provider is configured, delivered=false → fail honestly.
-  const result = await sender({ to, subject, text });
+  const dispatchId = nanoid();
+  const dispatchState = `dispatching:${dispatchId}`;
+  if (!claimDispatch(db, guardKey, dispatchId)) {
+    const { TRPCError } = await import("@trpc/server");
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "Delivery was claimed by another request. No duplicate message was sent.",
+    });
+  }
+
+  let result: Awaited<ReturnType<EmailSender>>;
+  try {
+    result = await sender({ to, subject, text });
+  } catch (error) {
+    markDispatchUncertain(db, guardKey, dispatchState);
+    throw error;
+  }
   if (!result.delivered) {
+    releaseUndeliveredClaim(db, guardKey, dispatchState);
     const { TRPCError } = await import("@trpc/server");
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No email provider is configured; nothing was sent. Configure SendGrid/SMTP." });
   }
 
   // Mark Sent (idempotently) + record.
   assertOutreachTransition(row.status ?? null, "Sent");
-  await setSystemSwitch(guardKey, true);
   const sentAt = new Date();
-  await db.update(outreachStatus).set({
-    status: "Sent",
-    initialContact: row.initialContact ?? sentAt,
-    lastContact: sentAt,
-    updatedAt: sentAt,
-  }).where(eq(outreachStatus.id, outreachId));
-  await createAuditLog({ userId, action: AUDIT_ACTIONS.OUTREACH_STATUS_CHANGED, entityType: "outreach", entityId: outreachId, details: { from: "Approved", to: "Sent", provider: result.provider } });
+  try {
+    db.transaction((tx: any) => {
+      const guardUpdate = tx.update(systemConfig)
+        .set({ configValue: "sent", updatedAt: sentAt })
+        .where(and(
+          eq(systemConfig.configKey, guardKey),
+          eq(systemConfig.configValue, dispatchState),
+        ))
+        .run();
+      if (Number(guardUpdate.changes || 0) !== 1) {
+        throw new Error("Outreach dispatch reservation was lost before finalization");
+      }
+
+      tx.update(outreachStatus).set({
+        status: "Sent",
+        initialContact: row.initialContact ?? sentAt,
+        lastContact: sentAt,
+        updatedAt: sentAt,
+      }).where(eq(outreachStatus.id, outreachId)).run();
+
+      tx.insert(auditLogs).values({
+        id: nanoid(),
+        userId,
+        action: AUDIT_ACTIONS.OUTREACH_STATUS_CHANGED,
+        entityType: "outreach",
+        entityId: outreachId,
+        details: JSON.stringify({ from: "Approved", to: "Sent", provider: result.provider }),
+        createdAt: sentAt,
+      }).run();
+    });
+  } catch (error) {
+    markDispatchUncertain(db, guardKey, dispatchState);
+    throw error;
+  }
 
   return { outreachId, sent: true, provider: result.provider, to };
 }

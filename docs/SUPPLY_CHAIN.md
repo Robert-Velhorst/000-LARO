@@ -18,4 +18,7 @@ The remediation upgraded the supported runtime to Node 22.12+, Electron 43, Vite
 
 ## Release rule
 
-Run `npm ci --ignore-scripts`, `npm run rebuild:node`, `npm run gate`, and `npm audit --audit-level=moderate` from a clean checkout. Audit status is time-sensitive and must be refreshed for every release.
+Run `npm ci --ignore-scripts`, `npm run rebuild:node`, and `npm run gate` from a
+clean checkout. The gate blocks on both full-lockfile and runtime-only npm audit
+findings at moderate severity or above. Audit status is time-sensitive and is
+therefore refreshed on every pull request and `main` build.

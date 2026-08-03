@@ -36,11 +36,25 @@ suite('Real outreach send (011/026/017)', () => {
 
     const { sendApprovedOutreach } = await import('../../server/outreachSend');
     const sent: any[] = [];
-    const fakeSender = async (email: any) => { sent.push(email); return { delivered: true, provider: 'fake' }; };
+    const fakeSender = async (email: any) => {
+      sent.push(email);
+      await new Promise((resolve) => { setTimeout(resolve, 25); });
+      return { delivered: true, provider: 'fake' };
+    };
 
-    const r1 = await sendApprovedOutreach(U.id, outreachId, fakeSender);
-    expect(r1.sent).toBe(true);
-    expect(r1.to).toBe('lawyer@law.example');
+    const concurrent = await Promise.allSettled([
+      sendApprovedOutreach(U.id, outreachId, fakeSender),
+      sendApprovedOutreach(U.id, outreachId, fakeSender),
+    ]);
+    const successful = concurrent.filter((result) => result.status === 'fulfilled');
+    const rejected = concurrent.filter((result) => result.status === 'rejected');
+    expect(successful).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((successful[0] as PromiseFulfilledResult<any>).value).toMatchObject({
+      sent: true,
+      to: 'lawyer@law.example',
+    });
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({ code: 'CONFLICT' });
     expect(sent.length).toBe(1);
 
     // Row is now Sent.
@@ -54,6 +68,54 @@ suite('Real outreach send (011/026/017)', () => {
     expect(r2.alreadySent).toBe(true);
     expect(sent.length).toBe(1); // still one send
 
+    const [guard] = await app.db.select().from(app.schema.systemConfig).where(
+      (await import('drizzle-orm')).eq(app.schema.systemConfig.configKey, `sent:${outreachId}`)
+    );
+    expect(guard.configValue).toBe('sent');
+    const auditRows = await app.db.select().from(app.schema.auditLogs).where(
+      (await import('drizzle-orm')).and(
+        (await import('drizzle-orm')).eq(app.schema.auditLogs.entityId, outreachId),
+        (await import('drizzle-orm')).eq(app.schema.auditLogs.action, 'outreach.status_changed'),
+      )
+    );
+    expect(auditRows).toHaveLength(2);
+    expect(auditRows.filter((entry: any) => entry.details?.includes('"to":"Sent"'))).toHaveLength(1);
+
+    await setFlag('outreach.send.enabled', false);
+  });
+
+  it('fails closed after an ambiguous provider exception', async () => {
+    const { setFlag } = await import('../../server/featureFlags');
+    await setFlag('outreach.send.enabled', true);
+    await app.db.insert(app.schema.cases).values(buildCase({ id: 'CASE_SEND_UNCERTAIN', userId: U.id }));
+    await app.makeCaller(U).workflow.prepareDrafts({ caseId: 'CASE_SEND_UNCERTAIN' });
+    const queue = await app.makeCaller(U).workflow.reviewQueue({ caseId: 'CASE_SEND_UNCERTAIN' });
+    const uncertainId = queue[0].id;
+    await app.makeCaller(U).workflow.approveDraft({ outreachId: uncertainId });
+
+    const { sendApprovedOutreach } = await import('../../server/outreachSend');
+    const ambiguousSender = async () => {
+      throw new Error('SMTP connection closed after DATA');
+    };
+    await expect(sendApprovedOutreach(U.id, uncertainId, ambiguousSender)).rejects.toThrow(
+      'SMTP connection closed after DATA',
+    );
+
+    let retryCalls = 0;
+    const retrySender = async () => {
+      retryCalls += 1;
+      return { delivered: true, provider: 'fake' };
+    };
+    await expect(sendApprovedOutreach(U.id, uncertainId, retrySender)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      message: expect.stringContaining('outcome is uncertain'),
+    });
+    expect(retryCalls).toBe(0);
+
+    const [guard] = await app.db.select().from(app.schema.systemConfig).where(
+      (await import('drizzle-orm')).eq(app.schema.systemConfig.configKey, `sent:${uncertainId}`)
+    );
+    expect(guard.configValue).toMatch(/^uncertain:/);
     await setFlag('outreach.send.enabled', false);
   });
 
@@ -113,6 +175,10 @@ suite('Real outreach send (011/026/017)', () => {
       (await import('drizzle-orm')).eq(app.schema.outreachStatus.id, oid)
     );
     expect(row.status).toBe('Approved');
+    const guards = await app.db.select().from(app.schema.systemConfig).where(
+      (await import('drizzle-orm')).eq(app.schema.systemConfig.configKey, `sent:${oid}`)
+    );
+    expect(guards).toHaveLength(0);
     await setFlag('outreach.send.enabled', false);
   });
 });

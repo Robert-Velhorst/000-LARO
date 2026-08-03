@@ -28,6 +28,24 @@ function fromAddress(): string {
   return resolveOutboundEmailConfiguration().from || "noreply@laro.local";
 }
 
+function createSmtpTransport() {
+  const port = Number(process.env.SMTP_PORT) || 587;
+  const startTls = process.env.SMTP_STARTTLS !== "false";
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port,
+    secure: port === 465,
+    requireTLS: port !== 465 && startTls,
+    tls: { minVersion: "TLSv1.2" },
+    auth:
+      process.env.SMTP_USER && process.env.SMTP_PASS
+        ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+        : undefined,
+    disableFileAccess: true,
+    disableUrlAccess: true,
+  });
+}
+
 async function sendViaSendGrid(email: SystemEmail): Promise<void> {
   const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
     method: "POST",
@@ -52,28 +70,41 @@ async function sendViaSendGrid(email: SystemEmail): Promise<void> {
 }
 
 async function sendViaSmtp(email: SystemEmail): Promise<void> {
-  const port = Number(process.env.SMTP_PORT) || 587;
-  const startTls = process.env.SMTP_STARTTLS !== "false";
-  const transport = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port,
-    secure: port === 465,
-    requireTLS: port !== 465 && startTls,
-    tls: { minVersion: "TLSv1.2" },
-    auth:
-      process.env.SMTP_USER && process.env.SMTP_PASS
-        ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-        : undefined,
-    disableFileAccess: true,
-    disableUrlAccess: true,
-  });
-  await transport.sendMail({
-    from: fromAddress(),
-    to: email.to,
-    subject: email.subject,
-    text: email.text,
-    html: email.html,
-  });
+  const transport = createSmtpTransport();
+  try {
+    await transport.sendMail({
+      from: fromAddress(),
+      to: email.to,
+      subject: email.subject,
+      text: email.text,
+      html: email.html,
+    });
+  } finally {
+    transport.close();
+  }
+}
+
+export async function verifyOutboundEmailConnection(): Promise<{
+  ok: boolean;
+  provider: "sendgrid" | "smtp" | "unconfigured";
+}> {
+  const configuration = resolveOutboundEmailConfiguration();
+  if (configuration.provider === "smtp" && configuration.configured) {
+    const transport = createSmtpTransport();
+    try {
+      await transport.verify();
+      return { ok: true, provider: "smtp" };
+    } finally {
+      transport.close();
+    }
+  }
+  if (configuration.provider === "sendgrid" && configuration.configured) {
+    const response = await fetch("https://api.sendgrid.com/v3/user/profile", {
+      headers: { Authorization: `Bearer ${ENV.SENDGRID_API_KEY}` },
+    });
+    return { ok: response.ok, provider: "sendgrid" };
+  }
+  return { ok: false, provider: "unconfigured" };
 }
 
 export async function sendSystemEmail(email: SystemEmail): Promise<SystemEmailResult> {
