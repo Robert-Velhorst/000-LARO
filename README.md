@@ -102,6 +102,12 @@ npm run dev
 
 `npm run setup` creates `.env` from `.env.example` only when `.env` does not already exist. It never overwrites existing configuration. The packaged desktop app atomically creates durable local JWT and cookie secrets in its Electron user-data directory; standalone production server operation requires strong values in `.env`. Keep `laro-secrets.json` with its matching database backup because it also protects encrypted provider tokens. A desktop single-instance lock prevents concurrent processes from opening that shared profile; a later launch restores and focuses the existing window. Electron browser permissions are denied by default because LARO uses reviewed native IPC for local-file selection and external links instead of browser device APIs.
 
+API-only deployments do not expose unrestricted registration. Their first
+account requires a one-time `STANDALONE_SIGNUP_TOKEN` of at least 32 random
+characters and becomes the administrator. After that owner exists, standalone
+enrollment stays closed even when the token remains configured. Packaged desktop
+signup is unchanged.
+
 Useful desktop commands:
 
 ```powershell
@@ -192,14 +198,14 @@ See [Operator Runbook](docs/OPERATOR_RUNBOOK.md), [Security](docs/SECURITY.md), 
 
 ## Verification
 
-The current production-readiness candidate was verified locally on 2026-08-01.
+The current production-readiness candidate was verified locally on 2026-08-03.
 GitHub Actions repeats the Node and browser checks on the supported Node 22 toolchain:
 
 - `npm run gate`: all blocking gates passed.
 - Server, Electron main-process, and shipped renderer TypeScript checks passed; no shipped runtime module disables type checking; ESLint passed.
 - Traceability reported 117 rows, 92 cited, and 0 broken references.
 - Runtime no-excuses scan reported 0 suspect findings; account safety reported 0 high-severity findings.
-- Vitest reported 59 passing files and 368 passing tests, including controlled
+- Vitest reported 60 passing files and 373 passing tests, including controlled
   NOvA parsing/filter, unknown-metric scoring, and review-gated
   media/organization discovery, tenant isolation, case-draft persistence, and
   target-database readiness tests, with no skipped or todo tests.
@@ -213,7 +219,8 @@ The packaged desktop ignores `.env` files in its launch directory and normally
 asks Windows for an available loopback port. Setting
 `OAUTH_REDIRECT_BASE_URL` to an explicit `localhost` or `127.0.0.1` port pins the
 desktop server to that registered OAuth callback port instead.
-- `npm audit` reported 0 known vulnerabilities.
+- `npm audit` reported 0 known vulnerabilities after updating the direct
+  PostCSS build dependency to the patched 8.5.25 release.
 - Production preflight and operator-readiness diagnostics reported no blockers.
   The isolated backup/delete/restore/reopen drill and target-database integrity,
   foreign-key, relationship-guard, invariant, reconciliation, duplicate, and
@@ -237,6 +244,9 @@ desktop server to that registered OAuth callback port instead.
   errors, and console errors all block the browser job.
 - Packaged Electron scanner QA passed signup, shared-session authorization, empty-state rendering, disabled unsafe scan state, Settings navigation, and clean renderer console checks.
 - A packaged launch from a directory containing hostile development `.env` values still reported production mode, database readiness, and a random `127.0.0.1` port.
+- An isolated Node 22 API-only container rejected anonymous owner bootstrap,
+  created exactly one token-authorized administrator, and rejected every later
+  signup against the same database.
 - Every protected-main commit must pass the Node, Python, renderer-accessibility,
   and Windows packaging workflows. Use the latest successful
   [GitHub Actions runs](https://github.com/Robert-Velhorst/000-LARO/actions)

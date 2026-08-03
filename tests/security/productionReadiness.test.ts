@@ -14,6 +14,20 @@ afterEach(() => {
 });
 
 describe('production readiness regressions', () => {
+  it('rejects a weak standalone signup bootstrap token in production', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.SERVER_ONLY = 'true';
+    process.env.JWT_SECRET = 'production-jwt-secret-with-32-characters';
+    process.env.COOKIE_SECRET = 'production-cookie-secret-with-32-characters';
+    process.env.STANDALONE_SIGNUP_TOKEN = 'too-short';
+    vi.resetModules();
+
+    const { assertSecurityConfig } = await import('../../server/_core/env');
+    expect(() => assertSecurityConfig()).toThrow(
+      'STANDALONE_SIGNUP_TOKEN must contain at least 32 characters',
+    );
+  });
+
   it('treats direct preflight as production unless development is explicit', () => {
     const script = join(ROOT, 'scripts/prod-preflight.mjs');
     const missingSecrets = spawnSync(process.execPath, [script], {

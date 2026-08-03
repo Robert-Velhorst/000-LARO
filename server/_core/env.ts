@@ -29,6 +29,7 @@ export const ENV = {
   HOST:             process.env.HOST || '127.0.0.1',
   API_BODY_LIMIT:   process.env.API_BODY_LIMIT || '10mb',
   SERVER_ONLY:      process.env.SERVER_ONLY === 'true',
+  STANDALONE_SIGNUP_TOKEN: process.env.STANDALONE_SIGNUP_TOKEN || '',
   NODE_ENV:         process.env.NODE_ENV || 'production',
 
   // Database
@@ -113,6 +114,13 @@ export function assertSecurityConfig(): string[] {
     const failures: string[] = [];
     if (jwtInsecure) failures.push('JWT_SECRET is missing or set to the insecure default');
     if (cookieInsecure) failures.push('COOKIE_SECRET is missing or set to the insecure default');
+    if (
+      ENV.SERVER_ONLY &&
+      ENV.STANDALONE_SIGNUP_TOKEN &&
+      ENV.STANDALONE_SIGNUP_TOKEN.trim().length < 32
+    ) {
+      failures.push('STANDALONE_SIGNUP_TOKEN must contain at least 32 characters when configured');
+    }
     if (failures.length > 0) {
       throw new ConfigError(
         `[config] Refusing to start in production with insecure secrets:\n` +

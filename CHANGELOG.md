@@ -7,6 +7,8 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Updated the direct PostCSS build dependency to 8.5.25 to resolve the current
+  upstream security advisory without changing the shipped renderer contract.
 - Reduced Google OAuth to Gmail/Drive read access plus account email, removed
   delegated Gmail/Outlook send and Gmail label-write scopes, made incomplete
   Microsoft collection explicitly unavailable, and made Google disconnect
@@ -85,6 +87,10 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   compact source controls that open the owning document.
 
 ### Fixed
+- Closed unrestricted signup on public API-only deployments: a new database now
+  requires a one-time strong bootstrap token for its first administrator and
+  permanently closes enrollment after that owner exists. Desktop signup remains
+  unchanged.
 - Isolated the backup/restore drill from target production JWT, cookie, S3, and
   local-storage settings so production readiness tests its own fixture instead
   of rejecting or redirecting it.
