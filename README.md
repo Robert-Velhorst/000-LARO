@@ -6,14 +6,16 @@ LARO assists with organization and preparation. It is not a lawyer, does not pro
 
 ## Current Architecture
 
-This repository has one production runtime: the Electron desktop application.
-The Flask command center is retained as a legacy review and migration source so
-existing source-linked ledgers can be moved without treating two databases as
-concurrent authorities.
+This repository has one maintained Express/tRPC application architecture with
+two production deployment modes: the Electron desktop and an API-only Docker
+service. The Flask command center is retained as a legacy review and migration
+source so existing source-linked ledgers can be moved without treating two
+databases as concurrent authorities.
 
 | Runtime | Primary use | Source | Default address | Persistence |
 | --- | --- | --- | --- | --- |
 | Electron desktop + Express/tRPC | Desktop case workflow, connectors, matching, controlled outreach, administration | `src-main/`, `src/renderer/`, `server/` | `http://localhost:3000` inside Electron | SQLite via Drizzle plus local or S3 evidence storage |
+| Express/tRPC API-only service | Authenticated remote API and provider operations through a controlled gateway | `server/`, `Dockerfile`, `docker-compose.yml` | Loopback Docker port routed through the configured HTTPS gateway | SQLite and local evidence in the persistent Docker volume, or configured S3 |
 | Legacy Flask migration source | Review/export an existing source-linked legal ledger before owner-bound migration | `app.py`, `legal_ledger.py`, `frontend/` | `http://127.0.0.1:8768/case_command_center.html` | `instance/laro_ledger.sqlite3` plus ignored local uploads and token vault |
 
 The Electron main process starts the Express/tRPC server and React renderer together. `npm run dev:server` runs only that API server. The Flask launcher remains loopback-only for legacy review. Stop both applications before applying the one-way Flask-to-desktop migration; after migration, Electron is authoritative.
@@ -29,6 +31,10 @@ The Electron main process starts the Express/tRPC server and React renderer toge
 - Run desktop keyword pulls as persisted, resumable jobs with live source phase,
   extracted-word and item counts, percentage, and estimated seconds remaining.
 - Deduplicate imported evidence while preserving source URIs and locally retrievable files.
+- Open managed local evidence through ownership-gated, five-minute signed HTTP
+  links that verify the stored SHA-256 hash and never expose a desktop or
+  container filesystem path. Configured S3 storage continues to use provider-
+  signed URLs.
 - Scan only folders selected through the native desktop picker, review the discovered files, and upload only the selected evidence.
 - Standalone servers reject local-folder collection unless the path resolves
   inside an operator-configured `LOCAL_SCAN_ROOTS` allowlist.
@@ -82,6 +88,10 @@ The Electron main process starts the Express/tRPC server and React renderer toge
 - Send an approved desktop-runtime lawyer outreach only when the global emergency stop is released, `outreach.send.enabled` is enabled, the caller owns the case, a real email provider is configured, and the idempotency guard has not already recorded the send.
 - Resolve an ambiguous provider outcome from the admin operations view only after checking provider activity. Confirmed delivery finalizes the send-once guard without retransmission; confirmed non-delivery safely permits a controlled retry, and both decisions are audited.
 - Prove the target environment's outbound path with an explicit owner self-test that verifies one Gmail inbox copy, exercises duplicate prevention, stores only signed redacted acceptance evidence, and removes its temporary case/outreach records.
+- Prove the target environment's Google intake with an explicit owner self-test
+  that reuses the labelled outbound message, exercises the real Gmail collector,
+  deterministic email analysis, signed source retrieval, and source-open audit,
+  then stores only signed redacted proof and removes the temporary case and bytes.
 
 ## Prerequisites
 
@@ -123,6 +133,7 @@ npm run build            # renderer, main process, and server builds
 npm run dist:win         # Windows package
 npm run release:prepare  # non-approved brand/provider acceptance draft
 npm run acceptance:providers # non-destructive provider evidence report
+npm run acceptance:google-evidence-live # controlled Gmail intake/source proof
 ```
 
 ## Legacy Flask Review
@@ -208,7 +219,7 @@ GitHub Actions repeats the Node and browser checks on the supported Node 22 tool
 - Server, Electron main-process, and shipped renderer TypeScript checks passed; no shipped runtime module disables type checking; ESLint passed.
 - Traceability reported 117 rows, 92 cited, and 0 broken references.
 - Runtime no-excuses scan reported 0 suspect findings; account safety reported 0 high-severity findings.
-- Vitest reported 63 passing files and 387 passing tests, including controlled
+- Vitest reported 65 passing files and 390 passing tests, including controlled
   NOvA parsing/filter, unknown-metric scoring, and review-gated
   media/organization discovery, tenant isolation, case-draft persistence, and
   target-database readiness tests, with no skipped or todo tests.

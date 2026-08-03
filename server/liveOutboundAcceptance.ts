@@ -77,6 +77,19 @@ function acceptanceIds(options: AcceptanceOptions) {
   };
 }
 
+export function outboundAcceptanceSubject(options: {
+  userId: string;
+  googleAccountId: string;
+  runId: string;
+}): string {
+  const marker = acceptanceIds({
+    ...options,
+    recipient: "",
+    confirmedRecipient: "",
+  }).outreachId.slice(-12);
+  return `LARO production delivery acceptance ${marker}`;
+}
+
 function cleanupTransientAcceptanceRows(
   db: Awaited<ReturnType<typeof getDb>>,
   ids: ReturnType<typeof acceptanceIds>,
@@ -217,7 +230,7 @@ export async function runLiveOutboundAcceptance(
 
   const marker = ids.outreachId.slice(-12);
   const caseType = `LARO provider acceptance ${marker}`;
-  const subject = `LARO production delivery acceptance ${marker}`;
+  const subject = outboundAcceptanceSubject(options);
   const acceptanceMessage: ApprovedOutreachMessageOverride = {
     subject,
     text:

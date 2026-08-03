@@ -13,7 +13,7 @@ import { evidenceFiles } from "../schema";
 import { eq, and, desc } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { assertCaseOwnership } from "../_core/authz";
-import { sanitizeFilename, storageDelete, storageGet, storagePut } from "../storage";
+import { sanitizeFilename, storageDelete, storagePut } from "../storage";
 import { managedStorageKeyFromMetadata } from "../managedStorage";
 import {
   isSupportedEvidenceMimeType,
@@ -21,7 +21,7 @@ import {
   MAX_EVIDENCE_FILE_BYTES,
 } from "../../shared/evidenceFiles";
 import { TRPCError } from "@trpc/server";
-import { AUDIT_ACTIONS, createAuditLog } from "../audit";
+import { getEvidenceDownloadUrl, recordEvidenceSourceOpened } from "../evidenceAccess";
 
 export const evidenceFilesRouter = router({
 
@@ -165,19 +165,11 @@ export const evidenceFilesRouter = router({
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw new Error("Not authenticated");
-      const db = await getDb();
-      if (!db) throw new Error("Database not available");
-
       const userId = ctx.user.id;
-      const file = await getEvidenceFile(userId, input.id);
-      if (!file) throw new Error("File not found");
-
-      const storageKey = managedStorageKeyFromMetadata(file.metadata);
-      if (storageKey) return { url: await storageGet(storageKey) };
-
-      if ((file as any).fileUrl) return { url: (file as any).fileUrl };
-
-      return { url: null, message: "File not available for download" };
+      const host = ctx.req.get?.("host") || ctx.req.headers.host;
+      const requestBase = host ? `${ctx.req.protocol || "http"}://${host}` : undefined;
+      const url = await getEvidenceDownloadUrl(userId, input.id, new Date(), requestBase);
+      return url ? { url } : { url: null, message: "File not available for download" };
     }),
 
   // Record only after the renderer successfully dispatches the source URL.
@@ -186,21 +178,10 @@ export const evidenceFilesRouter = router({
     .mutation(async ({ ctx, input }) => {
       const file = await getEvidenceFile(ctx.user.id, input.id);
       if (!file) throw new Error("File not found");
-      const managed = Boolean(managedStorageKeyFromMetadata(file.metadata));
-      if (!managed && !(file as any).fileUrl) {
-        throw new Error("File not available for download");
-      }
-
-      await createAuditLog({
+      await recordEvidenceSourceOpened({
         userId: ctx.user.id,
-        action: AUDIT_ACTIONS.EVIDENCE_SOURCE_OPENED,
-        entityType: "evidence",
-        entityId: file.id,
-        details: {
-          caseId: file.caseId,
-          accessMethod: managed ? "managed_storage" : "source_url",
-          dispatchConfirmed: true,
-        },
+        evidenceId: file.id,
+        accessMethod: managedStorageKeyFromMetadata(file.metadata) ? "managed_storage" : "source_url",
       });
       return { success: true as const };
     }),
