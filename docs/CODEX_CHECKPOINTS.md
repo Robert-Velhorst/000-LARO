@@ -342,3 +342,41 @@ traceability 0 broken. Tech-debt D1 RESOLVED.
 **Remaining 7 Partials (honest):** 010 renderer tsc (~500 errors), 013 disclaimer UI,
 021 autosave UI, 041 component tests (jsdom), 049 a11y audit, 050 responsive, 057
 i18n string migration — a dedicated frontend pass. Backend for all is done.
+
+---
+
+## Checkpoint 16 - 2026-08-08 - Giant-goal completion audit
+
+**Branch:** `agent/giant-goal-completion` · **Start:** `b5ae607`
+
+**Done:** source PDF phases 000-115 reconciled against current main; required
+current technical audit added; phase 057 moved from a dormant catalog to a
+persisted and reachable NL/EN renderer capability; all 117 matrix rows now cite
+existing artifacts; traceability fails closed on uncited implementation claims;
+new `nanoid` and `js-yaml` advisories were cleared with patched lockfile releases.
+
+**Verified at checkpoint:** i18n unit suite 7/7, renderer typecheck without
+diagnostics, traceability 117 cited / 0 broken / 0 uncited.
+
+**Next safe action:** full release gate, browser route and locale acceptance,
+fresh database/runtime smoke, production health, and live-provider acceptance
+state review. Never convert an external consent gate into a code-completion claim.
+
+---
+
+## Checkpoint 17 - 2026-08-09 - HAI connector and release candidate
+
+**Done:** owner-scoped HAI token lifecycle and minimized cursor feed; native HAI
+adapter; Settings credential controls; transient-auth reconnect state; eighth
+migration and query indexes; current audit and verification evidence.
+
+**Verified:** LARO HAI tests 3/3, HAI source package tests, all typechecks and
+lint, repository gates before the full-test stage, 222 Python tests, all Vitest
+files exercised with the two host-timeout suites passing in isolation,
+Playwright 4/4, production build, portable Windows packaging, and Electron
+SQLite ABI verification.
+
+**Next safe action:** protected pull requests and CI, merge to `main`, rebuild
+the retained API data volume, verify the ngrok route, and complete one explicit
+HAI synchronization. Google consent and approved outbound delivery remain
+owner/provider acceptance gates.

@@ -1,6 +1,6 @@
 # Manual Verification Evidence
 
-Current as of 2026-08-01. This document supersedes the 2026-07-06 phase
+Current as of 2026-08-09. This document supersedes the 2026-07-06 phase
 snapshot; exact release evidence is maintained in
 `docs/FINAL_VERIFICATION_REPORT.md`.
 
@@ -30,19 +30,36 @@ snapshot; exact release evidence is maintained in
 - Gmail SMTP authentication was verified without sending a message. This proves
   credentials only, not approved delivery, receipt, audit, or duplicate blocking.
 - Public branding is owner-approved and hash-bound in `release-acceptance.json`.
+- The LARO-to-HAI connector contract is covered by real SQLite migration,
+  token hashing, owner isolation, bounded cursor, minimization, revocation, and
+  HAI source-ingestion tests. Live cross-application sync is a separate
+  deployment acceptance step.
+- The current unsigned 151,855,902-byte Windows portable build has SHA-256
+  `5d2bef95bf76adb258c0b1a38b9ef820937d2de9992c15dfea16059c0069198f`;
+  Electron 43.1.0 loaded the native SQLite ABI 148 binding successfully.
+- The current real-browser audit passed all four scenarios, including all 15
+  routes at both desktop and mobile sizes, locale persistence, responsive
+  migration controls, and source-linked document reconstruction.
 
 ## Not Yet Verified
 
 - Google and outbound email are the selected live-provider scope and have not
-  completed target acceptance. Google is currently unconfigured pending a valid
-  replacement OAuth client secret. Outbound delivery remains disabled pending
-  an approved single-delivery test and audit/idempotency verification.
-- The ngrok `/laro` public route currently falls through to another service;
-  only loopback API health is verified.
+  completed target acceptance. The Google web client and SMTP provider are
+  configured, and a non-destructive live check authenticated SMTP. The owner's
+  Google consent grant is not stored yet, so Gmail/Drive reads and the controlled
+  self-delivery, evidence, source-opening, revocation, and duplicate-blocking
+  acceptance sequence remain pending.
+- The ngrok gateway now routes `https://laro-api-000.ngrok.app/laro` to LARO.
+  Public root, live, ready, health, and OAuth callback routing were rechecked on
+  2026-08-08. The callback returned the expected 400 response for an intentionally
+  invalid consent result, proving route ownership without creating a grant.
 - Optional inbound email, S3, and provider-backed AI are not selected for this
   release and remain disabled rather than being treated as verified.
 - Trusted public Windows distribution is not selected; the supported artifact
   is unsigned and intended for internal delivery.
+- HAI has not yet retained a live sync receipt from the deployed LARO endpoint.
+  A live result requires one owner-created LARO credential to be installed in
+  HAI's protected environment and then explicitly synchronized.
 
 Do not infer provider readiness from a successful build. Each enabled provider
 requires the acceptance evidence listed in `docs/ROADMAP.md` and

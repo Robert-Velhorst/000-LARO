@@ -113,6 +113,7 @@ export const cases = sqliteTable(
   },
   (t) => ({
     userIdx: index("cases_userId_idx").on(t.userId),
+    userUpdatedIdx: index("cases_userId_updatedAt_idx").on(t.userId, t.updatedAt),
   })
 );
 
@@ -169,6 +170,7 @@ export const documentAnalyses = sqliteTable(
     ),
     caseCreatedIdx: index("document_analyses_case_created_idx").on(table.caseId, table.createdAt),
     userIdx: index("document_analyses_user_idx").on(table.userId),
+    userUpdatedIdx: index("document_analyses_user_updatedAt_idx").on(table.userId, table.updatedAt),
   })
 );
 
@@ -555,21 +557,52 @@ export const notifications = sqliteTable("notifications", {
 
 export type InsertNotification = typeof notifications.$inferInsert;
 
-export const auditLogs = sqliteTable("audit_logs", {
-  id: text("id").primaryKey(),
-  userId: text("userId"),
-  action: text("action"),
-  resource: text("resource"),
-  entityType: text("entityType"),
-  entityId: text("entityId"),
-  details: text("details"),
-  ipAddress: text("ipAddress"),
-  userAgent: text("userAgent"),
-  metadata: text("metadata"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
-});
+export const auditLogs = sqliteTable(
+  "audit_logs",
+  {
+    id: text("id").primaryKey(),
+    userId: text("userId"),
+    action: text("action"),
+    resource: text("resource"),
+    entityType: text("entityType"),
+    entityId: text("entityId"),
+    details: text("details"),
+    ipAddress: text("ipAddress"),
+    userAgent: text("userAgent"),
+    metadata: text("metadata"),
+    createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
+  },
+  (table) => ({
+    createdAtIdx: index("audit_logs_createdAt_idx").on(table.createdAt),
+  })
+);
 
 export type InsertAuditLog = typeof auditLogs.$inferInsert;
+
+// Read-only integration credentials. Only a SHA-256 digest and a short display
+// prefix are persisted; the bearer token is returned once when it is created.
+export const integrationAccessTokens = sqliteTable(
+  "integration_access_tokens",
+  {
+    id: text("id").primaryKey(),
+    userId: text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    tokenPrefix: text("tokenPrefix").notNull(),
+    tokenHash: text("tokenHash").notNull(),
+    scope: text("scope").notNull(),
+    status: text("status").notNull().default("active"),
+    expiresAt: integer("expiresAt", { mode: "timestamp" }).notNull(),
+    lastUsedAt: integer("lastUsedAt", { mode: "timestamp" }),
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+    revokedAt: integer("revokedAt", { mode: "timestamp" }),
+  },
+  (table) => ({
+    tokenHashUnique: uniqueIndex("integration_access_tokens_hash_unique").on(table.tokenHash),
+    userStatusIdx: index("integration_access_tokens_user_status_idx").on(table.userId, table.status),
+  })
+);
+
+export type IntegrationAccessToken = typeof integrationAccessTokens.$inferSelect;
 
 export const legacyImportRuns = sqliteTable(
   "legacy_import_runs",

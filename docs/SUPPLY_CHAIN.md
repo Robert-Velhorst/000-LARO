@@ -1,10 +1,16 @@
 # Supply Chain and Dependency Review
 
-Date: 2026-07-13 | Branch: `agent/production-readiness-audit`
+Updated: 2026-08-08 | Branch: `agent/giant-goal-completion`
 
 ## Current result
 
 `npm audit --audit-level=moderate` reports **0 known vulnerabilities** for the committed lockfile.
+
+The 2026-08-08 audit initially found two newly published high-severity
+advisories. The lockfile was updated from `nanoid` 3.3.16 to 3.3.18 and from
+transitive `js-yaml` 4.3.0 to 4.3.1. Both the complete dependency graph and
+`--omit=dev` runtime graph then reported zero known vulnerabilities. No major
+version or application API change was required.
 
 The remediation upgraded the supported runtime to Node 22.12+, Electron 43, Vite 8, Vitest 4, electron-builder 26, `@electron/rebuild` 4, Drizzle ORM 0.45, Nodemailer 9, and UUID 11. Unused `xlsx`, Stripe SDK, PDFKit, Tesseract, and their unused type packages were removed. `drizzle-kit` was also removed because its current dependency chain retained the final four advisories; checked-in SQL migrations remain the production migration source.
 

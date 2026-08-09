@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import type { AgentConfig } from '../../../shared/types';
 import { getElectronAPI } from '@/lib/electronApiShim';
+import { useI18n } from '@/contexts/I18nContext';
+import { LanguageSelector } from '@/components/LanguageSelector';
 
 interface Props {
   config: AgentConfig | null;
@@ -10,6 +12,7 @@ interface Props {
 }
 
 export default function SettingsPage({ config, onNavigate, onSave }: Props) {
+  const { t } = useI18n();
   const electronAPI = getElectronAPI();
   const [caseId, setCaseId]     = useState(config?.caseId ?? '');
   const [saving, setSaving]     = useState(false);
@@ -26,9 +29,9 @@ export default function SettingsPage({ config, onNavigate, onSave }: Props) {
     setSaving(true);
     try {
       await onSave({ caseId: caseId || null });
-      toast.success('Settings saved');
+      toast.success(t('scanner.settingsSaved'));
     } catch {
-      toast.error('Failed to save settings');
+      toast.error(t('scanner.settingsSaveError'));
     } finally {
       setSaving(false);
     }
@@ -41,16 +44,19 @@ export default function SettingsPage({ config, onNavigate, onSave }: Props) {
           onClick={() => onNavigate('home')}
           className="text-slate-400 hover:text-white transition-colors text-sm"
         >
-          ← Back
+          ← {t('common.back')}
         </button>
-        <h1 className="font-semibold">Settings</h1>
+        <h1 className="font-semibold">{t('nav.settings')}</h1>
         <div className="w-16" />
       </header>
 
       <main className="flex-1 p-6 max-w-2xl mx-auto w-full space-y-6">
+        <Section title={t('language.label')}>
+          <LanguageSelector />
+        </Section>
         <form onSubmit={handleSave} className="space-y-6">
-          <Section title="Default case">
-            <Field label="Default Case ID" hint="Used when uploading without specifying a case">
+          <Section title={t('scanner.defaultCase')}>
+            <Field label={t('scanner.defaultCaseId')} hint={t('scanner.defaultCaseHint')}>
               <input
                 value={caseId}
                 onChange={e => setCaseId(e.target.value)}
@@ -65,17 +71,17 @@ export default function SettingsPage({ config, onNavigate, onSave }: Props) {
             disabled={saving}
             className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
           >
-            {saving ? 'Saving…' : 'Save settings'}
+            {saving ? t('scanner.saving') : t('scanner.saveSettings')}
           </button>
         </form>
 
         {/* System info */}
-        <Section title="System info">
+        <Section title={t('scanner.systemInfo')}>
           <div className="space-y-2 text-sm">
-            <Row label="App version" value={`v${version}`} />
-            <Row label="Device"      value={sysInfo?.hostname ?? '—'} />
-            <Row label="Platform"    value={sysInfo?.platform ?? '—'} />
-            <Row label="Username"    value={sysInfo?.username ?? '—'} />
+            <Row label={t('scanner.appVersion')} value={`v${version}`} />
+            <Row label={t('scanner.device')} value={sysInfo?.hostname ?? '—'} />
+            <Row label={t('scanner.platform')} value={sysInfo?.platform ?? '—'} />
+            <Row label={t('scanner.username')} value={sysInfo?.username ?? '—'} />
           </div>
         </Section>
       </main>

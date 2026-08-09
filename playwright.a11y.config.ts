@@ -17,14 +17,14 @@ export default defineConfig({
     {
       command: "npm run test:a11y:server",
       url: "http://127.0.0.1:3015/api/health",
-      reuseExistingServer: false,
-      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+      timeout: 300_000,
     },
     {
       command: "npm run test:a11y:renderer",
       url: "http://127.0.0.1:5181",
-      reuseExistingServer: false,
-      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+      timeout: 300_000,
     },
   ],
 });

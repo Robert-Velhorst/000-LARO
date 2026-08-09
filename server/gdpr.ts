@@ -48,6 +48,7 @@ const SENSITIVE_EXPORT_FIELDS = new Set([
   "accesstoken",
   "refreshtoken",
   "token",
+  "tokenhash",
   "apikey",
   "secret",
   "clientsecret",

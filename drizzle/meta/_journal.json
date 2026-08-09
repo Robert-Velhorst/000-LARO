@@ -50,6 +50,13 @@
       "when": 1784592000000,
       "tag": "0006_legacy_import_archive",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786233600000,
+      "tag": "0007_hai_integration",
+      "breakpoints": true
     }
   ]
 }

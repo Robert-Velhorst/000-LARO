@@ -14,7 +14,16 @@ export function useAuth(options?: UseAuthOptions) {
   const utils = trpc.useUtils();
 
   const meQuery = trpc.auth.me.useQuery(undefined, {
-    retry: false,
+    retry: (failureCount, error) => {
+      if (
+        error instanceof TRPCClientError &&
+        (error.data?.code === "UNAUTHORIZED" || error.data?.code === "FORBIDDEN")
+      ) {
+        return false;
+      }
+      return failureCount < 2;
+    },
+    retryDelay: (attempt) => Math.min(500 * 2 ** attempt, 2_000),
     refetchOnWindowFocus: false,
   });
 

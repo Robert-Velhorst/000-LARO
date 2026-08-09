@@ -5,8 +5,10 @@ import SettingsPage from "./pages/SettingsPage";
 import { getElectronAPI } from "@/lib/electronApiShim";
 import { trpc } from "@/lib/trpc";
 import type { AgentConfig, Page } from "../../shared/types";
+import { useI18n } from "./contexts/I18nContext";
 
 export default function App() {
+  const { t } = useI18n();
   const electronAPI = getElectronAPI();
   const [currentPage, setCurrentPage] = useState<Page>("home");
   const [config, setConfig] = useState<AgentConfig | null>(null);
@@ -54,22 +56,22 @@ export default function App() {
   };
 
   if (session.isLoading || (session.data && scannerToken.isLoading) || !config) {
-    return <ScannerStatus title="Preparing evidence scanner" detail="Verifying your LARO session..." />;
+    return <ScannerStatus title={t("scanner.preparing")} detail={t("scanner.verifySession")} />;
   }
 
   if (!session.data || scannerToken.isError || !scannerToken.data?.token) {
     return (
       <ScannerStatus
-        title="Sign in required"
-        detail="Sign in in the main LARO window, then retry. The scanner never creates an offline or anonymous session."
-        actionLabel="Retry"
+        title={t("scanner.signInRequired")}
+        detail={t("scanner.signInDetail")}
+        actionLabel={t("common.retry")}
         onAction={() => void session.refetch()}
       />
     );
   }
 
   if (!config.token || config.userId !== session.data.id) {
-    return <ScannerStatus title="Preparing evidence scanner" detail="Creating a short-lived upload session..." />;
+    return <ScannerStatus title={t("scanner.preparing")} detail={t("scanner.createSession")} />;
   }
 
   switch (currentPage) {
@@ -113,6 +115,7 @@ function ScannerStatus({
   actionLabel?: string;
   onAction?: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white">
       <section className="w-full max-w-md border border-slate-800 bg-slate-900 p-6">
@@ -125,7 +128,7 @@ function ScannerStatus({
             </button>
           ) : null}
           <button type="button" onClick={() => window.close()} className="border border-slate-700 px-4 py-2 text-sm hover:bg-slate-800">
-            Close
+            {t("common.close")}
           </button>
         </div>
       </section>

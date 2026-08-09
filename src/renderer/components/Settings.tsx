@@ -3,11 +3,14 @@ import { toast } from "sonner";
 import {
   AlertCircle,
   CheckCircle2,
+  Copy,
   FileArchive,
   FolderSearch,
   HardDrive,
   History,
   Mail,
+  KeyRound,
+  Link2,
   Send,
   Shield,
   Trash2,
@@ -23,7 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { trpc } from "@/lib/trpc";
 
-type SettingsSection = "email" | "sources" | "security";
+type SettingsSection = "email" | "sources" | "hai" | "security";
 
 const NAV_ITEMS: Array<{
   id: SettingsSection;
@@ -33,6 +36,7 @@ const NAV_ITEMS: Array<{
 }> = [
   { id: "email", label: "Email", description: "Provider and test send", icon: Mail },
   { id: "sources", label: "Evidence sources", description: "Google and local folders", icon: FolderSearch },
+  { id: "hai", label: "HAI", description: "Read-only case intelligence connector", icon: Link2 },
   { id: "security", label: "Security", description: "Account data and activity", icon: Shield },
 ];
 
@@ -79,6 +83,10 @@ export default function Settings() {
   const [isExporting, setIsExporting] = useState(false);
   const [isDownloadingActivity, setIsDownloadingActivity] = useState(false);
   const [scannerFolders, setScannerFolders] = useState<string[]>(readDefaultFolders);
+  const [haiTokenName, setHaiTokenName] = useState("HAI connected source");
+  const [haiTokenDays, setHaiTokenDays] = useState("90");
+  const [revealedHaiToken, setRevealedHaiToken] = useState<string | null>(null);
+  const utils = trpc.useUtils();
 
   const { data: providerInfo } = trpc.email.getProviderInfo.useQuery();
   const testEmailMutation = trpc.email.test.useMutation();
@@ -90,6 +98,14 @@ export default function Settings() {
   const legacyImports = trpc.legacyImports.listRuns.useQuery(undefined, {
     enabled: section === "security",
   });
+  const haiConnection = trpc.haiIntegration.connectionInfo.useQuery(undefined, {
+    enabled: section === "hai",
+  });
+  const haiTokens = trpc.haiIntegration.listTokens.useQuery(undefined, {
+    enabled: section === "hai",
+  });
+  const createHaiTokenMutation = trpc.haiIntegration.createToken.useMutation();
+  const revokeHaiTokenMutation = trpc.haiIntegration.revokeToken.useMutation();
 
   const activeMeta = useMemo(() => NAV_ITEMS.find((item) => item.id === section), [section]);
 
@@ -163,6 +179,39 @@ export default function Settings() {
       toast.error(error instanceof Error ? error.message : "Activity export failed");
     } finally {
       setIsDownloadingActivity(false);
+    }
+  };
+
+  const copyValue = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(`${label} copied`);
+    } catch {
+      toast.error(`${label} could not be copied`);
+    }
+  };
+
+  const handleCreateHaiToken = async () => {
+    try {
+      const result = await createHaiTokenMutation.mutateAsync({
+        name: haiTokenName.trim(),
+        expiresInDays: Number(haiTokenDays),
+      });
+      setRevealedHaiToken(result.token);
+      await utils.haiIntegration.listTokens.invalidate();
+      toast.success("HAI credential created");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "HAI credential could not be created");
+    }
+  };
+
+  const handleRevokeHaiToken = async (tokenId: string) => {
+    try {
+      await revokeHaiTokenMutation.mutateAsync({ tokenId });
+      await utils.haiIntegration.listTokens.invalidate();
+      toast.success("HAI credential revoked");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "HAI credential could not be revoked");
     }
   };
 
@@ -299,6 +348,157 @@ export default function Settings() {
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        ) : null}
+
+        {section === "hai" ? (
+          <div className="space-y-4">
+            <Card className="border-border/50 bg-card/50 shadow-sm">
+              <CardHeader>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2"><Link2 className="h-5 w-5" />HAI connector</CardTitle>
+                    <CardDescription className="mt-2">Owner-bound, incremental access to minimized case and analysis records</CardDescription>
+                  </div>
+                  <Badge variant="outline">Read only</Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="hai-base-url">LARO base URL</Label>
+                    <div className="flex gap-2">
+                      <Input id="hai-base-url" readOnly value={haiConnection.data?.baseUrl ?? "Loading..."} className="font-mono text-xs" />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label="Copy LARO base URL"
+                        title="Copy LARO base URL"
+                        disabled={!haiConnection.data?.baseUrl}
+                        onClick={() => haiConnection.data?.baseUrl && void copyValue(haiConnection.data.baseUrl, "Base URL")}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="hai-feed-url">Feed endpoint</Label>
+                    <div className="flex gap-2">
+                      <Input id="hai-feed-url" readOnly value={haiConnection.data?.feedUrl ?? "Loading..."} className="font-mono text-xs" />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label="Copy HAI feed endpoint"
+                        title="Copy HAI feed endpoint"
+                        disabled={!haiConnection.data?.feedUrl}
+                        onClick={() => haiConnection.data?.feedUrl && void copyValue(haiConnection.data.feedUrl, "Feed endpoint")}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {revealedHaiToken ? (
+                  <Alert>
+                    <KeyRound className="h-4 w-4" />
+                    <AlertDescription className="space-y-3">
+                      <p>This credential is shown once. LARO stores only its hash.</p>
+                      <div className="flex gap-2">
+                        <Input aria-label="New HAI credential" readOnly value={revealedHaiToken} className="font-mono text-xs" />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          aria-label="Copy new HAI credential"
+                          title="Copy new HAI credential"
+                          onClick={() => void copyValue(revealedHaiToken, "Credential")}
+                        >
+                          <Copy className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setRevealedHaiToken(null)}>Hide credential</Button>
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+
+                <div className="grid gap-4 border-t border-border/50 pt-4 md:grid-cols-[minmax(0,1fr)_180px_auto] md:items-end">
+                  <div className="space-y-2">
+                    <Label htmlFor="hai-token-name">Credential name</Label>
+                    <Input id="hai-token-name" value={haiTokenName} maxLength={80} onChange={(event) => setHaiTokenName(event.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="hai-token-expiry">Expires after</Label>
+                    <select
+                      id="hai-token-expiry"
+                      value={haiTokenDays}
+                      onChange={(event) => setHaiTokenDays(event.target.value)}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <option value="30">30 days</option>
+                      <option value="90">90 days</option>
+                      <option value="180">180 days</option>
+                      <option value="365">365 days</option>
+                    </select>
+                  </div>
+                  <Button
+                    type="button"
+                    disabled={createHaiTokenMutation.isPending || haiTokenName.trim().length < 2}
+                    onClick={() => void handleCreateHaiToken()}
+                  >
+                    <KeyRound className="mr-2 h-4 w-4" />
+                    {createHaiTokenMutation.isPending ? "Creating..." : "Create credential"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/50 bg-card/50 shadow-sm">
+              <CardHeader>
+                <CardTitle>Credentials</CardTitle>
+                <CardDescription>Active, expired, and revoked HAI access</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {haiTokens.isLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading credentials...</p>
+                ) : haiTokens.error ? (
+                  <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>Credentials could not be loaded.</AlertDescription></Alert>
+                ) : (haiTokens.data?.length ?? 0) === 0 ? (
+                  <p className="text-sm text-muted-foreground">No HAI credential has been created.</p>
+                ) : (
+                  <div className="divide-y divide-border/50 border-y border-border/50">
+                    {haiTokens.data?.map((credential) => (
+                      <div key={credential.id} className="grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{credential.name}</p>
+                          <p className="font-mono text-xs text-muted-foreground">{credential.tokenPrefix}...</p>
+                          <p className="text-xs text-muted-foreground">
+                            Expires {new Date(credential.expiresAt).toLocaleDateString()}
+                            {credential.lastUsedAt ? ` | Last used ${new Date(credential.lastUsedAt).toLocaleString()}` : " | Not used"}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 sm:justify-end">
+                          <Badge variant={credential.status === "active" ? "default" : "outline"}>{credential.status}</Badge>
+                          {credential.status === "active" ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={revokeHaiTokenMutation.isPending}
+                              onClick={() => void handleRevokeHaiToken(credential.id)}
+                            >
+                              Revoke
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
                     ))}
                   </div>

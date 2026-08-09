@@ -1,6 +1,6 @@
 # Technical Debt Register
 
-Updated: 2026-07-21
+Updated: 2026-08-08
 
 | # | Debt | Impact | Status / next step |
 | --- | --- | --- | --- |
@@ -17,7 +17,7 @@ Updated: 2026-07-21
 | D11 | Top-level proprietary license | - | Resolved |
 | D12 | CSV and ZIP evidence export include a case-scoped index, redacted metadata, analyses, and available source files; PDF remains unavailable | Low | Keep capability labels honest |
 | D13 | Historical subscription, usage-limit, and monetary usage columns remain in installed schemas | Low | Keep for compatibility; new telemetry writes quantity counts only and leaves monetary fields null |
-| D14 | Renderer strings are not fully migrated to `t()` | Low | Complete i18n pass |
+| D14 | Persisted NL/EN runtime and operational-surface translation | - | Resolved with typed catalog, language controls, locale formatting, and browser persistence coverage; source/provider/user content intentionally retains its original language |
 | D15 | Desktop scanner previously accepted false connection success and fabricated uploads | - | Resolved with session auth, folder consent, review selection and real evidence storage |
 | D16 | Supported Electron/Chromium route accessibility and responsive coverage | - | Resolved with a CI Playwright/axe matrix across all 15 static routes at desktop and mobile sizes; non-target browsers and formal WCAG certification remain outside the packaged-app claim |
 | D17 | Evidence, case, and account deletion could leave managed objects after metadata deletion | - | Resolved; managed storage keys are deleted first and failures abort deletion |
@@ -34,5 +34,5 @@ Updated: 2026-07-21
 
 D10 is operationally contained without rewriting installed databases. A native
 foreign-key conversion remains migration work, not a release blocker while the
-guard and reconciliation gates stay green. D14 and D16 are incremental quality
+guard and reconciliation gates stay green. D16 remains incremental quality
 work. Provider rollout must retain credential, consent, approval and audit gates.

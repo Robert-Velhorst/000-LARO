@@ -4,6 +4,7 @@ import { Toaster } from 'sonner';
 import DashboardApp from './DashboardApp';
 import App from './App';
 import { TrpcProvider } from './providers/TrpcProvider';
+import { I18nProvider } from './contexts/I18nContext';
 import './index.css';
 
 const params = new URLSearchParams(window.location.search);
@@ -11,9 +12,10 @@ const isScannerMode = params.get('mode') === 'scanner' || window.location.hash.i
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <TrpcProvider>
-      {isScannerMode ? <App /> : <DashboardApp />}
-      <Toaster
+    <I18nProvider>
+      <TrpcProvider>
+        {isScannerMode ? <App /> : <DashboardApp />}
+        <Toaster
         richColors
         position="top-right"
         theme="dark"
@@ -33,7 +35,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             description: "opacity-90",
           },
         }}
-      />
-    </TrpcProvider>
+        />
+      </TrpcProvider>
+    </I18nProvider>
   </React.StrictMode>
 );

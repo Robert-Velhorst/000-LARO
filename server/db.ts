@@ -89,6 +89,8 @@ function ensureIndexes(sqlite: InstanceType<typeof Database>) {
     `CREATE INDEX IF NOT EXISTS cases_userId_status_idx ON cases(userId, status);`,
     `CREATE INDEX IF NOT EXISTS cases_urgency_idx ON cases(urgency);`,
     `CREATE INDEX IF NOT EXISTS cases_updatedAt_idx ON cases(updatedAt);`,
+    `CREATE INDEX IF NOT EXISTS cases_userId_updatedAt_idx ON cases(userId, updatedAt);`,
+    `CREATE INDEX IF NOT EXISTS document_analyses_user_updatedAt_idx ON document_analyses(userId, updatedAt);`,
     `CREATE INDEX IF NOT EXISTS outreach_status_caseId_idx ON outreach_status(caseId);`,
     `CREATE INDEX IF NOT EXISTS outreach_status_lawyerId_idx ON outreach_status(lawyerId);`,
     `CREATE INDEX IF NOT EXISTS outreach_status_status_idx ON outreach_status(status);`,
@@ -99,6 +101,7 @@ function ensureIndexes(sqlite: InstanceType<typeof Database>) {
     `CREATE INDEX IF NOT EXISTS unified_messages_userId_idx ON unified_messages(userId);`,
     `CREATE INDEX IF NOT EXISTS notifications_userId_idx ON notifications(userId);`,
     `CREATE INDEX IF NOT EXISTS audit_logs_userId_idx ON audit_logs(userId);`,
+    `CREATE INDEX IF NOT EXISTS audit_logs_createdAt_idx ON audit_logs(createdAt);`,
   ];
   for (const stmt of indexStatements) {
     try {

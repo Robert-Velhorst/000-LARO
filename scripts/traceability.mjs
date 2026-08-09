@@ -5,6 +5,7 @@
  * Real, runnable traceability check: parses docs/GOAL_COMPLETION_MATRIX.md, and
  * for every phase row extracts the source/doc/test artifacts named in its
  * evidence column, then verifies each referenced path actually exists on disk.
+ * Every row marked Implemented must cite at least one existing artifact.
  *
  * This turns the completion matrix into a checkable claim: a phase marked
  * "Implemented" whose cited files are missing is flagged. Writes a report to
@@ -24,7 +25,7 @@ const OUT = join(ROOT, 'docs', 'TRACEABILITY.md');
 // Path-like tokens we treat as citeable artifacts. The filename portion is
 // greedy and includes dots so multi-extension paths (e.g. foo.smoke.test.ts)
 // are captured whole; a trailing sentence period is trimmed after matching.
-const PATH_RE = /\b((?:server|docs|tests|shared|src|src-main|scripts|\.github)\/[A-Za-z0-9_./-]*[A-Za-z0-9_-]\.[A-Za-z0-9]+)/g;
+const PATH_RE = /\b((?:(?:server|docs|tests|shared|src|src-main|scripts|\.github)\/[A-Za-z0-9_./-]*[A-Za-z0-9_-]\.[A-Za-z0-9]+|CHANGELOG\.md|Dockerfile|package\.json))/g;
 const ROW_RE = /^\|\s*(\d{3})\s*\|\s*(.+?)\s*\|\s*\*\*(.+?)\*\*\s*\|\s*(.+?)\s*\|$/;
 
 function main() {
@@ -59,7 +60,8 @@ function main() {
   report.push(
     `Parsed **${rows.length}** phase rows from the completion matrix. ` +
       `**${withCites.length}** cite at least one concrete artifact; ` +
-      `**${broken.length}** cite a path that does **not** exist on disk.`,
+      `**${broken.length}** cite a path that does **not** exist on disk; ` +
+      `**${implementedNoCite.length}** implemented rows have no artifact citation.`,
   );
   report.push('');
   report.push('## Broken references (cited but missing)');
@@ -85,14 +87,13 @@ function main() {
     report.push(`| ${r.phase} | ${r.title} | ${r.status} | ${marks} |`);
   }
   report.push('');
-  report.push('## Implemented rows with no cited artifact (review for over-claim)');
+  report.push('## Implemented rows with no cited artifact');
   report.push('');
   if (implementedNoCite.length === 0) {
     report.push('None — every "Implemented" row cites a concrete artifact.');
   } else {
     report.push(
-      'These are marked Implemented but cite no file. Many are process/own-deliverable ' +
-        'phases (docs, rules) — listed here for honest review, not as automatic failures.',
+      'These rows fail the traceability gate because an implementation claim requires a concrete artifact.',
     );
     report.push('');
     report.push('| Phase | Title |');
@@ -111,9 +112,10 @@ function main() {
   }
 
   console.error(
-    `traceability: ${rows.length} rows, ${withCites.length} cited, ${broken.length} broken.`,
+    `traceability: ${rows.length} rows, ${withCites.length} cited, ${broken.length} broken, ` +
+      `${implementedNoCite.length} implemented without citation.`,
   );
-  process.exit(broken.length === 0 ? 0 : 1);
+  process.exit(broken.length === 0 && implementedNoCite.length === 0 ? 0 : 1);
 }
 
 main();

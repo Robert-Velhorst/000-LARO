@@ -28,23 +28,26 @@ import { useLocation } from "wouter";
 import ChatWidget from "./ChatWidget";
 import NotificationCenter from "./NotificationCenter";
 import { LegalAdviceNotice } from "./LegalAdviceNotice";
+import { LanguageSelector } from "./LanguageSelector";
+import { useI18n } from "@/contexts/I18nContext";
+import type { TranslationKey } from "../../../shared/i18n";
 
 // Main navigation items (case-centric design)
 const mainMenuItems = [
-  { icon: Home, label: "Home", path: "/" },
-  { icon: Briefcase, label: "My Cases", path: "/cases" },
-  { icon: FileSearch, label: "Evidence", path: "/evidence" },
-  { icon: Megaphone, label: "Outreach", path: "/outreach" },
-  { icon: HelpCircle, label: "Help & Resources", path: "/help" },
-];
+  { icon: Home, labelKey: "nav.home", path: "/" },
+  { icon: Briefcase, labelKey: "nav.cases", path: "/cases" },
+  { icon: FileSearch, labelKey: "nav.evidence", path: "/evidence" },
+  { icon: Megaphone, labelKey: "nav.outreach", path: "/outreach" },
+  { icon: HelpCircle, labelKey: "nav.help", path: "/help" },
+] satisfies Array<{ icon: typeof Home; labelKey: TranslationKey; path: string }>;
 
 
 
 // Admin sub-menu
 const adminMenuItems = [
-  { icon: Shield, label: "Admin Panel", path: "/admin" },
-  { icon: BarChart3, label: "Analytics", path: "/admin-analytics" },
-];
+  { icon: Shield, labelKey: "nav.adminPanel", path: "/admin" },
+  { icon: BarChart3, labelKey: "nav.analytics", path: "/admin-analytics" },
+] satisfies Array<{ icon: typeof Shield; labelKey: TranslationKey; path: string }>;
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const DEFAULT_WIDTH = 280;
@@ -158,12 +161,15 @@ function DashboardLayoutContent({
   setSidebarWidth,
 }: DashboardLayoutContentProps) {
   const { user, logout } = useAuth();
+  const { t } = useI18n();
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const activeMenuItem = mainMenuItems.find(item => item.path === location);
+  const localizedMainMenuItems = mainMenuItems.map((item) => ({ ...item, label: t(item.labelKey) }));
+  const localizedAdminMenuItems = adminMenuItems.map((item) => ({ ...item, label: t(item.labelKey) }));
+  const activeMenuItem = localizedMainMenuItems.find(item => item.path === location);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -217,12 +223,12 @@ function DashboardLayoutContent({
                   <img
                     src={APP_LOGO}
                     className="h-9 w-9 rounded-lg object-cover shadow-sm ring-1 ring-white/10"
-                    alt="Logo"
+                    alt={APP_TITLE}
                   />
                   <button
                     type="button"
                     onClick={toggleSidebar}
-                    aria-label="Expand sidebar"
+                    aria-label={t("nav.expandSidebar")}
                     className="absolute inset-0 flex items-center justify-center rounded-lg bg-sidebar-accent/80 opacity-0 transition-opacity group-hover:opacity-100 focus:outline-none"
                   >
                     <PanelLeft className="h-4 w-4 text-sidebar-foreground" />
@@ -234,7 +240,7 @@ function DashboardLayoutContent({
                     <img
                       src={APP_LOGO}
                       className="h-9 w-9 shrink-0 rounded-lg object-cover shadow-md ring-1 ring-white/10"
-                      alt="Logo"
+                      alt={APP_TITLE}
                     />
                     <span className="truncate font-bold text-lg tracking-tight text-sidebar-foreground">
                       {APP_TITLE}
@@ -243,7 +249,7 @@ function DashboardLayoutContent({
                   <button
                     type="button"
                     onClick={toggleSidebar}
-                    aria-label="Collapse sidebar"
+                    aria-label={t("nav.collapseSidebar")}
                     className="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus:outline-none"
                   >
                     <PanelLeft className="h-4 w-4" />
@@ -256,7 +262,7 @@ function DashboardLayoutContent({
           <SidebarContent className="gap-0">
             <SidebarMenu className="px-2 py-1">
               {/* Main menu items */}
-              {mainMenuItems.map(item => {
+              {localizedMainMenuItems.map(item => {
                 const isActive = location === item.path;
                 return (
                   <SidebarMenuItem key={item.path}>
@@ -279,9 +285,9 @@ function DashboardLayoutContent({
               {/* Admin section (collapsible, admin-only) */}
               {user?.role === "admin" && (
                 <CollapsibleSection
-                  title="Admin"
+                  title={t("nav.admin")}
                   icon={Shield}
-                  items={adminMenuItems}
+                  items={localizedAdminMenuItems}
                   location={location}
                   setLocation={setLocation}
                   className="border-t border-border/50 mt-2 pt-2"
@@ -295,7 +301,7 @@ function DashboardLayoutContent({
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  aria-label="Open account menu"
+                  aria-label={t("nav.accountMenu")}
                   className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-accent/50 transition-colors w-full text-left justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <Avatar className="h-9 w-9 border shrink-0">
@@ -306,19 +312,22 @@ function DashboardLayoutContent({
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
+                <div className="border-b border-border/60 p-2">
+                  <LanguageSelector />
+                </div>
                 <DropdownMenuItem
                   onClick={() => setLocation("/settings")}
                   className="cursor-pointer"
                 >
                   <Settings className="mr-2 h-4 w-4" />
-                  <span>Settings</span>
+                  <span>{t("nav.settings")}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={logout}
                   className="cursor-pointer text-destructive focus:text-destructive"
                 >
                   <LogOut className="mr-2 h-4 w-4" />
-                  <span>Sign out</span>
+                  <span>{t("nav.signOut")}</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

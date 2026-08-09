@@ -471,3 +471,49 @@ notifications.runReminders + cron); 067 LICENSE.
 Tests: tests/backend/partials_hardening.test.ts (10/10). Gate 6/6 green; 26 files /
 175 passed. Matrix 95→102 Implemented, 21→14 Partial. Tech-debt D4/D5/D11 RESOLVED.
 Version 1.2.0 + CHANGELOG. Remaining Partials: renderer (D1/D2), send (D3), teams/external.
+
+## Batch: Giant-goal completion audit (2026-08-08)
+
+**Branch:** `agent/giant-goal-completion` · **Starting commit:** `b5ae607`
+
+- Re-read and visually checked the 124-page source specification, including all
+  phases 000-115 and its final-report requirements.
+- Added `docs/TECHNICAL_AUDIT.md` as the current audit; retained
+  `docs/phase-audit.md` as a clearly labelled historical prototype snapshot.
+- Completed phase 057 with a persisted typed NL/EN renderer runtime, language
+  controls, HTML language metadata, locale formatters, translated authentication,
+  navigation, legal safety messaging, and the complete scanner workflow.
+- Expanded i18n unit coverage and added real-browser locale persistence coverage.
+- Added concrete artifact citations to all 117 completion-matrix rows and made
+  uncited Implemented claims fail `scripts/traceability.mjs` and therefore CI.
+- Updated README, i18n, technical-debt, and verification documentation to match
+  the implemented behavior.
+- The fresh full gate exposed new high-severity `nanoid` and `js-yaml`
+  advisories. Updated only the lockfile to patched 3.3.18/4.3.1 releases; full
+  and runtime-only npm audits then returned zero vulnerabilities.
+
+Verification recorded so far: i18n unit suite 7/7; renderer typecheck completed
+without diagnostics; traceability 117/117 cited, 0 broken, 0 uncited. Full gate,
+browser matrix, fresh runtime, provider state, and deployment evidence follow in
+the final verification pass.
+
+## Batch: HAI bridge, resilience, and release verification (2026-08-09)
+
+- Added an owner-scoped, hashed, expiring, immediately revocable `hai:read`
+  credential and a bounded incremental REST feed that excludes source bytes,
+  quotations, contact details, and provider credentials.
+- Added the native HAI `laro` connected-source adapter. It requires an explicit
+  protected-environment bearer token, rejects unsafe remote HTTP and redirects,
+  limits response size, preserves a cursor, and forces imported legal-case
+  records to Sensitive so automatic memory is disabled.
+- Added a Settings workflow for one-time credential creation, copy, status,
+  expiry, last use, and revocation, plus transient authentication retry and an
+  honest reconnecting state.
+- Added the eighth SQLite migration and indexes for connector lookup, feed
+  ordering, and audit ordering.
+- Verification: LARO connector tests 3/3; complete HAI source package tests;
+  server/main/renderer typechecks; lint; traceability; safety and recovery
+  gates; 222 Python tests; all 67 Vitest files exercised with 398 passing and 10
+  explicit skips; both constrained-host timeout suites passed in isolation;
+  Playwright 4/4; production build; unsigned portable package; Electron 43.1.0
+  SQLite ABI 148 check.
