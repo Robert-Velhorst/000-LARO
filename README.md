@@ -348,6 +348,12 @@ credentials are excluded. HAI must use its dedicated `laro` connected-source
 adapter with `HAI_LARO_BASE_URL` and `HAI_LARO_CONNECTOR_TOKEN`; credentials are
 never placed in the source URL or HAI database.
 
+The live bridge was accepted on 2026-08-09: HAI reported the adapter
+operational, retained an audited incremental sync, and imported zero records
+because the deployed LARO owner database contained zero cases. Revoking a
+temporary credential immediately changed its health response from 200 to 401;
+the retained credential remains only in HAI's ignored protected environment.
+
 When the shared gateway cannot be changed yet, start a separate direct tunnel
 without altering the existing application or its traffic policy:
 

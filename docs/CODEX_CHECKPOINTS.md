@@ -380,3 +380,22 @@ SQLite ABI verification.
 the retained API data volume, verify the ngrok route, and complete one explicit
 HAI synchronization. Google consent and approved outbound delivery remain
 owner/provider acceptance gates.
+
+---
+
+## Checkpoint 18 - 2026-08-09 - Main merge and live HAI acceptance
+
+**Done:** LARO PR #68 merged at `ed177f59`; remote feature branch removed;
+protected-main CI and Windows package workflows passed. HAI PR #29 merged at
+`c161b6b`; its remote feature branch was removed. The retained LARO API volume
+was migrated and rebuilt behind the existing ngrok route.
+
+**Verified:** public root/live/ready/health return 200; anonymous HAI access
+returns 401; temporary credential health/feed succeeded and revocation returned
+401; retained HAI credential is environment-only; HAI adapter operational;
+owner source created; zero-item sync completed with zero failures and a retained
+read audit. GitHub artifact `9031062536` matches its SHA-256 sidecar.
+
+**Remaining external acceptance:** complete the owner's Google consent,
+Gmail/Drive evidence read and revocation path, then one explicitly approved
+outbound self-delivery with audit and duplicate-block proof.

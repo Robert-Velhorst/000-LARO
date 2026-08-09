@@ -32,8 +32,13 @@ snapshot; exact release evidence is maintained in
 - Public branding is owner-approved and hash-bound in `release-acceptance.json`.
 - The LARO-to-HAI connector contract is covered by real SQLite migration,
   token hashing, owner isolation, bounded cursor, minimization, revocation, and
-  HAI source-ingestion tests. Live cross-application sync is a separate
-  deployment acceptance step.
+  HAI source-ingestion tests.
+- Live cross-application acceptance passed on 2026-08-09: HAI reported the
+  adapter operational, created its owner-scoped source, completed a zero-item
+  incremental sync against the truthfully empty LARO case database, and retained
+  the read audit event. A temporary LARO credential changed from health 200 to
+  401 after revocation; the retained credential exists only in HAI's protected
+  ignored environment.
 - The current unsigned 151,855,902-byte Windows portable build has SHA-256
   `5d2bef95bf76adb258c0b1a38b9ef820937d2de9992c15dfea16059c0069198f`;
   Electron 43.1.0 loaded the native SQLite ABI 148 binding successfully.
@@ -57,10 +62,6 @@ snapshot; exact release evidence is maintained in
   release and remain disabled rather than being treated as verified.
 - Trusted public Windows distribution is not selected; the supported artifact
   is unsigned and intended for internal delivery.
-- HAI has not yet retained a live sync receipt from the deployed LARO endpoint.
-  A live result requires one owner-created LARO credential to be installed in
-  HAI's protected environment and then explicitly synchronized.
-
 Do not infer provider readiness from a successful build. Each enabled provider
 requires the acceptance evidence listed in `docs/ROADMAP.md` and
 `release-acceptance.json`.

@@ -1,8 +1,9 @@
 # Final Verification Report
 
 Date: 2026-08-09
-Verification target: `agent/giant-goal-completion`, based on protected `main`
-commit `b5ae60787000f82b6a9e90a78c2c202674dc7dd1`
+Verification target: protected `main` merge commit
+`ed177f59d8fc01d05b14c5b84d72b5cc74b7e7bf`, based on starting commit
+`b5ae60787000f82b6a9e90a78c2c202674dc7dd1`
 
 This report separates reproducible repository evidence from target-environment
 acceptance. It supersedes the 2026-07-06 phase snapshot.
@@ -29,8 +30,8 @@ acceptance. It supersedes the 2026-07-06 phase snapshot.
 | LARO-to-HAI connector | Dedicated read-only feed; hashed, expiring, revocable owner credential; bounded cursor; minimization and rate limit; LARO and HAI adapter tests pass |
 | Desktop scanner contract | Scoped 15-minute token; real bytes/hash; owner/MIME enforcement |
 | Branch CI policy | Node, Python, and renderer-accessibility checks run before merge |
-| Protected-main baseline CI | Actions run `30693140677`; Node, Python, and renderer-accessibility jobs passed |
-| Windows package baseline | Actions run `30693140665`; gate, build, ABI check, package, single-instance profile lock, checksum, and artifact upload passed |
+| Protected-main CI | Actions run `31289640812`; Node, Python, and renderer-accessibility jobs passed |
+| Windows package | Actions run `31289640843`; gate, build, ABI check, package, single-instance profile lock, checksum, and artifact upload passed |
 | Packaged matching assets | Seven aligned legal categories; invalid legacy dataset absent |
 | Dependency graph | One canonical Node workspace; 0 open Dependabot alerts |
 
@@ -136,13 +137,11 @@ and visually rechecked.
 
 The current local candidate `LARO Desktop 1.3.0.exe` is 151,855,902 bytes with
 SHA-256 `5d2bef95bf76adb258c0b1a38b9ef820937d2de9992c15dfea16059c0069198f`.
-It was built on 2026-08-09 and passed the Electron native SQLite check. The
-following protected-main artifact paragraph remains the prior CI baseline until
-this branch is merged and its workflows publish a replacement.
+It was built on 2026-08-09 and passed the Electron native SQLite check.
 
-The current protected-main portable artifact is GitHub Actions artifact
-`8816485204` from run `30693140665`. Its executable is 151,891,123 bytes with
-SHA-256 `14a27ff42c06d5cf1aa8897c605943b38ccc7d2e67675b7d27aeaa0e3714050c`;
+The protected-main portable artifact is GitHub Actions artifact `9031062536`
+from run `31289640843`. Its executable is 151,920,228 bytes with SHA-256
+`c620deecd8ea4ddb171a7a95ad40bce8f2790f9bfa54a2c48187285b90c09125`;
 the downloaded executable matches its packaged checksum sidecar. The workflow
 passed the production gate, build, Electron ABI/database-binding check,
 portable packaging, packaged single-instance profile lock, artifact staging,
@@ -155,7 +154,19 @@ line while retaining its explicitly named data volume. Local `/api/live`,
 and SMTP authentication succeeds without sending a message. The Google web
 client is configured, but the owner's OAuth grant is not yet stored. The ngrok
 gateway now routes `https://laro-api-000.ngrok.app/laro` to LARO; public root,
-live, ready, health, and OAuth callback ownership were verified on 2026-08-08.
+live, ready, health, and protected HAI route ownership were verified on
+2026-08-09.
+
+The deployed HAI bridge completed its live acceptance on 2026-08-09. A temporary
+owner credential returned health 200 and a bounded feed, then returned 401
+immediately after revocation. A separate 90-day credential is retained only in
+HAI's protected ignored environment. HAI created source
+`9a4adef2-41ad-4cc9-95cf-cf0438b15688`, reported the `laro` adapter operational,
+completed an incremental sync with zero failures, and retained its read audit
+event. LARO contained zero cases, so zero synchronized items is the truthful
+result; no sample legal record was created. The LARO database retains one active
+and one revoked connector credential, two feed-read audit entries, two creation
+entries, one revocation entry, and no bootstrap secret file.
 
 Packaged clean-profile evidence for this release line also verified fresh local
 secrets and databases, all eight packaged migrations, healthy version `1.3.0`
