@@ -44,13 +44,17 @@ describe('production renderer usability regressions', () => {
 
   it('keeps shared filters, privacy controls, and case-note fields named', () => {
     const layout = read('src/renderer/components/DashboardLayout.tsx');
+    const translations = read('shared/i18n.ts');
     const filters = read('src/renderer/components/SmartSearchFilters.tsx');
     const privacy = read('src/renderer/components/Privacy.tsx');
     const notes = read('src/renderer/components/CommunicationHub.tsx');
 
-    expect(layout).toContain('aria-label="Expand sidebar"');
-    expect(layout).toContain('aria-label="Collapse sidebar"');
-    expect(layout).toContain('aria-label="Open account menu"');
+    expect(layout).toContain('aria-label={t("nav.expandSidebar")}');
+    expect(layout).toContain('aria-label={t("nav.collapseSidebar")}');
+    expect(layout).toContain('aria-label={t("nav.accountMenu")}');
+    expect(translations).toContain('"nav.expandSidebar"');
+    expect(translations).toContain('"nav.collapseSidebar"');
+    expect(translations).toContain('"nav.accountMenu"');
     expect(filters).toContain('aria-label="Filter by legal area"');
     expect(filters).toContain('"Search lawyers" : "Search cases"');
     expect(privacy).toContain('aria-label="Allow marketing communication"');
@@ -97,12 +101,16 @@ describe('production renderer usability regressions', () => {
   it('keeps the legal-assistance boundary visible throughout the authenticated workspace', () => {
     const layout = read('src/renderer/components/DashboardLayout.tsx');
     const notice = read('src/renderer/components/LegalAdviceNotice.tsx');
+    const translations = read('shared/i18n.ts');
 
     expect(layout).toContain('<LegalAdviceNotice />');
     expect(notice).toContain('role="note"');
-    expect(notice).toContain('aria-label="Legal assistance notice"');
-    expect(notice).toContain('Legal assistance, not legal advice.');
-    expect(notice).toContain('reviewed by a qualified lawyer');
+    expect(notice).toContain('aria-label={t("legal.noticeLabel")}');
+    expect(notice).toContain('t("legal.noticeTitle")');
+    expect(notice).toContain('t("legal.noticeBody")');
+    expect(translations).toContain('"legal.noticeLabel"');
+    expect(translations).toContain('"legal.noticeTitle"');
+    expect(translations).toContain('"legal.noticeBody"');
   });
 
   it('offers local image OCR and analyzes supported evidence automatically', () => {

@@ -39,6 +39,7 @@ import { createContext } from './context';
 import { compressionMiddleware } from './compression';
 import { initCronScheduler } from './cronScheduler';
 import oauth2CallbacksRouter from './oauth2Callbacks';
+import haiIntegrationRoutes from './haiIntegrationRoutes';
 import { getDb } from './db';
 import { assertSecurityConfig, ENV } from './_core/env';
 import { listenHttpServer } from './listen';
@@ -192,6 +193,7 @@ if (ENV.SERVER_ONLY) {
 
 // Mount OAuth2 callback routes
 app.use(oauth2CallbacksRouter);
+app.use(haiIntegrationRoutes);
 
 // ─── tRPC middleware ──────────────────────────────────────────────────────────
 

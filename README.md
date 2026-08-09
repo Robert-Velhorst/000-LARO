@@ -161,6 +161,7 @@ Copy `.env.example` to `.env`; never commit real secrets. The template is groupe
 | Area | Important variables |
 | --- | --- |
 | Desktop server | `NODE_ENV`, `HOST`, `PORT`, `API_BODY_LIMIT`, `JWT_SECRET`, `COOKIE_SECRET` |
+| HAI connector | `LARO_PUBLIC_BASE_URL` (set automatically by the ngrok launcher); credentials are created and revoked in Settings |
 | Development renderer | `VITE_LARO_API_URL` (API proxy target when it is not `http://127.0.0.1:3000`) |
 | Desktop data | `DATABASE_URL`, `LOCAL_STORAGE_DIR`, `AWS_S3_*` |
 | Standalone local scan | `LOCAL_SCAN_ROOTS` (path-delimited allowlist; desktop uses the native folder picker) |
@@ -212,17 +213,20 @@ See [Operator Runbook](docs/OPERATOR_RUNBOOK.md), [Security](docs/SECURITY.md), 
 
 ## Verification
 
-The current production-readiness candidate was verified locally on 2026-08-03.
+The current production-readiness candidate was verified locally on 2026-08-09.
 GitHub Actions repeats the Node and browser checks on the supported Node 22 toolchain:
 
 - `npm run gate`: all blocking gates passed.
 - Server, Electron main-process, and shipped renderer TypeScript checks passed; no shipped runtime module disables type checking; ESLint passed.
-- Traceability reported 117 rows, 92 cited, and 0 broken references.
+- Traceability reports 117 rows, 117 cited, 0 broken references, and no
+  implemented phase without a concrete repository artifact.
 - Runtime no-excuses scan reported 0 suspect findings; account safety reported 0 high-severity findings.
-- Vitest reported 65 passing files and 390 passing tests, including controlled
-  NOvA parsing/filter, unknown-metric scoring, and review-gated
-  media/organization discovery, tenant isolation, case-draft persistence, and
-  target-database readiness tests, with no skipped or todo tests.
+- Vitest exercised all 67 files; 65 files passed in the full run and the two
+  startup-timeout suites then passed in isolation on the constrained host. In
+  total, 398 tests passed and 10 explicitly skipped tests remained documented.
+  Passing coverage includes controlled NOvA parsing/filter, unknown-metric
+  scoring, review-gated media/organization discovery, tenant isolation,
+  case-draft persistence, and target-database readiness tests.
 - Full Python discovery reported 222 passing tests, including 13 coordinated
   Flask recovery tests. Warning-focused optimization and UCID tests also passed
   with deprecations promoted to errors.
@@ -233,9 +237,9 @@ The packaged desktop ignores `.env` files in its launch directory and normally
 asks Windows for an available loopback port. Setting
 `OAUTH_REDIRECT_BASE_URL` to an explicit `localhost` or `127.0.0.1` port pins the
 desktop server to that registered OAuth callback port instead.
-- `npm audit` reported 0 known vulnerabilities after updating the direct
-  PostCSS build dependency to 8.5.25 and the transitive Socket.IO parser to
-  4.2.7.
+- `npm audit` reports 0 known vulnerabilities after the current lockfile also
+  moved `nanoid` to 3.3.18 and transitive `js-yaml` to 4.3.1 in response to the
+  2026-08-08 advisory feed.
 - Production preflight and operator-readiness diagnostics reported no blockers.
   The isolated backup/delete/restore/reopen drill and target-database integrity,
   foreign-key, relationship-guard, invariant, reconciliation, duplicate, and
@@ -253,7 +257,7 @@ desktop server to that registered OAuth callback port instead.
   exposed case-scoped CSV and ZIP exports, downloaded a real CSV, disabled the
   unavailable PDF format, and kept batch scoring unavailable with a truthful
   collection prompt when the selected case contained no evidence.
-- The CI Playwright/axe audit rendered all 15 supported static routes at
+- The Playwright/axe audit rendered all 15 supported static routes at
   1440x900 and 390x844. Serious/critical WCAG A/AA violations, unnamed visible
   controls, missing primary headings, page overflow, failed requests, page
   errors, and console errors all block the browser job.
@@ -271,7 +275,7 @@ desktop server to that registered OAuth callback port instead.
   Electron native-module ABI, single-instance profile lock, restart persistence
   of the desktop secret, and artifact checksum before upload.
 - Windows reports `NotSigned` for the current unsigned distribution, as intended.
-  A verified isolated-profile launch applies all six migrations, installs 228
+  A verified isolated-profile launch applies the packaged migrations, installs 228
   database relationship guards, serves the renderer on an automatically selected
   loopback port, and preserves the existing profile across restart.
 
@@ -328,6 +332,22 @@ publish the Electron interface. Register
 OAuth client. See [Deployment](docs/DEPLOYMENT.md) for the exact traffic-policy,
 secret-handling, and verification requirements.
 
+### HAI connected source
+
+LARO exposes a dedicated read-only HAI feed at
+`/api/integrations/hai/feed`. It is not a general API token: the credential is
+owner-bound, limited to `hai:read`, stored only as a SHA-256 digest, expires in
+at most 365 days, and can be revoked immediately from **Settings > HAI**. The
+raw credential is shown only once.
+
+The feed is incremental and bounded (50 records by default, 100 maximum). It
+contains case status, urgency, legal areas, case summary, and completed legal
+analysis summaries with selected structured findings. Client contact details,
+source-document bytes, source quotations, OAuth credentials, and outbound-mail
+credentials are excluded. HAI must use its dedicated `laro` connected-source
+adapter with `HAI_LARO_BASE_URL` and `HAI_LARO_CONNECTOR_TOKEN`; credentials are
+never placed in the source URL or HAI database.
+
 When the shared gateway cannot be changed yet, start a separate direct tunnel
 without altering the existing application or its traffic policy:
 
@@ -370,6 +390,11 @@ npm run dist:win
 LARO's supported local workflows are unmetered. There is no checkout, paid tier,
 usage quota, or upgrade gate; persisted usage data is operational count telemetry
 only.
+
+The desktop interface supports a persisted Dutch/English preference. Change it
+before sign-in or from the account menu; the legal safety notice, navigation,
+authentication, and scanner workflow update immediately and keep the selection
+after restart.
 
 The package includes only the two matcher datasets from `assets/`; the legacy
 development service, Python cache files, and local configuration are excluded.
@@ -450,6 +475,8 @@ unknown-publisher warning. Optional Store and direct-signing routes remain avail
 - [Backup and Restore](docs/BACKUP_RESTORE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Technical Debt](docs/TECH_DEBT.md)
+- [Current Technical Audit](docs/TECHNICAL_AUDIT.md)
+- [Internationalization](docs/I18N.md)
 - [Changelog](CHANGELOG.md)
 
 ## License

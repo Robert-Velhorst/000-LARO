@@ -8,6 +8,9 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import AuthPage from "@/components/AuthPage";
 import { DashboardSkeleton } from "@/components/SkeletonLoaders";
 import { WebSocketProvider } from "@/contexts/WebSocketContext";
+import { useI18n } from "@/contexts/I18nContext";
+import { AlertCircle, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 const Home = lazy(() => import("@/components/Home"));
 const Cases = lazy(() => import("@/components/Cases"));
@@ -25,10 +28,27 @@ const fileProtocol =
   typeof window !== "undefined" && window.location.protocol === "file:";
 
 export default function DashboardApp() {
-  const { user, loading } = useAuth();
+  const { user, loading, error, refresh } = useAuth();
+  const { t } = useI18n();
 
   if (loading) {
     return <DashboardSkeleton />;
+  }
+
+  if (error && !user) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
+        <section className="w-full max-w-md border border-border bg-card p-6 text-center">
+          <AlertCircle className="mx-auto h-8 w-8 text-destructive" aria-hidden="true" />
+          <h1 className="mt-4 text-lg font-semibold">{t("auth.connectionError")}</h1>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">{t("auth.connectionErrorDetail")}</p>
+          <Button className="mt-5" onClick={() => void refresh()}>
+            <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />
+            {t("common.retry")}
+          </Button>
+        </section>
+      </main>
+    );
   }
 
   if (!user) {
@@ -64,8 +84,8 @@ export default function DashboardApp() {
 
       <Route>
         <div className="p-8 text-center text-muted-foreground">
-          <p className="font-medium text-foreground">Page not found</p>
-          <p className="mt-2 text-sm">Use the sidebar to navigate.</p>
+          <p className="font-medium text-foreground">{t("route.notFound")}</p>
+          <p className="mt-2 text-sm">{t("route.notFoundHint")}</p>
         </div>
       </Route>
     </Switch>

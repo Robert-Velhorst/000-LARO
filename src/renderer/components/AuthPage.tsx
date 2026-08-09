@@ -6,10 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Lock, Mail, User, ArrowRight, ShieldCheck, KeyRound } from "lucide-react";
+import { LanguageSelector } from "@/components/LanguageSelector";
+import { useI18n } from "@/contexts/I18nContext";
+import type { TranslationKey } from "../../../shared/i18n";
 
 type AuthMode = "signin" | "signup" | "forgot" | "reset";
 
 export default function AuthPage() {
+  const { t } = useI18n();
   const [mode, setMode] = useState<AuthMode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -31,52 +35,53 @@ export default function AuthPage() {
     try {
       if (mode === "signin") {
         await loginMutation.mutateAsync({ email, password });
-        toast.success("Welcome back to LARO!");
+        toast.success(t("auth.welcomeBack"));
         await utils.auth.me.invalidate();
       } else if (mode === "signup") {
         await signupMutation.mutateAsync({ email, password, name });
-        toast.success("Account created! Welcome to LARO.");
+        toast.success(t("auth.accountCreated"));
         await utils.auth.me.invalidate();
       } else if (mode === "forgot") {
         await requestResetMutation.mutateAsync({ email });
-        toast.success("If an account exists for that email, a reset code has been sent.");
+        toast.success(t("auth.resetRequested"));
         setMode("reset");
       } else if (mode === "reset") {
         await resetPasswordMutation.mutateAsync({ email, code, newPassword });
-        toast.success("Password reset. You can now sign in.");
+        toast.success(t("auth.resetComplete"));
         setPassword("");
         setCode("");
         setNewPassword("");
         setMode("signin");
       }
     } catch (error: any) {
-      toast.error(error.message || "Something went wrong");
+      toast.error(error.message || t("auth.genericError"));
     } finally {
       setLoading(false);
     }
   };
 
-  const titles: Record<AuthMode, string> = {
-    signin: "Sign In",
-    signup: "Create Account",
-    forgot: "Reset Password",
-    reset: "Enter Reset Code",
+  const titleKeys: Record<AuthMode, TranslationKey> = {
+    signin: "auth.signIn",
+    signup: "auth.signUp",
+    forgot: "auth.resetPassword",
+    reset: "auth.enterResetCode",
   };
-  const descriptions: Record<AuthMode, string> = {
-    signin: "Enter your credentials to access your legal dashboard",
-    signup: "Join LARO to start consolidating your legal evidence",
-    forgot: "Enter your email and we'll send you a 6-digit reset code",
-    reset: "Enter the code from your email and choose a new password",
+  const descriptionKeys: Record<AuthMode, TranslationKey> = {
+    signin: "auth.signInDescription",
+    signup: "auth.signUpDescription",
+    forgot: "auth.forgotDescription",
+    reset: "auth.resetDescription",
   };
-  const submitLabels: Record<AuthMode, string> = {
-    signin: "Sign In",
-    signup: "Sign Up",
-    forgot: "Send Reset Code",
-    reset: "Reset Password",
+  const submitKeys: Record<AuthMode, TranslationKey> = {
+    signin: "auth.signIn",
+    signup: "auth.submitSignUp",
+    forgot: "auth.sendResetCode",
+    reset: "auth.resetPassword",
   };
 
   return (
-    <div className="min-h-screen bg-black flex items-center justify-center p-4">
+    <div className="relative min-h-screen bg-black flex items-center justify-center p-4">
+      <LanguageSelector compact className="absolute right-4 top-4 w-24" />
       <div className="w-full max-w-md animate-in fade-in zoom-in duration-500">
         {/* Brand Header */}
         <div className="text-center mb-8">
@@ -86,19 +91,19 @@ export default function AuthPage() {
             </div>
             <h1 className="text-4xl font-bold tracking-tight text-white uppercase letter-spacing-widest">LARO</h1>
           </div>
-          <p className="text-muted-foreground">Your self-hosted legal evidence agent</p>
+          <p className="text-muted-foreground">{t("app.tagline")}</p>
         </div>
 
         <Card className="border-border/50 bg-card/50 backdrop-blur-xl shadow-2xl">
           <CardHeader className="space-y-1">
-            <CardTitle className="text-2xl font-bold">{titles[mode]}</CardTitle>
-            <CardDescription>{descriptions[mode]}</CardDescription>
+            <CardTitle className="text-2xl font-bold">{t(titleKeys[mode])}</CardTitle>
+            <CardDescription>{t(descriptionKeys[mode])}</CardDescription>
           </CardHeader>
           <form onSubmit={handleSubmit}>
             <CardContent className="space-y-4">
               {mode === "signup" && (
                 <div className="space-y-2">
-                  <Label htmlFor="name">Full Name</Label>
+                  <Label htmlFor="name">{t("auth.fullName")}</Label>
                   <div className="relative">
                     <User className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                     <Input
@@ -118,7 +123,7 @@ export default function AuthPage() {
               {/* Email — shown for every mode except the final reset step,
                   where it's locked to the address the code was sent to. */}
               <div className="space-y-2">
-                <Label htmlFor="email">Email Address</Label>
+                <Label htmlFor="email">{t("auth.email")}</Label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                   <Input
@@ -137,7 +142,7 @@ export default function AuthPage() {
 
               {mode === "reset" && (
                 <div className="space-y-2">
-                  <Label htmlFor="code">Reset Code</Label>
+                  <Label htmlFor="code">{t("auth.resetCode")}</Label>
                   <div className="relative">
                     <KeyRound className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                     <Input
@@ -158,7 +163,7 @@ export default function AuthPage() {
 
               {(mode === "signin" || mode === "signup") && (
                 <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
+                  <Label htmlFor="password">{t("auth.password")}</Label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                     <Input
@@ -177,12 +182,12 @@ export default function AuthPage() {
 
               {mode === "reset" && (
                 <div className="space-y-2">
-                  <Label htmlFor="newPassword">New Password</Label>
+                  <Label htmlFor="newPassword">{t("auth.newPassword")}</Label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="newPassword"
-                      placeholder="At least 8 characters"
+                      placeholder={t("auth.passwordHint")}
                       type="password"
                       autoComplete="new-password"
                       minLength={8}
@@ -202,7 +207,7 @@ export default function AuthPage() {
                     onClick={() => setMode("forgot")}
                     className="text-sm text-muted-foreground hover:text-primary transition-colors underline-offset-4 hover:underline"
                   >
-                    Forgot password?
+                    {t("auth.forgotPassword")}
                   </button>
                 </div>
               )}
@@ -216,11 +221,11 @@ export default function AuthPage() {
                 {loading ? (
                   <div className="flex items-center gap-2">
                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Processing...
+                    {t("auth.processing")}
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
-                    {submitLabels[mode]}
+                    {t(submitKeys[mode])}
                     <ArrowRight className="w-4 h-4" />
                   </div>
                 )}
@@ -234,8 +239,8 @@ export default function AuthPage() {
                     className="text-sm text-muted-foreground hover:text-primary transition-colors underline-offset-4 hover:underline"
                   >
                     {mode === "signin"
-                      ? "Don't have an account? Sign up"
-                      : "Already have an account? Sign in"}
+                      ? t("auth.noAccount")
+                      : t("auth.hasAccount")}
                   </button>
                 )}
 
@@ -245,7 +250,7 @@ export default function AuthPage() {
                     onClick={() => setMode("forgot")}
                     className="block w-full text-sm text-muted-foreground hover:text-primary transition-colors underline-offset-4 hover:underline"
                   >
-                    Didn't get a code? Resend
+                    {t("auth.resendCode")}
                   </button>
                 )}
 
@@ -255,7 +260,7 @@ export default function AuthPage() {
                     onClick={() => setMode("signin")}
                     className="block w-full text-sm text-muted-foreground hover:text-primary transition-colors underline-offset-4 hover:underline"
                   >
-                    Back to sign in
+                    {t("auth.backToSignIn")}
                   </button>
                 )}
               </div>

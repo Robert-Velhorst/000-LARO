@@ -3,6 +3,8 @@ import { createTRPCProxyClient, httpBatchLink } from "@trpc/client";
 import superjson from "superjson";
 import type { AppRouter } from "../../../server/routers";
 import { getElectronAPI } from "@/lib/electronApiShim";
+import { useI18n } from "@/contexts/I18nContext";
+import type { TranslationKey } from "../../../shared/i18n";
 
 interface HomePageProps {
   onNavigate: (page: string) => void;
@@ -20,6 +22,7 @@ interface Case {
 }
 
 export default function HomePage({ onNavigate, onScanStarted, config }: HomePageProps) {
+  const { t } = useI18n();
   const electronAPI = getElectronAPI();
   const [cases, setCases] = useState<Case[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -68,10 +71,10 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
           const msg =
             err && typeof err === "object" && "message" in err
               ? String((err as { message: string }).message)
-              : "Failed to load cases.";
+              : t("scanner.loadCasesError");
           setError(
             msg.includes("UNAUTHORIZED") || msg.includes("Not authenticated")
-              ? "Not signed in to LARO. Sign in from the main window, then retry."
+              ? t("scanner.signInDetail")
               : msg
           );
           setCases([]);
@@ -88,7 +91,7 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [apiClient]);
+  }, [apiClient, t]);
 
   const loadCases = () => {
     if (!apiClient) return;
@@ -104,7 +107,7 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
         const msg =
           err && typeof err === "object" && "message" in err
             ? String((err as { message: string }).message)
-            : "Failed to load cases.";
+            : t("scanner.loadCasesError");
         setError(msg);
         setCases([]);
       })
@@ -128,11 +131,11 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
 
   const handleStartScan = async () => {
     if (!selectedCase) {
-      alert("Please select a case first");
+      alert(t("scanner.selectCaseFirst"));
       return;
     }
     if (!scanFolders.length) {
-      alert("Select at least one folder to scan");
+      alert(t("scanner.selectFolderFirst"));
       return;
     }
 
@@ -147,14 +150,14 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
       onScanStarted(result.scanId);
     } catch (err: unknown) {
       console.error("Failed to start scan:", err);
-      alert("Failed to start scan: " + (err instanceof Error ? err.message : String(err)));
+      alert(t("scanner.startScanError", { message: err instanceof Error ? err.message : String(err) }));
     }
   };
 
   if (!config?.apiUrl) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-gray-600">
-        Loading connection…
+        {t("common.loading")}
       </div>
     );
   }
@@ -163,15 +166,15 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
     <div className="flex h-full w-full flex-col">
       <header className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Evidence Collection</h1>
-          <p className="text-sm text-gray-600">Select a case and configure scan settings</p>
+          <h1 className="text-2xl font-bold text-gray-900">{t("scanner.collection")}</h1>
+          <p className="text-sm text-gray-600">{t("scanner.collectionHint")}</p>
         </div>
         <button
           type="button"
           onClick={() => onNavigate("settings")}
           className="rounded-lg px-4 py-2 text-gray-700 transition-colors hover:bg-gray-100"
         >
-          Settings
+          {t("nav.settings")}
         </button>
       </header>
 
@@ -179,20 +182,20 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
         <div className="mx-auto max-w-4xl space-y-6">
           <div className="rounded-lg bg-white p-6 shadow">
             <div className="mb-4 flex items-center justify-between gap-2">
-              <h2 className="text-lg font-semibold text-gray-900">Select Case</h2>
+              <h2 className="text-lg font-semibold text-gray-900">{t("scanner.selectCase")}</h2>
               <button
                 type="button"
                 onClick={loadCases}
                 className="text-sm font-medium text-blue-600 hover:text-blue-800"
               >
-                Refresh
+                {t("common.refresh")}
               </button>
             </div>
 
             {isLoading ? (
               <div className="py-8 text-center">
                 <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
-                <p className="mt-2 text-gray-600">Loading cases…</p>
+                <p className="mt-2 text-gray-600">{t("scanner.loadingCases")}</p>
               </div>
             ) : error ? (
               <div className="rounded-lg border border-red-200 bg-red-50 p-4">
@@ -202,14 +205,14 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
                   onClick={loadCases}
                   className="mt-2 text-sm font-medium text-red-700 hover:text-red-800"
                 >
-                  Try again
+                  {t("common.retry")}
                 </button>
               </div>
             ) : cases.length === 0 ? (
               <div className="py-8 text-center text-gray-600">
-                <p>No cases found for your account.</p>
+                <p>{t("scanner.noCases")}</p>
                 <p className="mt-2 text-sm">
-                  Create a case in the main LARO window while signed in, then click <strong>Refresh</strong> here.
+                  {t("scanner.noCasesHint")}
                 </p>
               </div>
             ) : (
@@ -240,7 +243,7 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
                                 : "bg-green-100 text-green-700"
                           }`}
                         >
-                          {c.urgency}
+                          {t(`case.urgency.${c.urgency}` as TranslationKey)}
                         </span>
                       </div>
                     </div>
@@ -251,25 +254,25 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
           </div>
 
           <div className="rounded-lg bg-white p-6 shadow">
-            <h2 className="mb-1 text-lg font-semibold text-gray-900">Folders to scan</h2>
+            <h2 className="mb-1 text-lg font-semibold text-gray-900">{t("scanner.folders")}</h2>
             <p className="mb-4 text-sm text-gray-600">
-              Only folders you explicitly select are scanned. Nothing uploads until you review the results.
+              {t("scanner.folderSafety")}
             </p>
             <div>
               <div className="mb-3 flex items-center justify-between">
-                <h3 className="font-medium text-gray-900">Selected folders</h3>
+                <h3 className="font-medium text-gray-900">{t("scanner.selectedFolders")}</h3>
                 <button
                   type="button"
                   onClick={handleAddScanFolder}
                   className="rounded-lg bg-blue-600 px-3 py-1 text-sm text-white transition-colors hover:bg-blue-700"
                 >
-                  Choose folders
+                  {t("scanner.chooseFolders")}
                 </button>
               </div>
 
               {scanFolders.length === 0 ? (
                 <p className="text-sm text-gray-600">
-                  No folders selected.
+                  {t("scanner.noFolders")}
                 </p>
               ) : (
                 <div className="space-y-2">
@@ -281,7 +284,7 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
                         onClick={() => handleRemoveScanFolder(folder)}
                         className="ml-2 text-red-600 hover:text-red-700"
                       >
-                        Remove
+                        {t("common.remove")}
                       </button>
                     </div>
                   ))}
@@ -297,10 +300,10 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
             className="w-full rounded-lg bg-blue-600 px-6 py-4 text-lg font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
           >
             {!selectedCase
-              ? "Select a Case to Continue"
+              ? t("scanner.selectCaseContinue")
               : scanFolders.length === 0
-                ? "Choose a Folder to Continue"
-                : "Scan Selected Folders"}
+                ? t("scanner.chooseFolderContinue")
+                : t("scanner.scanFolders")}
           </button>
         </div>
       </div>

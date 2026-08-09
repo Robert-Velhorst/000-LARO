@@ -154,8 +154,10 @@ describe('production readiness regressions', () => {
     expect(boundary).not.toContain('TODO: Send to error tracking service');
     const dashboardRoutes = readFileSync(join(ROOT, 'src/renderer/DashboardApp.tsx'), 'utf8');
     const dashboardLayout = readFileSync(join(ROOT, 'src/renderer/components/DashboardLayout.tsx'), 'utf8');
+    const translations = readFileSync(join(ROOT, 'shared/i18n.ts'), 'utf8');
     expect(dashboardRoutes).toContain('<Route path="/evidence" component={Evidence} />');
-    expect(dashboardLayout).toContain('label: "Evidence", path: "/evidence"');
+    expect(dashboardLayout).toContain('labelKey: "nav.evidence", path: "/evidence"');
+    expect(translations).toContain('"nav.evidence": { nl: "Bewijs", en: "Evidence" }');
   });
 
   it('uses encrypted PKCE state for Google OAuth', async () => {
@@ -687,17 +689,21 @@ describe('production readiness regressions', () => {
     const app = readFileSync(join(ROOT, 'src/renderer/App.tsx'), 'utf8');
     const home = readFileSync(join(ROOT, 'src/renderer/pages/HomePage.tsx'), 'utf8');
     const scan = readFileSync(join(ROOT, 'src/renderer/pages/ScanPage.tsx'), 'utf8');
+    const translations = readFileSync(join(ROOT, 'shared/i18n.ts'), 'utf8');
     const uploader = readFileSync(join(ROOT, 'src-main/uploader.ts'), 'utf8');
     const routers = readFileSync(join(ROOT, 'server/routers/index.ts'), 'utf8');
 
     expect(existsSync(join(ROOT, 'src/renderer/pages/AuthPage.tsx'))).toBe(false);
     expect(app).toContain('getScannerToken');
-    expect(app).toContain('scanner never creates an offline or anonymous session');
-    expect(home).toContain('Nothing uploads until you review the results');
+    expect(app).toContain('if (!session.data || scannerToken.isError || !scannerToken.data?.token)');
+    expect(app).toContain('setConfig({ token: null, userId: null, deviceId: null, caseId: null })');
+    expect(home).toContain('t("scanner.folderSafety")');
+    expect(translations).toContain('"scanner.folderSafety"');
     expect(home).toContain('folders: scanFolders');
     expect(home).toContain('autoUpload: false');
     expect(scan).toContain('setScanFileSelection');
-    expect(scan).toContain('Upload selected');
+    expect(scan).toContain('t("scanner.uploadSelected")');
+    expect(translations).toContain('"scanner.uploadSelected"');
     expect(main).toContain('approvedScanFolders');
     expect(main).toContain("autoUpload: false");
     expect(main).toContain("process.env.HOST = '127.0.0.1'");

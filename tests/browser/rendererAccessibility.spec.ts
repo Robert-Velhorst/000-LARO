@@ -34,7 +34,7 @@ async function createAccount(page: Page) {
   await page.getByLabel("Email Address").fill(email);
   await page.getByLabel("Password").fill("A11yAudit!2026");
   await page.getByRole("button", { name: "Sign Up", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Open account menu|Accountmenu openen/ })).toBeVisible();
   await page.waitForLoadState("networkidle");
   return email;
 }
@@ -140,6 +140,25 @@ test("all supported routes pass the blocking renderer accessibility audit", asyn
   expect(pageErrors, "renderer page errors").toEqual([]);
   expect(requestFailures, "renderer request failures").toEqual([]);
   expect(consoleErrors, "renderer console errors").toEqual([]);
+});
+
+test("language selection changes the mounted shell and persists across reloads", async ({ page }) => {
+  await createAccount(page);
+
+  await page.getByRole("button", { name: "Open account menu" }).click();
+  await page.getByRole("group", { name: "Language" }).getByRole("button", { name: "nl", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "nl");
+  await expect(page.getByText("Mijn zaken", { exact: true })).toBeVisible();
+  await expect(page.getByText("Juridische ondersteuning, geen juridisch advies.")).toBeVisible();
+
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.locator("html")).toHaveAttribute("lang", "nl");
+  await expect(page.getByText("Mijn zaken", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Accountmenu openen" }).click();
+  await page.getByRole("group", { name: "Taal" }).getByRole("button", { name: "en", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", "en");
+  await expect(page.getByText("My Cases", { exact: true })).toBeVisible();
 });
 
 test("Settings presents an owned Flask migration without responsive overflow", async ({ page }) => {

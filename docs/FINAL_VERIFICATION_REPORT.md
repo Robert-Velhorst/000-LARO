@@ -1,7 +1,8 @@
 # Final Verification Report
 
-Date: 2026-08-01
-Verification target: protected `main` commit `5dd3c7612a1730f2e9b7db02b7be47db25ef1359`
+Date: 2026-08-09
+Verification target: `agent/giant-goal-completion`, based on protected `main`
+commit `b5ae60787000f82b6a9e90a78c2c202674dc7dd1`
 
 This report separates reproducible repository evidence from target-environment
 acceptance. It supersedes the 2026-07-06 phase snapshot.
@@ -12,19 +13,20 @@ acceptance. It supersedes the 2026-07-06 phase snapshot.
 |---|---|
 | Server, Electron main, and renderer TypeScript | Pass; 0 shipped runtime `@ts-nocheck` bypasses |
 | ESLint | Pass |
-| Requirements traceability | 117 rows, 92 cited, 0 broken |
+| Requirements traceability | 117 rows, 117 cited, 0 broken, 0 implemented without an artifact |
 | Runtime no-excuses scan | 0 suspect findings |
 | Account-safety scan | 0 high-severity findings |
 | Renderer accessibility | 15 routes x 2 viewports; 0 serious/critical axe violations, unnamed controls, overflows, request failures, page errors, or console errors |
 | Isolated backup/delete/restore/reopen drill | Pass |
 | Target database readiness | SQLite integrity, declared foreign keys, 237 legacy relationship guards, invariants, reconciliation, duplicates, and demo markers clean |
-| Vitest | 59 files, 368 tests passed, 0 todo |
+| Vitest | All 67 files exercised; 398 tests passed and 10 explicitly skipped; two suites that hit setup timeout in the full constrained-host run passed immediately in isolation |
 | Python unittest discovery | 222 tests passed |
 | Runtime dependency audit | 0 known vulnerabilities |
 | Renderer, main, and server production builds | Pass |
-| Portable Windows packaging | Pass with tracked LARO icon; unsigned by policy |
+| Portable Windows packaging | Pass with tracked LARO icon; unsigned by policy; Electron 43.1.0 native SQLite ABI 148 verified |
 | Packaged `/api/health` | `healthy`, database ready, version 1.3.0 |
-| Packaged document intelligence and Outreach | Seven migrations present, including persisted keyword-pull jobs and the legacy-import archive; PDF, DOCX, native parser dependencies, and review-gated Outreach tables present; integrated server booted successfully |
+| Packaged document intelligence and Outreach | Eight migrations present, including persisted keyword-pull jobs, the legacy-import archive, and owner-scoped HAI credentials; PDF, DOCX, native parser dependencies, and review-gated Outreach tables present; integrated server booted successfully |
+| LARO-to-HAI connector | Dedicated read-only feed; hashed, expiring, revocable owner credential; bounded cursor; minimization and rate limit; LARO and HAI adapter tests pass |
 | Desktop scanner contract | Scoped 15-minute token; real bytes/hash; owner/MIME enforcement |
 | Branch CI policy | Node, Python, and renderer-accessibility checks run before merge |
 | Protected-main baseline CI | Actions run `30693140677`; Node, Python, and renderer-accessibility jobs passed |
@@ -42,6 +44,14 @@ A manifest-bound target recovery set was then created and validated against the
 current standalone JWT secret. Validation covered 54 tables and complete local
 evidence storage; publication and validation left no untracked SQLite temporary,
 WAL, or shared-memory sidecars.
+
+The current renderer audit passed four real-browser scenarios in 201.9 seconds:
+all 15 routes at 1440x900 and 390x844, persisted locale switching, responsive
+legacy-ledger migration presentation, and source-linked document
+reconstruction. There were no blocking accessibility violations, unnamed
+controls, horizontal overflows, request failures, page errors, or console
+errors. The in-app browser surface itself could not attach a local webview on
+this host; the independently launched Chromium audit is the acceptance evidence.
 
 ## Packaged UI evidence
 
@@ -124,6 +134,12 @@ disabled with a collection prompt while the case had no evidence. The inherited
 dark-theme recommendation contrast defect found during this pass was corrected
 and visually rechecked.
 
+The current local candidate `LARO Desktop 1.3.0.exe` is 151,855,902 bytes with
+SHA-256 `5d2bef95bf76adb258c0b1a38b9ef820937d2de9992c15dfea16059c0069198f`.
+It was built on 2026-08-09 and passed the Electron native SQLite check. The
+following protected-main artifact paragraph remains the prior CI baseline until
+this branch is merged and its workflows publish a replacement.
+
 The current protected-main portable artifact is GitHub Actions artifact
 `8816485204` from run `30693140665`. Its executable is 151,891,123 bytes with
 SHA-256 `14a27ff42c06d5cf1aa8897c605943b38ccc7d2e67675b7d27aeaa0e3714050c`;
@@ -136,18 +152,17 @@ internal distribution policy.
 The API-only Docker deployment was rebuilt on Node 22 from the current release
 line while retaining its explicitly named data volume. Local `/api/live`,
 `/api/ready`, and `/api/health` checks pass, the reported version is `1.3.0`,
-and SMTP authentication succeeds without sending a message. Google remains
-unconfigured because the previously stored value was not a Google client
-secret. The ngrok `/laro` gateway currently falls through to another service,
-so no public-API acceptance is claimed until that route is repaired and
-reverified.
+and SMTP authentication succeeds without sending a message. The Google web
+client is configured, but the owner's OAuth grant is not yet stored. The ngrok
+gateway now routes `https://laro-api-000.ngrok.app/laro` to LARO; public root,
+live, ready, health, and OAuth callback ownership were verified on 2026-08-08.
 
 Packaged clean-profile evidence for this release line also verified fresh local
-secrets and databases, all seven packaged migrations, healthy version `1.3.0`
+secrets and databases, all eight packaged migrations, healthy version `1.3.0`
 startup, SQLite integrity with zero foreign-key violations, and all 237 required
 relationship guards. Packaged resources contain the current migrations,
 PDF/DOCX parsers, native parser dependency, consolidated managed-storage
-deletion, legacy-import archive schema, and seven-category matching data.
+deletion, legacy-import archive and HAI credential schemas, and seven-category matching data.
 
 An earlier isolated package from the same release line was launched with
 `NODE_ENV=development` deliberately injected by its parent process. It still
@@ -230,9 +245,11 @@ provider-specific checks before it can publish.
   reconciliation remains the explicit repair path for pre-existing drift.
 - Route-level lazy loading keeps the production entry chunk near 276 KB before
   gzip; the largest route chunk is near 266 KB.
-- Full i18n migration remains useful optional hardening. Firefox and Safari are
-  not targets for the packaged Electron application; formal WCAG conformance is
-  not claimed.
+- The persisted NL/EN runtime covers authentication, application navigation,
+  legal safety messaging, and the complete desktop scanner workflow. Source,
+  provider, and user-authored content retains its original language. Firefox
+  and Safari are not targets for the packaged Electron application; formal
+  WCAG conformance is not claimed.
 
 ## Verdict
 
