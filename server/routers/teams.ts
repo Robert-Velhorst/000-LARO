@@ -2,7 +2,7 @@ import { z } from "zod";
 import { router, protectedProcedure } from "../_core/trpc";
 import { getDb } from "../db";
 import { users } from "../schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getTeamMembers, addTeamMember, removeTeamMember } from "../teams";
 
 /**
@@ -15,12 +15,14 @@ export const teamsRouter = router({
     const db = await getDb();
     const ids = await getTeamMembers(ctx.user.id);
     if (!db || ids.length === 0) return [] as Array<{ id: string; email: string; name: string }>;
-    const out: Array<{ id: string; email: string; name: string }> = [];
-    for (const id of ids) {
-      const u = (await db.select().from(users).where(eq(users.id, id)).limit(1))[0];
-      out.push({ id, email: (u as any)?.email || "", name: (u as any)?.name || "" });
-    }
-    return out;
+    const rows = await db.select({ id: users.id, email: users.email, name: users.name })
+      .from(users)
+      .where(inArray(users.id, ids));
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    return ids.map((id) => {
+      const user = byId.get(id);
+      return { id, email: user?.email || "", name: user?.name || "" };
+    });
   }),
   addMember: protectedProcedure.input(z.object({ email: z.string().email() })).mutation(async ({ ctx, input }) => {
     const db = await getDb();

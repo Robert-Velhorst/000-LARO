@@ -56,6 +56,22 @@ suite("persisted workflow controls", () => {
     ));
     expect(audit).toHaveLength(1);
     expect(JSON.parse(audit[0].details)).toMatchObject({ analysisMode: "cloud", messageApprovalMode: "batch" });
+
+    await Promise.all([
+      ownerCaller.userPreferences.updateWorkflow({ autoAnalyzeImports: false }),
+      ownerCaller.userPreferences.updateWorkflow({ messageApprovalMode: "automatic" }),
+    ]);
+    await expect(ownerCaller.userPreferences.workflow()).resolves.toMatchObject({
+      autoAnalyzeImports: false,
+      messageApprovalMode: "automatic",
+    });
+    const keyedRows = await app.db.select({ id: app.schema.userPreferences.id })
+      .from(app.schema.userPreferences)
+      .where(and(
+        eq(app.schema.userPreferences.userId, owner.id),
+        eq(app.schema.userPreferences.key, "workflow-controls"),
+      ));
+    expect(keyedRows).toHaveLength(1);
   });
 
   it("does not send raw content to a provider when full-source sharing is disabled", async () => {

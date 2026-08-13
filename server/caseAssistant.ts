@@ -233,7 +233,7 @@ export function validateCaseAssistantProviderAnswer(value: unknown, validIds: Se
 export function buildCaseAssistantRetrievalAnswer(
   question: string,
   rankedSources: RankedCaseAssistantSource[],
-  providerConfigured: boolean
+  fallbackReason: "provider_unavailable" | "invalid_response" | "provider_failed"
 ): CaseAssistantAnswer {
   if (!rankedSources.length) {
     return {
@@ -259,9 +259,11 @@ export function buildCaseAssistantRetrievalAnswer(
     citations,
     grounded: true,
     mode: "retrieval",
-    notice: providerConfigured
+    notice: fallbackReason === "invalid_response"
       ? "The AI response was rejected because it did not preserve valid source citations; deterministic evidence matches are shown instead."
-      : "Cloud analysis is disabled or unavailable; deterministic evidence matches are shown instead.",
+      : fallbackReason === "provider_failed"
+        ? "The selected AI provider could not complete the request; deterministic evidence matches are shown instead."
+        : "Cloud analysis is disabled or unavailable; deterministic evidence matches are shown instead.",
   };
 }
 
@@ -351,7 +353,7 @@ export async function answerCaseQuestion(options: {
 
   const rankedSources = rankCaseAssistantSources(options.question, sources);
   if (!rankedSources.length) {
-    return buildCaseAssistantRetrievalAnswer(options.question, [], providerAvailable);
+    return buildCaseAssistantRetrievalAnswer(options.question, [], providerAvailable ? "invalid_response" : "provider_unavailable");
   }
 
   const sourceMap = new Map(rankedSources.map((source, index) => [`D${index + 1}`, source]));
@@ -364,7 +366,7 @@ export async function answerCaseQuestion(options: {
   }).join("\n\n");
 
   if (!providerAvailable || !provider) {
-    return buildCaseAssistantRetrievalAnswer(options.question, rankedSources, false);
+    return buildCaseAssistantRetrievalAnswer(options.question, rankedSources, "provider_unavailable");
   }
 
   try {
@@ -412,7 +414,7 @@ export async function answerCaseQuestion(options: {
     });
     const raw = llmText(response.choices?.[0]?.message?.content);
     const parsed = validateCaseAssistantProviderAnswer(JSON.parse(raw || "{}"), new Set(sourceMap.keys()));
-    if (!parsed) return buildCaseAssistantRetrievalAnswer(options.question, rankedSources, true);
+    if (!parsed) return buildCaseAssistantRetrievalAnswer(options.question, rankedSources, "invalid_response");
     const citations = parsed.citationIds
       .map((id) => sourceMap.get(id))
       .filter((source): source is RankedCaseAssistantSource => Boolean(source))
@@ -425,6 +427,6 @@ export async function answerCaseQuestion(options: {
       notice: null,
     };
   } catch {
-    return buildCaseAssistantRetrievalAnswer(options.question, rankedSources, providerAvailable);
+    return buildCaseAssistantRetrievalAnswer(options.question, rankedSources, "provider_failed");
   }
 }

@@ -15,7 +15,8 @@ export default function App() {
   const [activeScanId, setActiveScanId] = useState<string | null>(null);
 
   const session = trpc.auth.me.useQuery(undefined, {
-    refetchInterval: 15_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
     retry: false,
   });
   const scannerToken = trpc.auth.getScannerToken.useQuery(undefined, {

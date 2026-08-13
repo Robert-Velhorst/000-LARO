@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { getElectronAPI } from "@/lib/electronApiShim";
+import { useWebSocket } from "@/contexts/WebSocketContext";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -141,6 +142,7 @@ function connectedIds(selectedId: string | null, edges: ReconstructionEdge[]): S
 }
 
 export function CaseReconstruction({ caseId }: { caseId: string }) {
+  const { isConnected } = useWebSocket();
   const [reconstruction, setReconstruction] = useState<Reconstruction | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [orientation, setOrientation] = useState<"horizontal" | "vertical">("horizontal");
@@ -158,7 +160,7 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
   const [correctionMessage, setCorrectionMessage] = useState<string | null>(null);
   const timelineQuery = trpc.documentAnalysis.generateCaseTimeline.useQuery(
     { caseId },
-    { refetchInterval: 15_000, refetchOnWindowFocus: true },
+    { refetchInterval: isConnected ? false : 60_000, refetchOnWindowFocus: true },
   );
   const sourceMutation = trpc.evidenceFiles.getDownloadUrl.useMutation();
   const sourceOpenedMutation = trpc.evidenceFiles.recordSourceOpened.useMutation();

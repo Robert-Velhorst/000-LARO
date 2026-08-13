@@ -177,6 +177,9 @@ Copy `.env.example` to `.env`; never commit real secrets. The template is groupe
 | Google intake | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` |
 
 Keep `LARO_HOST` and `LARO_OLLAMA_BASE_URL` on loopback for the local Flask workflow. The Flask analysis engine rejects a non-loopback Ollama endpoint.
+Document-analysis cache entries are bound to the source hash, analysis version,
+selected provider, and selected model. Changing any of those inputs triggers a
+fresh analysis instead of silently reusing a result from another configuration.
 
 ### Google Gmail and Drive
 
@@ -201,6 +204,8 @@ The Flask password-login path stores users and hashed bearer sessions in the ign
 
 - Extracted events and legal observations are suggestions, not confirmed facts.
 - Every retained AI observation must cite source text; uncited model output is discarded.
+- Evidence-gap scores measure record completeness, not case strength or the likelihood of a legal outcome. Missing records and silence can only reduce completeness and never establish motive, destruction, concealment, or liability.
+- Generated records requests, preservation requests, missing-record clarifications, and resolution letters are factual review drafts. They contain no invented authorities or automatic findings of misconduct and must be reviewed before use.
 - Case ownership is enforced on authenticated case, document, approval, audit, and matching routes.
 - Approving a draft does not send it.
 - Desktop outreach send is off by default through `outreach.send.enabled` and is overridden by the global emergency stop.
@@ -214,7 +219,7 @@ See [Operator Runbook](docs/OPERATOR_RUNBOOK.md), [Security](docs/SECURITY.md), 
 
 ## Verification
 
-The current production-readiness candidate was verified locally on 2026-08-09.
+The current production-readiness candidate was verified locally on 2026-08-14.
 GitHub Actions repeats the Node and browser checks on the supported Node 22 toolchain:
 
 - `npm run gate`: all blocking gates passed.
@@ -222,16 +227,16 @@ GitHub Actions repeats the Node and browser checks on the supported Node 22 tool
 - Traceability reports 117 rows, 117 cited, 0 broken references, and no
   implemented phase without a concrete repository artifact.
 - Runtime no-excuses scan reported 0 suspect findings; account safety reported 0 high-severity findings.
-- Vitest exercised all 67 files; 65 files passed in the full run and the two
-  startup-timeout suites then passed in isolation on the constrained host. In
-  total, 398 tests passed and 10 explicitly skipped tests remained documented.
+- Vitest exercised 72 files in the blocking gate; all 415 tests passed.
   Passing coverage includes controlled NOvA parsing/filter, unknown-metric
   scoring, review-gated media/organization discovery, tenant isolation,
-  case-draft persistence, and target-database readiness tests.
+  case-draft persistence, provider/model cache invalidation, concurrent
+  preference writes, legal-draft safety, gap-analysis safety, mutation
+  truthfulness, graceful shutdown, HAI boundaries, and target-database readiness.
 - Full Python discovery reported 222 passing tests, including 13 coordinated
   Flask recovery tests. Warning-focused optimization and UCID tests also passed
   with deprecations promoted to errors.
-- The Vite 8 renderer, Electron 43 main process, and standalone server builds completed successfully.
+- The Vite 8 renderer, Electron 43 main process, and standalone server builds completed successfully. Electron loaded the rebuilt SQLite binding at ABI 148.
 - The scanner integration test verified scoped-token isolation, owner checks, supported MIME enforcement, exact stored bytes, and SHA-256 readback.
 
 The packaged desktop ignores `.env` files in its launch directory and normally
@@ -241,7 +246,7 @@ desktop server to that registered OAuth callback port instead.
 - `npm audit` reports 0 known vulnerabilities after the current lockfile also
   moved `nanoid` to 3.3.18 and transitive `js-yaml` to 4.3.1 in response to the
   2026-08-08 advisory feed.
-- Production preflight and operator-readiness diagnostics reported no blockers.
+- Production preflight and production-mode operator-readiness diagnostics reported no blockers.
   The isolated backup/delete/restore/reopen drill and target-database integrity,
   foreign-key, relationship-guard, invariant, reconciliation, duplicate, and
   demo-marker checks passed.
@@ -258,10 +263,17 @@ desktop server to that registered OAuth callback port instead.
   exposed case-scoped CSV and ZIP exports, downloaded a real CSV, disabled the
   unavailable PDF format, and kept batch scoring unavailable with a truthful
   collection prompt when the selected case contained no evidence.
-- The Playwright/axe audit rendered all 15 supported static routes at
-  1440x900 and 390x844. Serious/critical WCAG A/AA violations, unnamed visible
-  controls, missing primary headings, page overflow, failed requests, page
-  errors, and console errors all block the browser job.
+- The Playwright/axe job passed all four browser flows: the blocking audit for
+  every supported route, persisted language selection, responsive Settings
+  migration controls, and source-linked document reconstruction. In-app browser
+  QA also passed signup, dashboard and case navigation, New Case dialog opening,
+  a 390x844 responsive check, and clean console checks.
+- The built production API passed liveness/readiness, rejected anonymous case
+  access, rejected an unauthenticated HAI request, emitted security headers, and
+  shut down cleanly. The configured ngrok gateway health endpoint was live at
+  verification time and the public HAI endpoint failed closed with HTTP 401.
+- Live Google consent/read/revocation and approved outbound delivery remain
+  explicit external acceptance gates; local success does not mark them complete.
 - Packaged Electron scanner QA passed signup, shared-session authorization, empty-state rendering, disabled unsafe scan state, Settings navigation, and clean renderer console checks.
 - A packaged launch from a directory containing hostile development `.env` values still reported production mode, database readiness, and a random `127.0.0.1` port.
 - An isolated Node 22 API-only container rejected anonymous owner bootstrap,
@@ -276,7 +288,9 @@ desktop server to that registered OAuth callback port instead.
   Electron native-module ABI, single-instance profile lock, restart persistence
   of the desktop secret, and artifact checksum before upload.
 - Windows reports `NotSigned` for the current unsigned distribution, as intended.
-  A verified isolated-profile launch applies the packaged migrations, installs 228
+  The unsigned 1.3.0 installer was generated locally, hashed, and its unpacked
+  executable remained healthy during an isolated-profile launch smoke test.
+  A verified isolated-profile launch applies the packaged migrations, installs 240
   database relationship guards, serves the renderer on an automatically selected
   loopback port, and preserves the existing profile across restart.
 

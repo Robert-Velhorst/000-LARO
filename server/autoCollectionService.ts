@@ -24,6 +24,7 @@ import { analyzeStoredEvidence } from './documentAnalysisService';
 import { supportsDocumentAnalysisMime } from './documentIntelligence';
 import { getWorkflowPreferences } from './workflowPreferences';
 import { getStoredGmailEvidenceState, resolveGmailAccountIds } from './gmailCollectionPolicy';
+import { emitRealtimeDataChange } from './realtime';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -1528,6 +1529,7 @@ async function executeKeywordPullJob(id: string, params: KeywordPullJobParams): 
       completedAt,
       updatedAt: completedAt,
     }).where(eq(keywordPullJobs.id, id));
+    emitRealtimeDataChange(params.userId, { scope: 'evidence', caseId: params.caseId });
   } catch (error) {
     await writeChain;
     const completedAt = new Date();
@@ -1539,6 +1541,7 @@ async function executeKeywordPullJob(id: string, params: KeywordPullJobParams): 
       completedAt,
       updatedAt: completedAt,
     }).where(eq(keywordPullJobs.id, id));
+    emitRealtimeDataChange(params.userId, { scope: 'evidence', caseId: params.caseId });
   } finally {
     runningKeywordPullJobIds.delete(id);
   }
@@ -1630,6 +1633,7 @@ export async function runAutoCollection(caseId: string): Promise<{
     totalEmailsCollected: String(result.gmailMessages),
     totalFilesCollected: String(files),
   }).where(eq(autoCollectionSettings.caseId, caseId));
+  emitRealtimeDataChange(settings.userId, { scope: 'evidence', caseId });
   return {
     emailsFound: result.gmailMessages,
     emailsProcessed: result.gmailMessages,

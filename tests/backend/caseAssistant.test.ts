@@ -95,7 +95,7 @@ describe("case assistant evidence retrieval", () => {
   it("uses analyzed documents for broad case-overview questions", () => {
     const ranked = rankCaseAssistantSources("What happened in this case?", [source("decision")]);
     expect(ranked).toHaveLength(1);
-    const fallback = buildCaseAssistantRetrievalAnswer("What happened in this case?", ranked, false);
+    const fallback = buildCaseAssistantRetrievalAnswer("What happened in this case?", ranked, "provider_unavailable");
     expect(fallback).toMatchObject({
       grounded: true,
       mode: "retrieval",
@@ -103,6 +103,13 @@ describe("case assistant evidence retrieval", () => {
     });
     expect(fallback.answer).toContain("[D1]");
     expect(fallback.notice).toContain("disabled or unavailable");
+  });
+
+  it("reports provider transport failures separately from invalid citations", () => {
+    const ranked = rankCaseAssistantSources("What happened in this case?", [source("decision")]);
+    const fallback = buildCaseAssistantRetrievalAnswer("What happened in this case?", ranked, "provider_failed");
+    expect(fallback.notice).toContain("could not complete");
+    expect(fallback.notice).not.toContain("source citations");
   });
 
   it("accepts only provider answers that retain supplied document IDs", () => {

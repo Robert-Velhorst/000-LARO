@@ -95,24 +95,25 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
   const [dateEnd, setDateEnd] = useState("");
   const [pullJobId, setPullJobId] = useState<string | null>(null);
   const [handledJobId, setHandledJobId] = useState<string | null>(null);
+  const [connectingGoogle, setConnectingGoogle] = useState(false);
 
   const utils = trpc.useUtils();
 
   const { data: driveStatus } = trpc.googleDrive.checkConnection.useQuery(undefined, {
     refetchOnWindowFocus: true,
-    refetchInterval: 2_000,
+    refetchInterval: connectingGoogle ? 1_500 : false,
   });
   const { data: localFolderData, refetch: refetchLocalFolders } =
     trpc.autoCollection.getLocalFolders.useQuery({ caseId });
 
   const activePullJob = trpc.autoCollection.activePullJob.useQuery({ caseId }, {
-    refetchInterval: 1_000,
+    refetchInterval: (data) => data?.status === "queued" || data?.status === "running" ? 1_000 : false,
   });
   const pullJob = trpc.autoCollection.pullJobStatus.useQuery(
     { jobId: pullJobId || "00000000-0000-0000-0000-000000000000" },
     {
       enabled: Boolean(pullJobId),
-      refetchInterval: (data) => !data || data.status === "queued" || data.status === "running" ? 500 : false,
+      refetchInterval: (data) => !data || data.status === "queued" || data.status === "running" ? 1_000 : false,
     },
   );
   const currentJob = pullJob.data ?? activePullJob.data ?? null;
@@ -121,6 +122,17 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
   useEffect(() => {
     if (!pullJobId && activePullJob.data?.id) setPullJobId(activePullJob.data.id);
   }, [activePullJob.data?.id, pullJobId]);
+
+  useEffect(() => {
+    if (!connectingGoogle) return;
+    if (driveStatus?.connected) {
+      setConnectingGoogle(false);
+      toast.success("Google connected");
+      return;
+    }
+    const timeout = window.setTimeout(() => setConnectingGoogle(false), 5 * 60_000);
+    return () => window.clearTimeout(timeout);
+  }, [connectingGoogle, driveStatus?.connected]);
 
   useEffect(() => {
     if (!currentJob || pullActive || handledJobId === currentJob.id) return;
@@ -185,6 +197,7 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
     onSuccess: (data) => {
       if (data?.authUrl) {
         window.open(data.authUrl, "_blank", "width=520,height=720");
+        setConnectingGoogle(true);
         toast.message("Complete the Google sign-in in the new window");
       } else {
         toast.error("No auth URL returned");

@@ -1,9 +1,12 @@
 import { and, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { messages } from "../schema";
+import { assertCaseOwnership } from "../_core/authz";
+import { emitRealtimeDataChange } from "../realtime";
 
 export const messagesRouter = router({
   list: protectedProcedure
@@ -36,13 +39,14 @@ export const messagesRouter = router({
 
   send: protectedProcedure
     .input(z.object({
-      caseId: z.string().optional(),
-      threadId: z.string().optional(),
-      body: z.string().min(1),
+      caseId: z.string().trim().min(1).max(128).optional(),
+      threadId: z.string().trim().min(1).max(128).optional(),
+      body: z.string().trim().min(1).max(50_000),
     }))
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
+      if (input.caseId) await assertCaseOwnership(input.caseId, ctx.user.id);
       const id = nanoid();
       await db.insert(messages).values({
         id,
@@ -51,6 +55,7 @@ export const messagesRouter = router({
         threadId: input.threadId ?? null,
         content: input.body,
       } as any);
+      emitRealtimeDataChange(ctx.user.id, { scope: "message", caseId: input.caseId });
       return { id, success: true, deliveryStatus: "saved-locally" as const };
     }),
 
@@ -59,9 +64,13 @@ export const messagesRouter = router({
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      await db
+      const result = await db
         .delete(messages)
         .where(and(eq(messages.id, input.id), eq(messages.userId, ctx.user.id)));
+      if (!Number((result as any)?.changes ?? 0)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Message not found" });
+      }
+      emitRealtimeDataChange(ctx.user.id, { scope: "message" });
       return { success: true };
     }),
 });

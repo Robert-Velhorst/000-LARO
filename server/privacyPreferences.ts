@@ -45,32 +45,31 @@ export async function updatePrivacyPreferences(
 ): Promise<PrivacyPreferences> {
   const db = await getDb();
   if (!db) throw new Error('Database not available');
-  const current = await getPrivacyPreferences(userId);
-  const next: PrivacyPreferences = {
-    marketing: updates.marketing ?? current.marketing,
-    analytics: updates.analytics ?? current.analytics,
-  };
-  const [existing] = await db
-    .select({ id: userPreferences.id })
-    .from(userPreferences)
-    .where(and(eq(userPreferences.userId, userId), eq(userPreferences.key, PRIVACY_PREFERENCE_KEY)))
-    .limit(1);
-
-  if (existing) {
-    await db
-      .update(userPreferences)
-      .set({ value: JSON.stringify(next), updatedAt: new Date() })
-      .where(and(eq(userPreferences.id, existing.id), eq(userPreferences.userId, userId)));
-  } else {
-    await db.insert(userPreferences).values({
+  return db.transaction((tx) => {
+    const row = tx
+      .select({ value: userPreferences.value })
+      .from(userPreferences)
+      .where(and(eq(userPreferences.userId, userId), eq(userPreferences.key, PRIVACY_PREFERENCE_KEY)))
+      .limit(1)
+      .get();
+    const current = parsePreferences(row?.value);
+    const next: PrivacyPreferences = {
+      marketing: updates.marketing ?? current.marketing,
+      analytics: updates.analytics ?? current.analytics,
+    };
+    const now = new Date();
+    tx.insert(userPreferences).values({
       id: nanoid(),
       userId,
       key: PRIVACY_PREFERENCE_KEY,
       value: JSON.stringify(next),
-      updatedAt: new Date(),
-    });
-  }
-  return next;
+      updatedAt: now,
+    }).onConflictDoUpdate({
+      target: [userPreferences.userId, userPreferences.key],
+      set: { value: JSON.stringify(next), updatedAt: now },
+    }).run();
+    return next;
+  });
 }
 
 export const PRIVACY_CONSENT_PREFERENCE_KEY = PRIVACY_PREFERENCE_KEY;

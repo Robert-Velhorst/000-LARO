@@ -36,3 +36,25 @@ export function listenHttpServer(server: Server, port: number, host: string): Pr
     }
   });
 }
+
+/** Stop accepting work and bound shutdown even when a client keeps a socket open. */
+export function closeHttpServer(server: Server, timeoutMs = 5_000): Promise<void> {
+  if (!server.listening) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
+    const timer = setTimeout(() => {
+      server.closeAllConnections?.();
+      finish();
+    }, timeoutMs);
+    timer.unref?.();
+    server.close((error) => finish(error));
+    server.closeIdleConnections?.();
+  });
+}

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, Re
 import { io, Socket } from "socket.io-client";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
+import { trpc } from "@/lib/trpc";
 
 interface WebSocketContextType {
   socket: Socket | null;
@@ -54,6 +55,12 @@ function useBurstToaster() {
     };
   }, [flush]);
 
+  useEffect(() => () => {
+    for (const buffer of Object.values(buffers.current)) {
+      if (buffer.timer) clearTimeout(buffer.timer);
+    }
+  }, []);
+
   return { push };
 }
 
@@ -63,6 +70,16 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const userId = user?.id;
   const { push } = useBurstToaster();
+  const utils = trpc.useUtils();
+  const invalidateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const scheduleInvalidate = useCallback(() => {
+    if (invalidateTimer.current) clearTimeout(invalidateTimer.current);
+    invalidateTimer.current = setTimeout(() => {
+      invalidateTimer.current = null;
+      void utils.invalidate();
+    }, 250);
+  }, [utils]);
 
   useEffect(() => {
     if (!userId) return;
@@ -126,12 +143,15 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       });
     });
 
+    socketInstance.on("data_change", scheduleInvalidate);
+
     setSocket(socketInstance);
 
     return () => {
       socketInstance.disconnect();
+      if (invalidateTimer.current) clearTimeout(invalidateTimer.current);
     };
-  }, [userId, push]);
+  }, [userId, push, scheduleInvalidate]);
 
   return (
     <WebSocketContext.Provider value={{ socket, isConnected }}>

@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { join } from "path";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { analyzeDocumentBytes, extractDocumentText } from "../../server/documentIntelligence";
 import { buildCase, buildUser } from "../factories";
@@ -92,6 +92,10 @@ suite("persisted document analysis and source-linked timeline", () => {
   });
 
   afterAll(() => app?.cleanup());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
 
   it("stores source bytes, persists one versioned analysis, caches it, and generates linked events", async () => {
     const sourceText = [
@@ -255,5 +259,88 @@ suite("persisted document analysis and source-linked timeline", () => {
     expect((await caller.evidenceFiles.delete({ id: uploaded.id })).success).toBe(true);
     await expect(storageRead(storageKey)).rejects.toThrow("not found");
     expect(await caller.documentAnalysis.byEvidence({ evidenceId: uploaded.id })).toBeNull();
+  });
+
+  it("invalidates analysis caches when the selected provider changes or cached JSON is corrupt", async () => {
+    const caller = app.makeCaller(owner);
+    await app.db.insert(app.schema.cases).values(buildCase({
+      id: "CASE_PROVIDER_CACHE",
+      userId: owner.id,
+      caseType: "Administrative Law",
+    }));
+    const uploaded = await caller.evidenceFiles.upload({
+      caseId: "CASE_PROVIDER_CACHE",
+      title: "Provider cache decision.txt",
+      type: "document",
+      fileName: "provider-cache-decision.txt",
+      mimeType: "text/plain",
+      source: "manual",
+      base64: Buffer.from("Besluit van 14 juli 2026. U moet binnen zes weken bezwaar maken.").toString("base64"),
+    });
+    const providerFinding = {
+      summary: "A cited administrative decision.",
+      summaryCitations: ["src-1"],
+      documentType: "administrative decision",
+      legalIssues: [{ text: "administrative law", citations: ["src-1"] }],
+      parties: [],
+      claims: [],
+      obligations: [{ text: "Object within six weeks", citations: ["src-1"] }],
+      riskFlags: [],
+      timelineEvents: [{
+        text: "Decision dated 14 July 2026",
+        citations: ["src-1"],
+        date: "2026-07-14",
+        title: "Decision",
+        actor: null,
+        importance: "high",
+        category: "legal",
+      }],
+    };
+    const providerResponse = () => new Response(JSON.stringify({
+      id: "provider-analysis",
+      created: 1,
+      model: "provider-test-model",
+      choices: [{
+        index: 0,
+        message: { role: "assistant", content: JSON.stringify(providerFinding) },
+        finish_reason: "stop",
+      }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    const fetchMock = vi.fn(() => Promise.resolve(providerResponse()));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    vi.stubEnv("TOGETHER_API_KEY", "test-together-key");
+    vi.stubEnv("LARO_OPENAI_MODEL", "provider-test-model-v1");
+
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: true });
+    const openai = await caller.documentAnalysis.analyzeEvidence({ evidenceId: uploaded.id, deepAnalysis: true });
+    expect(openai).toMatchObject({ cached: false, result: { analysisProvider: "openai", providerStatus: "complete" } });
+    await expect(caller.documentAnalysis.analyzeEvidence({ evidenceId: uploaded.id, deepAnalysis: true }))
+      .resolves.toMatchObject({ cached: true, result: { analysisProvider: "openai" } });
+
+    vi.stubEnv("LARO_OPENAI_MODEL", "provider-test-model-v2");
+    await expect(caller.documentAnalysis.analyzeEvidence({ evidenceId: uploaded.id, deepAnalysis: true }))
+      .resolves.toMatchObject({ cached: false, result: { analysisProvider: "openai", providerModel: "provider-test-model-v2" } });
+
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "together" });
+    const together = await caller.documentAnalysis.analyzeEvidence({ evidenceId: uploaded.id, deepAnalysis: true });
+    expect(together).toMatchObject({ cached: false, result: { analysisProvider: "together", providerStatus: "complete" } });
+
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
+    const local = await caller.documentAnalysis.analyzeEvidence({ evidenceId: uploaded.id, deepAnalysis: true });
+    expect(local).toMatchObject({
+      cached: false,
+      result: { analysisProvider: "local", providerModel: null, providerStatus: "not_requested" },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    await app.db.update(app.schema.documentAnalyses)
+      .set({ result: "{not-valid-json" })
+      .where(eq(app.schema.documentAnalyses.evidenceId, uploaded.id));
+    await expect(caller.documentAnalysis.analyzeEvidence({ evidenceId: uploaded.id, deepAnalysis: true }))
+      .resolves.toMatchObject({ cached: false, result: { analysisProvider: "local" } });
+    const rows = await app.db.select().from(app.schema.documentAnalyses)
+      .where(eq(app.schema.documentAnalyses.evidenceId, uploaded.id));
+    expect(rows).toHaveLength(1);
   });
 });

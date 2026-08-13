@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { and, asc, eq, gt, or } from "drizzle-orm";
+import { and, asc, eq, gt, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { createAuditLog } from "./audit";
 import { getDb } from "./db";
@@ -176,14 +176,6 @@ export async function createHaiToken(userId: string, name: string, expiresInDays
   if (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 365) {
     throw new HaiIntegrationError("Credential expiry must be between 1 and 365 days", 400);
   }
-  const active = await db.select({ id: integrationAccessTokens.id }).from(integrationAccessTokens).where(and(
-    eq(integrationAccessTokens.userId, userId),
-    eq(integrationAccessTokens.status, "active"),
-    gt(integrationAccessTokens.expiresAt, new Date()),
-  ));
-  if (active.length >= HAI_TOKEN_MAX_ACTIVE) {
-    throw new HaiIntegrationError(`At most ${HAI_TOKEN_MAX_ACTIVE} active integration tokens are allowed`, 409);
-  }
   const token = HAI_TOKEN_PREFIX + crypto.randomBytes(32).toString("base64url");
   const now = new Date();
   const row = {
@@ -197,7 +189,17 @@ export async function createHaiToken(userId: string, name: string, expiresInDays
     expiresAt: new Date(now.getTime() + expiresInDays * 86_400_000),
     createdAt: now,
   };
-  await db.insert(integrationAccessTokens).values(row);
+  db.transaction((tx) => {
+    const active = tx.select({ id: integrationAccessTokens.id }).from(integrationAccessTokens).where(and(
+      eq(integrationAccessTokens.userId, userId),
+      eq(integrationAccessTokens.status, "active"),
+      gt(integrationAccessTokens.expiresAt, now),
+    )).all();
+    if (active.length >= HAI_TOKEN_MAX_ACTIVE) {
+      throw new HaiIntegrationError(`At most ${HAI_TOKEN_MAX_ACTIVE} active integration tokens are allowed`, 409);
+    }
+    tx.insert(integrationAccessTokens).values(row).run();
+  });
   await createAuditLog({
     userId,
     action: "integration.hai_token_created",
@@ -265,7 +267,9 @@ export async function authenticateHaiToken(rawToken: string | undefined) {
     throw new HaiIntegrationError("Integration token has expired", 401);
   }
   enforceFeedRateLimit(row.id, now.getTime());
-  await db.update(integrationAccessTokens).set({ lastUsedAt: now }).where(eq(integrationAccessTokens.id, row.id));
+  if (!row.lastUsedAt || now.getTime() - row.lastUsedAt.getTime() >= 60_000) {
+    await db.update(integrationAccessTokens).set({ lastUsedAt: now }).where(eq(integrationAccessTokens.id, row.id));
+  }
   return { tokenId: row.id, userId: row.userId, tokenPrefix: row.tokenPrefix };
 }
 
@@ -297,7 +301,10 @@ export async function buildHaiFeed(userId: string, cursorValue: string | undefin
       documentType: documentAnalyses.documentType,
       confidence: documentAnalyses.confidence,
       summary: documentAnalyses.summary,
-      result: documentAnalyses.result,
+      claimsJson: sql<string>`CASE WHEN json_valid(${documentAnalyses.result}) THEN COALESCE(json_extract(${documentAnalyses.result}, '$.claims'), '[]') ELSE '[]' END`,
+      obligationsJson: sql<string>`CASE WHEN json_valid(${documentAnalyses.result}) THEN COALESCE(json_extract(${documentAnalyses.result}, '$.obligations'), '[]') ELSE '[]' END`,
+      legalIssuesJson: sql<string>`CASE WHEN json_valid(${documentAnalyses.result}) THEN COALESCE(json_extract(${documentAnalyses.result}, '$.legalIssues'), '[]') ELSE '[]' END`,
+      timelineEventsJson: sql<string>`CASE WHEN json_valid(${documentAnalyses.result}) THEN COALESCE(json_extract(${documentAnalyses.result}, '$.timelineEvents'), '[]') ELSE '[]' END`,
       updatedAt: documentAnalyses.updatedAt,
       evidenceTitle: evidence.title,
     }).from(documentAnalyses)
@@ -332,12 +339,11 @@ export async function buildHaiFeed(userId: string, cursorValue: string | undefin
     });
   }
   for (const row of analysisRows) {
-    const result = safeJson(row.result) as Record<string, unknown> | null;
     const lines = [`Summary: ${compact(row.summary, 2_000)}`];
-    appendSection(lines, "Claims", findingLines(result?.claims, 10));
-    appendSection(lines, "Obligations and deadlines", findingLines(result?.obligations, 10));
-    appendSection(lines, "Legal issues", findingLines(result?.legalIssues, 10));
-    appendSection(lines, "Dated events", timelineLines(result?.timelineEvents));
+    appendSection(lines, "Claims", findingLines(safeJson(row.claimsJson), 10));
+    appendSection(lines, "Obligations and deadlines", findingLines(safeJson(row.obligationsJson), 10));
+    appendSection(lines, "Legal issues", findingLines(safeJson(row.legalIssuesJson), 10));
+    appendSection(lines, "Dated events", timelineLines(safeJson(row.timelineEventsJson)));
     lines.push("Source quotations and document bytes remain in LARO and are not copied into this feed.");
     const updatedAt = row.updatedAt.getTime();
     entries.push({

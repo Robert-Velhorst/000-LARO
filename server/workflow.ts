@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import { getDb } from "./db";
 import { cases, outreachStatus, emailActivity } from "./schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { createAuditLog, AUDIT_ACTIONS } from "./audit";
 import { getNextLawyerToContact } from "./matching";
 
@@ -347,16 +347,24 @@ export async function getWorkflowStats() {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const allOutreach = await db.select().from(outreachStatus);
-  const allEmails = await db.select().from(emailActivity);
+  const [[outreachCounts], [emailCounts]] = await Promise.all([
+    db.select({
+      totalOutreach: sql<number>`count(*)`,
+      contacted: sql<number>`sum(case when ${outreachStatus.status} = 'Contacted' then 1 else 0 end)`,
+      interested: sql<number>`sum(case when ${outreachStatus.status} = 'Interested' then 1 else 0 end)`,
+      declined: sql<number>`sum(case when ${outreachStatus.status} = 'Declined' then 1 else 0 end)`,
+      noResponse: sql<number>`sum(case when ${outreachStatus.status} = 'No Response' then 1 else 0 end)`,
+    }).from(outreachStatus),
+    db.select({ totalEmails: sql<number>`count(*)` }).from(emailActivity),
+  ]);
 
   const stats = {
-    totalOutreach: allOutreach.length,
-    contacted: allOutreach.filter(o => o.status === "Contacted").length,
-    interested: allOutreach.filter(o => o.status === "Interested").length,
-    declined: allOutreach.filter(o => o.status === "Declined").length,
-    noResponse: allOutreach.filter(o => o.status === "No Response").length,
-    totalEmails: allEmails.length,
+    totalOutreach: Number(outreachCounts?.totalOutreach || 0),
+    contacted: Number(outreachCounts?.contacted || 0),
+    interested: Number(outreachCounts?.interested || 0),
+    declined: Number(outreachCounts?.declined || 0),
+    noResponse: Number(outreachCounts?.noResponse || 0),
+    totalEmails: Number(emailCounts?.totalEmails || 0),
     responseRate: 0,
     averageResponseTime: 0,
   };

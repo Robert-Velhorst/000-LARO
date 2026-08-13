@@ -12,6 +12,11 @@ type RealtimeNotification = {
   message?: string;
 };
 
+export type RealtimeDataChange = {
+  scope: "case" | "evidence" | "outreach" | "message";
+  caseId?: string;
+};
+
 let realtimeServer: Server | null = null;
 
 function readCookie(header: string | undefined, name: string): string | null {
@@ -77,4 +82,17 @@ export function emitRealtimeNotification(
   notification: RealtimeNotification
 ): void {
   realtimeServer?.to(userRoom(userId)).emit("notification", notification);
+}
+
+export function emitRealtimeDataChange(userId: string, change: RealtimeDataChange): void {
+  realtimeServer?.to(userRoom(userId)).emit("data_change", change);
+}
+
+export function closeRealtimeServer(): Promise<void> {
+  const server = realtimeServer;
+  realtimeServer = null;
+  if (!server) return Promise.resolve();
+  return new Promise((resolve) => {
+    server.close(() => resolve());
+  });
 }

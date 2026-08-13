@@ -75,36 +75,35 @@ export async function updateWorkflowPreferences(
 ): Promise<WorkflowPreferences> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const current = await getWorkflowPreferences(userId);
-  const normalizedUpdates = { ...updates };
-  if (updates.analysisProvider) {
-    normalizedUpdates.analysisMode = updates.analysisProvider === "local" ? "local" : "cloud";
-  } else if (updates.analysisMode) {
-    normalizedUpdates.analysisProvider = updates.analysisMode === "cloud" ? "forge" : "local";
-  }
-  const next = parseWorkflowPreferences(JSON.stringify({ ...current, ...normalizedUpdates }));
-  const [existing] = await db
-    .select({ id: userPreferences.id })
-    .from(userPreferences)
-    .where(and(
-      eq(userPreferences.userId, userId),
-      eq(userPreferences.key, WORKFLOW_PREFERENCE_KEY),
-    ))
-    .limit(1);
-
-  if (existing) {
-    await db
-      .update(userPreferences)
-      .set({ value: JSON.stringify(next), updatedAt: new Date() })
-      .where(and(eq(userPreferences.id, existing.id), eq(userPreferences.userId, userId)));
-  } else {
-    await db.insert(userPreferences).values({
+  return db.transaction((tx) => {
+    const row = tx
+      .select({ value: userPreferences.value })
+      .from(userPreferences)
+      .where(and(
+        eq(userPreferences.userId, userId),
+        eq(userPreferences.key, WORKFLOW_PREFERENCE_KEY),
+      ))
+      .limit(1)
+      .get();
+    const current = parseWorkflowPreferences(row?.value);
+    const normalizedUpdates = { ...updates };
+    if (updates.analysisProvider) {
+      normalizedUpdates.analysisMode = updates.analysisProvider === "local" ? "local" : "cloud";
+    } else if (updates.analysisMode) {
+      normalizedUpdates.analysisProvider = updates.analysisMode === "cloud" ? "forge" : "local";
+    }
+    const next = parseWorkflowPreferences(JSON.stringify({ ...current, ...normalizedUpdates }));
+    const now = new Date();
+    tx.insert(userPreferences).values({
       id: nanoid(),
       userId,
       key: WORKFLOW_PREFERENCE_KEY,
       value: JSON.stringify(next),
-      updatedAt: new Date(),
-    });
-  }
-  return next;
+      updatedAt: now,
+    }).onConflictDoUpdate({
+      target: [userPreferences.userId, userPreferences.key],
+      set: { value: JSON.stringify(next), updatedAt: now },
+    }).run();
+    return next;
+  });
 }

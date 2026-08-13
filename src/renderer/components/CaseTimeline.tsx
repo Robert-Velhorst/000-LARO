@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { getElectronAPI } from "@/lib/electronApiShim";
+import { useWebSocket } from "@/contexts/WebSocketContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -42,12 +43,13 @@ interface CaseTimelineProps {
 }
 
 export function CaseTimeline({ caseId }: CaseTimelineProps) {
+  const { isConnected } = useWebSocket();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [layout, setLayout] = useState<"vertical" | "horizontal">("vertical");
 
   const timelineQuery = trpc.documentAnalysis.generateCaseTimeline.useQuery(
     { caseId },
-    { refetchInterval: 15_000, refetchOnWindowFocus: true },
+    { refetchInterval: isConnected ? false : 60_000, refetchOnWindowFocus: true },
   );
   const timeline = timelineQuery.data;
   const generating = timelineQuery.isFetching;

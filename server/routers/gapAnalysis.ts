@@ -440,14 +440,14 @@ export const gapAnalysisRouter = router({
   generateDocument: protectedProcedure
     .input(
       z.object({
-        caseId: z.string(),
+        caseId: z.string().trim().min(1).max(128),
         documentType: z.enum([
           "discovery_request",
           "preservation_notice",
           "spoliation_warning",
           "demand_letter",
         ]),
-        demandAmount: z.number().optional(),
+        demandAmount: z.number().finite().positive().max(1_000_000_000).optional(),
       })
     )
     .mutation(async ({ input, ctx }) => {

@@ -8,6 +8,7 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { getElectronAPI } from "@/lib/electronApiShim";
+import { useWebSocket } from "@/contexts/WebSocketContext";
 
 interface MessageCitation {
   evidenceId: string;
@@ -28,6 +29,7 @@ interface Message {
 }
 
 export default function ChatWidget({ embedded = false }: { embedded?: boolean }) {
+  const { isConnected } = useWebSocket();
   const [location] = useLocation();
   const [isOpen, setIsOpen] = useState(embedded);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -44,7 +46,8 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { data: pendingQuestions } = trpc.clarifications.pending.useQuery(undefined, {
     enabled: isOpen,
-    refetchInterval: 30000, // Refetch every 30 seconds
+    refetchInterval: isConnected ? false : 60_000,
+    refetchOnWindowFocus: true,
   });
   const answerMutation = trpc.clarifications.answer.useMutation({
     onSuccess: () => {

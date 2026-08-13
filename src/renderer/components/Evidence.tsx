@@ -51,8 +51,8 @@ export default function Evidence() {
       const src = String(f.uploadSource ?? f.source ?? "").toLowerCase();
       return src.includes("scan") || src.includes("agent");
     }).length;
-    const strength = total === 0 ? 0 : Math.min(100, Math.round((relevant / total) * 70 + Math.min(total, 30)));
-    return { total, relevant, sources: sources.size, scanCount, strength };
+    const completeness = total === 0 ? 0 : Math.min(100, Math.round((relevant / total) * 70 + Math.min(total, 30)));
+    return { total, relevant, sources: sources.size, scanCount, completeness };
   }, [evidenceItems]);
 
   const prioritizedIssues = useMemo(() => {
@@ -388,15 +388,15 @@ export default function Evidence() {
 
             <Card className="border-border/50 bg-card/50 shadow-sm">
               <CardHeader className="pb-4">
-                <CardTitle className="text-base">Case Strength</CardTitle>
-                <CardDescription>Live signal from current evidence profile</CardDescription>
+                <CardTitle className="text-base">Evidence Completeness</CardTitle>
+                <CardDescription>Coverage signal from the current evidence profile, not a legal-outcome score</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Score</span>
-                  <span className="text-lg font-semibold">{stats.strength}/100</span>
+                  <span className="text-lg font-semibold">{stats.completeness}/100</span>
                 </div>
-                <Progress aria-label="Case strength" value={stats.strength} />
+                <Progress aria-label="Evidence completeness" value={stats.completeness} />
               </CardContent>
             </Card>
 

@@ -48,6 +48,7 @@ export default function NotificationCenter() {
   const [, navigate] = useLocation();
   
   const utils = trpc.useUtils();
+  const { socket, isConnected } = useWebSocket();
   
   // Fetch notifications from API
   const { data: notifications = [], refetch } = trpc.notifications.list.useQuery(
@@ -56,7 +57,8 @@ export default function NotificationCenter() {
   );
   
   const { data: unreadCountData = 0, refetch: refetchCount } = trpc.notifications.unreadCount.useQuery(undefined, {
-    refetchInterval: 30000 // Refresh every 30 seconds
+    refetchInterval: isConnected ? false : 60_000,
+    refetchOnWindowFocus: true,
   });
   
   const markAsReadMutation = trpc.notifications.markAsRead.useMutation({
@@ -67,18 +69,12 @@ export default function NotificationCenter() {
   });
 
   // WebSocket listener for real-time notifications
-  const { socket } = useWebSocket();
-
   useEffect(() => {
     if (!socket) return;
 
-    const handleNotification = (notification: Notification) => {
-      // Show toast for new notification
-      toast.info(notification.title, {
-        description: notification.message,
-      });
-
-      // Refetch notifications and count
+    const handleNotification = () => {
+      // WebSocketContext owns the user-facing toast. This listener only refreshes
+      // persisted notification state so one event cannot produce duplicate toasts.
       refetch();
       refetchCount();
     };

@@ -169,18 +169,9 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
     }
   };
 
-  const getStrengthBadge = (strength: string) => {
-    switch (strength) {
-      case "very_strong":
-        return <Badge className="bg-green-600">Very Strong</Badge>;
-      case "strong":
-        return <Badge className="bg-green-500">Strong</Badge>;
-      case "medium":
-        return <Badge className="bg-yellow-500">Medium</Badge>;
-      default:
-        return <Badge variant="secondary">Weak</Badge>;
-    }
-  };
+  const getStrengthBadge = (strength: string) => (
+    <Badge variant="secondary">{strength === "review_required" ? "Review required" : "Unverified"}</Badge>
+  );
 
   const strengths = toStringArray(cs.strengths);
   const weaknesses = toStringArray(cs.weaknesses);
@@ -188,23 +179,23 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
 
   return (
     <div className="space-y-6">
-      {/* Case Strength Overview */}
+      {/* Evidence completeness overview */}
       {caseStrength && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Shield className="h-5 w-5" />
-              Case Strength Analysis
+              Evidence Completeness Analysis
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             {/* Overall Score */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium">Overall Strength</span>
+                <span className="text-sm font-medium">Completeness Score</span>
                 <span className="text-2xl font-bold">{score.overall}%</span>
               </div>
-              <Progress aria-label="Overall evidence strength" value={score.overall} className="h-3" />
+              <Progress aria-label="Overall evidence completeness" value={score.overall} className="h-3" />
             </div>
 
             {/* Score Breakdown */}
@@ -223,10 +214,10 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
                 </div>
               </div>
               <div>
-                <div className="text-sm text-muted-foreground mb-1">Circumstantial Evidence</div>
+                <div className="text-sm text-muted-foreground mb-1">Context Coverage</div>
                 <div className="flex items-center gap-2">
                   <Progress
-                    aria-label="Circumstantial evidence strength"
+                    aria-label="Context coverage"
                     value={score.circumstantial}
                     className="h-2 flex-1"
                   />
@@ -236,10 +227,10 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
                 </div>
               </div>
               <div>
-                <div className="text-sm text-muted-foreground mb-1">Legal Basis</div>
+                <div className="text-sm text-muted-foreground mb-1">Verified Legal Basis</div>
                 <div className="flex items-center gap-2">
                   <Progress
-                    aria-label="Legal basis strength"
+                    aria-label="Verified legal basis"
                     value={score.legalBasis}
                     className="h-2 flex-1"
                   />
@@ -249,10 +240,10 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
                 </div>
               </div>
               <div>
-                <div className="text-sm text-muted-foreground mb-1">Gap Analysis Impact</div>
+                <div className="text-sm text-muted-foreground mb-1">Gap Risk</div>
                 <div className="flex items-center gap-2">
                   <Progress
-                    aria-label="Gap analysis impact"
+                    aria-label="Evidence gap risk"
                     value={score.gapImpact}
                     className="h-2 flex-1"
                   />
@@ -278,7 +269,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
                 <div>
                   <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
                     <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    Strengths
+                    Available Evidence
                   </h4>
                   <ul className="space-y-1">
                     {strengths.map((strength: string, idx: number) => (
@@ -348,7 +339,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
           </TabsTrigger>
           <TabsTrigger value="inferences" className="gap-2">
             <Scale className="h-4 w-4" />
-            Legal ({summary?.inferencesCount || 0})
+            Review ({summary?.inferencesCount || 0})
           </TabsTrigger>
           <TabsTrigger value="records" className="gap-2">
             <Building2 className="h-4 w-4" />

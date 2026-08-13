@@ -12,7 +12,7 @@ import {
   evidenceFiles,
   emailAccounts,
 } from "./schema";
-import { eq, and, desc, asc, sql } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
 interface TimelineEvent {
@@ -125,7 +125,7 @@ export class GapDetectionService {
     const expectedDocs = await this.identifyExpectedDocuments(caseId, caseInfo, timelineEvents);
 
     // Detect suspicious patterns
-    const patterns = await this.detectSuspiciousPatterns(caseId, timelineEvents, gaps);
+    const patterns = await this.detectSuspiciousPatterns(caseId, timelineEvents, gaps, expectedDocs);
 
     // Generate legal inferences
     const inferences = await this.generateLegalInferences(caseId, gaps, expectedDocs, patterns);
@@ -159,40 +159,18 @@ export class GapDetectionService {
     const db = await getDb();
     if (!db) return [];
 
-    // Get communications
-    const comms = await db
-      .select()
-      .from(communications)
-      .where(eq(communications.caseId, caseId))
-      .orderBy(asc(communications.createdAt));
-
-    // Get timeline events
-    const timelineData = await db
-      .select()
-      .from(timeline)
-      .where(eq(timeline.caseId, caseId))
-      .orderBy(asc(timeline.eventAt));
-
-    // Get evidence items (uploaded files, scanned docs, etc.)
-    const evidenceData = await db
-      .select()
-      .from(evidence)
-      .where(eq(evidence.caseId, caseId))
-      .orderBy(asc(evidence.createdAt));
-
-    // Get evidence files (from desktop scanner)
-    const evidenceFileData = await db
-      .select()
-      .from(evidenceFiles)
-      .where(eq(evidenceFiles.caseId, caseId))
-      .orderBy(asc(evidenceFiles.uploadedAt));
+    const [comms, timelineData, evidenceData, evidenceFileData, caseRows] = await Promise.all([
+      db.select().from(communications).where(eq(communications.caseId, caseId)).orderBy(asc(communications.createdAt)),
+      db.select().from(timeline).where(eq(timeline.caseId, caseId)).orderBy(asc(timeline.eventAt)),
+      db.select().from(evidence).where(eq(evidence.caseId, caseId)).orderBy(asc(evidence.createdAt)),
+      db.select().from(evidenceFiles).where(eq(evidenceFiles.caseId, caseId)).orderBy(asc(evidenceFiles.uploadedAt)),
+      db.select({ userId: cases.userId }).from(cases).where(eq(cases.id, caseId)).limit(1),
+    ]);
 
     // Build the set of the case owner's connected email addresses so we can
     // infer whether a pulled email was sent (outbound) or received (inbound).
     const connectedEmails = new Set<string>();
-    const caseRow = (
-      await db.select({ userId: cases.userId }).from(cases).where(eq(cases.id, caseId)).limit(1)
-    )[0];
+    const caseRow = caseRows[0];
     if (caseRow?.userId) {
       const accounts = await db
         .select({ email: emailAccounts.email })
@@ -368,9 +346,9 @@ export class GapDetectionService {
           significance,
           precedingEvents: JSON.stringify([sent.id]),
           legalImplications: JSON.stringify([
-            "Failure to respond may indicate bad faith",
-            "May support claim of unfair treatment",
-            "Could be used to argue employer is hiding information",
+            "Verify delivery, the expected response date, and whether a reply exists outside LARO",
+            "No response by itself does not establish motive, liability, or bad faith",
+            "Ask a qualified lawyer whether the silence has legal relevance in this case",
           ]),
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -407,10 +385,10 @@ export class GapDetectionService {
             caseId,
             gapId: null,
             documentType: "termination_letter",
-            reason: "Required by Dutch labor law (Article 7:671 BW)",
-            legalRequirement: true,
-            legalBasis: "Article 7:671 BW - Employer must provide written termination notice",
-            deadline: terminationDate,
+            reason: "Potentially relevant termination record; verify whether it should exist for this case",
+            legalRequirement: false,
+            legalBasis: null,
+            deadline: null,
             status: this.checkDocumentStatus("termination", timelineEvents),
             receivedAt: null,
             notes: null,
@@ -422,10 +400,10 @@ export class GapDetectionService {
             caseId,
             gapId: null,
             documentType: "final_paycheck",
-            reason: "Required within 1 month of termination",
-            legalRequirement: true,
-            legalBasis: "Dutch labor law - Final wages must be paid within reasonable time",
-            deadline: new Date(terminationDate.getTime() + 30 * 24 * 60 * 60 * 1000),
+            reason: "Potentially relevant final-payment record; verify scope and timing",
+            legalRequirement: false,
+            legalBasis: null,
+            deadline: null,
             status: this.checkDocumentStatus("paycheck", timelineEvents),
             receivedAt: null,
             notes: null,
@@ -437,11 +415,11 @@ export class GapDetectionService {
             caseId,
             gapId: null,
             documentType: "vacation_days_payout",
-            reason: "Unused vacation days must be paid out",
-            legalRequirement: true,
-            legalBasis: "Article 7:641 BW - Vacation pay must be settled upon termination",
-            deadline: new Date(terminationDate.getTime() + 30 * 24 * 60 * 60 * 1000),
-            status: "missing",
+            reason: "Potentially relevant leave-balance or payout record; verify applicability",
+            legalRequirement: false,
+            legalBasis: null,
+            deadline: null,
+            status: this.checkDocumentStatus("vacation", timelineEvents),
             receivedAt: null,
             notes: null,
             createdAt: new Date(),
@@ -452,11 +430,11 @@ export class GapDetectionService {
             caseId,
             gapId: null,
             documentType: "uwv_form",
-            reason: "Employer must provide UWV form for unemployment benefits",
-            legalRequirement: true,
-            legalBasis: "UWV regulations - Required for unemployment benefits application",
-            deadline: new Date(terminationDate.getTime() + 7 * 24 * 60 * 60 * 1000),
-            status: "missing",
+            reason: "Potentially relevant unemployment-benefit record; verify applicability",
+            legalRequirement: false,
+            legalBasis: null,
+            deadline: null,
+            status: this.checkDocumentStatus("uwv", timelineEvents),
             receivedAt: null,
             notes: null,
             createdAt: new Date(),
@@ -475,7 +453,8 @@ export class GapDetectionService {
   private async detectSuspiciousPatterns(
     caseId: string,
     timelineEvents: TimelineEvent[],
-    gaps: CommunicationGap[]
+    gaps: CommunicationGap[],
+    expectedDocs: ExpectedDocument[]
   ): Promise<SuspiciousPattern[]> {
     const patterns: SuspiciousPattern[] = [];
 
@@ -497,54 +476,30 @@ export class GapDetectionService {
         caseId,
         patternType: "documented_to_verbal_shift",
         description:
-          "Employer switched from written to verbal-only communication after conflict began",
+          "The available record changes from documented to undocumented events after a communication gap",
         evidenceIds: JSON.stringify([
           ...documentedPeriod.slice(-3).map((e) => e.id),
           ...verbalPeriod.map((e) => e.id),
         ]),
         legalSignificance:
-          "Suggests intentional avoidance of creating paper trail. May indicate consciousness of guilt.",
-        confidence: "85",
+          "Review the missing context and verify whether records exist elsewhere; this pattern does not establish motive or wrongdoing.",
+        confidence: "70",
         detectedAt: new Date(),
       });
     }
 
-    // Pattern 2: Missing legally required documents
-    const db = await getDb();
-    if (db) {
-      const documentRows = await db
-        .select()
-        .from(expectedDocuments)
-        .where(eq(expectedDocuments.caseId, caseId));
-
-      const legallyRequired = documentRows
-        .map((d) => {
-          try {
-            const parsed = d.data ? JSON.parse(d.data) : {};
-            return { ...d, ...parsed } as any;
-          } catch {
-            return d as any;
-          }
-        })
-        .filter((d: any) => d.legalRequirement === true);
-
-      const missing = legallyRequired.filter(
-        (d) => d.status === "missing" || d.status === "delayed"
-      );
-
-      if (missing.length > 0) {
-        patterns.push({
-          id: nanoid(),
-          caseId,
-          patternType: "missing_legal_documents",
-          description: `${missing.length} legally required documents not provided`,
-          evidenceIds: JSON.stringify(missing.map((d) => d.id)),
-          legalSignificance:
-            "Violation of Dutch labor law. May result in penalties for employer.",
-          confidence: "95",
-          detectedAt: new Date(),
-        });
-      }
+    const missing = expectedDocs.filter((document) => document.status === "missing" || document.status === "delayed");
+    if (missing.length > 0) {
+      patterns.push({
+        id: nanoid(),
+        caseId,
+        patternType: "missing_expected_documents",
+        description: `${missing.length} potentially relevant record(s) were not found in LARO`,
+        evidenceIds: JSON.stringify(missing.map((document) => document.id)),
+        legalSignificance: "Verify whether each record should exist, whether it is stored elsewhere, and whether its absence matters legally.",
+        confidence: "80",
+        detectedAt: new Date(),
+      });
     }
 
     return patterns;
@@ -568,43 +523,35 @@ export class GapDetectionService {
         id: nanoid(),
         caseId,
         inference:
-          "Employer's shift from written to verbal communication indicates consciousness of wrongdoing",
-        legalPrinciple: "Adverse inference rule (Dutch: 'bewijsvermoeden')",
+          "The communication channel changed in the available record; the reason for that change is not established.",
+        legalPrinciple: "Evidence-review question only; no legal conclusion is drawn.",
         supportingEvidence: JSON.stringify([
-          "12 months of documented communication",
-          "Sudden shift to verbal-only after conflict began",
-          "Refusal to provide written termination notice",
+          verbalShiftPattern.description,
+          "Check calendars, call notes, other mailboxes, and records held by the other party.",
         ]),
-        caselaw: JSON.stringify([
-          "Hoge Raad 12-01-2018, ECLI:NL:HR:2018:18 - Court may draw adverse inference from party's failure to produce evidence",
-        ]),
-        strength: "strong",
-        category: "adverse_inference",
+        caselaw: JSON.stringify([]),
+        strength: "review_required",
+        category: "communication_channel_change",
         generatedAt: new Date(),
       });
     }
 
-    // Inference 2: Spoliation of evidence
-    const missingLegalDocs = expectedDocs.filter(
-      (d) => d.legalRequirement && (d.status === "missing" || d.status === "delayed")
+    const missingExpectedDocs = expectedDocs.filter(
+      (document) => document.status === "missing" || document.status === "delayed"
     );
-    if (missingLegalDocs.length > 0) {
+    if (missingExpectedDocs.length > 0) {
       inferences.push({
         id: nanoid(),
         caseId,
         inference:
-          "Employer's failure to provide legally required documents constitutes spoliation of evidence",
-        legalPrinciple:
-          "Spoliation doctrine - destruction or withholding of evidence creates presumption it would be unfavorable",
+          "Potentially relevant records were not found in LARO; this does not prove that they do not exist or were withheld.",
+        legalPrinciple: "Verify existence, custody, applicability, and legal significance with a qualified lawyer.",
         supportingEvidence: JSON.stringify(
-          missingLegalDocs.map((d) => `${d.documentType} - ${d.reason}`)
+          missingExpectedDocs.map((document) => `${document.documentType} - ${document.reason}`)
         ),
-        caselaw: JSON.stringify([
-          "Article 7:671 BW - Employer must provide written termination notice",
-          "Rechtbank Amsterdam 15-03-2019, ECLI:NL:RBAMS:2019:1234 - Failure to provide required documents supports employee's claims",
-        ]),
-        strength: "very_strong",
-        category: "spoliation",
+        caselaw: JSON.stringify([]),
+        strength: "review_required",
+        category: "records_gap",
         generatedAt: new Date(),
       });
     }
@@ -621,17 +568,15 @@ export class GapDetectionService {
       inferences.push({
         id: nanoid(),
         caseId,
-        inference: `${longestGap.durationDays} days of non-response demonstrates bad faith and obstruction`,
-        legalPrinciple: "Duty to cooperate in good faith (Article 6:2 BW)",
+        inference: `${longestGap.durationDays} days without a recorded response requires context; it does not establish motive or wrongdoing.`,
+        legalPrinciple: "Verify delivery, response expectations, external communications, and applicable duties.",
         supportingEvidence: JSON.stringify([
           `No response for ${longestGap.durationDays} days`,
           longestGap.context || "",
         ]),
-        caselaw: JSON.stringify([
-          "Article 6:2 BW - Parties must act in accordance with reasonableness and fairness",
-        ]),
-        strength: "medium",
-        category: "bad_faith",
+        caselaw: JSON.stringify([]),
+        strength: "review_required",
+        category: "no_response_review",
         generatedAt: new Date(),
       });
     }
@@ -654,34 +599,21 @@ export class GapDetectionService {
     const documentedEvents = timelineEvents.filter((e) => e.hasDocumentation);
     const directEvidenceScore = Math.min(100, (documentedEvents.length / 10) * 100);
 
-    // Circumstantial evidence score (based on gaps and patterns)
-    const circumstantialScore =
-      (gaps.filter((g) => g.significance === "critical").length * 20 +
-        gaps.filter((g) => g.significance === "important").length * 10 +
-        patterns.length * 15) /
-      2;
+    // Deterministic review questions cannot establish legal merit. This score is
+    // intentionally zero until a source-verified legal analysis is available.
+    const legalBasisScore = 0;
 
-    // Legal basis score (based on inferences)
-    const legalBasisScore =
-      (inferences.filter((i) => i.strength === "very_strong").length * 25 +
-        inferences.filter((i) => i.strength === "strong").length * 15 +
-        inferences.filter((i) => i.strength === "medium").length * 5) /
-      2;
-
-    // Gap analysis impact (how much gaps help the case)
-    const gapAnalysisImpact =
-      (gaps.filter((g) => g.significance === "critical").length * 15 +
-        expectedDocs.filter((d) => d.legalRequirement && d.status === "missing").length * 20) /
-      2;
-
-    const overallScore = Math.min(
-      100,
-      (directEvidenceScore * 0.3 +
-        circumstantialScore * 0.25 +
-        legalBasisScore * 0.25 +
-        gapAnalysisImpact * 0.2) /
-        0.8
-    );
+    // Gaps only reduce completeness. They never increase legal merit or confidence.
+    const gapAnalysisImpact = Math.min(100,
+      gaps.filter((g) => g.significance === "critical").length * 20 +
+      gaps.filter((g) => g.significance === "important").length * 10 +
+      expectedDocs.filter((d) => d.status === "missing").length * 15 +
+      patterns.length * 10);
+    const contextCoverageScore = timelineEvents.length > 0
+      ? Math.max(0, 100 - gapAnalysisImpact)
+      : 0;
+    const overallScore = Math.min(100,
+      directEvidenceScore * 0.7 + contextCoverageScore * 0.3);
 
     const strengths: string[] = [];
     const weaknesses: string[] = [];
@@ -694,26 +626,14 @@ export class GapDetectionService {
       recommendations.push("Collect more documented evidence (emails, contracts, etc.)");
     }
 
-    if (circumstantialScore > 50) {
-      strengths.push("Significant circumstantial evidence from communication gaps");
-    }
-
-    if (legalBasisScore > 60) {
-      strengths.push("Strong legal basis for claims");
-    }
-
     if (gapAnalysisImpact > 40) {
-      strengths.push("Opponent's lack of documentation significantly strengthens case");
-    }
-
-    if (inferences.some((i) => i.category === "spoliation")) {
-      strengths.push("Spoliation of evidence supports adverse inference");
-      recommendations.push("File formal discovery request for missing documents");
+      weaknesses.push("Material gaps remain in the evidence available to LARO");
+      recommendations.push("Verify whether the expected records exist elsewhere and document each search step");
     }
 
     if (gaps.some((g) => g.significance === "critical" && parseInt(g.durationDays || "0") > 30)) {
-      strengths.push("Prolonged non-response demonstrates bad faith");
-      recommendations.push("Send evidence preservation notice to prevent further spoliation");
+      weaknesses.push("A prolonged period has no recorded response or follow-up context");
+      recommendations.push("Verify delivery and response expectations before drawing any conclusion from the silence");
     }
 
     const narrative = this.generateNarrative(
@@ -727,7 +647,8 @@ export class GapDetectionService {
     return {
       overallScore: Math.round(overallScore),
       directEvidenceScore: Math.round(directEvidenceScore),
-      circumstantialEvidenceScore: Math.round(circumstantialScore),
+      // Kept for API/database compatibility; this now represents context coverage.
+      circumstantialEvidenceScore: Math.round(contextCoverageScore),
       legalBasisScore: Math.round(legalBasisScore),
       gapAnalysisImpact: Math.round(gapAnalysisImpact),
       strengths,
@@ -750,7 +671,7 @@ export class GapDetectionService {
     const parts: string[] = [];
 
     parts.push(
-      `Your case has an overall strength score of ${Math.round(overallScore)}% based on the available evidence and legal analysis.`
+      `The available evidence has a completeness score of ${Math.round(overallScore)}%. This is not a prediction of legal merit or outcome.`
     );
 
     if (timelineEvents.filter((e) => e.hasDocumentation).length > 5) {
@@ -761,19 +682,19 @@ export class GapDetectionService {
 
     if (gaps.length > 0) {
       parts.push(
-        `We identified ${gaps.length} communication gaps, including ${gaps.filter((g) => g.significance === "critical").length} critical gaps that significantly strengthen your position.`
+        `We identified ${gaps.length} communication gaps, including ${gaps.filter((g) => g.significance === "critical").length} high-priority gap(s) that require source verification.`
       );
     }
 
     if (patterns.some((p) => p.patternType === "documented_to_verbal_shift")) {
       parts.push(
-        "The employer's shift from documented to verbal-only communication is highly suspicious and suggests they are deliberately avoiding creating a paper trail."
+        "The available record changes from documented to undocumented communication. LARO cannot determine why; check for records held elsewhere."
       );
     }
 
-    if (inferences.some((i) => i.category === "spoliation")) {
+    if (inferences.some((i) => i.category === "records_gap")) {
       parts.push(
-        "The employer's failure to provide legally required documents constitutes spoliation of evidence, which creates a legal presumption that the missing documents would be unfavorable to them."
+        "Potentially relevant records were not found in LARO. Their existence, custody, applicability, and legal significance remain unverified."
       );
     }
 
@@ -794,19 +715,16 @@ export class GapDetectionService {
     const db = await getDb();
     if (!db) return;
 
-    // Clear existing analysis for this case before saving new results
-    // This prevents duplicates when re-running analysis
-    await Promise.all([
-      db.delete(communicationGaps).where(eq(communicationGaps.caseId, caseId)),
-      db.delete(expectedDocuments).where(eq(expectedDocuments.caseId, caseId)),
-      db.delete(suspiciousPatterns).where(eq(suspiciousPatterns.caseId, caseId)),
-      db.delete(legalInferences).where(eq(legalInferences.caseId, caseId)),
-      db.delete(caseStrengthAnalysis).where(eq(caseStrengthAnalysis.caseId, caseId)),
-    ]);
+    db.transaction((tx) => {
+      tx.delete(communicationGaps).where(eq(communicationGaps.caseId, caseId)).run();
+      tx.delete(expectedDocuments).where(eq(expectedDocuments.caseId, caseId)).run();
+      tx.delete(suspiciousPatterns).where(eq(suspiciousPatterns.caseId, caseId)).run();
+      tx.delete(legalInferences).where(eq(legalInferences.caseId, caseId)).run();
+      tx.delete(caseStrengthAnalysis).where(eq(caseStrengthAnalysis.caseId, caseId)).run();
 
     // Save gaps into generic `data` column schema
     if (gaps.length > 0) {
-      await db.insert(communicationGaps).values(
+      tx.insert(communicationGaps).values(
         gaps.map((g) => ({
           id: g.id,
           caseId: g.caseId,
@@ -823,12 +741,12 @@ export class GapDetectionService {
           }),
           createdAt: g.createdAt,
         }))
-      );
+      ).run();
     }
 
     // Save expected documents into generic `data` column schema
     if (expectedDocs.length > 0) {
-      await db.insert(expectedDocuments).values(
+      tx.insert(expectedDocuments).values(
         expectedDocs.map((d) => ({
           id: d.id,
           caseId: d.caseId,
@@ -846,12 +764,12 @@ export class GapDetectionService {
           }),
           createdAt: d.createdAt,
         }))
-      );
+      ).run();
     }
 
     // Save patterns into generic `data` column schema
     if (patterns.length > 0) {
-      await db.insert(suspiciousPatterns).values(
+      tx.insert(suspiciousPatterns).values(
         patterns.map((p) => ({
           id: p.id,
           caseId: p.caseId,
@@ -865,12 +783,12 @@ export class GapDetectionService {
           }),
           createdAt: p.detectedAt,
         }))
-      );
+      ).run();
     }
 
     // Save inferences into generic `data` column schema
     if (inferences.length > 0) {
-      await db.insert(legalInferences).values(
+      tx.insert(legalInferences).values(
         inferences.map((i) => ({
           id: i.id,
           caseId: i.caseId,
@@ -885,11 +803,11 @@ export class GapDetectionService {
           }),
           createdAt: i.generatedAt,
         }))
-      );
+      ).run();
     }
 
     // Save case strength analysis — store as numbers not strings
-    await db.insert(caseStrengthAnalysis).values({
+    tx.insert(caseStrengthAnalysis).values({
       id: nanoid(),
       caseId,
       data: JSON.stringify({
@@ -905,6 +823,7 @@ export class GapDetectionService {
         generatedAt: new Date(),
       }),
       createdAt: new Date(),
+    }).run();
     });
   }
 
@@ -937,16 +856,16 @@ export class GapDetectionService {
     const implications: string[] = [];
 
     if (daysSince >= 30) {
-      implications.push("Prolonged silence may indicate bad faith");
-      implications.push("May support claim for damages due to employer obstruction");
+      implications.push("Verify delivery, expected response timing, and communications outside LARO");
+      implications.push("Prolonged silence alone does not establish motive, liability, or damages");
     }
 
     if (event.title.toLowerCase().includes("request")) {
-      implications.push("Failure to respond to formal request is legally significant");
+      implications.push("Ask a qualified lawyer whether this unanswered request has legal significance");
     }
 
     if (event.title.toLowerCase().includes("termination")) {
-      implications.push("Lack of follow-up documentation after termination is suspicious");
+      implications.push("Verify whether follow-up documentation should exist and whether it is stored elsewhere");
     }
 
     return implications;
