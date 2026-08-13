@@ -3,6 +3,7 @@ import { ENV } from './env';
 import { capabilitiesFor, normalizeRole } from './roles';
 import { APP_VERSION } from './version';
 import { resolveOutboundEmailConfiguration } from '../emailConfig';
+import { getLLMProviderDescriptors } from '../llm';
 
 export const systemRouter = router({
   health: publicProcedure.query(() => ({
@@ -44,8 +45,8 @@ export const systemRouter = router({
     const has = (v: string | undefined) => !!(v && v.length > 0);
     const outboundEmail = resolveOutboundEmailConfiguration();
     const items = [
-      { provider: 'AI analysis (Forge-compatible LLM)', category: 'ai', requiredEnv: ['FORGE_API_KEY'],
-        configured: has(ENV.forgeApiKey),
+      { provider: 'AI analysis (selected provider)', category: 'ai', requiredEnv: ['one supported provider API key'],
+        configured: getLLMProviderDescriptors().some((provider) => provider.configured),
         note: 'Optional — provider-backed AI actions fail closed without this key; deterministic analysis remains available.' },
       { provider: 'Google (Gmail/Drive)', category: 'oauth', requiredEnv: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
         configured: has(ENV.GOOGLE_CLIENT_ID) && has(ENV.GOOGLE_CLIENT_SECRET) },

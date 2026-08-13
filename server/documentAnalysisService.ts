@@ -6,6 +6,8 @@ import { analyzeDocumentBytes, DOCUMENT_ANALYSIS_VERSION, type DocumentAnalysisR
 import { getEvidenceFile } from "./evidence";
 import { documentAnalyses } from "./schema";
 import { storageRead } from "./storage";
+import { getWorkflowPreferences } from "./workflowPreferences";
+import { isLLMProviderConfigured } from "./llm";
 
 export function parseDocumentAnalysisResult(value: string): DocumentAnalysisResult {
   return JSON.parse(value) as DocumentAnalysisResult;
@@ -19,7 +21,7 @@ function parseMetadata(value: string | null): Record<string, unknown> {
 export async function analyzeStoredEvidence(options: {
   userId: string;
   evidenceId: string;
-  deepAnalysis: boolean;
+  deepAnalysis?: boolean;
   force?: boolean;
 }) {
   const db = await getDb();
@@ -28,6 +30,14 @@ export async function analyzeStoredEvidence(options: {
   await assertCaseOwnership(item.caseId, options.userId);
 
   const metadata = parseMetadata(item.metadata);
+  const preferences = await getWorkflowPreferences(options.userId);
+  const provider = preferences.analysisProvider === "local" ? undefined : preferences.analysisProvider;
+  const requestedDeepAnalysis = options.deepAnalysis ?? true;
+  const deepAnalysis = Boolean(
+    requestedDeepAnalysis &&
+    provider &&
+    preferences.shareRawDocumentContent
+  );
   const storageKey = metadata.storageKey;
   if (typeof storageKey !== "string" || !storageKey) {
     throw new Error("This evidence record has no stored source file to analyze");
@@ -44,7 +54,7 @@ export async function analyzeStoredEvidence(options: {
     .limit(1);
   const cachedResult = cached ? parseDocumentAnalysisResult(cached.result) : null;
   const providerUpgradeNeeded = Boolean(
-    options.deepAnalysis && process.env.FORGE_API_KEY && cachedResult?.providerStatus !== "complete"
+    deepAnalysis && provider && isLLMProviderConfigured(provider) && cachedResult?.providerStatus !== "complete"
   );
   if (!options.force && cached && !providerUpgradeNeeded && (!sourceHash || cached.contentHash === sourceHash)) {
     return { id: cached.id, cached: true, result: cachedResult! };
@@ -54,7 +64,8 @@ export async function analyzeStoredEvidence(options: {
   const result = await analyzeDocumentBytes({
     bytes,
     mimeType: item.mimeType || "application/octet-stream",
-    deepAnalysis: options.deepAnalysis,
+    deepAnalysis,
+    provider,
   });
   const id = cached?.id ?? randomUUID();
   const values = {

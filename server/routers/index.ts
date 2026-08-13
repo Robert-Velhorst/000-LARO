@@ -65,8 +65,9 @@ import { getUser, getDb } from "../db";
 import { users, cases } from "../schema";
 import { and, count, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { invokeLLM } from "../llm";
+import { invokeLLM, isLLMProviderConfigured } from "../llm";
 import { answerCaseQuestion } from "../caseAssistant";
+import { getWorkflowPreferences } from "../workflowPreferences";
 import { extractImageText } from "../ocr";
 import {
   isSupportedImageOcrMimeType,
@@ -470,7 +471,19 @@ export const appRouter = router({
         }
 
         try {
+          const preferences = await getWorkflowPreferences(ctx.user.id);
+          const provider = preferences.analysisProvider === "local" ? null : preferences.analysisProvider;
+          if (!provider || !isLLMProviderConfigured(provider)) {
+            return {
+              answer: "General AI guidance is disabled while local analysis is selected. Select a configured external provider in Settings to enable it.",
+              citations: [],
+              grounded: false,
+              mode: "local" as const,
+              notice: "No case is selected and no external provider was used.",
+            };
+          }
           const result = await invokeLLM({
+            provider,
             messages: [
               {
                 role: "system",

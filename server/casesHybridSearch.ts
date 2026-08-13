@@ -1,9 +1,9 @@
 import { and, eq, like, or } from "drizzle-orm";
 import { getDb } from "./db";
 import { cases } from "./schema";
-import { ENV } from "./_core/env";
-import { invokeLLM } from "./llm";
+import { invokeLLM, isLLMProviderConfigured } from "./llm";
 import { globalSearch } from "./globalSearch";
+import { getWorkflowPreferences } from "./workflowPreferences";
 
 const STOP = new Set([
   "the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "my", "is", "are", "was", "were",
@@ -20,17 +20,13 @@ function tokenizeHeuristic(q: string): string[] {
   return [...new Set([trimmed, ...words])].slice(0, 14);
 }
 
-async function expandCaseSearchTerms(query: string): Promise<string[]> {
+async function expandCaseSearchTerms(query: string, userId: string): Promise<string[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
 
-  const hasLlm =
-    Boolean(ENV.OPENAI_API_KEY) ||
-    Boolean(ENV.GROQ_API_KEY) ||
-    Boolean(ENV.DEEPSEEK_API_KEY) ||
-    Boolean(ENV.ANTHROPIC_API_KEY) ||
-    Boolean(ENV.GOOGLE_GEMINI_API_KEY) ||
-    Boolean(ENV.forgeApiKey);
+  const preferences = await getWorkflowPreferences(userId);
+  const provider = preferences.analysisProvider === "local" ? null : preferences.analysisProvider;
+  const hasLlm = Boolean(provider && preferences.shareRawDocumentContent && isLLMProviderConfigured(provider));
 
   if (!hasLlm) {
     return tokenizeHeuristic(trimmed);
@@ -38,6 +34,7 @@ async function expandCaseSearchTerms(query: string): Promise<string[]> {
 
   try {
     const res = await invokeLLM({
+      provider: provider!,
       messages: [
         {
           role: "system",
@@ -73,7 +70,7 @@ export async function hybridCaseSearch(query: string, userId: string): Promise<s
   const trimmed = query.trim();
   if (!trimmed) return [];
 
-  const terms = await expandCaseSearchTerms(trimmed);
+  const terms = await expandCaseSearchTerms(trimmed, userId);
   const ids = new Set<string>();
 
   const db = await getDb();

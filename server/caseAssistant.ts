@@ -1,13 +1,13 @@
 import { and, desc, eq } from "drizzle-orm";
 import { assertCaseOwnership } from "./_core/authz";
-import { ENV } from "./_core/env";
 import { getDb } from "./db";
 import {
   type CitedFinding,
   type DocumentAnalysisResult,
   type TimelineFinding,
 } from "./documentIntelligence";
-import { invokeLLM } from "./llm";
+import { invokeLLM, isLLMProviderConfigured } from "./llm";
+import { getWorkflowPreferences } from "./workflowPreferences";
 import { cases, documentAnalyses, evidence } from "./schema";
 
 const MAX_RETRIEVAL_SOURCES = 6;
@@ -261,7 +261,7 @@ export function buildCaseAssistantRetrievalAnswer(
     mode: "retrieval",
     notice: providerConfigured
       ? "The AI response was rejected because it did not preserve valid source citations; deterministic evidence matches are shown instead."
-      : "The AI provider is not configured; deterministic evidence matches are shown instead.",
+      : "Cloud analysis is disabled or unavailable; deterministic evidence matches are shown instead.",
   };
 }
 
@@ -331,6 +331,13 @@ export async function answerCaseQuestion(options: {
   caseId: string;
   question: string;
 }): Promise<CaseAssistantAnswer> {
+  const preferences = await getWorkflowPreferences(options.userId);
+  const provider = preferences.analysisProvider === "local" ? null : preferences.analysisProvider;
+  const providerAvailable = Boolean(
+    provider &&
+    preferences.shareRawDocumentContent &&
+    isLLMProviderConfigured(provider)
+  );
   const { caseContext, sources } = await loadCaseSources(options.userId, options.caseId);
   if (!sources.length) {
     return {
@@ -344,7 +351,7 @@ export async function answerCaseQuestion(options: {
 
   const rankedSources = rankCaseAssistantSources(options.question, sources);
   if (!rankedSources.length) {
-    return buildCaseAssistantRetrievalAnswer(options.question, [], Boolean(ENV.forgeApiKey));
+    return buildCaseAssistantRetrievalAnswer(options.question, [], providerAvailable);
   }
 
   const sourceMap = new Map(rankedSources.map((source, index) => [`D${index + 1}`, source]));
@@ -356,8 +363,13 @@ export async function answerCaseQuestion(options: {
     return [rendered];
   }).join("\n\n");
 
+  if (!providerAvailable || !provider) {
+    return buildCaseAssistantRetrievalAnswer(options.question, rankedSources, false);
+  }
+
   try {
     const response = await invokeLLM({
+      provider,
       messages: [
         {
           role: "system",
@@ -413,6 +425,6 @@ export async function answerCaseQuestion(options: {
       notice: null,
     };
   } catch {
-    return buildCaseAssistantRetrievalAnswer(options.question, rankedSources, Boolean(ENV.forgeApiKey));
+    return buildCaseAssistantRetrievalAnswer(options.question, rankedSources, providerAvailable);
   }
 }

@@ -2,9 +2,10 @@ import { z } from 'zod';
 import { eq, and, gte, desc } from 'drizzle-orm';
 import { getDb } from '../db';
 import { protectedProcedure, router } from '../_core/trpc';
-import { lawyerRatings, lawyerInteractions, ratingCalculationLogs, lawyers } from '../schema';
+import { lawyerRatings, lawyerInteractions, ratingCalculationLogs, lawyers, cases } from '../schema';
 import { nanoid } from 'nanoid';
-import { invokeLLM } from '../llm';
+import { invokeLLM, isLLMProviderConfigured, type LLMProvider } from '../llm';
+import { getWorkflowPreferences } from '../workflowPreferences';
 
 const responseAnalysisSchema = z.object({
   completenessScore: z.number().finite(),
@@ -82,7 +83,12 @@ export async function recordLawyerInteraction(data: {
 
   if (data.responseText && data.responseText.length > 50) {
     try {
-      aiScores = await analyzeResponseQuality(data.responseText);
+      const [caseOwner] = await db.select({ userId: cases.userId }).from(cases).where(eq(cases.id, data.caseId)).limit(1);
+      const preferences = caseOwner?.userId ? await getWorkflowPreferences(caseOwner.userId) : null;
+      const provider = preferences?.analysisProvider === "local" ? null : preferences?.analysisProvider;
+      if (provider && preferences?.shareRawDocumentContent && isLLMProviderConfigured(provider)) {
+        aiScores = await analyzeResponseQuality(data.responseText, provider);
+      }
     } catch (error) {
       console.error('[LawyerRating] AI analysis failed:', error);
       // Continue without AI scores
@@ -123,7 +129,7 @@ export async function recordLawyerInteraction(data: {
 /**
  * Analyze response quality using AI
  */
-async function analyzeResponseQuality(responseText: string): Promise<{
+async function analyzeResponseQuality(responseText: string, provider: LLMProvider): Promise<{
   completenessScore: number;
   professionalismScore: number;
   helpfulnessScore: number;
@@ -154,6 +160,7 @@ Provide your analysis in JSON format:
 }`;
 
   const response = await invokeLLM({
+    provider,
     messages: [
       { role: 'system', content: 'You are an expert at analyzing legal professional communications.' },
       { role: 'user', content: prompt }

@@ -102,7 +102,7 @@ describe("case assistant evidence retrieval", () => {
       citations: [expect.objectContaining({ evidenceId: "decision" })],
     });
     expect(fallback.answer).toContain("[D1]");
-    expect(fallback.notice).toContain("not configured");
+    expect(fallback.notice).toContain("disabled or unavailable");
   });
 
   it("accepts only provider answers that retain supplied document IDs", () => {

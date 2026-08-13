@@ -150,4 +150,59 @@ suite("review-gated media and organization outreach directory", () => {
     })).rejects.toThrow("supported legal area");
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("supports one-action batch review and automatic shortlist preparation", async () => {
+    const caller = app.makeCaller(owner);
+    const first = await caller.outreachDirectory.createManual({
+      targetType: "organization",
+      name: "Employment Rights One",
+      url: "https://batch-one.example.org",
+      legalAreas: ["Employment Law"],
+    });
+    const second = await caller.outreachDirectory.createManual({
+      targetType: "organization",
+      name: "Employment Rights Two",
+      url: "https://batch-two.example.org",
+      legalAreas: ["Employment Law"],
+    });
+    await expect(caller.outreachDirectory.reviewBatch({
+      ids: [first.id, "TARGET_NOT_OWNED"],
+      status: "approved",
+      targetType: "organization",
+      caseId: "CASE_TARGET_OWNER",
+    })).rejects.toThrow("not found");
+    const stillPending = await caller.outreachDirectory.list({ targetType: "organization", status: "pending" });
+    expect(stillPending.map((target) => target.id)).toEqual(expect.arrayContaining([first.id, second.id]));
+    await expect(caller.outreachDirectory.reviewBatch({
+      ids: [first.id, first.id],
+      status: "approved",
+      targetType: "organization",
+    })).rejects.toThrow("Duplicate outreach target IDs");
+    const batch = await caller.outreachDirectory.reviewBatch({
+      ids: [first.id, second.id],
+      status: "approved",
+      targetType: "organization",
+      caseId: "CASE_TARGET_OWNER",
+    });
+    expect(batch.reviewed).toBe(2);
+    expect(batch.matches?.length).toBeGreaterThanOrEqual(2);
+
+    await caller.userPreferences.updateWorkflow({ outreachReviewMode: "automatic" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(`
+      <div class="result">
+        <a class="result__a" href="https://automatic.example.nl/employment-desk">Employment Desk News</a>
+        <div class="result__snippet">Public-interest employment reporting.</div>
+      </div>`, { status: 200, headers: { "Content-Type": "text/html" } })));
+    const report = await caller.outreachDirectory.discoverForCase({
+      caseId: "CASE_TARGET_OWNER",
+      targetType: "media",
+      maxQueries: 1,
+      maxResults: 5,
+    });
+    expect(report.reviewMode).toBe("automatic");
+    expect(report.autoReviewed).toBeGreaterThanOrEqual(1);
+    expect(report.automaticMatches).toBeGreaterThanOrEqual(1);
+    expect(await caller.outreachDirectory.list({ targetType: "media", status: "pending" })).toHaveLength(0);
+    await caller.userPreferences.updateWorkflow({ outreachReviewMode: "each" });
+  });
 });

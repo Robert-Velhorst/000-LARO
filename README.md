@@ -74,13 +74,14 @@ The Electron main process starts the Express/tRPC server and React renderer toge
   link counts. These views never infer motive or a legal outcome.
 - Browse source-linked legal events horizontally or vertically, source documents,
   and operational case activity from one Timeline workspace.
+- Inspect the same evidence history as a metro map, chronological list, or Gantt chart. Natural-language timeline corrections are stored as audited overlays; source evidence remains immutable.
 - Generate source-linked case summaries, lawyer briefings, red-line drafts, and approval-bound case bundles.
 
 ### Matching and outreach
 
 - Query the official NOvA public lawyer finder from the desktop case workspace, retain source/profile provenance, and rank lawyers using the case's legal fields plus only attributes that are actually available. Unknown capacity, availability, or performance receives no invented score.
 - Apply official legal-area, city/postcode, radius, specialization-association, and financed-legal-aid filters. City/postcode sharing is explicit; LARO does not send case prose or a client's stored address to NOvA.
-- Use one desktop Outreach workspace for analytics, lawyers, media, and organizations. Media and organization candidates remain pending until a user approves or rejects their public source.
+- Use one desktop Outreach workspace for analytics, lawyers, media, and organizations. Media and organization candidates follow the owner's per-item, batch, or automatic shortlist-review setting; preparing a shortlist never sends a message.
 - Discover or manually import media/organization candidates from bounded public searches, deduplicate them per owner and category, and rank only approved records against the selected case. Discovery sends canonical legal-area queries, never case prose, and does not claim exhaustive internet coverage.
 - Legacy Flask outreach records are archived during migration but are never inserted into a live desktop send queue.
 - Track outreach totals, progress, responses, acceptance, and pending work per case.
@@ -165,7 +166,7 @@ Copy `.env.example` to `.env`; never commit real secrets. The template is groupe
 | Development renderer | `VITE_LARO_API_URL` (API proxy target when it is not `http://127.0.0.1:3000`) |
 | Desktop data | `DATABASE_URL`, `LOCAL_STORAGE_DIR`, `AWS_S3_*` |
 | Standalone local scan | `LOCAL_SCAN_ROOTS` (path-delimited allowlist; desktop uses the native folder picker) |
-| Provider-backed desktop AI | `FORGE_API_URL`, `FORGE_API_KEY` |
+| Provider-backed desktop AI | Select a configured provider in **Settings > Workflow**. Supported keys: `FORGE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `TOGETHER_API_KEY`. Model IDs have matching `LARO_*_MODEL` overrides in `.env.example`. |
 | Optional active connectors | `TELEGRAM_BOT_TOKEN`, `SENDGRID_API_KEY`, `SMTP_*` |
 | Reserved Microsoft connector config | `MICROSOFT_*` (collection remains unavailable until implemented and accepted) |
 | Flask server | `LARO_FLASK_PORT`, `LARO_HOST`, `LARO_DEBUG`, `SECRET_KEY` |

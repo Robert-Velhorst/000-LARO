@@ -6,8 +6,7 @@ import {
   isSupportedDocumentAnalysisMimeType,
   isSupportedImageOcrMimeType,
 } from "../shared/evidenceFiles";
-import { ENV } from "./_core/env";
-import { invokeLLM } from "./llm";
+import { invokeLLM, isLLMProviderConfigured, type LLMProvider } from "./llm";
 import { extractImageText } from "./ocr";
 
 export const DOCUMENT_ANALYSIS_VERSION = "2.2.0";
@@ -384,9 +383,9 @@ function validateAiResult(value: unknown, validCitationIds: Set<string>): value 
   );
 }
 
-async function enrichAnalysis(base: DocumentAnalysisResult): Promise<DocumentAnalysisResult> {
-  if (!ENV.forgeApiKey) {
-    return { ...base, providerStatus: "unavailable", providerMessage: "Deep analysis provider is not configured; local source extraction completed." };
+async function enrichAnalysis(base: DocumentAnalysisResult, provider: LLMProvider): Promise<DocumentAnalysisResult> {
+  if (!isLLMProviderConfigured(provider)) {
+    return { ...base, providerStatus: "unavailable", providerMessage: `${provider} is selected but not configured; local source extraction completed.` };
   }
   const providerCitations: Citation[] = [];
   let providerLength = 0;
@@ -399,6 +398,7 @@ async function enrichAnalysis(base: DocumentAnalysisResult): Promise<DocumentAna
   const sourceText = providerCitations.map((citation) => `[${citation.id}] ${citation.quote}`).join("\n");
   try {
     const response = await invokeLLM({
+      provider,
       messages: [
         {
           role: "system",
@@ -483,6 +483,7 @@ export async function analyzeDocumentBytes(options: {
   bytes: Buffer;
   mimeType: string;
   deepAnalysis: boolean;
+  provider?: LLMProvider;
 }): Promise<DocumentAnalysisResult> {
   const extraction = await extractDocumentText(options.bytes, options.mimeType);
   if (extraction.text.length < 20) {
@@ -493,5 +494,5 @@ export async function analyzeDocumentBytes(options: {
     );
   }
   const base = deterministicAnalysis(extraction);
-  return options.deepAnalysis ? enrichAnalysis(base) : base;
+  return options.deepAnalysis ? enrichAnalysis(base, options.provider || "forge") : base;
 }

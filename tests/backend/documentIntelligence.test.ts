@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { join } from "path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { analyzeDocumentBytes, extractDocumentText } from "../../server/documentIntelligence";
 import { buildCase, buildUser } from "../factories";
@@ -146,6 +146,95 @@ suite("persisted document analysis and source-linked timeline", () => {
       expect.objectContaining({ id: uploaded.id, title: "Besluit gemeente.txt", analysisStatus: "complete" }),
     ]));
     expect(timeline.reconstruction.nodes[0].summary).toContain("Gemeente Utrecht");
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai" });
+    vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    const correctionFetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+      id: "timeline-correction-response",
+      created: 1,
+      model: "test-model",
+      choices: [{
+        index: 0,
+        message: {
+          role: "assistant",
+          content: JSON.stringify({
+            operation: "update",
+            targetEventId: "E1",
+            sourceDocumentId: null,
+            date: "2026-07-15",
+            title: "Corrected decision date",
+            description: "The decision date was corrected by the owner.",
+            actor: "Gemeente Utrecht",
+            category: "legal",
+            reason: "The owner requested a corrected decision date.",
+          }),
+        },
+        finish_reason: "stop",
+      }],
+      }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: "timeline-correction-response-2",
+        created: 2,
+        model: "test-model",
+        choices: [{
+          index: 0,
+          message: {
+            role: "assistant",
+            content: JSON.stringify({
+              operation: "update",
+              targetEventId: "E1",
+              sourceDocumentId: null,
+              date: "2026-07-16",
+              title: "Final corrected decision date",
+              description: "The owner corrected the decision date a second time.",
+              actor: "Gemeente Utrecht",
+              category: "legal",
+              reason: "The owner supplied a second correction.",
+            }),
+          },
+          finish_reason: "stop",
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", correctionFetch);
+    const correction = await caller.documentAnalysis.correctCaseTimeline({
+      caseId: "CASE_DOC_ANALYSIS",
+      instruction: "Change the decision date to 15 July 2026 and keep the same source.",
+    });
+    expect(correction).toMatchObject({ operation: "update", before: { date: "2026-07-14" }, after: { date: "2026-07-15" } });
+    const correctedTimeline = await caller.documentAnalysis.generateCaseTimeline({ caseId: "CASE_DOC_ANALYSIS" });
+    expect(correctedTimeline.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        date: "2026-07-15",
+        title: "Corrected decision date",
+        source: expect.objectContaining({ evidenceId: uploaded.id }),
+      }),
+    ]));
+    expect(correctedTimeline.events.some((event) => event.date === "2026-07-14" && event.title === timeline.events[0].title)).toBe(false);
+    expect(correctedTimeline.corrections).toHaveLength(1);
+    const secondCorrection = await caller.documentAnalysis.correctCaseTimeline({
+      caseId: "CASE_DOC_ANALYSIS",
+      instruction: "Change the corrected decision date to 16 July 2026.",
+    });
+    expect(secondCorrection).toMatchObject({
+      operation: "update",
+      before: { date: "2026-07-15", title: "Corrected decision date" },
+      after: { date: "2026-07-16", title: "Final corrected decision date" },
+    });
+    const twiceCorrectedTimeline = await caller.documentAnalysis.generateCaseTimeline({ caseId: "CASE_DOC_ANALYSIS" });
+    expect(twiceCorrectedTimeline.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ date: "2026-07-16", title: "Final corrected decision date" }),
+    ]));
+    expect(twiceCorrectedTimeline.events.some((event) => (
+      event.date === "2026-07-15" && event.title === "Corrected decision date"
+    ))).toBe(false);
+    expect(twiceCorrectedTimeline.corrections).toHaveLength(2);
+    const correctionAudit = await caller.audit.list({ limit: 100 });
+    expect(correctionAudit).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "timeline.ai_correction_applied", entityId: correction.id }),
+    ]));
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     const caseAnalyses = await caller.documentAnalysis.byCase({ caseId: "CASE_DOC_ANALYSIS" });
     expect(caseAnalyses).toEqual([
       expect.objectContaining({ evidenceId: uploaded.id, documentType: first.result.documentType }),

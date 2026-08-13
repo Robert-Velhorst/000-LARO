@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { getElectronAPI } from "@/lib/electronApiShim";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,29 +42,17 @@ interface CaseTimelineProps {
 }
 
 export function CaseTimeline({ caseId }: CaseTimelineProps) {
-  const [generating, setGenerating] = useState(false);
-  const [timeline, setTimeline] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [layout, setLayout] = useState<"vertical" | "horizontal">("vertical");
-  const generatedForCase = useRef<string | null>(null);
 
-  const generateMutation = trpc.documentAnalysis.generateCaseTimeline.useMutation();
+  const timelineQuery = trpc.documentAnalysis.generateCaseTimeline.useQuery(
+    { caseId },
+    { refetchInterval: 15_000, refetchOnWindowFocus: true },
+  );
+  const timeline = timelineQuery.data;
+  const generating = timelineQuery.isFetching;
   const sourceMutation = trpc.evidenceFiles.getDownloadUrl.useMutation();
   const sourceOpenedMutation = trpc.evidenceFiles.recordSourceOpened.useMutation();
-
-  const handleGenerateTimeline = async () => {
-    try {
-      setGenerating(true);
-      setErrorMessage(null);
-      const result = await generateMutation.mutateAsync({ caseId });
-      setTimeline(result);
-    } catch (error) {
-      console.error('Error generating timeline:', error);
-      setErrorMessage(error instanceof Error ? error.message : "Timeline generation failed.");
-    } finally {
-      setGenerating(false);
-    }
-  };
 
   const openSource = async (evidenceId: string) => {
     try {
@@ -77,12 +65,6 @@ export function CaseTimeline({ caseId }: CaseTimelineProps) {
       setErrorMessage(error instanceof Error ? error.message : "The source file could not be opened.");
     }
   };
-
-  useEffect(() => {
-    if (generatedForCase.current === caseId) return;
-    generatedForCase.current = caseId;
-    void handleGenerateTimeline();
-  }, [caseId]);
 
   const getImportanceColor = (importance: string) => {
     const colors = {
@@ -159,11 +141,11 @@ export function CaseTimeline({ caseId }: CaseTimelineProps) {
 
   return (
     <div className="space-y-6">
-      {errorMessage && (
+      {(errorMessage || timelineQuery.error) && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Timeline action failed</AlertTitle>
-          <AlertDescription>{errorMessage}</AlertDescription>
+          <AlertDescription>{errorMessage || timelineQuery.error?.message}</AlertDescription>
         </Alert>
       )}
       {/* Generate Timeline Button */}
@@ -180,7 +162,7 @@ export function CaseTimeline({ caseId }: CaseTimelineProps) {
           </CardHeader>
           <CardContent>
             <Button
-              onClick={handleGenerateTimeline}
+              onClick={() => void timelineQuery.refetch()}
               disabled={generating}
               size="lg"
             >
@@ -335,7 +317,7 @@ export function CaseTimeline({ caseId }: CaseTimelineProps) {
           <div className="flex justify-center">
             <Button
               variant="outline"
-              onClick={handleGenerateTimeline}
+              onClick={() => void timelineQuery.refetch()}
               disabled={generating}
             >
               {generating ? (

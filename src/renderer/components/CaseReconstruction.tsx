@@ -7,6 +7,7 @@ import {
   Columns3,
   FileQuestion,
   Focus,
+  GanttChart,
   GitBranch,
   List,
   Loader2,
@@ -15,6 +16,7 @@ import {
   Plus,
   Rows3,
   RotateCcw,
+  Sparkles,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { getElectronAPI } from "@/lib/electronApiShim";
@@ -22,6 +24,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 
 type RouteId = "employment" | "termination" | "communication" | "legal" | "financial" | "other";
 type Relationship = "attachment_of" | "references" | "responds_to" | "related";
@@ -141,7 +144,7 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
   const [reconstruction, setReconstruction] = useState<Reconstruction | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [orientation, setOrientation] = useState<"horizontal" | "vertical">("horizontal");
-  const [view, setView] = useState<"map" | "list">("map");
+  const [view, setView] = useState<"map" | "list" | "gantt">("map");
   const [showInferred, setShowInferred] = useState(true);
   const [minimumConfidence, setMinimumConfidence] = useState(52);
   const [routeFilter, setRouteFilter] = useState<RouteId | "all">("all");
@@ -151,30 +154,34 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [traceSelected, setTraceSelected] = useState(false);
   const [zoom, setZoom] = useState(1);
-  const loadedCase = useRef<string | null>(null);
-  const generateMutation = trpc.documentAnalysis.generateCaseTimeline.useMutation();
+  const [correctionInstruction, setCorrectionInstruction] = useState("");
+  const [correctionMessage, setCorrectionMessage] = useState<string | null>(null);
+  const timelineQuery = trpc.documentAnalysis.generateCaseTimeline.useQuery(
+    { caseId },
+    { refetchInterval: 15_000, refetchOnWindowFocus: true },
+  );
   const sourceMutation = trpc.evidenceFiles.getDownloadUrl.useMutation();
   const sourceOpenedMutation = trpc.evidenceFiles.recordSourceOpened.useMutation();
-
-  const load = async () => {
-    try {
-      setErrorMessage(null);
-      const result = await generateMutation.mutateAsync({ caseId });
-      const next = result.reconstruction as Reconstruction;
-      setReconstruction(next);
-      setSelectedId((current) => current && next.nodes.some((node) => node.id === current)
-        ? current
-        : next.nodes[0]?.id ?? null);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "The document reconstruction could not be generated.");
-    }
-  };
+  const correctionMutation = trpc.documentAnalysis.correctCaseTimeline.useMutation({
+    onSuccess: async (result) => {
+      setCorrectionInstruction("");
+      setCorrectionMessage(`${result.operation === "remove" ? "Removed" : result.operation === "add" ? "Added" : "Updated"} timeline event. ${result.reason}`);
+      await timelineQuery.refetch();
+    },
+    onError: (error) => {
+      setCorrectionMessage(null);
+      setErrorMessage(error.message);
+    },
+  });
 
   useEffect(() => {
-    if (loadedCase.current === caseId) return;
-    loadedCase.current = caseId;
-    void load();
-  }, [caseId]);
+    const next = timelineQuery.data?.reconstruction as Reconstruction | undefined;
+    if (!next) return;
+    setReconstruction(next);
+    setSelectedId((current) => current && next.nodes.some((node) => node.id === current)
+      ? current
+      : next.nodes[0]?.id ?? null);
+  }, [timelineQuery.data]);
 
   const openSource = async (evidenceId: string) => {
     try {
@@ -238,7 +245,7 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
     if (selectedId && !visibleNodeIds.has(selectedId)) setSelectedId(visibleNodes[0]?.id ?? null);
   }, [selectedId, visibleNodeIds, visibleNodes]);
 
-  if (!reconstruction && generateMutation.isPending) {
+  if (!reconstruction && timelineQuery.isLoading) {
     return (
       <div className="flex min-h-64 items-center justify-center gap-3 text-sm text-muted-foreground">
         <Loader2 className="h-5 w-5 animate-spin" /> Reconstructing the document history…
@@ -249,10 +256,10 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
   if (!reconstruction) {
     return (
       <div className="space-y-4">
-        {errorMessage ? (
-          <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Reconstruction failed</AlertTitle><AlertDescription>{errorMessage}</AlertDescription></Alert>
+        {timelineQuery.error ? (
+          <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Reconstruction failed</AlertTitle><AlertDescription>{timelineQuery.error.message}</AlertDescription></Alert>
         ) : null}
-        <Button onClick={() => void load()} disabled={generateMutation.isPending}>
+        <Button onClick={() => void timelineQuery.refetch()} disabled={timelineQuery.isFetching}>
           <RotateCcw className="mr-2 h-4 w-4" /> Retry reconstruction
         </Button>
       </div>
@@ -275,6 +282,37 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
         <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Document action failed</AlertTitle><AlertDescription>{errorMessage}</AlertDescription></Alert>
       ) : null}
 
+      <section className="border-y border-border/60 py-4" aria-labelledby="timeline-correction-title">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-64 flex-1">
+            <label id="timeline-correction-title" htmlFor="timeline-correction" className="text-sm font-medium">Correct the timeline with AI</label>
+            <Textarea
+              id="timeline-correction"
+              className="mt-2 min-h-20 resize-y"
+              value={correctionInstruction}
+              onChange={(event) => setCorrectionInstruction(event.target.value)}
+              placeholder="For example: change the dismissal meeting to 14 March 2024 and keep the meeting notes as its source."
+            />
+          </div>
+          <Button
+            type="button"
+            disabled={correctionInstruction.trim().length < 5 || correctionMutation.isPending}
+            onClick={() => {
+              setErrorMessage(null);
+              setCorrectionMessage(null);
+              correctionMutation.mutate({ caseId, instruction: correctionInstruction.trim() });
+            }}
+          >
+            {correctionMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+            Apply correction
+          </Button>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground" aria-live="polite">
+          <span>{timelineQuery.data?.corrections.length || 0} audited correction{timelineQuery.data?.corrections.length === 1 ? "" : "s"}</span>
+          {correctionMessage ? <span className="text-foreground">{correctionMessage}</span> : null}
+        </div>
+      </section>
+
       <div className="grid gap-3 border-b border-border/60 pb-4 sm:grid-cols-3">
         <div><div className="text-xs text-muted-foreground">Documents</div><div className="text-2xl font-semibold">{reconstruction.nodes.length}</div></div>
         <div><div className="text-xs text-muted-foreground">Verified links</div><div className="text-2xl font-semibold">{reconstruction.edges.filter((edge) => edge.evidence === "explicit").length}</div></div>
@@ -285,6 +323,7 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
         <div className="inline-flex rounded-md border border-border bg-background p-1" role="group" aria-label="Reconstruction view">
           <Button type="button" variant={view === "map" ? "secondary" : "ghost"} size="icon" className="h-8 w-8" title="Document map" aria-label="Show document map" aria-pressed={view === "map"} onClick={() => setView("map")}><MapIcon className="h-4 w-4" /></Button>
           <Button type="button" variant={view === "list" ? "secondary" : "ghost"} size="icon" className="h-8 w-8" title="Accessible document list" aria-label="Show document list" aria-pressed={view === "list"} onClick={() => setView("list")}><List className="h-4 w-4" /></Button>
+          <Button type="button" variant={view === "gantt" ? "secondary" : "ghost"} size="icon" className="h-8 w-8" title="Gantt timeline" aria-label="Show Gantt timeline" aria-pressed={view === "gantt"} onClick={() => setView("gantt")}><GanttChart className="h-4 w-4" /></Button>
         </div>
         {view === "map" ? (
           <>
@@ -332,9 +371,10 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
         <label className="flex h-9 items-center gap-2 text-sm">
           <Switch checked={traceSelected} onCheckedChange={setTraceSelected} aria-label="Trace selected document chain" /> Trace selection
         </label>
-        <Button type="button" variant="outline" size="sm" className="ml-auto" onClick={() => void load()} disabled={generateMutation.isPending}>
-          {generateMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />} Refresh
-        </Button>
+        <span className="ml-auto flex h-9 items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
+          {timelineQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          {timelineQuery.isFetching ? "Updating evidence" : "Updates automatically"}
+        </span>
       </div>
 
       <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted-foreground" aria-label="Route legend">
@@ -462,6 +502,14 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
           onSelect={setSelectedId}
           onOpenSource={(id) => void openSource(id)}
         />
+      ) : view === "gantt" ? (
+        <ReconstructionGantt
+          nodes={visibleNodes}
+          phases={reconstruction.phases}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onOpenSource={(id) => void openSource(id)}
+        />
       ) : (
         <div className="divide-y divide-border border-y border-border">
           {visibleNodes.map((node) => (
@@ -535,6 +583,70 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
       {reconstruction.warnings.map((warning) => (
         <Alert key={warning}><GitBranch className="h-4 w-4" /><AlertTitle>Interpretation note</AlertTitle><AlertDescription>{warning}</AlertDescription></Alert>
       ))}
+    </div>
+  );
+}
+
+function ReconstructionGantt({
+  nodes,
+  phases,
+  selectedId,
+  onSelect,
+  onOpenSource,
+}: {
+  nodes: ReconstructionNode[];
+  phases: Reconstruction["phases"];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  onOpenSource: (id: string) => void;
+}) {
+  const dated = nodes.map((node) => ({ node, time: Date.parse(`${node.date}T00:00:00Z`) }))
+    .filter((item) => Number.isFinite(item.time));
+  if (!dated.length) return <div className="border border-dashed border-border p-8 text-center text-sm text-muted-foreground">No dated documents are available for a Gantt view.</div>;
+  const min = Math.min(...dated.map((item) => item.time));
+  const max = Math.max(...dated.map((item) => item.time));
+  const span = Math.max(86_400_000, max - min);
+  const left = (time: number) => Math.min(98, Math.max(1, ((time - min) / span) * 96 + 1));
+  const visibleIds = new Set(nodes.map((node) => node.id));
+  const visiblePhases = phases.filter((phase) => phase.documentIds.some((id) => visibleIds.has(id)));
+
+  return (
+    <div className="overflow-x-auto border-y border-border" aria-label="Evidence Gantt timeline">
+      <div className="min-w-[760px] p-4">
+        <div className="mb-3 grid grid-cols-[12rem_1fr] gap-4 text-xs text-muted-foreground">
+          <span>Documented phase</span>
+          <div className="flex justify-between"><span>{formatDate(new Date(min).toISOString().slice(0, 10))}</span><span>{formatDate(new Date(max).toISOString().slice(0, 10))}</span></div>
+        </div>
+        <div className="space-y-2">
+          {visiblePhases.map((phase) => {
+            const phaseNodes = dated.filter((item) => phase.documentIds.includes(item.node.id));
+            if (!phaseNodes.length) return null;
+            const start = Math.min(...phaseNodes.map((item) => item.time));
+            const end = Math.max(...phaseNodes.map((item) => item.time));
+            return (
+              <div key={phase.id} className="grid min-h-14 grid-cols-[12rem_1fr] items-center gap-4 border-b border-border/50 py-2">
+                <div className="min-w-0"><div className="truncate text-sm font-medium">{phase.label}</div><div className="text-xs text-muted-foreground">{phaseNodes.length} document{phaseNodes.length === 1 ? "" : "s"}</div></div>
+                <div className="relative h-9 bg-muted/35">
+                  <div className="absolute top-3 h-3 bg-orange-500/35" style={{ left: `${left(start)}%`, width: `${Math.max(1.5, left(end) - left(start))}%` }} />
+                  {phaseNodes.map(({ node, time }) => (
+                    <button
+                      key={node.id}
+                      type="button"
+                      className={`absolute top-2 h-5 w-5 -translate-x-1/2 rounded-full border-2 ${selectedId === node.id ? "border-white ring-2 ring-orange-500" : "border-slate-950"}`}
+                      style={{ left: `${left(time)}%`, backgroundColor: ROUTE_COLORS[node.route] }}
+                      title={`${formatDate(node.date)} - ${node.title}`}
+                      aria-label={`Select ${node.title}, ${formatDate(node.date)}`}
+                      onClick={() => onSelect(node.id)}
+                      onDoubleClick={() => onOpenSource(node.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">Select a station for details. Double-click a station to open its source document.</p>
+      </div>
     </div>
   );
 }

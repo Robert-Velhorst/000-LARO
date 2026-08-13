@@ -584,6 +584,7 @@ export default function EnhancedCaseDetailsDialog({
   const { data: outreachHistory, refetch: refetchOutreach } = trpc.outreach.byCaseId.useQuery(caseId, {
     enabled: open && !!caseId,
   });
+  const workflowPreferences = trpc.userPreferences.workflow.useQuery(undefined, { enabled: open });
 
   /* ── mutations ── */
   const initiateOutreachMutation = trpc.workflow.initiateOutreach.useMutation({
@@ -596,6 +597,10 @@ export default function EnhancedCaseDetailsDialog({
 
   const approveDraftMutation = trpc.workflow.approveDraft.useMutation({
     onSuccess: () => { toast.success("Draft approved; nothing has been sent yet"); refetchOutreach(); },
+    onError: (error) => toast.error(error.message),
+  });
+  const approveDraftsMutation = trpc.workflow.approveDrafts.useMutation({
+    onSuccess: (result) => { toast.success(`${result.approved} drafts approved; nothing has been sent yet`); refetchOutreach(); },
     onError: (error) => toast.error(error.message),
   });
   const rejectDraftMutation = trpc.workflow.rejectDraft.useMutation({
@@ -633,6 +638,9 @@ export default function EnhancedCaseDetailsDialog({
     const notes = window.prompt("Optional response summary")?.trim() || undefined;
     recordResponseMutation.mutate({ outreachId, response, notes });
   };
+  const pendingOutreachIds = (outreachHistory ?? [])
+    .filter((outreach: any) => outreach.status === "PendingApproval")
+    .map((outreach: any) => outreach.id);
 
   if (!open) return null;
 
@@ -1232,9 +1240,16 @@ export default function EnhancedCaseDetailsDialog({
                     <OutreachProgressVisualization caseId={caseId} />
                     <Card className="border-border/30 bg-card/40">
                       <CardHeader className="pb-3">
-                        <CardTitle className="flex items-center gap-2 text-base">
-                          <MessageSquare className="w-4 h-4 text-muted-foreground/60" /> Lawyers Contacted
-                        </CardTitle>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <CardTitle className="flex items-center gap-2 text-base">
+                            <MessageSquare className="w-4 h-4 text-muted-foreground/60" /> Lawyer outreach
+                          </CardTitle>
+                          {workflowPreferences.data?.messageApprovalMode === "batch" && pendingOutreachIds.length > 1 ? (
+                            <Button size="sm" variant="outline" disabled={approveDraftsMutation.isPending} onClick={() => approveDraftsMutation.mutate({ outreachIds: pendingOutreachIds })}>
+                              {approveDraftsMutation.isPending ? "Approving..." : `Approve ${pendingOutreachIds.length} drafts`}
+                            </Button>
+                          ) : null}
+                        </div>
                       </CardHeader>
                       <CardContent>
                         {outreachHistory && outreachHistory.length > 0 ? (
@@ -1248,8 +1263,8 @@ export default function EnhancedCaseDetailsDialog({
                                   </Badge>
                                 </div>
                                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                                  <span>Distance: {outreach.distanceKm} km</span>
-                                  <span>Contact: {new Date(outreach.initialContact).toLocaleDateString()}</span>
+                                  {outreach.distanceKm !== null && outreach.distanceKm !== undefined ? <span>Distance: {outreach.distanceKm} km</span> : null}
+                                  {outreach.initialContact ? <span>Contact: {new Date(outreach.initialContact).toLocaleDateString()}</span> : <span>Not sent</span>}
                                   <span>Follow-ups: {outreach.followUpsSent}</span>
                                 </div>
                                 {outreach.response && (

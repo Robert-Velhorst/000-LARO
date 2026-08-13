@@ -71,30 +71,17 @@ export async function initiateOutreach(caseId: string, userId?: string) {
     throw new Error("No matching lawyers found for this case");
   }
 
-  // Create outreach record
+  // Create a reviewable draft. This helper must never imply that an external
+  // message was sent; transmission is owned by sendApprovedOutreach().
   const outreachId = nanoid();
   await db.insert(outreachStatus).values({
     id: outreachId,
     caseId,
     lawyerId: lawyer.id,
-    status: "Contacted",
-    initialContact: new Date(),
-    lastContact: new Date(),
+    status: "PendingApproval",
     followUpsSent: 0,
     distanceKm: Math.round(lawyer.distance),
   });
-
-  // Create email activity record
-  await db.insert(emailActivity).values({
-    id: nanoid(),
-    lawyerId: lawyer.id,
-    caseId,
-    activityType: "Initial",
-    subject: "New Legal Case - Your Expertise Needed",
-    sentAt: new Date(),
-    responseReceived: "No",
-    responseStatus: "No Response",
-  } as any);
 
   // Update case status
   await db
@@ -113,13 +100,16 @@ export async function initiateOutreach(caseId: string, userId?: string) {
       lawyerId: lawyer.id,
       lawyerName: lawyer.name,
       distance: lawyer.distance,
+      status: "PendingApproval",
+      externalMessageSent: false,
     },
   });
 
   return {
     outreachId,
     lawyer,
-    scheduledTime: new Date(),
+    scheduledTime: null,
+    sent: false,
   };
 }
 

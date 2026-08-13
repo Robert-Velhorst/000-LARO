@@ -22,6 +22,7 @@ import { storagePut } from './storage';
 import { createEvidenceFile } from './evidence';
 import { analyzeStoredEvidence } from './documentAnalysisService';
 import { supportsDocumentAnalysisMime } from './documentIntelligence';
+import { getWorkflowPreferences } from './workflowPreferences';
 import { getStoredGmailEvidenceState, resolveGmailAccountIds } from './gmailCollectionPolicy';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -54,7 +55,9 @@ async function analyzeImportedEvidence(
 ): Promise<number> {
   if (!supportsDocumentAnalysisMime(mimeType)) return 0;
   try {
-    const analysis = await analyzeStoredEvidence({ userId, evidenceId, deepAnalysis: false });
+    const preferences = await getWorkflowPreferences(userId);
+    if (!preferences.autoAnalyzeImports) return 0;
+    const analysis = await analyzeStoredEvidence({ userId, evidenceId });
     return analysis.result.analyzedWords ?? countWords(analysis.result.summary || '');
   } catch (error) {
     errors.push(`Analysis for "${label}" failed: ${error instanceof Error ? error.message : String(error)}`);

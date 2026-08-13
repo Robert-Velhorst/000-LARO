@@ -50,6 +50,7 @@ export const ENV = {
   GOOGLE_GEMINI_API_KEY: process.env.GOOGLE_GEMINI_API_KEY || '',
   DEEPSEEK_API_KEY:     process.env.DEEPSEEK_API_KEY || '',
   GROQ_API_KEY:         process.env.GROQ_API_KEY || '',
+  TOGETHER_API_KEY:     process.env.TOGETHER_API_KEY || '',
 
   // OAuth integrations
   GOOGLE_CLIENT_ID:       process.env.GOOGLE_CLIENT_ID || '',
@@ -145,7 +146,9 @@ export function assertSecurityConfig(): string[] {
   // Truthful startup summary of optional integrations (Phase 006 / Phase 004
   // "dev/demo/test must be visibly labelled"): report what is NOT configured so
   // operators are not surprised when a provider-dependent feature is inert.
-  if (!ENV.OPENAI_API_KEY && !ENV.ANTHROPIC_API_KEY && !ENV.forgeApiKey && !ENV.GOOGLE_GEMINI_API_KEY) {
+  if (!ENV.OPENAI_API_KEY && !ENV.ANTHROPIC_API_KEY && !ENV.forgeApiKey &&
+      !ENV.GOOGLE_GEMINI_API_KEY && !ENV.DEEPSEEK_API_KEY && !ENV.GROQ_API_KEY &&
+      !ENV.TOGETHER_API_KEY) {
     warnings.push('No Forge LLM key set — provider-backed AI analysis is unavailable.');
   }
   if (!ENV.AWS_S3_BUCKET) {
