@@ -14,6 +14,20 @@ afterEach(() => {
 });
 
 describe('production readiness regressions', () => {
+  it('does not retain test files excluded by the maintained suite configuration', () => {
+    const rootTestFiles = readdirSync(join(ROOT, 'tests'), { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.test.ts'))
+      .map((entry) => entry.name)
+      .sort();
+    const config = readFileSync(join(ROOT, 'vitest.config.ts'), 'utf8');
+
+    expect(rootTestFiles).toEqual([]);
+    expect(config).toContain('Root-level `tests/*.test.ts` files are');
+    expect(config).toContain("'tests/backend/**/*.test.ts'");
+    expect(config).toContain("'tests/frontend/**/*.test.ts'");
+    expect(config).toContain("'tests/security/**/*.test.ts'");
+  });
+
   it('rejects a weak standalone signup bootstrap token in production', async () => {
     process.env.NODE_ENV = 'production';
     process.env.SERVER_ONLY = 'true';
