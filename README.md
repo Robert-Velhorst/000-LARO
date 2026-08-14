@@ -323,6 +323,9 @@ docker compose up --build
 ```
 
 SQLite and local evidence persist in the `laro-data` volume. Health endpoints are available at `/api/live`, `/api/ready`, and `/api/health`.
+Run `npm run readiness:runtime` inside the API container to verify the lean
+production runtime, database, evidence volume, version, and HAI authentication
+boundary without installing development dependencies.
 
 For the supported Windows API deployment through an existing ngrok gateway,
 keep the container on host loopback and route a dedicated path to LARO's private

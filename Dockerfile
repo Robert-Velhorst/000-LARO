@@ -31,6 +31,7 @@ COPY package.json package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist/server ./dist/server
 COPY scripts/run-built-operation.mjs ./scripts/run-built-operation.mjs
+COPY scripts/runtime-readiness.mjs ./scripts/runtime-readiness.mjs
 COPY drizzle ./drizzle
 COPY assets ./assets
 

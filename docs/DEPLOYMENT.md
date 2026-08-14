@@ -27,6 +27,9 @@ npm run docker:build && npm run docker:run
 ```
 
 - Healthcheck: the container polls `/api/health`.
+- Runtime readiness: `npm run readiness:runtime` verifies production secrets,
+  SQLite integrity and migrations, evidence-volume read/write, API health and
+  version, and fail-closed HAI authentication without shipping development tools.
 - Configure via `.env` (see `.env.example`). In production the server refuses to
   start without strong `JWT_SECRET`/`COOKIE_SECRET` (Phase 006).
 
@@ -178,7 +181,9 @@ The Docker image includes compiled backup and live-provider acceptance entry
 points plus the small runtime dispatcher used by the normal npm commands. This
 keeps `npm run db:backup`, `npm run db:validate`, and
 `npm run acceptance:providers` operational after development dependencies are
-pruned from the image.
+pruned from the image. `scripts/start-ngrok-api.ps1` also runs the lean
+`npm run readiness:runtime` contract inside the newly started container before
+it accepts the deployment as healthy.
 
 For Gmail SMTP, use `smtp.gmail.com`, port `587`, the sending Gmail address, and
 a Google app password. A normal Google account password must not be used. LARO
