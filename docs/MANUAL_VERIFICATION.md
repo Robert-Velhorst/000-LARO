@@ -43,9 +43,9 @@ snapshot; exact release evidence is maintained in
   the read audit event. A temporary LARO credential changed from health 200 to
   401 after revocation; the retained credential exists only in HAI's protected
   ignored environment.
-- The protected-main unsigned Windows artifact from Actions run `31803372455`
-  is 150,911,252 bytes with SHA-256
-  `239d53499a930297bb8f9e6955614ab7f77b5134fcec6de4fe39be176ad0e281`.
+- The protected-main unsigned Windows artifact from Actions run `31810825819`
+  is 150,907,650 bytes with SHA-256
+  `d291c9a51c895be60c94727a269de74880c61de1d524af3d82c8d617f820e2b6`.
   Its downloaded bytes match the checksum sidecar, and Electron 43.1.0 loaded
   the native SQLite ABI 148 binding successfully.
 - A 120-request public health probe returned only HTTP 200 responses. Readiness
@@ -57,7 +57,7 @@ snapshot; exact release evidence is maintained in
 
 ## Not Yet Verified
 
-- The checksum-verified exact-main artifact from run `31803372455` has not been
+- The checksum-verified exact-main artifact from run `31810825819` has not been
   launched on this host because executing newly downloaded software requires
   explicit action-time owner authorization. GitHub's clean Windows runner did
   verify its native SQLite ABI, packaging, and single-instance profile lock.
