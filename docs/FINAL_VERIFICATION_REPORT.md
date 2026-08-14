@@ -2,7 +2,7 @@
 
 Date: 2026-08-14
 Verification target: protected `main` merge commit
-`6110c3667185ccc1995e5ad4fae77de8d2e0f5a1`.
+`bd73a8ebc10e0d07d193e279e0364d5399b3a6f8`.
 
 This report separates reproducible repository evidence from target-environment
 acceptance. It supersedes the 2026-07-06 phase snapshot.
@@ -29,8 +29,8 @@ acceptance. It supersedes the 2026-07-06 phase snapshot.
 | LARO-to-HAI connector | Dedicated read-only feed; hashed, expiring, revocable owner credential; bounded cursor; minimization and rate limit; LARO and HAI adapter tests pass |
 | Desktop scanner contract | Scoped 15-minute token; real bytes/hash; owner/MIME enforcement |
 | Branch CI policy | Node, Python, and renderer-accessibility checks run before merge |
-| Protected-main CI | Actions run `31758745261`; Node, Python, and renderer-accessibility jobs passed for merge commit `6110c36` |
-| Windows package | Actions run `31758745277`; gate, build, ABI check, package, single-instance profile lock, checksum, and artifact upload passed |
+| Protected-main CI | Actions run `31761028471`; Node, Python, and renderer-accessibility jobs passed for merge commit `bd73a8e` |
+| Windows package | Actions run `31761028455`; gate, build, ABI check, package, single-instance profile lock, checksum, and artifact upload passed |
 | Packaged matching assets | Seven aligned legal categories; invalid legacy dataset absent |
 | Dependency graph | One canonical Node workspace; 0 open Dependabot alerts |
 
@@ -134,14 +134,17 @@ disabled with a collection prompt while the case had no evidence. The inherited
 dark-theme recommendation contrast defect found during this pass was corrected
 and visually rechecked.
 
-The protected-main portable artifact is GitHub Actions artifact `9204005016`
-from run `31758745277`. Its executable is 151,940,420 bytes with SHA-256
-`56484bd1cf5a2d5a371fc6cb129c956750721bf93a29080a5a2ea683d8180d55`;
+The protected-main portable artifact is GitHub Actions artifact `9204816896`
+from run `31761028455`. Its executable is 151,942,295 bytes with SHA-256
+`134dc17e14f303a773ffb49956c56b49652e865286ae19f67eddcd7fd6f9b19d`;
 the downloaded executable matches its packaged checksum sidecar. The workflow
 passed the production gate, build, Electron ABI/database-binding check,
 portable packaging, packaged single-instance profile lock, artifact staging,
 and upload. Windows reports `NotSigned`, matching the selected unsigned
 internal distribution policy.
+
+Documentation-only pushes to `main` now skip Windows packaging while retaining
+normal CI. Tagged pushes and manual workflow dispatch remain unaffected.
 
 The API-only Docker deployment was rebuilt on Node 22 from the current release
 line while retaining its explicitly named data volume. Local `/api/live`,
