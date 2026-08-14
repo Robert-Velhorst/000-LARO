@@ -1,6 +1,6 @@
 # LARO Architecture
 
-Updated: 2026-07-22
+Updated: 2026-08-14
 
 LARO has one production runtime: Electron with Express/tRPC and React. The Flask
 command center remains a legacy review and migration source for existing
@@ -53,7 +53,7 @@ Important boundaries:
   sends legal-area terms rather than case prose, and persists candidates behind
   an explicit review gate before local case matching.
 - External outreach is disabled by default and requires ownership, approval, feature-flag, emergency-stop, provider, and idempotency checks.
-- Server, Electron main, renderer TypeScript, ESLint, safety scans, traceability,
+- Server, Electron main, renderer TypeScript, ESLint, renderer bundle budgets, safety scans, traceability,
   an isolated database/key/evidence backup-set recovery drill, and Vitest are
   blocking release gates.
 
@@ -129,6 +129,6 @@ Private records are scoped as follows:
 2. Several old prototype HTML and documentation files remain for traceability and are not supported entry points.
 3. Some desktop schema fields still store numeric values as text and need reviewed migrations.
 4. Database integrity remains partly application-enforced; additional foreign keys require migration planning.
-5. The renderer bundle should be split further to improve startup performance.
+5. Renderer growth remains a monitored risk; production builds enforce per-chunk, Evidence-route, and stylesheet budgets.
 
 Use current code, `README.md`, `docs/SECURITY.md`, and fresh gate output as status authority. Historical phase reports are snapshots, not release evidence.

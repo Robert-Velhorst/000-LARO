@@ -1,6 +1,6 @@
 # Frontend Architecture
 
-Current as of 2026-07-16.
+Current as of 2026-08-14.
 
 ## Shipped surfaces
 
@@ -12,7 +12,11 @@ Current as of 2026-07-16.
 - `App`: the desktop evidence scanner, loaded only with `?mode=scanner`.
 
 Both use the Electron-owned loopback API origin. Major dashboard routes are
-lazy-loaded. The packaged entry bundle is approximately 274 KB before gzip.
+lazy-loaded. The packaged entry bundle is approximately 162 KB before gzip.
+Advanced evidence views load only when selected; the default Evidence route is
+approximately 38 KB before gzip and uses lightweight native DOM/SVG summary
+charts. Release checks cap every JavaScript chunk at 200 KiB, the Evidence route
+at 80 KiB, and stylesheets at 100 KiB.
 
 ## Dashboard routes
 
@@ -53,7 +57,7 @@ at 390x844 and 1280x800.
 
 ## Quality boundary
 
-Renderer TypeScript, Electron/server TypeScript, ESLint, security scans, tests,
-and recovery verification are release-blocking. External links are
+Renderer TypeScript, Electron/server TypeScript, ESLint, production bundle
+budgets, security scans, tests, and recovery verification are release-blocking. External links are
 protocol-checked by Electron, local API traffic is loopback-bound, and OAuth
 authorization opens in the system browser.

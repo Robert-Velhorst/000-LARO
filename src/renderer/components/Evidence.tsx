@@ -8,17 +8,32 @@ import {
   FileText, Cloud, BarChart2, ListChecks,
   Clock, FolderOpen, AlertTriangle, Link2, Download, Gauge, Sparkles,
 } from "lucide-react";
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { EvidenceCollection } from "@/components/EvidenceCollection";
-import AutoCollectionSettings from "@/components/AutoCollectionSettings";
-import EvidenceConnectionsCard from "@/components/EvidenceConnectionsCard";
+import { lazy, Suspense, useState, useEffect, useCallback, useMemo } from "react";
 import EvidenceSummaryDashboard from "@/components/EvidenceSummaryDashboard";
-import EvidenceTimeline from "@/components/EvidenceTimeline";
-import { EvidenceGapAnalysisDashboard } from "@/components/EvidenceGapAnalysisDashboard";
-import RelevanceScoringDashboard from "@/components/RelevanceScoringDashboard";
-import EvidenceExportUI from "@/components/EvidenceExportUI";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+
+const EvidenceCollection = lazy(() =>
+  import("@/components/EvidenceCollection").then((module) => ({ default: module.EvidenceCollection }))
+);
+const AutoCollectionSettings = lazy(() => import("@/components/AutoCollectionSettings"));
+const EvidenceConnectionsCard = lazy(() => import("@/components/EvidenceConnectionsCard"));
+const EvidenceTimeline = lazy(() => import("@/components/EvidenceTimeline"));
+const EvidenceGapAnalysisDashboard = lazy(() =>
+  import("@/components/EvidenceGapAnalysisDashboard").then((module) => ({ default: module.EvidenceGapAnalysisDashboard }))
+);
+const RelevanceScoringDashboard = lazy(() => import("@/components/RelevanceScoringDashboard"));
+const EvidenceExportUI = lazy(() => import("@/components/EvidenceExportUI"));
+
+function EvidenceViewFallback() {
+  return (
+    <Card>
+      <CardContent className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">
+        Loading evidence view...
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function Evidence() {
   const [activeView,        setActiveView]        = useState("dashboard");
@@ -212,6 +227,7 @@ export default function Evidence() {
             </CardContent>
           </Card>
 
+          <Suspense fallback={<EvidenceViewFallback />}>
           <div className="min-w-0 space-y-4">
             {activeView === "dashboard" && (
               <EvidenceSummaryDashboard key={refreshKey} caseId={selectedCaseId ?? undefined} />
@@ -349,6 +365,7 @@ export default function Evidence() {
               )
             )}
           </div>
+          </Suspense>
 
           <div className="space-y-4">
             <Card className="border-border/50 bg-card/50 shadow-sm">

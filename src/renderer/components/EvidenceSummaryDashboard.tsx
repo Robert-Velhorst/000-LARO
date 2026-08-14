@@ -5,10 +5,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  BarChart, Bar, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-} from "recharts";
-import {
   Mail, FileText, MessageSquare, CheckCircle2, AlertCircle,
   Download, RefreshCw, Loader2, FolderOpen,
 } from "lucide-react";
@@ -30,6 +26,140 @@ const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; color: string; labe
   manual:         { icon: <FileText className="w-4 h-4" />,      color: "#9CA3AF", label: "Manual Upload" },
   agent:          { icon: <FolderOpen className="w-4 h-4" />,    color: "#F97316", label: "Desktop Scan" },
 };
+
+interface ChartDatum {
+  name: string;
+  value: number;
+  fill?: string;
+}
+
+interface TimelineDatum {
+  date: string;
+  count: number;
+}
+
+function HorizontalBarChart({
+  data,
+  label,
+  color,
+}: {
+  data: ChartDatum[];
+  label: string;
+  color: string;
+}) {
+  const normalized = data.map((item) => ({
+    ...item,
+    name: String(item.name || "Other"),
+    value: Number.isFinite(item.value) ? Math.max(0, item.value) : 0,
+  }));
+  const maximum = Math.max(1, ...normalized.map((item) => item.value));
+
+  if (normalized.length === 0) {
+    return <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">No data yet</div>;
+  }
+
+  return (
+    <div className="h-[280px] overflow-y-auto pr-2" role="list" aria-label={label}>
+      <div className="space-y-4 py-2">
+        {normalized.map((item) => (
+          <div
+            key={item.name}
+            className="grid grid-cols-[minmax(5rem,8rem)_minmax(0,1fr)_2.5rem] items-center gap-3"
+            role="listitem"
+            aria-label={`${item.name}: ${item.value}`}
+          >
+            <span className="truncate text-xs font-medium" title={item.name}>{item.name}</span>
+            <div className="h-2.5 overflow-hidden rounded-sm bg-muted" aria-hidden="true">
+              <div
+                className="h-full rounded-sm"
+                style={{
+                  backgroundColor: item.fill ?? color,
+                  width: `${(item.value / maximum) * 100}%`,
+                }}
+              />
+            </div>
+            <span className="text-right text-xs tabular-nums text-muted-foreground">{item.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TimelineChart({ data }: { data: TimelineDatum[] }) {
+  const normalized = data.map((item) => ({
+    date: String(item.date),
+    count: Number.isFinite(item.count) ? Math.max(0, item.count) : 0,
+  }));
+  const width = 720;
+  const height = 190;
+  const horizontalPadding = 18;
+  const verticalPadding = 18;
+  const maximum = Math.max(1, ...normalized.map((item) => item.count));
+  const x = (index: number) => normalized.length === 1
+    ? width / 2
+    : horizontalPadding + (index / (normalized.length - 1)) * (width - horizontalPadding * 2);
+  const y = (count: number) => height - verticalPadding - (count / maximum) * (height - verticalPadding * 2);
+  const points = normalized.map((item, index) => `${x(index)},${y(item.count)}`).join(" ");
+  const total = normalized.reduce((sum, item) => sum + item.count, 0);
+  const peak = Math.max(0, ...normalized.map((item) => item.count));
+  const middleIndex = Math.floor((normalized.length - 1) / 2);
+
+  return (
+    <figure aria-label={`Evidence collection timeline. ${total} items collected; peak ${peak} in one day.`}>
+      <div className="mb-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+        <span>Total collected: <strong className="text-foreground">{total}</strong></span>
+        <span>Peak daily: <strong className="text-foreground">{peak}</strong></span>
+      </div>
+      <svg
+        className="h-[210px] w-full"
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-hidden="true"
+      >
+        {[0, 0.5, 1].map((ratio) => {
+          const gridY = verticalPadding + ratio * (height - verticalPadding * 2);
+          return (
+            <line
+              key={ratio}
+              x1={horizontalPadding}
+              x2={width - horizontalPadding}
+              y1={gridY}
+              y2={gridY}
+              stroke="currentColor"
+              className="text-border"
+              strokeWidth="1"
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        })}
+        <polyline
+          points={points}
+          fill="none"
+          stroke="#F97316"
+          strokeWidth="2.25"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+        />
+        {normalized.map((item, index) => (
+          <circle key={`${item.date}-${index}`} cx={x(index)} cy={y(item.count)} r="3.5" fill="#F97316">
+            <title>{`${item.date}: ${item.count}`}</title>
+          </circle>
+        ))}
+      </svg>
+      <div className="flex justify-between gap-3 text-xs text-muted-foreground" aria-hidden="true">
+        <span className="truncate">{normalized[0]?.date}</span>
+        {normalized.length > 2 && <span className="truncate text-center">{normalized[middleIndex]?.date}</span>}
+        <span className="truncate text-right">{normalized[normalized.length - 1]?.date}</span>
+      </div>
+      <figcaption className="sr-only">
+        {normalized.map((item) => `${item.date}: ${item.count}`).join("; ")}
+      </figcaption>
+    </figure>
+  );
+}
 
 export default function EvidenceSummaryDashboard({ caseId }: EvidenceSummaryDashboardProps) {
   const [selectedSource, setSelectedSource] = useState<string | null>(null);
@@ -140,11 +270,6 @@ export default function EvidenceSummaryDashboard({ caseId }: EvidenceSummaryDash
     if (tl.length > 0) return tl.map((r: any) => ({ date: r.date, count: Number(r.count) }));
     return [];
   }, [uploadTimeline]);
-
-  const relevanceData = [
-    { name: "Relevant",     value: stats.relevant,   fill: "#10B981" },
-    { name: "Not Relevant", value: stats.irrelevant,  fill: "#EF4444" },
-  ];
 
   const filteredItems = useMemo(() => {
     if (!selectedSource) return files;
@@ -268,15 +393,11 @@ export default function EvidenceSummaryDashboard({ caseId }: EvidenceSummaryDash
                     <CardTitle className="text-lg">Evidence by Source</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ResponsiveContainer width="100%" height={280}>
-                      <BarChart data={sourceChartData}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" />
-                        <YAxis allowDecimals={false} />
-                        <Tooltip />
-                        <Bar dataKey="value" fill="#F97316" />
-                      </BarChart>
-                    </ResponsiveContainer>
+                    <HorizontalBarChart
+                      data={sourceChartData}
+                      label="Evidence items grouped by source"
+                      color="#F97316"
+                    />
                   </CardContent>
                 </Card>
 
@@ -285,15 +406,11 @@ export default function EvidenceSummaryDashboard({ caseId }: EvidenceSummaryDash
                     <CardTitle className="text-lg">Evidence by Type</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ResponsiveContainer width="100%" height={280}>
-                      <BarChart data={typeChartData}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" />
-                        <YAxis allowDecimals={false} />
-                        <Tooltip />
-                        <Bar dataKey="value" fill="#3B82F6" />
-                      </BarChart>
-                    </ResponsiveContainer>
+                    <HorizontalBarChart
+                      data={typeChartData}
+                      label="Evidence items grouped by file type"
+                      color="#3B82F6"
+                    />
                   </CardContent>
                 </Card>
               </div>
@@ -308,21 +425,7 @@ export default function EvidenceSummaryDashboard({ caseId }: EvidenceSummaryDash
                       No timeline data yet
                     </div>
                   ) : (
-                    <ResponsiveContainer width="100%" height={260}>
-                      <LineChart data={timelineChartData}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="date" />
-                        <YAxis allowDecimals={false} />
-                        <Tooltip />
-                        <Line
-                          type="monotone"
-                          dataKey="count"
-                          stroke="#F97316"
-                          strokeWidth={2}
-                          dot={{ fill: "#F97316", r: 4 }}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
+                    <TimelineChart data={timelineChartData} />
                   )}
                 </CardContent>
               </Card>
