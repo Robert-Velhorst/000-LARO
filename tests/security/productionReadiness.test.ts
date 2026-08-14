@@ -598,9 +598,16 @@ describe('production readiness regressions', () => {
   it('builds the shipped renderer with production React regardless of local env files', () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
     const rendererBuild = readFileSync(join(ROOT, 'scripts/build-renderer.mjs'), 'utf8');
+    const bundleBudget = readFileSync(join(ROOT, 'scripts/renderer-bundle-budget.mjs'), 'utf8');
+    const gate = readFileSync(join(ROOT, 'scripts/stabilization-gate.mjs'), 'utf8');
     expect(pkg.scripts['build:renderer']).toBe('node scripts/build-renderer.mjs');
+    expect(pkg.scripts['check:renderer-bundle']).toContain('renderer-bundle-budget.mjs');
     expect(rendererBuild.indexOf('process.env.NODE_ENV = "production"'))
       .toBeLessThan(rendererBuild.indexOf('await import("vite")'));
+    expect(bundleBudget).toContain('javascriptChunk: 200 * KIB');
+    expect(bundleBudget).toContain('evidenceRoute: 80 * KIB');
+    expect(bundleBudget).toContain('The split Evidence route chunk was not found.');
+    expect(gate).toContain('"renderer bundle budget"');
   });
 
   it('keeps horizontal tabs stacked above their content at every viewport', () => {

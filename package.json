@@ -14,6 +14,7 @@
     "dev:server": "npm run rebuild:node && cross-env NODE_ENV=development tsx server/index.ts",
     "build": "npm run build:renderer && npm run build:main && npm run build:server",
     "build:renderer": "node scripts/build-renderer.mjs",
+    "check:renderer-bundle": "npm run build:renderer && node scripts/renderer-bundle-budget.mjs",
     "build:main": "tsc -p tsconfig.main.json",
     "build:server": "tsc -p tsconfig.server.json",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.main.json --noEmit",

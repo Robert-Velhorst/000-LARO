@@ -5,7 +5,7 @@
  * Gates:
  *   1. server typecheck
  *   2. Electron main-process typecheck
- *   3. renderer typecheck and lint
+ *   3. renderer typecheck, lint, and production bundle budgets
  *   4. full and runtime-only dependency audits
  *   5. release acceptance record schema/version
  *   6. traceability report
@@ -34,6 +34,7 @@ const BLOCKING = [
   { name: "main typecheck", cmd: process.execPath, args: [TSC, "-p", "tsconfig.main.json", "--noEmit"] },
   { name: "renderer typecheck", cmd: process.execPath, args: [TSC, "-p", "tsconfig.renderer.json", "--noEmit"] },
   { name: "lint", cmd: process.execPath, args: [NPM_CLI, "run", "lint", "--silent"] },
+  { name: "renderer bundle budget", cmd: process.execPath, args: [NPM_CLI, "run", "check:renderer-bundle", "--silent"] },
   { name: "dependency audit", cmd: process.execPath, args: [NPM_CLI, "audit", "--audit-level=moderate"] },
   { name: "runtime dependency audit", cmd: process.execPath, args: [NPM_CLI, "audit", "--omit=dev", "--audit-level=moderate"] },
   { name: "release acceptance record", cmd: process.execPath, args: ["scripts/release-acceptance.mjs"] },
