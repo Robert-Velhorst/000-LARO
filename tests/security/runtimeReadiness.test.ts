@@ -105,4 +105,18 @@ describe('production runtime readiness', () => {
     expect(result.stdout).toContain('[FAIL] HAI authentication boundary: HTTP 200; status=healthy');
     expect(result.stderr).toContain('Runtime is not ready.');
   });
+
+  it('fails when a required live provider is absent from the running container', async () => {
+    const current = await fixture();
+    directories.push(current.directory);
+    servers.push(current.server);
+    const result = await runReadiness({
+      ...current.env,
+      LARO_REQUIRED_LIVE_PROVIDERS: 'google,outboundEmail',
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('[FAIL] required Google provider: credentials missing');
+    expect(result.stdout).toContain('[FAIL] required outbound email provider: configuration missing');
+  });
 });

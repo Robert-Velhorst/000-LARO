@@ -109,7 +109,11 @@ function Assert-GoogleProviderConfig {
 }
 
 function Import-ProtectedProviderConfig {
-    if (-not (Test-Path -LiteralPath $providerConfigPath)) { return }
+    $requiredProviders = @()
+    if (-not (Test-Path -LiteralPath $providerConfigPath)) {
+        $env:LARO_REQUIRED_LIVE_PROVIDERS = ""
+        return
+    }
 
     $config = Get-Content -LiteralPath $providerConfigPath -Raw | ConvertFrom-Json
     if ($config.schemaVersion -ne 1) {
@@ -123,6 +127,7 @@ function Import-ProtectedProviderConfig {
         Assert-GoogleProviderConfig -ClientId $config.google.clientId -ClientSecret $googleClientSecret
         $env:GOOGLE_CLIENT_ID = $config.google.clientId
         $env:GOOGLE_CLIENT_SECRET = $googleClientSecret
+        $requiredProviders += "google"
         $googleClientSecret = $null
     }
     if ($config.outboundEmail) {
@@ -142,7 +147,9 @@ function Import-ProtectedProviderConfig {
         $env:SMTP_PASS = Unprotect-Secret -ProtectedValue $config.outboundEmail.passwordProtected
         $env:SMTP_FROM = $config.outboundEmail.from
         $env:SMTP_STARTTLS = if ($config.outboundEmail.startTls) { "true" } else { "false" }
+        $requiredProviders += "outboundEmail"
     }
+    $env:LARO_REQUIRED_LIVE_PROVIDERS = $requiredProviders -join ","
 }
 
 function Wait-ForJsonEndpoint {
@@ -380,6 +387,7 @@ try {
     $env:LARO_PUBLIC_ORIGIN = $publicOrigin
     $env:LARO_PUBLIC_BASE_URL = $publicBaseUrl
     $env:LARO_PUBLIC_PATH_PREFIX = $normalizedPrefix
+    $env:LARO_PUBLIC_DEPLOYMENT_REQUIRED = "true"
 
     $composeArguments = @("compose", "-p", $ComposeProjectName, "up", "-d")
     if (-not $SkipBuild) { $composeArguments += "--build" }
@@ -406,6 +414,11 @@ try {
         -Path $envPath `
         -Name "LARO_NGROK_MODE" `
         -Value $(if ($useDirectTunnel) { "direct" } else { "gateway" })
+    Set-EnvValue -Path $envPath -Name "LARO_PUBLIC_ORIGIN" -Value $publicOrigin
+    Set-EnvValue -Path $envPath -Name "LARO_PUBLIC_BASE_URL" -Value $publicBaseUrl
+    Set-EnvValue -Path $envPath -Name "LARO_PUBLIC_PATH_PREFIX" -Value $normalizedPrefix
+    Set-EnvValue -Path $envPath -Name "LARO_PUBLIC_DEPLOYMENT_REQUIRED" -Value "true"
+    Set-EnvValue -Path $envPath -Name "LARO_REQUIRED_LIVE_PROVIDERS" -Value $env:LARO_REQUIRED_LIVE_PROVIDERS
 
     [ordered]@{
         mode = if ($useDirectTunnel) { "direct" } else { "gateway" }

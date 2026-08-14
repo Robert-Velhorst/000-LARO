@@ -22,6 +22,17 @@ function strongSecret(value) {
   return typeof value === 'string' && value.length >= 32 && !INSECURE_SECRETS.has(value.toLowerCase());
 }
 
+function present(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function requiredProviders(environment) {
+  return new Set((environment.LARO_REQUIRED_LIVE_PROVIDERS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean));
+}
+
 async function requestJson(fetchImpl, url) {
   const response = await fetchImpl(url, {
     headers: { Accept: 'application/json' },
@@ -79,6 +90,44 @@ export async function assessRuntimeReadiness(options = {}) {
   check('API-only mode', env.SERVER_ONLY === 'true', `SERVER_ONLY=${env.SERVER_ONLY || '<unset>'}`);
   check('JWT secret', strongSecret(env.JWT_SECRET), strongSecret(env.JWT_SECRET) ? 'configured' : 'missing or weak');
   check('cookie secret', strongSecret(env.COOKIE_SECRET), strongSecret(env.COOKIE_SECRET) ? 'configured' : 'missing or weak');
+  const required = requiredProviders(env);
+  if (required.has('google')) {
+    const configured = present(env.GOOGLE_CLIENT_ID) && present(env.GOOGLE_CLIENT_SECRET);
+    check('required Google provider', configured, configured ? 'configured' : 'credentials missing');
+  }
+  if (required.has('outboundEmail')) {
+    const smtpConfigured = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM'].every((name) => present(env[name]));
+    const sendGridConfigured = present(env.SENDGRID_API_KEY) && present(env.EMAIL_FROM);
+    check(
+      'required outbound email provider',
+      smtpConfigured || sendGridConfigured,
+      smtpConfigured ? 'SMTP configured' : sendGridConfigured ? 'SendGrid configured' : 'configuration missing',
+    );
+  }
+  const unknownRequired = [...required].filter((provider) => !['google', 'outboundEmail'].includes(provider));
+  if (unknownRequired.length > 0) {
+    check('required provider names', false, `unsupported: ${unknownRequired.join(', ')}`);
+  }
+  if (env.LARO_PUBLIC_DEPLOYMENT_REQUIRED === 'true') {
+    let publicContract = false;
+    let publicContractDetail = 'invalid public URL contract';
+    try {
+      const publicUrl = new URL(env.LARO_PUBLIC_BASE_URL || '');
+      const oauthUrl = new URL(env.OAUTH_REDIRECT_BASE_URL || '');
+      const prefix = (env.PUBLIC_PATH_PREFIX || '').replace(/\/+$/, '');
+      const expectedPrefix = publicUrl.pathname === '/' ? '' : publicUrl.pathname.replace(/\/+$/, '');
+      const allowedOrigins = (env.ALLOWED_ORIGINS || '').split(',').map((value) => value.trim());
+      publicContract = env.SERVER_ONLY === 'true' &&
+        publicUrl.protocol === 'https:' &&
+        oauthUrl.toString() === publicUrl.toString() &&
+        allowedOrigins.includes(publicUrl.origin) &&
+        prefix === expectedPrefix;
+      publicContractDetail = publicContract ? `${publicUrl.origin}${expectedPrefix}` : publicContractDetail;
+    } catch {
+      publicContract = false;
+    }
+    check('public deployment contract', publicContract, publicContractDetail);
+  }
 
   try {
     const database = inspectDatabase(env.DATABASE_URL || '');
