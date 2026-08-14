@@ -27,9 +27,9 @@ snapshot; exact release evidence is maintained in
 - A complete manifest-bound target backup validates with 55 tables, the current
   standalone secret compatibility tag, complete local evidence coverage, and no
   untracked SQLite sidecars.
-- Google target acceptance verified consent, Gmail and Drive root reads, one
-  persisted Gmail source, source reopening with a matching hash, and disconnect
-  revocation. A representative Drive-file import remains pending.
+- Google target acceptance verified consent, Gmail and Drive root reads,
+  representative Gmail and Drive imports, deterministic analysis, provider
+  provenance, source reopening with matching hashes, and disconnect revocation.
   Outbound acceptance delivered one approved SMTP message to the controlled
   inbox, retained its audit record, and blocked duplicate dispatch.
 - Public branding is owner-approved and hash-bound in `release-acceptance.json`.

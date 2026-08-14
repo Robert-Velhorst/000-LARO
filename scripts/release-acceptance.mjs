@@ -8,7 +8,17 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const GATE_NAMES = ['publicBrand', 'liveProviders'];
 const BRAND_ASSET_PATHS = ['build/icon.png', 'public/laro-logo.png'];
 export const PROVIDER_REQUIREMENTS = Object.freeze({
-  google: ['credentials', 'oauthConsent', 'gmailRead', 'driveRead', 'evidencePersisted', 'sourceLinkOpened', 'disconnectRevoked'],
+  google: [
+    'credentials',
+    'oauthConsent',
+    'gmailRead',
+    'driveRead',
+    'evidencePersisted',
+    'sourceLinkOpened',
+    'driveEvidencePersisted',
+    'driveSourceLinkOpened',
+    'disconnectRevoked',
+  ],
   outboundEmail: ['credentials', 'approvedSend', 'singleDelivery', 'auditRecorded', 'duplicateBlocked'],
   inboundEmail: ['credentials', 'replyReceived', 'threadedToOutreach', 'analyticsUpdated'],
   s3: ['credentials', 'put', 'read', 'hashMatched', 'delete', 'backupInventory'],

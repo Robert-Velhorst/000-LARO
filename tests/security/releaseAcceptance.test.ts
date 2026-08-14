@@ -9,7 +9,17 @@ const ROOT = join(__dirname, '..', '..');
 const packageVersion = '1.3.0';
 const temporaryDirectories: string[] = [];
 const providerRequirements = {
-  google: ['credentials', 'oauthConsent', 'gmailRead', 'driveRead', 'evidencePersisted', 'sourceLinkOpened', 'disconnectRevoked'],
+  google: [
+    'credentials',
+    'oauthConsent',
+    'gmailRead',
+    'driveRead',
+    'evidencePersisted',
+    'sourceLinkOpened',
+    'driveEvidencePersisted',
+    'driveSourceLinkOpened',
+    'disconnectRevoked',
+  ],
   outboundEmail: ['credentials', 'approvedSend', 'singleDelivery', 'auditRecorded', 'duplicateBlocked'],
 };
 
@@ -115,6 +125,33 @@ describe('release acceptance provider evidence', () => {
     const result = validate(record({ ...approval(), providerScope: [...providerScope], providerChecks }));
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('All recorded external acceptance gates are approved.');
+  });
+
+  it('rejects a legacy Google checklist without Drive document proof', () => {
+    const result = validate(record({
+      ...approval(),
+      providerScope: ['google'],
+      providerChecks: {
+        google: {
+          status: 'passed',
+          testedAt: new Date().toISOString(),
+          evidence: ['run:legacy-google-acceptance'],
+          checks: [
+            'credentials',
+            'oauthConsent',
+            'gmailRead',
+            'driveRead',
+            'evidencePersisted',
+            'sourceLinkOpened',
+            'disconnectRevoked',
+          ],
+        },
+      },
+    }));
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('driveEvidencePersisted');
+    expect(result.stderr).toContain('driveSourceLinkOpened');
   });
 
   it('prepares an unapproved provider draft with exact checks and brand hashes', () => {

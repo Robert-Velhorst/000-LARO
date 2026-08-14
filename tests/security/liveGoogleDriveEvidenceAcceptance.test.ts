@@ -179,6 +179,20 @@ suite("live Google Drive evidence acceptance", () => {
     expect(JSON.stringify(receipt)).not.toContain(recipient);
     expect(JSON.stringify(receipt)).not.toContain("drive-file-acceptance-001");
 
+    const { collectLiveProviderAcceptance } = await import("../../server/liveProviderAcceptance");
+    const probe = await collectLiveProviderAcceptance({
+      listDriveFolders: async () => [{ id: "folder" }],
+      testGmail: async () => ({ ok: true, email: recipient }),
+      verifyOutbound: async () => ({ ok: false, provider: "unconfigured" }),
+      targetUserId: userId,
+      targetGoogleAccountId: accountId,
+    });
+    expect(probe.providers.google.checks.driveEvidencePersisted.passed).toBe(true);
+    expect(probe.providers.google.checks.driveSourceLinkOpened.passed).toBe(true);
+    expect(probe.providers.google.checks.driveEvidencePersisted.evidence).toContain(
+      "receipt:google-drive-evidence-persisted-and-read",
+    );
+
     const resumed = await runLiveGoogleDriveEvidenceAcceptance({
       userId,
       googleAccountId: accountId,

@@ -31,6 +31,7 @@
       "evidence": [
         "codex-task:019f0b03-ca19-7f62-8f85-61a772f45256:owner-selected-google-plus-outbound-email",
         "runtime-acceptance:google:2026-08-14T08:51:14.710Z",
+        "runtime-acceptance:google-drive-evidence:2026-08-14T14:28:33.018Z",
         "runtime-acceptance:outboundEmail:2026-08-14T08:51:14.710Z"
       ],
       "scopeSelectedBy": "LARO product owner",
@@ -42,7 +43,7 @@
       "providerChecks": {
         "google": {
           "status": "passed",
-          "testedAt": "2026-08-14T08:51:14.710Z",
+          "testedAt": "2026-08-14T14:28:33.018Z",
           "evidence": [
             "runtime:google-client-configured",
             "database:google-account-connected",
@@ -53,6 +54,8 @@
             "google-api:drive-root-read:folders=32",
             "receipt:google-evidence-persisted-and-read",
             "receipt:google-source-opened-and-hash-matched",
+            "receipt:google-drive-evidence-persisted-and-read",
+            "receipt:google-drive-source-opened-and-hash-matched",
             "audit:provider.disconnect_revoked:count=1"
           ],
           "checks": [
@@ -62,6 +65,8 @@
             "driveRead",
             "evidencePersisted",
             "sourceLinkOpened",
+            "driveEvidencePersisted",
+            "driveSourceLinkOpened",
             "disconnectRevoked"
           ],
           "requiredChecks": [
@@ -71,6 +76,8 @@
             "driveRead",
             "evidencePersisted",
             "sourceLinkOpened",
+            "driveEvidencePersisted",
+            "driveSourceLinkOpened",
             "disconnectRevoked"
           ]
         },
