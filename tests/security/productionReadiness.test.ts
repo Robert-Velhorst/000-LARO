@@ -206,6 +206,8 @@ describe('production readiness regressions', () => {
     expect(main).toContain('contextIsolation: true');
     expect(main).toContain('sandbox: true');
     expect(callback).toContain("window.opener.postMessage({ type: 'laro:oauth-complete'");
+    expect(callback).toContain("'Cross-Origin-Opener-Policy', 'unsafe-none'");
+    expect(callback).toContain("'Referrer-Policy', 'no-referrer'");
     expect(callback).toContain("action.addEventListener('click', () => window.location.reload())");
     expect(callback).toContain('const retryable = !tokenExchangeCompleted && isRetryableOAuthNetworkError(error)');
     expect(callback).toContain('window.close()');
@@ -214,6 +216,10 @@ describe('production readiness regressions', () => {
     expect(connections).toContain('if (!oauthWindow && !isElectron())');
     expect(connections).toContain('refetchInterval: connectingPlatform === "gmail" ? 1_500 : false');
     expect(connections).toContain('refetchInterval: connectingPlatform === "google-drive" ? 1_500 : false');
+    expect(connections).toContain('OAUTH_WAIT_TIMEOUT_MS = 10 * 60 * 1_000');
+    expect(connections).toContain('document.addEventListener("visibilitychange", refreshOnReturn)');
+    expect(connections).toContain('oauthWindowRef.current?.closed');
+    expect(connections).toContain('Finishing Google connection...');
   });
 
   it('refreshes the evidence query used by the case workspace after a keyword pull', () => {

@@ -14,6 +14,9 @@ import { toast } from "sonner";
 import { useEffect, useRef, useState } from "react";
 import { isElectron } from "@/lib/electronApiShim";
 
+const OAUTH_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
+const OAUTH_WINDOW_CHECK_INTERVAL_MS = 750;
+
 // Get current user context (adjust based on your auth implementation)
 const useCurrentUser = () => {
   const { data: user } = trpc.auth.me.useQuery();
@@ -45,12 +48,12 @@ export default function EvidenceConnectionsCard() {
   const oauthCallbackOriginRef = useRef<string | null>(null);
   
   // Query both capabilities because they share one owner-scoped Google grant.
-  const { data: gmailStatus, isLoading: gmailLoading } = trpc.gmailEnhanced.getStatus.useQuery(undefined, {
+  const { data: gmailStatus, isLoading: gmailLoading, refetch: refetchGmailStatus } = trpc.gmailEnhanced.getStatus.useQuery(undefined, {
     enabled: !!currentUser,
     refetchOnWindowFocus: true,
     refetchInterval: connectingPlatform === "gmail" ? 1_500 : false,
   });
-  const { data: driveStatus, isLoading: driveLoading } = trpc.googleDrive.checkConnection.useQuery(undefined, {
+  const { data: driveStatus, isLoading: driveLoading, refetch: refetchDriveStatus } = trpc.googleDrive.checkConnection.useQuery(undefined, {
     enabled: !!currentUser,
     refetchOnWindowFocus: true,
     refetchInterval: connectingPlatform === "google-drive" ? 1_500 : false,
@@ -101,6 +104,52 @@ export default function EvidenceConnectionsCard() {
     window.addEventListener('message', handleOAuthComplete);
     return () => window.removeEventListener('message', handleOAuthComplete);
   }, [connectingPlatform, utils]);
+
+  useEffect(() => {
+    if (!connectingPlatform) return;
+
+    let checkingClosedWindow = false;
+    const refreshConnection = async () => {
+      const [gmailResult, driveResult] = await Promise.all([
+        refetchGmailStatus(),
+        refetchDriveStatus(),
+      ]);
+      return Boolean(gmailResult.data?.connected || driveResult.data?.connected);
+    };
+    const refreshOnReturn = () => {
+      if (document.visibilityState === "visible") void refreshConnection();
+    };
+    const windowCheck = window.setInterval(() => {
+      if (!oauthWindowRef.current?.closed || checkingClosedWindow) return;
+      oauthWindowRef.current = null;
+      checkingClosedWindow = true;
+      void refreshConnection()
+        .then((connected) => {
+          if (!connected) {
+            setConnectingPlatform(null);
+            toast.error("Google authorization closed before the connection completed.");
+          }
+        })
+        .finally(() => {
+          checkingClosedWindow = false;
+        });
+    }, OAUTH_WINDOW_CHECK_INTERVAL_MS);
+    const timeout = window.setTimeout(() => {
+      oauthWindowRef.current?.close();
+      oauthWindowRef.current = null;
+      setConnectingPlatform(null);
+      toast.error("Google authorization timed out. Please try again.");
+    }, OAUTH_WAIT_TIMEOUT_MS);
+
+    window.addEventListener("focus", refreshOnReturn);
+    document.addEventListener("visibilitychange", refreshOnReturn);
+    return () => {
+      window.clearInterval(windowCheck);
+      window.clearTimeout(timeout);
+      window.removeEventListener("focus", refreshOnReturn);
+      document.removeEventListener("visibilitychange", refreshOnReturn);
+    };
+  }, [connectingPlatform, refetchDriveStatus, refetchGmailStatus]);
 
   const platforms: PlatformConnection[] = [
     {
@@ -219,11 +268,13 @@ export default function EvidenceConnectionsCard() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {platforms.map((platform) => (
-              <div
-                key={platform.id}
-                className="border rounded-lg p-4 space-y-3 hover:border-primary/50 transition-colors"
-              >
+            {platforms.map((platform) => {
+              const isConnecting = connectingPlatform === platform.id;
+              return (
+                <div
+                  key={platform.id}
+                  className="border rounded-lg p-4 space-y-3 hover:border-primary/50 transition-colors"
+                >
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
                     <div className={`p-2 rounded-lg ${platform.color} text-white`}>
@@ -279,15 +330,21 @@ export default function EvidenceConnectionsCard() {
                       variant="default"
                       size="sm"
                       className="flex-1"
+                      disabled={connectingPlatform !== null}
                       onClick={() => handleConnect(platform.id)}
                     >
-                      <ExternalLink className="w-4 h-4 mr-2" />
-                      Connect
+                      {isConnecting ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <ExternalLink className="w-4 h-4 mr-2" />
+                      )}
+                      {isConnecting ? "Finishing Google connection..." : "Connect"}
                     </Button>
                   )}
                 </div>
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         )}
       </CardContent>

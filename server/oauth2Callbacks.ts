@@ -28,6 +28,10 @@ function sendCallbackPage(
   const nonce = randomBytes(18).toString('base64');
   res.status(options.status ?? 200);
   res.setHeader('Cache-Control', 'no-store');
+  // This minimal callback page must retain its opener long enough to report
+  // completion after returning from a cross-origin identity provider.
+  res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
+  res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader(
     'Content-Security-Policy',
     `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'`
@@ -71,7 +75,7 @@ function sendCallbackPage(
       };
       ${options.retry
         ? "action.addEventListener('click', () => window.location.reload());"
-        : "action.addEventListener('click', closePage); window.setTimeout(closePage, 3000);"}
+        : "action.addEventListener('click', closePage); notifyOpener(); window.setTimeout(closePage, 750);"}
     </script>
   </body>
 </html>`);
