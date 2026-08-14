@@ -40,9 +40,9 @@ snapshot; exact release evidence is maintained in
   the read audit event. A temporary LARO credential changed from health 200 to
   401 after revocation; the retained credential exists only in HAI's protected
   ignored environment.
-- The protected-main unsigned Windows artifact from Actions run `31758745277`
-  is 151,940,420 bytes with SHA-256
-  `56484bd1cf5a2d5a371fc6cb129c956750721bf93a29080a5a2ea683d8180d55`.
+- The protected-main unsigned Windows artifact from Actions run `31761028455`
+  is 151,942,295 bytes with SHA-256
+  `134dc17e14f303a773ffb49956c56b49652e865286ae19f67eddcd7fd6f9b19d`.
   Its downloaded bytes match the checksum sidecar, and Electron 43.1.0 loaded
   the native SQLite ABI 148 binding successfully.
 - A 120-request public health probe returned only HTTP 200 responses. Readiness
