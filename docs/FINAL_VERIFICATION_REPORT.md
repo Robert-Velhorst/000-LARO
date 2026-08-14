@@ -25,7 +25,7 @@ acceptance. It supersedes the 2026-07-06 phase snapshot.
 | Renderer, main, and server production builds | Pass |
 | Portable Windows packaging | Pass with tracked LARO icon; unsigned by policy; Electron 43.1.0 native SQLite ABI 148 verified |
 | Packaged `/api/health` | `healthy`, database ready, version 1.3.0 |
-| Packaged document intelligence and Outreach | Eight migrations present, including persisted keyword-pull jobs, the legacy-import archive, and owner-scoped HAI credentials; PDF, DOCX, native parser dependencies, and review-gated Outreach tables present; integrated server booted successfully |
+| Packaged document intelligence and Outreach | Nine migrations present, including persisted keyword-pull jobs, the legacy-import archive, owner-scoped HAI credentials, and unique keyed preferences; PDF, DOCX, native parser dependencies, and review-gated Outreach tables present; integrated server booted successfully |
 | LARO-to-HAI connector | Dedicated read-only feed; hashed, expiring, revocable owner credential; bounded cursor; minimization and rate limit; LARO and HAI adapter tests pass |
 | Desktop scanner contract | Scoped 15-minute token; real bytes/hash; owner/MIME enforcement |
 | Branch CI policy | Node, Python, and renderer-accessibility checks run before merge |
