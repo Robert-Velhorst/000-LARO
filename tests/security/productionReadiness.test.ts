@@ -15,17 +15,37 @@ afterEach(() => {
 
 describe('production readiness regressions', () => {
   it('does not retain test files excluded by the maintained suite configuration', () => {
-    const rootTestFiles = readdirSync(join(ROOT, 'tests'), { withFileTypes: true })
-      .filter((entry) => entry.isFile() && entry.name.endsWith('.test.ts'))
-      .map((entry) => entry.name)
+    const maintainedSuites = [
+      'smoke',
+      'backend',
+      'e2e',
+      'security',
+      'frontend',
+      'a11y',
+      'acceptance',
+      'sim',
+    ];
+    const pending = [join(ROOT, 'tests')];
+    const testFiles: string[] = [];
+    while (pending.length > 0) {
+      const directory = pending.pop()!;
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const absolutePath = join(directory, entry.name);
+        if (entry.isDirectory()) pending.push(absolutePath);
+        if (entry.isFile() && entry.name.endsWith('.test.ts')) {
+          testFiles.push(absolutePath.slice(join(ROOT, 'tests').length + 1).replaceAll('\\', '/'));
+        }
+      }
+    }
+    const excludedTestFiles = testFiles
+      .filter((path) => !maintainedSuites.some((suite) => path.startsWith(`${suite}/`)))
       .sort();
     const config = readFileSync(join(ROOT, 'vitest.config.ts'), 'utf8');
 
-    expect(rootTestFiles).toEqual([]);
-    expect(config).toContain('Root-level `tests/*.test.ts` files are');
-    expect(config).toContain("'tests/backend/**/*.test.ts'");
-    expect(config).toContain("'tests/frontend/**/*.test.ts'");
-    expect(config).toContain("'tests/security/**/*.test.ts'");
+    expect(excludedTestFiles).toEqual([]);
+    for (const suite of maintainedSuites) {
+      expect(config).toContain(`'tests/${suite}/**/*.test.ts'`);
+    }
   });
 
   it('rejects a weak standalone signup bootstrap token in production', async () => {

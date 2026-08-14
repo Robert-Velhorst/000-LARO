@@ -4,9 +4,9 @@ import { defineConfig } from 'vitest/config';
  * Standalone Vitest config.
  *
  * The explicit suite list keeps backend and critical-path tests independent of
- * the Electron/React renderer plugins. Root-level `tests/*.test.ts` files are
- * prohibited because this config would not execute them; a release regression
- * check enforces that invariant so excluded files cannot look like coverage.
+ * the Electron/React renderer plugins. Vitest test files outside these suite
+ * directories are prohibited; a recursive release regression check enforces
+ * that invariant so excluded files cannot look like coverage.
  */
 export default defineConfig({
   test: {

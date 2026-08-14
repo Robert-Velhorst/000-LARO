@@ -26,9 +26,9 @@ Date: 2026-08-14
   controls, missing primary headings, horizontal overflow, page errors, failed
   requests, and console errors. GitHub Actions runs this as the
   `renderer-accessibility` job.
-- Vitest runs only maintained suite directories. A release regression check
-  rejects root-level `tests/*.test.ts` files so excluded or broken tests cannot
-  be represented as passing coverage.
+- Vitest runs only maintained suite directories. A recursive release regression
+  check rejects test files outside those directories so excluded or broken
+  tests cannot be represented as passing coverage.
 
 ## Renderer and package audit
 
