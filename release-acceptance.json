@@ -25,11 +25,13 @@
       ]
     },
     "liveProviders": {
-      "status": "pending",
-      "approvedBy": null,
-      "approvedAt": null,
+      "status": "approved",
+      "approvedBy": "LARO product owner",
+      "approvedAt": "2026-08-14T08:52:49.4660609Z",
       "evidence": [
-        "codex-task:019f0b03-ca19-7f62-8f85-61a772f45256:owner-selected-google-plus-outbound-email"
+        "codex-task:019f0b03-ca19-7f62-8f85-61a772f45256:owner-selected-google-plus-outbound-email",
+        "runtime-acceptance:google:2026-08-14T08:51:14.710Z",
+        "runtime-acceptance:outboundEmail:2026-08-14T08:51:14.710Z"
       ],
       "scopeSelectedBy": "LARO product owner",
       "scopeSelectedAt": "2026-07-22T06:32:50.8382650Z",
@@ -39,10 +41,29 @@
       ],
       "providerChecks": {
         "google": {
-          "status": "pending",
-          "testedAt": null,
-          "evidence": [],
-          "checks": [],
+          "status": "passed",
+          "testedAt": "2026-08-14T08:51:14.710Z",
+          "evidence": [
+            "runtime:google-client-configured",
+            "database:google-account-connected",
+            "database:google-token-vault-decryptable",
+            "audit:selected-provider.connected",
+            "database:google-refresh-grant-stored",
+            "google-api:gmail-profile-read",
+            "google-api:drive-root-read:folders=32",
+            "receipt:google-evidence-persisted-and-read",
+            "receipt:google-source-opened-and-hash-matched",
+            "audit:provider.disconnect_revoked:count=1"
+          ],
+          "checks": [
+            "credentials",
+            "oauthConsent",
+            "gmailRead",
+            "driveRead",
+            "evidencePersisted",
+            "sourceLinkOpened",
+            "disconnectRevoked"
+          ],
           "requiredChecks": [
             "credentials",
             "oauthConsent",
@@ -54,10 +75,22 @@
           ]
         },
         "outboundEmail": {
-          "status": "pending",
-          "testedAt": null,
-          "evidence": [],
-          "checks": [],
+          "status": "passed",
+          "testedAt": "2026-08-14T08:51:14.710Z",
+          "evidence": [
+            "provider:smtp:authenticated-connection",
+            "receipt:approved-send:smtp",
+            "receipt:gmail-inbox-message-count=1",
+            "audit:provider.acceptance_recorded",
+            "receipt:duplicate-dispatch-blocked"
+          ],
+          "checks": [
+            "credentials",
+            "approvedSend",
+            "singleDelivery",
+            "auditRecorded",
+            "duplicateBlocked"
+          ],
           "requiredChecks": [
             "credentials",
             "approvedSend",
