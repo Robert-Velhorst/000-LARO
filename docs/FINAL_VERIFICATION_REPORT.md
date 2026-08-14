@@ -2,7 +2,7 @@
 
 Date: 2026-08-14
 Verification target: protected `main` merge commit
-`2d09077a68c5afeddf47ba1503cf5e7f67ca5ffa`.
+`1e46aac7c85ef5510d2d4ace4c3239c4b232d76d`.
 
 This report separates reproducible repository evidence from target-environment
 acceptance. It supersedes the 2026-07-06 phase snapshot.
@@ -19,7 +19,7 @@ acceptance. It supersedes the 2026-07-06 phase snapshot.
 | Renderer accessibility | 15 routes x 2 viewports; 0 serious/critical axe violations, unnamed controls, overflows, request failures, page errors, or console errors |
 | Isolated backup/delete/restore/reopen drill | Pass |
 | Target database readiness | SQLite integrity, declared foreign keys, 240 legacy relationship guards, invariants, reconciliation, duplicates, demo markers, 28 strict numeric fields, and 8 cross-counter constraints clean |
-| Vitest | 77 files and 438 tests passed in the complete blocking gate |
+| Vitest | 78 files and 442 tests passed in the complete blocking gate |
 | Python unittest discovery | 222 tests passed |
 | Runtime dependency audit | 0 known vulnerabilities |
 | Renderer, main, and server production builds | Pass |
@@ -29,8 +29,8 @@ acceptance. It supersedes the 2026-07-06 phase snapshot.
 | LARO-to-HAI connector | Dedicated read-only feed; hashed, expiring, revocable owner credential; bounded cursor; minimization and rate limit; LARO and HAI adapter tests pass |
 | Desktop scanner contract | Scoped 15-minute token; real bytes/hash; owner/MIME enforcement |
 | Branch CI policy | Node, Python, and renderer-accessibility checks run before merge |
-| Protected-main CI | Actions run `31803372534`; Node, Python, and renderer-accessibility jobs passed for merge commit `2d09077` |
-| Windows package | Actions run `31803372455`; gate, build, ABI check, package, single-instance profile lock, checksum, and artifact upload passed |
+| Protected-main CI | Actions run `31810825822`; Node, Python, and renderer-accessibility jobs passed for functional release commit `1e46aac` |
+| Windows package | Actions run `31810825819`; gate, build, ABI check, package, single-instance profile lock, checksum, and artifact upload passed |
 | Packaged matching assets | Seven aligned legal categories; invalid legacy dataset absent |
 | Dependency graph | One canonical Node workspace; 0 open Dependabot alerts |
 
@@ -134,9 +134,9 @@ disabled with a collection prompt while the case had no evidence. The inherited
 dark-theme recommendation contrast defect found during this pass was corrected
 and visually rechecked.
 
-The protected-main portable artifact is GitHub Actions artifact `9220496086`
-from run `31803372455`. Its executable is 150,911,252 bytes with SHA-256
-`239d53499a930297bb8f9e6955614ab7f77b5134fcec6de4fe39be176ad0e281`;
+The protected-main portable artifact is GitHub Actions artifact `9223426353`
+from run `31810825819`. Its executable is 150,907,650 bytes with SHA-256
+`d291c9a51c895be60c94727a269de74880c61de1d524af3d82c8d617f820e2b6`;
 the downloaded executable matches its packaged checksum sidecar. The workflow
 passed the production gate, build, Electron ABI/database-binding check,
 portable packaging, packaged single-instance profile lock, artifact staging,
@@ -248,7 +248,7 @@ development renderer path from the launching shell.
 | Trusted public Windows distribution | Deliberately out of scope | Configure Store or certificate signing only if platform publisher trust becomes a requirement; unsigned tagged delivery remains supported with a checksum and warning |
 | Public branding | Approved on 2026-07-21 | Owner-approved LARO timeline mark is stored in `build/icon.png` / `public/laro-logo.png`; release acceptance binds both files to SHA-256 `134ca32789b6dd24f0c39d461f0c405f1e1156475dceb0fa4e525373ab200a0f` |
 | Live providers | Approved on 2026-08-14 for the recorded checks | Google credentials, consent, Gmail and Drive imports, analysis, provenance, source opening with matching hashes, and revocation passed; outbound approved delivery, receipt, audit, and duplicate blocking passed |
-| Exact-main local Windows launch | Awaiting explicit owner authorization | Launch downloaded artifact `9220496086` on this Windows 11 host and confirm healthy startup; checksum, ABI, packaging, and single-instance behavior already pass in Actions |
+| Exact-main local Windows launch | Awaiting explicit owner authorization | Launch downloaded artifact `9223426353` on this Windows 11 host and confirm healthy startup; checksum, ABI, packaging, and single-instance behavior already pass in Actions |
 
 These external states are represented in `release-acceptance.json`. Normal
 development builds may retain pending gates, but the tagged release workflow
