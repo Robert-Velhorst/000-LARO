@@ -18,7 +18,7 @@ async function fixture() {
   for (let id = 1; id <= migrationCount; id += 1) insert.run(id);
   database.close();
 
-  const moduleUrl = `${pathToFileURL(join(ROOT, 'scripts/runtime-readiness.mjs')).href}?test=${Date.now()}`;
+  const moduleUrl = pathToFileURL(join(ROOT, 'scripts/runtime-readiness.mjs')).href;
   const readiness = await import(moduleUrl);
   const env = {
     NODE_ENV: 'production',
