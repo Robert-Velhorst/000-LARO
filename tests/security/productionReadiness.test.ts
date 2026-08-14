@@ -279,9 +279,10 @@ describe('production readiness regressions', () => {
 
   it('supports owner-selected unsigned releases while blocking unaccepted or mismatched tags', async () => {
     const workflow = readFileSync(join(ROOT, '.github/workflows/build.yml'), 'utf8');
+    const normalizedWorkflow = workflow.replace(/\r\n/g, '\n');
     const acceptance = JSON.parse(readFileSync(join(ROOT, 'release-acceptance.json'), 'utf8'));
     const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-    expect(workflow).toContain("paths-ignore:\n      - 'docs/**'\n      - '*.md'");
+    expect(normalizedWorkflow).toContain("paths-ignore:\n      - 'docs/**'\n      - '*.md'");
     expect(workflow).toContain('WINDOWS_SIGNING_PROVIDER must be unsigned, microsoft-store, pfx, azure-artifact-signing, or sslcom-esigner');
     expect(workflow).toContain("$env:WINDOWS_SIGNING_PROVIDER -eq 'unsigned'");
     expect(workflow).toContain('Tagged release is unsigned by owner-selected policy.');
