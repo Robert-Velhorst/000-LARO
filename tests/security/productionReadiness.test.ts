@@ -524,7 +524,7 @@ describe('production readiness regressions', () => {
     const readiness = readFileSync(join(ROOT, 'scripts/operator-readiness.mjs'), 'utf8');
     expect(pkg.scripts.readiness).toContain('npm run rebuild:node');
     expect(pkg.scripts['readiness:production']).toContain('npm run rebuild:node');
-    expect(pkg.scripts['db:readiness']).toContain('scripts/data-readiness.ts');
+    expect(pkg.scripts['db:readiness']).toContain('run-built-operation.mjs data-readiness');
     expect(readiness).toContain("name: 'target database readiness'");
     expect(readiness).toContain("'scripts/data-readiness.ts'");
     expect(readiness).toContain('[result.stdout, result.stderr]');

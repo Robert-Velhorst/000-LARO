@@ -12,6 +12,7 @@
     "server/**/*",
     "shared/**/*",
     "scripts/backup.ts",
-    "scripts/backupArguments.ts"
+    "scripts/backupArguments.ts",
+    "scripts/data-readiness.ts"
   ]
 }

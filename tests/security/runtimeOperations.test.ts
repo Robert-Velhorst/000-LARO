@@ -5,17 +5,23 @@ import { describe, expect, it } from 'vitest';
 const ROOT = path.resolve(__dirname, '../..');
 
 describe('production runtime operations', () => {
-  it('runs backup and live acceptance through compiled fallbacks', () => {
+  it('runs maintenance and live acceptance through compiled fallbacks', () => {
     const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
     const runner = readFileSync(path.join(ROOT, 'scripts/run-built-operation.mjs'), 'utf8');
     const serverConfig = JSON.parse(readFileSync(path.join(ROOT, 'tsconfig.server.json'), 'utf8'));
     const dockerfile = readFileSync(path.join(ROOT, 'Dockerfile'), 'utf8');
 
     expect(pkg.scripts['db:backup']).toContain('run-built-operation.mjs backup');
+    expect(pkg.scripts['db:readiness']).toContain('run-built-operation.mjs data-readiness');
     expect(pkg.scripts['acceptance:providers']).toContain('run-built-operation.mjs acceptance:providers');
     expect(runner).toContain('dist/server/scripts/backup.js');
+    expect(runner).toContain('dist/server/scripts/data-readiness.js');
+    expect(runner).toContain('preferSourceWhenAvailable: true');
+    expect(runner).toContain('rebuildNodeForSource: true');
+    expect(runner).toContain("[npmCli, 'run', 'rebuild:node']");
     expect(runner).toContain('dist/server/server/liveProviderAcceptance.js');
     expect(serverConfig.include).toContain('scripts/backup.ts');
+    expect(serverConfig.include).toContain('scripts/data-readiness.ts');
     expect(dockerfile).toContain('COPY scripts/run-built-operation.mjs ./scripts/run-built-operation.mjs');
   });
 
