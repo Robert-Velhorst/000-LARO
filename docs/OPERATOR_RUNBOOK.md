@@ -91,6 +91,36 @@ audit. Rerunning an accepted operation performs interrupted cleanup without
 reading Gmail again. Preserve `COOKIE_SECRET`, because it authenticates both
 provider acceptance receipts.
 
+### Live Google Drive evidence acceptance
+
+Run this with a specific, unique document name from the selected owner's Drive.
+The command sends no message and does not modify Google Drive. It reads the
+matching file through the production collector, persists both the evidence and
+provider-provenance rows, runs deterministic analysis, retrieves the stored
+bytes through a signed HTTP link, verifies the SHA-256 hash, records the
+source-open audit, and removes all temporary business data:
+
+```powershell
+npm.cmd run acceptance:google-drive-evidence-live -- `
+  --user-id <owner-user-id> `
+  --google-account-id <connected-google-account-id> `
+  --recipient <owner-email> `
+  --confirm-account <owner-email> `
+  --drive-file-name <exact-unique-drive-document-name> `
+  --drive-folder-id <folder-id-or-root> `
+  --run-id <stable-drive-acceptance-run-id>
+```
+
+`--drive-folder-id` is optional and defaults to `root`; the scan is recursive.
+In the API container, invoke
+`/app/dist/server/server/liveGoogleDriveEvidenceAcceptance.js` with the same
+arguments. Exact-name selection is checked before any matching file is
+downloaded, and the operation fails unless exactly one Drive file is found. It
+retains only a signed, redacted receipt and acceptance audit; filenames, Drive
+IDs, account addresses, stored bytes, temporary evidence, analyses, collection
+logs, and provider rows are removed. Rerunning an accepted operation does not
+read Drive again.
+
 ## Data Operations
 
 - Integrity: `admin.invariants`

@@ -54,6 +54,7 @@
     "acceptance:providers": "node scripts/run-built-operation.mjs acceptance:providers",
     "acceptance:outbound-live": "node scripts/run-built-operation.mjs acceptance:outbound-live",
     "acceptance:google-evidence-live": "node scripts/run-built-operation.mjs acceptance:google-evidence-live",
+    "acceptance:google-drive-evidence-live": "node scripts/run-built-operation.mjs acceptance:google-drive-evidence-live",
     "traceability": "node scripts/traceability.mjs --write",
     "gate": "node scripts/stabilization-gate.mjs",
     "verify": "npm run gate",

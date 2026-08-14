@@ -27,6 +27,10 @@ const operations = {
     built: 'dist/server/server/liveGoogleEvidenceAcceptance.js',
     source: 'server/liveGoogleEvidenceAcceptance.ts',
   },
+  'acceptance:google-drive-evidence-live': {
+    built: 'dist/server/server/liveGoogleDriveEvidenceAcceptance.js',
+    source: 'server/liveGoogleDriveEvidenceAcceptance.ts',
+  },
 };
 
 const operationName = process.argv[2];

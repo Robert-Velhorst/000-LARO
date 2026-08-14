@@ -985,6 +985,7 @@ async function pullFromDrive(
   folderIds: string[],
   errors: string[],
   accountId?: string,
+  exactFileName?: string,
   dateStart?: Date,
   dateEnd?: Date,
   onProgress?: PullProgressReporter,
@@ -1002,13 +1003,23 @@ async function pullFromDrive(
   for (const folderId of folders) {
     try {
       const files = await getAllFilesInFolder(userId, folderId, true, cred.accountId);
+      const normalizedExactFileName = exactFileName?.trim().toLowerCase();
       const candidates = files.filter((file) => {
-        if (!file.name || !file.id || !matchesKeywords(file.name, keywords, matchMode)) return false;
+        if (!file.name || !file.id) return false;
+        if (normalizedExactFileName) {
+          if (file.name.trim().toLowerCase() !== normalizedExactFileName) return false;
+        } else if (!matchesKeywords(file.name, keywords, matchMode)) {
+          return false;
+        }
         const modified = (file as any).modifiedTime ? new Date((file as any).modifiedTime) : null;
         if (dateStart && modified && modified < dateStart) return false;
         if (dateEnd && modified && modified > dateEnd) return false;
         return true;
       });
+      if (normalizedExactFileName && candidates.length !== 1) {
+        errors.push(`Drive exact-name selection matched ${candidates.length} files; expected exactly one`);
+        continue;
+      }
       onProgress?.({
         phase: 'drive',
         message: `Reviewing ${candidates.length} matching Drive file${candidates.length === 1 ? '' : 's'}`,
@@ -1061,6 +1072,7 @@ async function pullFromDrive(
             id: uuidv4(),
             userId,
             caseId,
+            accountId: cred.accountId,
             googleFileId: file.id,
             fileName: fileData.fileName,
             mimeType: fileData.mimeType,
@@ -1314,6 +1326,7 @@ export async function pullEvidenceByKeywords(params: {
   gmailAccountIds?: string[];
   driveAccountId?: string;
   driveFolderIds?: string[];
+  driveExactFileName?: string;
   localFolderPaths?: string[];
   dateStart?: Date;
   dateEnd?: Date;
@@ -1363,7 +1376,7 @@ export async function pullEvidenceByKeywords(params: {
       errors.push(`Gmail pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { messages: 0, attachments: 0 };
     }),
-    (params.includeDrive === false ? Promise.resolve({ files: 0 }) : pullFromDrive(params.caseId, params.userId, params.keywords, matchMode, driveFolderIds, errors, params.driveAccountId, params.dateStart, params.dateEnd, params.onProgress)).catch((err) => {
+    (params.includeDrive === false ? Promise.resolve({ files: 0 }) : pullFromDrive(params.caseId, params.userId, params.keywords, matchMode, driveFolderIds, errors, params.driveAccountId, params.driveExactFileName, params.dateStart, params.dateEnd, params.onProgress)).catch((err) => {
       errors.push(`Drive pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { files: 0 };
     }),

@@ -31,6 +31,7 @@ temporary SQLite databases; they do not contact external people or accounts.
 | AC24 | Resolve uncertain delivery without automatic retransmission | `tests/backend/realSend.test.ts` | Automated |
 | AC25 | Run a resumable owner-only live outbound self-test, retain signed redacted proof, and remove transient business rows | `tests/security/liveOutboundAcceptance.test.ts` | Automated with injected delivery and inbox providers; target environment requires the operator command |
 | AC26 | Persist, analyze, retrieve, and audit one owner-only Gmail source through an integrity-checked HTTP link, retain signed redacted proof, and remove transient data | `tests/security/liveGoogleEvidenceAcceptance.test.ts`, `tests/security/evidenceAccess.test.ts` | Automated with controlled Gmail and HTTP boundaries; target environment requires the operator command |
+| AC27 | Persist, analyze, retrieve, and audit one owner-only Drive file with evidence and provider provenance, retain signed redacted proof, and remove transient data | `tests/security/liveGoogleDriveEvidenceAcceptance.test.ts`, `tests/security/evidenceAccess.test.ts` | Automated with controlled Drive and HTTP boundaries; target environment requires the operator command |
 
 ## Target-Environment Acceptance
 
