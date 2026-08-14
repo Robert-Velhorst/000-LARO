@@ -610,6 +610,14 @@ describe('production readiness regressions', () => {
     expect(gate).toContain('"renderer bundle budget"');
   });
 
+  it('keeps obsolete analytics surfaces and their chart runtime out of production', () => {
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+    expect(pkg.dependencies).not.toHaveProperty('recharts');
+    expect(existsSync(join(ROOT, 'src/renderer/components/AdminAnalytics.tsx'))).toBe(false);
+    expect(existsSync(join(ROOT, 'src/renderer/components/Analytics.tsx'))).toBe(false);
+    expect(existsSync(join(ROOT, 'src/renderer/components/EvidenceAnalytics.tsx'))).toBe(false);
+  });
+
   it('keeps horizontal tabs stacked above their content at every viewport', () => {
     const tabs = readFileSync(join(ROOT, 'src/renderer/components/ui/tabs.tsx'), 'utf8');
     expect(tabs).toContain('data-[orientation=horizontal]:flex-col');
