@@ -12,6 +12,11 @@ Current as of 2026-07-16.
 | Every release | Run `npm run readiness:production`, package, launch with isolated user data, probe health, and record checksum. |
 | Quarterly | Review dependencies, rotate live-provider credentials, and exercise emergency stop and token revocation. |
 
+Documentation-only pushes to `main` skip the Windows packaging workflow because
+they cannot change the executable. Pull-request and main CI still run, tagged
+pushes always package, and an operator can start packaging manually with
+`workflow_dispatch`.
+
 ## Operational Signals
 
 - `/api/health` and `/api/ready` must report the expected version and production
