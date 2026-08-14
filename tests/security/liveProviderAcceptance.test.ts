@@ -33,7 +33,7 @@ suite("live provider acceptance evidence", () => {
     });
 
     expect(result.summary.status).toBe("pending");
-    expect(result.summary.pendingChecks).toHaveLength(12);
+    expect(result.summary.pendingChecks).toHaveLength(14);
     expect(result.providers.google.status).toBe("pending");
     expect(result.providers.outboundEmail.status).toBe("pending");
   });
@@ -126,6 +126,16 @@ suite("live provider acceptance evidence", () => {
         createdAt: now,
       },
     ]);
+    const { recordGoogleDriveEvidenceAcceptanceReceipt } = await import(
+      "../../server/providerAcceptanceEvidence"
+    );
+    await recordGoogleDriveEvidenceAcceptanceReceipt({
+      userId,
+      runId: "provider-drive-acceptance-001",
+      accountEmail: "private-owner@example.com",
+      sourceId: "private-drive-source-id",
+      verifiedAt: now,
+    });
 
     const providerDependencies: LiveProviderAcceptanceDependencies = {
       listDriveFolders: async () => [{ id: "folder" }] as any,

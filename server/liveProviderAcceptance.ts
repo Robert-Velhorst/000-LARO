@@ -16,6 +16,7 @@ import {
 import { verifyOutboundEmailConnection } from "./systemEmail";
 import {
   hashAcceptanceRecipient,
+  readGoogleDriveEvidenceAcceptanceReceipt,
   readGoogleEvidenceAcceptanceReceipt,
   readOutboundAcceptanceReceipt,
 } from "./providerAcceptanceEvidence";
@@ -27,6 +28,8 @@ const GOOGLE_REQUIREMENTS = [
   "driveRead",
   "evidencePersisted",
   "sourceLinkOpened",
+  "driveEvidencePersisted",
+  "driveSourceLinkOpened",
   "disconnectRevoked",
 ] as const;
 
@@ -197,6 +200,22 @@ export async function collectLiveProviderAcceptance(
     parsedAuditDetails(entry.details).provider === "google",
   ));
   const googleReceiptProven = googleReceiptMatchesAccount && googleReceiptAuditRecorded;
+  const driveReceipt = googleAccount?.userId
+    ? await readGoogleDriveEvidenceAcceptanceReceipt(googleAccount.userId)
+    : null;
+  const driveReceiptMatchesAccount = Boolean(
+    driveReceipt &&
+    googleAccount?.email &&
+    driveReceipt.accountEmailHash === hashAcceptanceRecipient(googleAccount.email),
+  );
+  const driveReceiptAuditRecorded = Boolean(driveReceipt && ownerAudits.some((entry) => {
+    const details = parsedAuditDetails(entry.details);
+    return entry.action === AUDIT_ACTIONS.PROVIDER_ACCEPTANCE_RECORDED &&
+      entry.entityId === driveReceipt.runId &&
+      details.provider === "google" &&
+      details.source === "google_drive";
+  }));
+  const driveReceiptProven = driveReceiptMatchesAccount && driveReceiptAuditRecorded;
 
   const googleChecks = {
     credentials: check(
@@ -233,6 +252,14 @@ export async function collectLiveProviderAcceptance(
       googleSourceOpenAudits.length > 0
         ? `audit:google-evidence.source_opened:count=${googleSourceOpenAudits.length}`
         : false,
+    ),
+    driveEvidencePersisted: check(
+      driveReceiptProven,
+      driveReceiptProven ? "receipt:google-drive-evidence-persisted-and-read" : false,
+    ),
+    driveSourceLinkOpened: check(
+      driveReceiptProven,
+      driveReceiptProven ? "receipt:google-drive-source-opened-and-hash-matched" : false,
     ),
     disconnectRevoked: check(
       auditCount(AUDIT_ACTIONS.PROVIDER_DISCONNECT_REVOKED) > 0,

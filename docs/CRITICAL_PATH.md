@@ -48,7 +48,8 @@ Repository tests use injected delivery and Google boundaries and cannot by
 themselves prove a target account. The selected production scope completed its
 separate owner-controlled acceptance on 2026-08-14: Google consent, Gmail/Drive
 root reads, persisted Gmail evidence/source verification, and revocation passed;
-a representative Drive-file import remains pending. Outbound SMTP delivered
+a representative Drive-file import, analysis, provenance, hash verification,
+and source reopening passed. Outbound SMTP delivered
 once, retained its audit record, and blocked duplicate dispatch. Future
 credentials or deployment targets must repeat those checks rather than
 inheriting this approval.

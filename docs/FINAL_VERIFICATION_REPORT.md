@@ -247,7 +247,7 @@ development renderer path from the launching shell.
 |---|---|---|
 | Trusted public Windows distribution | Deliberately out of scope | Configure Store or certificate signing only if platform publisher trust becomes a requirement; unsigned tagged delivery remains supported with a checksum and warning |
 | Public branding | Approved on 2026-07-21 | Owner-approved LARO timeline mark is stored in `build/icon.png` / `public/laro-logo.png`; release acceptance binds both files to SHA-256 `134ca32789b6dd24f0c39d461f0c405f1e1156475dceb0fa4e525373ab200a0f` |
-| Live providers | Approved on 2026-08-14 for the recorded checks | Google credentials, consent, Gmail import, Drive root read, Gmail evidence/source opening, and revocation passed; a representative Drive-file import remains pending; outbound approved delivery, receipt, audit, and duplicate blocking passed |
+| Live providers | Approved on 2026-08-14 for the recorded checks | Google credentials, consent, Gmail and Drive imports, analysis, provenance, source opening with matching hashes, and revocation passed; outbound approved delivery, receipt, audit, and duplicate blocking passed |
 | Exact-main local Windows launch | Awaiting explicit owner authorization | Launch downloaded artifact `9220496086` on this Windows 11 host and confirm healthy startup; checksum, ABI, packaging, and single-instance behavior already pass in Actions |
 
 These external states are represented in `release-acceptance.json`. Normal
