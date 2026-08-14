@@ -10,6 +10,8 @@ import {
 } from "./haiIntegration";
 
 const router = Router();
+const emptyFeedAuditAt = new Map<string, number>();
+const EMPTY_FEED_AUDIT_INTERVAL_MS = 60 * 60 * 1000;
 
 function bearerToken(header: string | undefined): string | undefined {
   if (!header) return undefined;
@@ -43,13 +45,23 @@ router.get(HAI_FEED_PATH, async (req, res) => {
       typeof req.query.cursor === "string" ? req.query.cursor : undefined,
       rawLimit,
     );
-    await createAuditLog({
-      userId: auth.userId,
-      action: "integration.hai_feed_read",
-      entityType: "integration_token",
-      entityId: auth.tokenId,
-      details: { itemCount: result.items.length, incremental: typeof req.query.cursor === "string" },
-    });
+    const now = Date.now();
+    const lastEmptyAudit = emptyFeedAuditAt.get(auth.tokenId) || 0;
+    if (result.items.length > 0 || now - lastEmptyAudit >= EMPTY_FEED_AUDIT_INTERVAL_MS) {
+      await createAuditLog({
+        userId: auth.userId,
+        action: "integration.hai_feed_read",
+        entityType: "integration_token",
+        entityId: auth.tokenId,
+        details: { itemCount: result.items.length, incremental: typeof req.query.cursor === "string" },
+      });
+      if (result.items.length === 0) emptyFeedAuditAt.set(auth.tokenId, now);
+    }
+    if (emptyFeedAuditAt.size > 1_000) {
+      for (const [tokenId, at] of emptyFeedAuditAt) {
+        if (now - at >= 2 * EMPTY_FEED_AUDIT_INTERVAL_MS) emptyFeedAuditAt.delete(tokenId);
+      }
+    }
     res.setHeader("Cache-Control", "private, no-store");
     res.status(200).json(result);
   } catch (error) {

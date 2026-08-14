@@ -95,24 +95,25 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
   const [dateEnd, setDateEnd] = useState("");
   const [pullJobId, setPullJobId] = useState<string | null>(null);
   const [handledJobId, setHandledJobId] = useState<string | null>(null);
+  const [connectingGoogle, setConnectingGoogle] = useState(false);
 
   const utils = trpc.useUtils();
 
   const { data: driveStatus } = trpc.googleDrive.checkConnection.useQuery(undefined, {
     refetchOnWindowFocus: true,
-    refetchInterval: 2_000,
+    refetchInterval: connectingGoogle ? 1_500 : false,
   });
   const { data: localFolderData, refetch: refetchLocalFolders } =
     trpc.autoCollection.getLocalFolders.useQuery({ caseId });
 
   const activePullJob = trpc.autoCollection.activePullJob.useQuery({ caseId }, {
-    refetchInterval: 1_000,
+    refetchInterval: (data) => data?.status === "queued" || data?.status === "running" ? 1_000 : false,
   });
   const pullJob = trpc.autoCollection.pullJobStatus.useQuery(
     { jobId: pullJobId || "00000000-0000-0000-0000-000000000000" },
     {
       enabled: Boolean(pullJobId),
-      refetchInterval: (data) => !data || data.status === "queued" || data.status === "running" ? 500 : false,
+      refetchInterval: (data) => !data || data.status === "queued" || data.status === "running" ? 1_000 : false,
     },
   );
   const currentJob = pullJob.data ?? activePullJob.data ?? null;
@@ -121,6 +122,17 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
   useEffect(() => {
     if (!pullJobId && activePullJob.data?.id) setPullJobId(activePullJob.data.id);
   }, [activePullJob.data?.id, pullJobId]);
+
+  useEffect(() => {
+    if (!connectingGoogle) return;
+    if (driveStatus?.connected) {
+      setConnectingGoogle(false);
+      toast.success("Google connected");
+      return;
+    }
+    const timeout = window.setTimeout(() => setConnectingGoogle(false), 5 * 60_000);
+    return () => window.clearTimeout(timeout);
+  }, [connectingGoogle, driveStatus?.connected]);
 
   useEffect(() => {
     if (!currentJob || pullActive || handledJobId === currentJob.id) return;
@@ -185,6 +197,7 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
     onSuccess: (data) => {
       if (data?.authUrl) {
         window.open(data.authUrl, "_blank", "width=520,height=720");
+        setConnectingGoogle(true);
         toast.message("Complete the Google sign-in in the new window");
       } else {
         toast.error("No auth URL returned");
@@ -584,6 +597,7 @@ export default function EnhancedCaseDetailsDialog({
   const { data: outreachHistory, refetch: refetchOutreach } = trpc.outreach.byCaseId.useQuery(caseId, {
     enabled: open && !!caseId,
   });
+  const workflowPreferences = trpc.userPreferences.workflow.useQuery(undefined, { enabled: open });
 
   /* ── mutations ── */
   const initiateOutreachMutation = trpc.workflow.initiateOutreach.useMutation({
@@ -596,6 +610,10 @@ export default function EnhancedCaseDetailsDialog({
 
   const approveDraftMutation = trpc.workflow.approveDraft.useMutation({
     onSuccess: () => { toast.success("Draft approved; nothing has been sent yet"); refetchOutreach(); },
+    onError: (error) => toast.error(error.message),
+  });
+  const approveDraftsMutation = trpc.workflow.approveDrafts.useMutation({
+    onSuccess: (result) => { toast.success(`${result.approved} drafts approved; nothing has been sent yet`); refetchOutreach(); },
     onError: (error) => toast.error(error.message),
   });
   const rejectDraftMutation = trpc.workflow.rejectDraft.useMutation({
@@ -633,6 +651,9 @@ export default function EnhancedCaseDetailsDialog({
     const notes = window.prompt("Optional response summary")?.trim() || undefined;
     recordResponseMutation.mutate({ outreachId, response, notes });
   };
+  const pendingOutreachIds = (outreachHistory ?? [])
+    .filter((outreach: any) => outreach.status === "PendingApproval")
+    .map((outreach: any) => outreach.id);
 
   if (!open) return null;
 
@@ -1232,9 +1253,16 @@ export default function EnhancedCaseDetailsDialog({
                     <OutreachProgressVisualization caseId={caseId} />
                     <Card className="border-border/30 bg-card/40">
                       <CardHeader className="pb-3">
-                        <CardTitle className="flex items-center gap-2 text-base">
-                          <MessageSquare className="w-4 h-4 text-muted-foreground/60" /> Lawyers Contacted
-                        </CardTitle>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <CardTitle className="flex items-center gap-2 text-base">
+                            <MessageSquare className="w-4 h-4 text-muted-foreground/60" /> Lawyer outreach
+                          </CardTitle>
+                          {workflowPreferences.data?.messageApprovalMode === "batch" && pendingOutreachIds.length > 1 ? (
+                            <Button size="sm" variant="outline" disabled={approveDraftsMutation.isPending} onClick={() => approveDraftsMutation.mutate({ outreachIds: pendingOutreachIds })}>
+                              {approveDraftsMutation.isPending ? "Approving..." : `Approve ${pendingOutreachIds.length} drafts`}
+                            </Button>
+                          ) : null}
+                        </div>
                       </CardHeader>
                       <CardContent>
                         {outreachHistory && outreachHistory.length > 0 ? (
@@ -1248,8 +1276,8 @@ export default function EnhancedCaseDetailsDialog({
                                   </Badge>
                                 </div>
                                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                                  <span>Distance: {outreach.distanceKm} km</span>
-                                  <span>Contact: {new Date(outreach.initialContact).toLocaleDateString()}</span>
+                                  {outreach.distanceKm !== null && outreach.distanceKm !== undefined ? <span>Distance: {outreach.distanceKm} km</span> : null}
+                                  {outreach.initialContact ? <span>Contact: {new Date(outreach.initialContact).toLocaleDateString()}</span> : <span>Not sent</span>}
                                   <span>Follow-ups: {outreach.followUpsSent}</span>
                                 </div>
                                 {outreach.response && (

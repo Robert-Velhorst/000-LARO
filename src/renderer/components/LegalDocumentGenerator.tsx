@@ -53,66 +53,53 @@ export function LegalDocumentGenerator({ caseId }: LegalDocumentGeneratorProps) 
     });
   };
 
-  const handleDownload = (format: "txt" | "pdf") => {
+  const handleDownload = () => {
     if (!previewDoc) return;
 
-    const content = `${previewDoc.title}\n\n${previewDoc.content}\n\nLegal Basis:\n${previewDoc.legalBasis.join("\n")}\n\n${previewDoc.deadline ? `Deadline: ${previewDoc.deadline}\n\n` : ""}${previewDoc.consequences ? `Consequences:\n${previewDoc.consequences.join("\n")}` : ""}`;
-
-    if (format === "txt") {
-      // Download as text file
-      const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${previewDoc.type}_${caseId}_${new Date().toISOString().split("T")[0]}.txt`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } else {
-      // For PDF, we would need a server-side PDF generation
-      // For now, download as formatted text that can be converted to PDF
-      const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${previewDoc.type}_${caseId}_${new Date().toISOString().split("T")[0]}.txt`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }
+    const reviewItems = previewDoc.consequences?.length
+      ? `\n\nReview checklist:\n${previewDoc.consequences.join("\n")}`
+      : "";
+    const content = `${previewDoc.title}\n\n${previewDoc.content}${reviewItems}`;
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${previewDoc.type}_${caseId}_${new Date().toISOString().split("T")[0]}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const documents = [
     {
       type: "discovery_request" as const,
-      title: "Discovery Request (Art. 843a Rv)",
-      description: "Formal request for opponent to provide documents",
+      title: "Records Request",
+      description: "Source-limited draft asking for identified records",
       icon: FileText,
       color: "text-blue-500",
       bgColor: "bg-blue-50",
     },
     {
       type: "preservation_notice" as const,
-      title: "Evidence Preservation Notice",
-      description: "Formal notice requiring opponent to preserve all evidence",
+      title: "Records Preservation Request",
+      description: "Review draft defining records that may need preservation",
       icon: Shield,
       color: "text-green-500",
       bgColor: "bg-green-50",
     },
     {
       type: "spoliation_warning" as const,
-      title: "Spoliation Warning",
-      description: "Warning about consequences of destroying evidence",
+      title: "Missing Records Clarification",
+      description: "Ask about unavailable records without alleging misconduct",
       icon: AlertTriangle,
       color: "text-red-500",
       bgColor: "bg-red-50",
     },
     {
       type: "demand_letter" as const,
-      title: "Formal Demand Letter",
-      description: "Formal demand for compliance with obligations",
+      title: "Resolution Request",
+      description: "Review draft listing verified open items and requested resolution",
       icon: Send,
       color: "text-orange-500",
       bgColor: "bg-orange-50",
@@ -123,17 +110,17 @@ export function LegalDocumentGenerator({ caseId }: LegalDocumentGeneratorProps) 
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Automated Legal Document Generator</CardTitle>
+        <CardTitle>Review Draft Generator</CardTitle>
           <CardDescription>
-            Generate professional legal documents based on gap analysis findings
+            Prepare factual drafts from the evidence currently available in this case
           </CardDescription>
         </CardHeader>
         <CardContent>
           <Alert className="mb-4">
             <Scale className="h-4 w-4" />
             <AlertDescription>
-              All documents are auto-populated with case data, gap analysis findings, and Dutch
-              legal citations. Review before sending to opponent.
+              Drafts do not establish legal rights, misconduct, deadlines, or consequences. Verify
+              every fact and obtain qualified legal review before sending.
             </AlertDescription>
           </Alert>
 
@@ -216,8 +203,7 @@ export function LegalDocumentGenerator({ caseId }: LegalDocumentGeneratorProps) 
                 </pre>
               </div>
 
-              {/* Legal Basis */}
-              <Card>
+              {previewDoc.legalBasis.length > 0 && <Card>
                 <CardHeader>
                   <CardTitle className="text-sm">Legal Basis</CardTitle>
                 </CardHeader>
@@ -230,7 +216,7 @@ export function LegalDocumentGenerator({ caseId }: LegalDocumentGeneratorProps) 
                     ))}
                   </ul>
                 </CardContent>
-              </Card>
+              </Card>}
 
               {/* Deadline */}
               {previewDoc.deadline && (
@@ -245,7 +231,7 @@ export function LegalDocumentGenerator({ caseId }: LegalDocumentGeneratorProps) 
               {previewDoc.consequences && previewDoc.consequences.length > 0 && (
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-sm">Legal Consequences</CardTitle>
+                    <CardTitle className="text-sm">Review Checklist</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <ul className="space-y-1">
@@ -260,14 +246,10 @@ export function LegalDocumentGenerator({ caseId }: LegalDocumentGeneratorProps) 
               )}
 
               {/* Download Buttons */}
-              <div className="flex gap-3">
-                <Button onClick={() => handleDownload("txt")} className="flex-1">
+              <div>
+                <Button onClick={handleDownload} className="w-full">
                   <Download className="w-4 h-4 mr-2" />
                   Download as Text
-                </Button>
-                <Button onClick={() => handleDownload("pdf")} variant="outline" className="flex-1">
-                  <Download className="w-4 h-4 mr-2" />
-                  Download as PDF
                 </Button>
               </div>
 

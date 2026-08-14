@@ -33,8 +33,15 @@ suite('Phase 106 — teams / shared case access', () => {
     const exported = await app.makeCaller(MATE).cases.export({ caseId: 'CASE_TEAM' });
     expect(exported.format).toBe('laro-case-export/v1');
 
+    // Shared access is consistent for mutations as well as reads.
+    await app.makeCaller(MATE).cases.update({ id: 'CASE_TEAM', caseSummary: 'Updated by teammate' });
+    const [updated] = await app.db.select().from(app.schema.cases);
+    expect(updated.caseSummary).toBe('Updated by teammate');
+
     // The stranger is STILL blocked.
     await expect(app.makeCaller(STRANGER).cases.export({ caseId: 'CASE_TEAM' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(app.makeCaller(STRANGER).cases.update({ id: 'CASE_TEAM', caseSummary: 'Blocked' }))
+      .rejects.toMatchObject({ code: 'FORBIDDEN' });
 
     // listMembers reflects it.
     const members = await app.makeCaller(OWNER).teams.listMembers();

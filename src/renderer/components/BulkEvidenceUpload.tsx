@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -209,6 +209,7 @@ export default function BulkEvidenceUpload({
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>Upload files</DialogTitle>
+          <DialogDescription>Select evidence files to store and analyze for this case.</DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 overflow-auto space-y-4">

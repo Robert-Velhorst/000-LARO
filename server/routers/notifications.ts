@@ -61,7 +61,7 @@ export const notificationsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      await db
+      const result = await db
         .update(notifications)
         .set({ read: true })
         .where(
@@ -70,16 +70,16 @@ export const notificationsRouter = router({
             eq(notifications.userId, ctx.user.id),
           ),
         );
-      return { success: true };
+      return { success: Number((result as any)?.changes ?? 0) > 0 };
     }),
 
   markAllAsRead: protectedProcedure.mutation(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error("Database not available");
-    await db
+    const result = await db
       .update(notifications)
       .set({ read: true })
       .where(eq(notifications.userId, ctx.user.id));
-    return { success: true };
+    return { success: true, updated: Number((result as any)?.changes ?? 0) };
   }),
 });

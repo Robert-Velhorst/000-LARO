@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import { getDb } from "./db";
 import { cases, outreachStatus, emailActivity } from "./schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { createAuditLog, AUDIT_ACTIONS } from "./audit";
 import { getNextLawyerToContact } from "./matching";
 
@@ -71,30 +71,17 @@ export async function initiateOutreach(caseId: string, userId?: string) {
     throw new Error("No matching lawyers found for this case");
   }
 
-  // Create outreach record
+  // Create a reviewable draft. This helper must never imply that an external
+  // message was sent; transmission is owned by sendApprovedOutreach().
   const outreachId = nanoid();
   await db.insert(outreachStatus).values({
     id: outreachId,
     caseId,
     lawyerId: lawyer.id,
-    status: "Contacted",
-    initialContact: new Date(),
-    lastContact: new Date(),
+    status: "PendingApproval",
     followUpsSent: 0,
     distanceKm: Math.round(lawyer.distance),
   });
-
-  // Create email activity record
-  await db.insert(emailActivity).values({
-    id: nanoid(),
-    lawyerId: lawyer.id,
-    caseId,
-    activityType: "Initial",
-    subject: "New Legal Case - Your Expertise Needed",
-    sentAt: new Date(),
-    responseReceived: "No",
-    responseStatus: "No Response",
-  } as any);
 
   // Update case status
   await db
@@ -113,13 +100,16 @@ export async function initiateOutreach(caseId: string, userId?: string) {
       lawyerId: lawyer.id,
       lawyerName: lawyer.name,
       distance: lawyer.distance,
+      status: "PendingApproval",
+      externalMessageSent: false,
     },
   });
 
   return {
     outreachId,
     lawyer,
-    scheduledTime: new Date(),
+    scheduledTime: null,
+    sent: false,
   };
 }
 
@@ -357,16 +347,24 @@ export async function getWorkflowStats() {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const allOutreach = await db.select().from(outreachStatus);
-  const allEmails = await db.select().from(emailActivity);
+  const [[outreachCounts], [emailCounts]] = await Promise.all([
+    db.select({
+      totalOutreach: sql<number>`count(*)`,
+      contacted: sql<number>`sum(case when ${outreachStatus.status} = 'Contacted' then 1 else 0 end)`,
+      interested: sql<number>`sum(case when ${outreachStatus.status} = 'Interested' then 1 else 0 end)`,
+      declined: sql<number>`sum(case when ${outreachStatus.status} = 'Declined' then 1 else 0 end)`,
+      noResponse: sql<number>`sum(case when ${outreachStatus.status} = 'No Response' then 1 else 0 end)`,
+    }).from(outreachStatus),
+    db.select({ totalEmails: sql<number>`count(*)` }).from(emailActivity),
+  ]);
 
   const stats = {
-    totalOutreach: allOutreach.length,
-    contacted: allOutreach.filter(o => o.status === "Contacted").length,
-    interested: allOutreach.filter(o => o.status === "Interested").length,
-    declined: allOutreach.filter(o => o.status === "Declined").length,
-    noResponse: allOutreach.filter(o => o.status === "No Response").length,
-    totalEmails: allEmails.length,
+    totalOutreach: Number(outreachCounts?.totalOutreach || 0),
+    contacted: Number(outreachCounts?.contacted || 0),
+    interested: Number(outreachCounts?.interested || 0),
+    declined: Number(outreachCounts?.declined || 0),
+    noResponse: Number(outreachCounts?.noResponse || 0),
+    totalEmails: Number(emailCounts?.totalEmails || 0),
     responseRate: 0,
     averageResponseTime: 0,
   };

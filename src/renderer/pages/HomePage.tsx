@@ -85,7 +85,9 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
     };
 
     void refreshCases(true);
-    const interval = window.setInterval(() => void refreshCases(false), 10_000);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refreshCases(false);
+    }, 60_000);
 
     return () => {
       cancelled = true;

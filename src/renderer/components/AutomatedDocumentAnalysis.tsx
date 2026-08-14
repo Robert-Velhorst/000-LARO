@@ -125,7 +125,6 @@ export function AutomatedDocumentAnalysis({ caseId, onAnalysisComplete }: Automa
 
       const analysis = await analyzeMutation.mutateAsync({
         evidenceId: uploadResult.id,
-        deepAnalysis: true,
       });
       const view = toAnalysisView(analysis.result, selectedFile.name);
       setAnalyzing(false);
@@ -145,7 +144,7 @@ export function AutomatedDocumentAnalysis({ caseId, onAnalysisComplete }: Automa
       setAnalyzing(true);
       setActiveEvidenceId(file.id);
       setErrorMessage(null);
-      const analysis = await analyzeMutation.mutateAsync({ evidenceId: file.id, deepAnalysis: true });
+      const analysis = await analyzeMutation.mutateAsync({ evidenceId: file.id });
       setAnalysisResult(toAnalysisView(analysis.result, file.fileName || file.title));
       await caseAnalyses.refetch();
       onAnalysisComplete?.(file.id);
@@ -224,7 +223,7 @@ export function AutomatedDocumentAnalysis({ caseId, onAnalysisComplete }: Automa
             </div>
           )}
           <p className="text-xs text-muted-foreground">
-            Local source extraction is always used, including Dutch and English OCR for images. Deep analysis is {capabilities.data?.deepAnalysisConfigured ? "configured" : "not configured"}; findings remain linked to extracted source passages.
+            Local source extraction is always used, including Dutch and English OCR for images. {capabilities.data?.selectedAnalysisMode === "cloud" ? "Configured cloud analysis is selected." : "Cost-saving local analysis is selected."} Findings remain linked to extracted source passages.
           </p>
           <div className="border-t border-border pt-4">
             <div className="flex flex-wrap items-center justify-between gap-3">

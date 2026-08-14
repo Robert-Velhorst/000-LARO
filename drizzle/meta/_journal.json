@@ -57,6 +57,13 @@
       "when": 1786233600000,
       "tag": "0007_hai_integration",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1786665600000,
+      "tag": "0008_unique_keyed_preferences",
+      "breakpoints": true
     }
   ]
 }

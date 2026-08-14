@@ -72,8 +72,23 @@ export default function EnhancedEvidenceUpload({ caseId }: { caseId?: string }) 
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const utils = trpc.useUtils();
   const uploadEvidenceFile = trpc.evidenceFiles.upload.useMutation();
   const analyzeEvidence = trpc.documentAnalysis.analyzeEvidence.useMutation();
+
+  const refreshEvidenceWorkspace = useCallback(async () => {
+    if (!caseId) return;
+    await Promise.all([
+      utils.evidenceFiles.search.invalidate({ caseId }),
+      utils.documentAnalysis.byCase.invalidate({ caseId }),
+      utils.documentAnalysis.generateCaseTimeline.invalidate({ caseId }),
+      utils.evidenceAnalytics.getStats.invalidate(),
+      utils.evidenceAnalytics.getFileTypeDistribution.invalidate(),
+      utils.evidenceAnalytics.getUploadTimeline.invalidate(),
+      utils.evidenceAnalytics.getStorageByCase.invalidate(),
+      utils.evidenceAnalytics.getUploadSourceBreakdown.invalidate(),
+    ]);
+  }, [caseId, utils]);
 
   const handleFiles = useCallback(async (fileList: FileList) => {
     if (!caseId) {
@@ -109,25 +124,27 @@ export default function EnhancedEvidenceUpload({ caseId }: { caseId?: string }) 
         if (isSupportedDocumentAnalysisMimeType(item.mimeType)) {
           setFiles((previous) => previous.map((file) => file.id === item.id ? { ...file, status: "analyzing" } : file));
           try {
-            await analyzeEvidence.mutateAsync({ evidenceId: uploaded.id, deepAnalysis: false });
+            await analyzeEvidence.mutateAsync({ evidenceId: uploaded.id });
           } catch (error) {
             const message = error instanceof Error ? error.message : "Automatic analysis failed";
             setFiles((previous) => previous.map((file) => file.id === item.id
               ? { ...file, status: "complete", analysisWarning: message }
               : file));
             toast.warning(`${item.file.name} was stored, but analysis needs review`);
+            await refreshEvidenceWorkspace();
             continue;
           }
         }
         setFiles((previous) => previous.map((file) => file.id === item.id ? { ...file, status: "complete" } : file));
         toast.success(`${item.file.name} stored${isSupportedDocumentAnalysisMimeType(item.mimeType) ? " and analyzed" : " as evidence"}`);
+        await refreshEvidenceWorkspace();
       } catch (error) {
         const message = error instanceof Error ? error.message : "Upload failed";
         setFiles((previous) => previous.map((file) => file.id === item.id ? { ...file, status: "error", error: message } : file));
         toast.error(`${item.file.name}: ${message}`);
       }
     }
-  }, [analyzeEvidence, caseId, uploadEvidenceFile]);
+  }, [analyzeEvidence, caseId, refreshEvidenceWorkspace, uploadEvidenceFile]);
 
   const completeCount = files.filter((file) => file.status === "complete").length;
   const settledCount = files.filter((file) => file.status === "complete" || file.status === "error").length;

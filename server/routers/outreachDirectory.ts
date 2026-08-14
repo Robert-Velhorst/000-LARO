@@ -11,8 +11,10 @@ import {
   listOutreachTargets,
   matchApprovedTargetsForCase,
   reviewOutreachTarget,
+  reviewOutreachTargetsBatch,
   updateCaseTargetMatchStatus,
 } from "../outreachDirectory";
+import { getWorkflowPreferences } from "../workflowPreferences";
 
 const targetTypeSchema = z.enum(["media", "organization"]);
 const reviewStatusSchema = z.enum(["pending", "approved", "rejected"]);
@@ -44,6 +46,31 @@ export const outreachDirectoryRouter = router({
         message: "Too many public discovery requests. Please wait a moment.",
       });
       const report = await discoverOutreachTargetsForCase({ userId: ctx.user.id, ...input });
+      const preferences = await getWorkflowPreferences(ctx.user.id);
+      let autoReviewed = 0;
+      let automaticMatches = 0;
+      if (preferences.outreachReviewMode === "automatic") {
+        const pending = await listOutreachTargets({
+          userId: ctx.user.id,
+          targetType: input.targetType,
+          status: "pending",
+          limit: 200,
+        });
+        for (const target of pending) {
+          await reviewOutreachTarget({
+            userId: ctx.user.id,
+            id: target.id,
+            targetType: input.targetType,
+            status: "approved",
+            reviewNotes: "Automatically approved by the owner's workflow setting.",
+          });
+          autoReviewed += 1;
+        }
+        if (autoReviewed > 0) {
+          const matches = await matchApprovedTargetsForCase({ userId: ctx.user.id, caseId: input.caseId, targetType: input.targetType });
+          automaticMatches = matches.length;
+        }
+      }
       await createAuditLog({
         userId: ctx.user.id,
         action: "outreach.directory_discovered",
@@ -54,9 +81,12 @@ export const outreachDirectoryRouter = router({
           status: report.status,
           newCandidates: report.newCandidates,
           rawCaseTextShared: report.rawCaseTextShared,
+          reviewMode: preferences.outreachReviewMode,
+          autoReviewed,
+          automaticMatches,
         },
       });
-      return report;
+      return { ...report, reviewMode: preferences.outreachReviewMode, autoReviewed, automaticMatches };
     }),
 
   createManual: protectedProcedure
@@ -113,6 +143,36 @@ export const outreachDirectoryRouter = router({
         details: { status: input.status, targetType: reviewed.targetType, caseId: input.caseId || null },
       });
       return { success: true as const, matches };
+    }),
+
+  reviewBatch: protectedProcedure
+    .input(z.object({
+      ids: z.array(z.string().min(1)).min(1).max(50)
+        .refine((ids) => new Set(ids).size === ids.length, "Duplicate outreach target IDs are not allowed"),
+      status: z.enum(["approved", "rejected"]),
+      targetType: targetTypeSchema,
+      caseId: z.string().min(1).optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (input.caseId) await assertCaseOwnership(input.caseId, ctx.user.id);
+      const reviewed = await reviewOutreachTargetsBatch({
+        userId: ctx.user.id,
+        ids: input.ids,
+        targetType: input.targetType,
+        status: input.status,
+        reviewNotes: `Reviewed in an owner-approved batch of ${input.ids.length}.`,
+      });
+      const matches = input.status === "approved" && input.caseId
+        ? await matchApprovedTargetsForCase({ userId: ctx.user.id, caseId: input.caseId, targetType: input.targetType })
+        : null;
+      await createAuditLog({
+        userId: ctx.user.id,
+        action: "outreach.directory_batch_reviewed",
+        entityType: "outreach_target",
+        entityId: input.ids[0],
+        details: { ids: input.ids, count: input.ids.length, status: input.status, targetType: input.targetType, caseId: input.caseId || null },
+      });
+      return { success: true as const, reviewed: reviewed.reviewed, matches };
     }),
 
   matchCase: protectedProcedure

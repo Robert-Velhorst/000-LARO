@@ -26,6 +26,8 @@ import { ensureDesktopSecrets } from './desktopSecrets';
 
 const DEFAULT_PORT = 3000;
 let laroUrl = `http://127.0.0.1:${DEFAULT_PORT}`;
+let stopIntegratedServer: (() => Promise<void>) | null = null;
+let shutdownStarted = false;
 const isDev = isDesktopDevelopmentMode(app.isPackaged, process.env.NODE_ENV);
 let mainWindow: BrowserWindow | null = null;
 const ownsDesktopProfile = acquireSingleInstanceLock(app, () => mainWindow);
@@ -347,11 +349,12 @@ if (ownsDesktopProfile) app.whenReady().then(async () => {
   process.env.HOST = '127.0.0.1';
 
   try {
-    const { startServer } = await import('../server/index');
+    const { startServer, stopServer } = await import('../server/index');
     const requestedPort = app.isPackaged
       ? resolveDesktopServerPort(process.env.OAUTH_REDIRECT_BASE_URL)
       : DEFAULT_PORT;
     const actualPort = await startServer(requestedPort);
+    stopIntegratedServer = stopServer;
     laroUrl = `http://127.0.0.1:${actualPort}`;
     agentConfig.apiUrl = laroUrl;
     const allowedOrigins = new Set(
@@ -383,10 +386,18 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (shutdownStarted) return;
+  event.preventDefault();
+  shutdownStarted = true;
   currentScanner?.stop();
   currentUploader?.stop();
-  closeAgentDb();
+  void (stopIntegratedServer?.() ?? Promise.resolve())
+    .catch((error) => log.error('[Electron] Integrated server shutdown failed:', error))
+    .finally(() => {
+      closeAgentDb();
+      app.quit();
+    });
 });
 
 function setupIPC(): void {

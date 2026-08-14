@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertCircle,
+  BrainCircuit,
   CheckCircle2,
   Copy,
   FileArchive,
@@ -24,9 +25,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 
-type SettingsSection = "email" | "sources" | "hai" | "security";
+type SettingsSection = "workflow" | "email" | "sources" | "hai" | "security";
 
 const NAV_ITEMS: Array<{
   id: SettingsSection;
@@ -34,6 +36,7 @@ const NAV_ITEMS: Array<{
   description: string;
   icon: typeof Mail;
 }> = [
+  { id: "workflow", label: "Workflow", description: "Analysis and approval controls", icon: BrainCircuit },
   { id: "email", label: "Email", description: "Provider and test send", icon: Mail },
   { id: "sources", label: "Evidence sources", description: "Google and local folders", icon: FolderSearch },
   { id: "hai", label: "HAI", description: "Read-only case intelligence connector", icon: Link2 },
@@ -77,7 +80,7 @@ function providerName(provider: string) {
 }
 
 export default function Settings() {
-  const [section, setSection] = useState<SettingsSection>("email");
+  const [section, setSection] = useState<SettingsSection>("workflow");
   const [testEmail, setTestEmail] = useState("");
   const [isTesting, setIsTesting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -89,6 +92,9 @@ export default function Settings() {
   const utils = trpc.useUtils();
 
   const { data: providerInfo } = trpc.email.getProviderInfo.useQuery();
+  const workflowPreferences = trpc.userPreferences.workflow.useQuery();
+  const analysisCapabilities = trpc.documentAnalysis.capabilities.useQuery();
+  const updateWorkflowMutation = trpc.userPreferences.updateWorkflow.useMutation();
   const testEmailMutation = trpc.email.test.useMutation();
   const exportDataMutation = trpc.gdpr.exportData.useMutation();
   const auditLog = trpc.audit.list.useQuery(
@@ -108,6 +114,19 @@ export default function Settings() {
   const revokeHaiTokenMutation = trpc.haiIntegration.revokeToken.useMutation();
 
   const activeMeta = useMemo(() => NAV_ITEMS.find((item) => item.id === section), [section]);
+
+  const updateWorkflow = async (updates: Parameters<typeof updateWorkflowMutation.mutateAsync>[0]) => {
+    try {
+      await updateWorkflowMutation.mutateAsync(updates);
+      await Promise.all([
+        utils.userPreferences.workflow.invalidate(),
+        utils.documentAnalysis.capabilities.invalidate(),
+      ]);
+      toast.success("Workflow preference saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Workflow preference could not be saved");
+    }
+  };
 
   const openScanner = useCallback(async () => {
     try {
@@ -247,6 +266,101 @@ export default function Settings() {
           <div className="border-b border-border/50 pb-3">
             <p className="text-sm font-medium text-foreground">{activeMeta.label}</p>
             <p className="text-xs text-muted-foreground">{activeMeta.description}</p>
+          </div>
+        ) : null}
+
+        {section === "workflow" ? (
+          <div className="space-y-4">
+            <Card className="border-border/50 bg-card/50 shadow-sm">
+              <CardHeader>
+                <CardTitle>Document analysis</CardTitle>
+                <CardDescription>Choose how LARO analyzes new and existing evidence</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="space-y-2 text-sm">
+                    <span className="font-medium">Analysis provider</span>
+                    <select
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      value={workflowPreferences.data?.analysisProvider ?? "local"}
+                      disabled={workflowPreferences.isLoading || analysisCapabilities.isLoading || updateWorkflowMutation.isPending}
+                      onChange={(event) => void updateWorkflow({ analysisProvider: event.target.value as "local" | "forge" | "openai" | "anthropic" | "google" | "deepseek" | "groq" | "together" })}
+                    >
+                      <option value="local">Local analysis - recommended, no usage cost</option>
+                      {(analysisCapabilities.data?.providers || []).map((provider) => (
+                        <option key={provider.id} value={provider.id} disabled={!provider.configured}>
+                          {provider.label} - {provider.model}{provider.configured ? "" : " (not configured)"}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground">External analysis uses only the selected provider. LARO does not fall back to another paid service.</p>
+                  </label>
+                  <div className="flex items-center justify-between gap-4 border border-border/60 p-4">
+                    <div>
+                      <Label htmlFor="auto-analyze-imports">Analyze imports automatically</Label>
+                      <p className="mt-1 text-xs text-muted-foreground">Start analysis after Gmail, Drive, or local evidence is stored.</p>
+                    </div>
+                    <Switch
+                      id="auto-analyze-imports"
+                      checked={workflowPreferences.data?.autoAnalyzeImports ?? true}
+                      disabled={workflowPreferences.isLoading || updateWorkflowMutation.isPending}
+                      onCheckedChange={(checked) => void updateWorkflow({ autoAnalyzeImports: checked })}
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-4 border-t border-border/60 pt-4">
+                  <div>
+                    <Label htmlFor="share-raw-analysis">Allow full source text for cloud analysis</Label>
+                    <p className="mt-1 text-xs text-muted-foreground">Enabled by default so the selected provider can assess the complete record. Turning this off forces local analysis.</p>
+                  </div>
+                  <Switch
+                    id="share-raw-analysis"
+                    checked={workflowPreferences.data?.shareRawDocumentContent ?? true}
+                    disabled={workflowPreferences.isLoading || updateWorkflowMutation.isPending}
+                    onCheckedChange={(checked) => void updateWorkflow({ shareRawDocumentContent: checked })}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/50 bg-card/50 shadow-sm">
+              <CardHeader>
+                <CardTitle>Review and approval</CardTitle>
+                <CardDescription>Keep maximum control or reduce repetitive confirmations</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-5 md:grid-cols-2">
+                <label className="space-y-2 text-sm">
+                  <span className="font-medium">Outreach shortlist review</span>
+                  <select
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    value={workflowPreferences.data?.outreachReviewMode ?? "each"}
+                    disabled={workflowPreferences.isLoading || updateWorkflowMutation.isPending}
+                    onChange={(event) => void updateWorkflow({ outreachReviewMode: event.target.value as "each" | "batch" | "automatic" })}
+                  >
+                    <option value="each">Review every suggestion</option>
+                    <option value="batch">Review a complete shortlist</option>
+                    <option value="automatic">Build shortlists automatically</option>
+                  </select>
+                </label>
+                <label className="space-y-2 text-sm">
+                  <span className="font-medium">Outbound message approval</span>
+                  <select
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    value={workflowPreferences.data?.messageApprovalMode ?? "each"}
+                    disabled={workflowPreferences.isLoading || updateWorkflowMutation.isPending}
+                    onChange={(event) => void updateWorkflow({ messageApprovalMode: event.target.value as "each" | "batch" | "automatic" })}
+                  >
+                    <option value="each">Approve every message</option>
+                    <option value="batch">Approve reviewed batches</option>
+                    <option value="automatic">Pre-approve drafts; sending still requires action</option>
+                  </select>
+                </label>
+                <Alert className="md:col-span-2">
+                  <Shield className="h-4 w-4" />
+                  <AlertDescription>Changing an approval preference does not enable sending. Provider configuration, the outbound feature switch, ownership checks, and duplicate-send protection remain required.</AlertDescription>
+                </Alert>
+              </CardContent>
+            </Card>
           </div>
         ) : null}
 

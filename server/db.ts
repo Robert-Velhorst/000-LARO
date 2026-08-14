@@ -82,6 +82,46 @@ function ensureIndexes(sqlite: InstanceType<typeof Database>) {
     );
   }
 
+  // Keyed preferences are snapshots, so duplicate rows make reads ambiguous and
+  // can lose a user's latest privacy or workflow setting. Keep the newest legacy
+  // row before enforcing the invariant for all future writes.
+  try {
+    const duplicateCount = (sqlite.prepare(`
+      SELECT COALESCE(SUM(rowCount - 1), 0) AS count
+      FROM (
+        SELECT COUNT(*) AS rowCount
+        FROM user_preferences
+        WHERE key IS NOT NULL
+        GROUP BY userId, key
+        HAVING COUNT(*) > 1
+      )
+    `).get() as { count: number }).count;
+    if (duplicateCount > 0) {
+      sqlite.exec(`
+        DELETE FROM user_preferences
+        WHERE rowid IN (
+          SELECT rowid FROM (
+            SELECT
+              rowid,
+              ROW_NUMBER() OVER (
+                PARTITION BY userId, key
+                ORDER BY COALESCE(updatedAt, 0) DESC, rowid DESC
+              ) AS preferenceRank
+            FROM user_preferences
+            WHERE key IS NOT NULL
+          )
+          WHERE preferenceRank > 1
+        );
+      `);
+      console.warn(`[Database] Reconciled ${duplicateCount} duplicate keyed preference row(s).`);
+    }
+    sqlite.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS user_preferences_user_key_unique ON user_preferences(userId, key);`
+    );
+  } catch (e) {
+    console.warn("[Database] Could not reconcile or index keyed user preferences:", e);
+  }
+
   // Hot-path indexes for the highest-traffic lookups (outreach, evidence, email,
   // messaging, lawyer rating). All idempotent.
   const indexStatements = [

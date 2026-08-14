@@ -9,6 +9,7 @@ import { getAllFlags } from "../featureFlags";
 import { createAuditLog } from "../audit";
 import { APP_VERSION } from "../_core/version";
 import { resolveOutboundEmailConfiguration } from "../emailConfig";
+import { getLLMProviderDescriptors } from "../llm";
 
 /**
  * Phase 036 — admin/operator diagnostics.
@@ -37,7 +38,7 @@ export const adminRouter = router({
       db: { ready: dbReady },
       jobs: getJobStatus(),
       integrations: {
-        ai: !!(ENV.OPENAI_API_KEY || ENV.ANTHROPIC_API_KEY || ENV.GOOGLE_GEMINI_API_KEY || ENV.forgeApiKey),
+        ai: getLLMProviderDescriptors().some((provider) => provider.configured),
         s3: !!ENV.AWS_S3_BUCKET,
         google: !!(ENV.GOOGLE_CLIENT_ID && ENV.GOOGLE_CLIENT_SECRET),
         microsoft: !!(ENV.MICROSOFT_CLIENT_ID && ENV.MICROSOFT_CLIENT_SECRET),

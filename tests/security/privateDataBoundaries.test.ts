@@ -92,17 +92,16 @@ suite("private data boundaries", () => {
 
   it("persists privacy preferences per owner and includes them in export", async () => {
     expect(await app.makeCaller(B).gdpr.getConsent()).toMatchObject({ marketing: false, analytics: false });
-    expect(await app.makeCaller(B).gdpr.updateConsent({ marketing: true })).toMatchObject({
-      success: true,
-      marketing: true,
-      analytics: false,
-    });
-    expect(await app.makeCaller(B).gdpr.getConsent()).toMatchObject({ marketing: true, analytics: false });
+    await Promise.all([
+      app.makeCaller(B).gdpr.updateConsent({ marketing: true }),
+      app.makeCaller(B).gdpr.updateConsent({ analytics: true }),
+    ]);
+    expect(await app.makeCaller(B).gdpr.getConsent()).toMatchObject({ marketing: true, analytics: true });
     expect(await app.makeCaller(A).gdpr.getConsent()).toMatchObject({ marketing: false, analytics: false });
 
     const { data: exported } = await app.makeCaller(B).gdpr.exportData();
     expect(exported.user_preferences?.some((row: any) =>
-      row.key === 'privacy-consent' && JSON.parse(row.value).marketing === true
+      row.key === 'privacy-consent' && JSON.parse(row.value).marketing === true && JSON.parse(row.value).analytics === true
     )).toBe(true);
   });
 

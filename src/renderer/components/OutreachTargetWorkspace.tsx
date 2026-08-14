@@ -48,6 +48,7 @@ export default function OutreachTargetWorkspace({ targetType }: { targetType: Ta
 
   const caseQuery = trpc.cases.list.useQuery({ page: 1, limit: 100, sortBy: "updatedAt", sortDir: "desc" });
   const targetsQuery = trpc.outreachDirectory.list.useQuery({ targetType, limit: 200 });
+  const workflowPreferences = trpc.userPreferences.workflow.useQuery();
   const matchesQuery = trpc.outreachDirectory.matches.useQuery(
     { caseId, targetType },
     { enabled: Boolean(caseId), refetchOnWindowFocus: false },
@@ -95,7 +96,7 @@ export default function OutreachTargetWorkspace({ targetType }: { targetType: Ta
   const discoverMutation = trpc.outreachDirectory.discoverForCase.useMutation({
     onSuccess: async (report) => {
       await refreshWorkspace();
-      if (approved.length > 0 && caseId) matchMutation.mutate({ caseId, targetType });
+      if (report.reviewMode !== "automatic" && approved.length > 0 && caseId) matchMutation.mutate({ caseId, targetType });
       const message = `${report.newCandidates} new, ${report.existingCandidates} existing candidates`;
       if (report.status === "complete") toast.success(message);
       else if (report.status === "partial") toast.warning(`Partial discovery: ${message}`);
@@ -109,6 +110,14 @@ export default function OutreachTargetWorkspace({ targetType }: { targetType: Ta
       await refreshWorkspace();
       toast.success(input.status === "approved" ? `${singular} approved and case matches refreshed` : `${singular} rejected`);
       if (result.matches) await utils.outreachDirectory.matches.invalidate({ caseId: input.caseId!, targetType });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const batchReviewMutation = trpc.outreachDirectory.reviewBatch.useMutation({
+    onSuccess: async (result, input) => {
+      await refreshWorkspace();
+      toast.success(`${result.reviewed} ${label.toLocaleLowerCase()} candidates ${input.status}`);
     },
     onError: (error) => toast.error(error.message),
   });
@@ -207,7 +216,19 @@ export default function OutreachTargetWorkspace({ targetType }: { targetType: Ta
 
       <div className="grid min-w-0 gap-5 xl:grid-cols-2">
         <section className="min-w-0 space-y-3">
-          <div className="flex items-center justify-between"><h3 className="font-medium">Review queue</h3><Badge variant="secondary">{pending.length}</Badge></div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2"><h3 className="font-medium">Review queue</h3><Badge variant="secondary">{pending.length}</Badge></div>
+            {workflowPreferences.data?.outreachReviewMode === "batch" && pending.length > 0 ? (
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" disabled={batchReviewMutation.isPending} onClick={() => batchReviewMutation.mutate({ ids: pending.slice(0, 50).map((target) => target.id), status: "rejected", targetType, caseId: caseId || undefined })}>
+                  <X className="mr-1 h-4 w-4" />Reject batch
+                </Button>
+                <Button size="sm" disabled={batchReviewMutation.isPending} onClick={() => batchReviewMutation.mutate({ ids: pending.slice(0, 50).map((target) => target.id), status: "approved", targetType, caseId: caseId || undefined })}>
+                  <Check className="mr-1 h-4 w-4" />Approve batch
+                </Button>
+              </div>
+            ) : null}
+          </div>
           {targetsQuery.isLoading ? <Skeleton className="h-40 w-full" /> : pending.length ? pending.map((target) => (
             <Card key={target.id} className="border-border/50">
               <CardContent className="space-y-3 p-4">

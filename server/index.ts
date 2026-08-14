@@ -37,16 +37,16 @@ import { corsMiddleware, csrfGuard } from './_core/csrf';
 import { appRouter } from './routers';
 import { createContext } from './context';
 import { compressionMiddleware } from './compression';
-import { initCronScheduler } from './cronScheduler';
+import { initCronScheduler, stopCronScheduler } from './cronScheduler';
 import oauth2CallbacksRouter from './oauth2Callbacks';
 import haiIntegrationRoutes from './haiIntegrationRoutes';
-import { getDb } from './db';
+import { closeDatabaseForMaintenance, getDb } from './db';
 import { assertSecurityConfig, ENV } from './_core/env';
-import { listenHttpServer } from './listen';
+import { closeHttpServer, listenHttpServer } from './listen';
 import { APP_VERSION } from './_core/version';
 import { EvidenceAccessError, readSignedEvidenceDownload } from './evidenceAccess';
 import { sanitizeFilename } from './storage';
-import { initializeRealtimeServer } from './realtime';
+import { closeRealtimeServer, initializeRealtimeServer } from './realtime';
 import {
   normalizePublicPathPrefix,
   publicPathPrefixMiddleware,
@@ -269,8 +269,38 @@ export async function startServer(port: number = PORT): Promise<number> {
   return actualPort;
 }
 
+let shutdownPromise: Promise<void> | null = null;
+
+export function stopServer(): Promise<void> {
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    stopCronScheduler();
+    await closeRealtimeServer();
+    await closeHttpServer(httpServer);
+    closeDatabaseForMaintenance();
+  })().finally(() => {
+    shutdownPromise = null;
+  });
+  return shutdownPromise;
+}
+
 // Start if run directly (though Electron usually calls startServer)
 if (require.main === module) {
+  let signalReceived = false;
+  const shutdownFromSignal = (signal: NodeJS.Signals) => {
+    if (signalReceived) return;
+    signalReceived = true;
+    console.log(`[Server] ${signal} received; shutting down.`);
+    void stopServer().then(
+      () => { process.exitCode = 0; },
+      (error) => {
+        console.error('[Server] Graceful shutdown failed:', error);
+        process.exitCode = 1;
+      },
+    );
+  };
+  process.once('SIGINT', shutdownFromSignal);
+  process.once('SIGTERM', shutdownFromSignal);
   startServer().catch((error) => {
     console.error(error);
     process.exitCode = 1;

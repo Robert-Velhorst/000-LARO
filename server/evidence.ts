@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { and, desc, eq, like, or, sql } from "drizzle-orm";
 import { getDb } from "./db";
 import { evidence } from "./schema";
+import { emitRealtimeDataChange } from "./realtime";
 
 export type EvidenceFileRow = typeof evidence.$inferSelect;
 export type EvidenceFileView = EvidenceFileRow & {
@@ -120,6 +121,7 @@ export async function createEvidenceFile(
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+  emitRealtimeDataChange(userId, { scope: "evidence", caseId: data.caseId });
   return id;
 }
 
@@ -127,7 +129,9 @@ export async function deleteEvidenceFile(userId: string, id: string): Promise<bo
   const db = await getDb();
   if (!db) return false;
   const res = await db.delete(evidence).where(and(eq(evidence.id, id), eq(evidence.userId, userId)));
-  return (res as unknown as { affectedRows?: number }).affectedRows !== 0;
+  const deleted = Number((res as unknown as { changes?: number }).changes ?? 0) > 0;
+  if (deleted) emitRealtimeDataChange(userId, { scope: "evidence" });
+  return deleted;
 }
 
 export async function getEvidenceFilesByCase(userId: string, caseId: string): Promise<EvidenceFileView[]> {

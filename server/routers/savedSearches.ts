@@ -4,6 +4,7 @@ import { getDb } from "../db";
 import { savedSearches } from "../schema";
 import { eq, and } from "drizzle-orm";
 import { nanoid } from "nanoid";
+import { TRPCError } from "@trpc/server";
 
 /** Stored in `saved_searches.queryJson` — table has no separate searchType/filters columns. */
 type SavedSearchPayload = {
@@ -185,7 +186,7 @@ export const savedSearchesRouter = router({
       const db = await getDb();
       if (!db) throw new Error("Database not available");
 
-      await db
+      const result = await db
         .delete(savedSearches)
         .where(
           and(
@@ -193,6 +194,10 @@ export const savedSearchesRouter = router({
             eq(savedSearches.userId, ctx.user.id)
           )
         );
+
+      if (!Number((result as any)?.changes ?? 0)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Saved search not found" });
+      }
 
       return { success: true };
     }),

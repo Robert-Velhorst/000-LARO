@@ -29,6 +29,7 @@ export interface JobStatus {
 
 const jobStatus = new Map<string, JobStatus>();
 let initialized = false;
+const scheduledTasks: Array<{ stop: () => void; destroy?: () => void }> = [];
 
 export const CRON_SCHEDULES = {
   autoCollection: '0 2 * * *',
@@ -119,26 +120,26 @@ export function initCronScheduler() {
   ensureStatus('retention');
 
   // Daily auto-collection at 02:00.
-  cron.schedule(CRON_SCHEDULES.autoCollection, () => {
+  scheduledTasks.push(cron.schedule(CRON_SCHEDULES.autoCollection, () => {
     void runJob('auto-collection', async () => { await runAutoCollectionForAllCases(); }, { retries: 2 });
-  });
+  }));
 
   // Hourly outreach heartbeat — intentionally does NOT send anything.
-  cron.schedule(CRON_SCHEDULES.outreachHeartbeat, () => {
+  scheduledTasks.push(cron.schedule(CRON_SCHEDULES.outreachHeartbeat, () => {
     void runJob('outreach-heartbeat', async () => {
       console.log('[Cron] Automated outreach follow-ups are disabled; explicit approved sends only. Heartbeat recorded.');
     }, { retries: 0 });
-  });
+  }));
 
   // Phase 027 — daily reminder sweep: creates user notifications for items needing
   // attention (approval-pending, urgent-no-evidence). Idempotent per case/kind/day.
-  cron.schedule(CRON_SCHEDULES.reminders, () => {
+  scheduledTasks.push(cron.schedule(CRON_SCHEDULES.reminders, () => {
     void runJob('reminders', async () => {
       const { runReminderSweep } = await import('./reminders');
       const res = await runReminderSweep();
       console.log(`[Cron] Reminder sweep: ${res.created} reminder(s) across ${res.users} user(s).`);
     }, { retries: 1 });
-  });
+  }));
 
   const runRetention = async () => {
     const { runRetentionSweep } = await import('./retention');
@@ -151,9 +152,21 @@ export function initCronScheduler() {
   // Catch up after downtime at startup, then enforce the policy daily. The
   // sweep is idempotent and never touches cases, evidence, or outreach data.
   void runJob('retention', runRetention, { retries: 1 });
-  cron.schedule(CRON_SCHEDULES.retention, () => {
+  scheduledTasks.push(cron.schedule(CRON_SCHEDULES.retention, () => {
     void runJob('retention', runRetention, { retries: 1 });
-  });
+  }));
 
   console.log('[Cron] Scheduled tasks loaded:', getJobStatus().map((j) => j.name).join(', '));
+}
+
+export function stopCronScheduler(): void {
+  for (const task of scheduledTasks.splice(0)) {
+    try {
+      task.stop();
+      task.destroy?.();
+    } catch (error) {
+      console.warn('[Cron] Could not stop a scheduled task:', error);
+    }
+  }
+  initialized = false;
 }

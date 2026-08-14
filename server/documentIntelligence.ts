@@ -6,8 +6,7 @@ import {
   isSupportedDocumentAnalysisMimeType,
   isSupportedImageOcrMimeType,
 } from "../shared/evidenceFiles";
-import { ENV } from "./_core/env";
-import { invokeLLM } from "./llm";
+import { getLLMProviderDescriptors, invokeLLM, isLLMProviderConfigured, type LLMProvider } from "./llm";
 import { extractImageText } from "./ocr";
 
 export const DOCUMENT_ANALYSIS_VERSION = "2.2.0";
@@ -44,6 +43,9 @@ export type DocumentAnalysisResult = {
   status: "complete";
   extractionMethod: "plain_text" | "html" | "pdf_text" | "docx_text" | "email_text" | "ocr_text";
   extractionConfidence: number | null;
+  /** Missing on analyses created before provider-aware cache invalidation. */
+  analysisProvider?: "local" | LLMProvider;
+  providerModel?: string | null;
   providerStatus: "not_requested" | "unavailable" | "complete" | "invalid_response" | "failed";
   providerMessage: string | null;
   documentType: string;
@@ -328,6 +330,8 @@ function deterministicAnalysis(extraction: ExtractionResult): DocumentAnalysisRe
     status: "complete",
     extractionMethod: method,
     extractionConfidence: extraction.confidence,
+    analysisProvider: "local",
+    providerModel: null,
     providerStatus: "not_requested",
     providerMessage: null,
     documentType: classification.type,
@@ -384,9 +388,16 @@ function validateAiResult(value: unknown, validCitationIds: Set<string>): value 
   );
 }
 
-async function enrichAnalysis(base: DocumentAnalysisResult): Promise<DocumentAnalysisResult> {
-  if (!ENV.forgeApiKey) {
-    return { ...base, providerStatus: "unavailable", providerMessage: "Deep analysis provider is not configured; local source extraction completed." };
+async function enrichAnalysis(base: DocumentAnalysisResult, provider: LLMProvider): Promise<DocumentAnalysisResult> {
+  const providerModel = getLLMProviderDescriptors().find((item) => item.id === provider)?.model ?? null;
+  if (!isLLMProviderConfigured(provider)) {
+    return {
+      ...base,
+      analysisProvider: provider,
+      providerModel,
+      providerStatus: "unavailable",
+      providerMessage: `${provider} is selected but not configured; local source extraction completed.`,
+    };
   }
   const providerCitations: Citation[] = [];
   let providerLength = 0;
@@ -399,6 +410,7 @@ async function enrichAnalysis(base: DocumentAnalysisResult): Promise<DocumentAna
   const sourceText = providerCitations.map((citation) => `[${citation.id}] ${citation.quote}`).join("\n");
   try {
     const response = await invokeLLM({
+      provider,
       messages: [
         {
           role: "system",
@@ -454,10 +466,18 @@ async function enrichAnalysis(base: DocumentAnalysisResult): Promise<DocumentAna
     const parsed = typeof content === "string" ? JSON.parse(content) : content;
     const validIds = new Set(providerCitations.map((citation) => citation.id));
     if (!validateAiResult(parsed, validIds)) {
-      return { ...base, providerStatus: "invalid_response", providerMessage: "Deep analysis was discarded because one or more findings lacked valid source citations." };
+      return {
+        ...base,
+        analysisProvider: provider,
+        providerModel,
+        providerStatus: "invalid_response",
+        providerMessage: "Deep analysis was discarded because one or more findings lacked valid source citations.",
+      };
     }
     return {
       ...base,
+      analysisProvider: provider,
+      providerModel,
       providerStatus: "complete",
       providerMessage: null,
       summary: parsed.summary,
@@ -473,6 +493,8 @@ async function enrichAnalysis(base: DocumentAnalysisResult): Promise<DocumentAna
   } catch (error) {
     return {
       ...base,
+      analysisProvider: provider,
+      providerModel,
       providerStatus: "failed",
       providerMessage: error instanceof Error ? error.message.slice(0, 300) : "Deep analysis provider failed.",
     };
@@ -483,6 +505,7 @@ export async function analyzeDocumentBytes(options: {
   bytes: Buffer;
   mimeType: string;
   deepAnalysis: boolean;
+  provider?: LLMProvider;
 }): Promise<DocumentAnalysisResult> {
   const extraction = await extractDocumentText(options.bytes, options.mimeType);
   if (extraction.text.length < 20) {
@@ -493,5 +516,5 @@ export async function analyzeDocumentBytes(options: {
     );
   }
   const base = deterministicAnalysis(extraction);
-  return options.deepAnalysis ? enrichAnalysis(base) : base;
+  return options.deepAnalysis ? enrichAnalysis(base, options.provider || "forge") : base;
 }

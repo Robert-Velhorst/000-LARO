@@ -286,7 +286,12 @@ export const caseManagementRouter = router({
     if (!db) throw new Error("Database not available");
     const [current] = await db.select({ status: casesTable.status }).from(casesTable).where(eq(casesTable.id, input.caseId)).limit(1);
     assertCaseTransition(current?.status ?? null, input.status);
-    await db.update(casesTable).set({ status: input.status, updatedAt: new Date() } as any).where(and(eq(casesTable.id, input.caseId), eq(casesTable.userId, ctx.user.id)));
+    const result = await db.update(casesTable)
+      .set({ status: input.status, updatedAt: new Date() } as any)
+      .where(eq(casesTable.id, input.caseId));
+    if (!Number((result as any)?.changes ?? 0)) {
+      throw new TRPCError({ code: "CONFLICT", message: "Case changed before the status could be saved" });
+    }
     return { ok: true as const, status: input.status };
   }),
   getStatusHistory: protectedProcedure.input(z.object({ caseId: z.string() })).query(async ({ input, ctx }) => {

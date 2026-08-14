@@ -1,34 +1,11 @@
-/**
- * Legal Document Generator Service
- * 
- * Automatically generates legal documents based on gap analysis findings:
- * - Discovery requests (Article 843a Rv - Dutch Code of Civil Procedure)
- * - Evidence preservation notices
- * - Spoliation warnings
- * - Formal demand letters
- * 
- * All documents are based on Dutch law and legal precedents.
- */
-
 interface GapAnalysisData {
   caseId: string;
   clientName: string;
   opponentName: string;
   opponentAddress?: string;
-  gaps: Array<{
-    type: string;
-    description: string;
-    durationDays?: number;
-  }>;
-  missingDocuments: Array<{
-    type: string;
-    legalRequirement?: string;
-    deadline?: string;
-  }>;
-  suspiciousPatterns: Array<{
-    pattern: string;
-    evidence: string;
-  }>;
+  gaps: Array<{ type: string; description: string; durationDays?: number }>;
+  missingDocuments: Array<{ type: string; legalRequirement?: string; deadline?: string }>;
+  suspiciousPatterns: Array<{ pattern: string; evidence: string }>;
 }
 
 export interface GeneratedDocument {
@@ -40,396 +17,163 @@ export interface GeneratedDocument {
   consequences?: string[];
 }
 
+const REVIEW_HEADER = "DRAFT FOR FACTUAL AND LEGAL REVIEW - DO NOT SEND WITHOUT REVIEW";
+
 class LegalDocumentGeneratorService {
-  /**
-   * Generate discovery request under Article 843a Rv
-   * (Right to inspect documents)
-   */
   generateDiscoveryRequest(data: GapAnalysisData): GeneratedDocument {
-    const today = new Date();
-    const deadline = new Date(today);
-    deadline.setDate(deadline.getDate() + 14); // 14-day deadline
+    const deadline = this.suggestedResponseDate(14);
+    const records = this.numbered(
+      data.missingDocuments.map((item) => item.type),
+      "No specific missing records have been identified. Add the records sought before sending."
+    );
+    return this.document(
+      "discovery_request",
+      "Draft records request",
+      data,
+      `Subject: Request for records concerning case ${data.caseId}
 
-    const missingDocsText = data.missingDocuments
-      .map((doc, idx) => `${idx + 1}. ${doc.type}${doc.legalRequirement ? ` (${doc.legalRequirement})` : ""}`)
-      .join("\n");
+Dear Sir/Madam,
 
-    const content = `
-**FORMEEL VERZOEK TOT INZAGE DOCUMENTEN**
-**Artikel 843a Wetboek van Burgerlijke Rechtsvordering**
+On behalf of ${data.clientName}, I request copies of the records listed below that may be relevant to the matter between the parties:
 
-Datum: ${this.formatDate(today)}
+${records}
 
-Aan: ${data.opponentName}
-${data.opponentAddress || ""}
+Please respond by ${this.formatDate(deadline)}. This is a proposed response date and is not presented as a statutory or court-ordered deadline. If a requested record does not exist, is not held by you, or cannot be provided, please identify the item and explain that position. Please also state whether responsive records are held in another system or by another custodian.
 
-Betreft: Formeel verzoek tot inzage en afschrift van documenten
-Zaaknummer: ${data.caseId}
+This draft does not assert that ${data.clientName} has a legal entitlement to every listed record. Scope, legal basis, confidentiality, privilege, proportionality, and the correct procedure must be checked for the specific matter before sending.
 
-Geachte heer/mevrouw,
-
-Namens mijn cliënt, ${data.clientName}, doe ik hierbij een formeel beroep op artikel 843a Wetboek van Burgerlijke Rechtsvordering.
-
-**1. JURIDISCHE GRONDSLAG**
-
-Op grond van artikel 843a lid 1 Rv kan degene die daarbij rechtmatig belang heeft, inzage, afschrift of uittreksel vorderen van bepaalde bescheiden aangaande een rechtsbetrekking waarin hij partij is.
-
-**2. RECHTMATIG BELANG**
-
-Mijn cliënt heeft een rechtmatig belang bij inzage in de hieronder genoemde documenten, aangezien deze betrekking hebben op de rechtsbetrekking tussen partijen en noodzakelijk zijn voor de beoordeling van de rechtspositie van mijn cliënt.
-
-**3. GEVORDERDE DOCUMENTEN**
-
-Hierbij verzoek ik u om binnen 14 dagen na dagtekening van deze brief inzage, afschrift of uittreksel te verstrekken van de volgende documenten:
-
-${missingDocsText}
-
-**4. WETTELIJKE VERPLICHTING**
-
-Artikel 843a Rv verplicht u tot het verstrekken van de gevraagde documenten, tenzij:
-a) Er een wettelijk verschoningsrecht bestaat;
-b) Het belang van de verzoeker niet opweegt tegen het belang van de bescheiden;
-c) Er gewichtige redenen zijn om aan het verzoek niet te voldoen.
-
-**5. TERMIJN EN GEVOLGEN**
-
-Ik verzoek u vriendelijk doch dringend om uiterlijk op ${this.formatDate(deadline)} aan dit verzoek te voldoen.
-
-Indien u niet tijdig aan dit verzoek voldoet, zal ik genoodzaakt zijn om:
-- Een kort geding procedure te starten op grond van artikel 843a Rv;
-- De proceskosten op u te verhalen;
-- Een beroep te doen op bewijsvermoeden (artikel 843a lid 4 Rv);
-- Schadevergoeding te vorderen wegens onrechtmatig handelen.
-
-**6. BEWIJSVERMOEDEN**
-
-Ingevolge artikel 843a lid 4 Rv geldt dat indien u zonder gewichtige redenen niet voldoet aan een bevel tot overlegging, de rechter het als vaststaand kan aannemen dat de beweerde feiten overeenstemmen met de werkelijkheid.
-
-Hoogachtend,
-
-[Advocaat naam]
-Namens ${data.clientName}
-
-**Bijlagen:**
-- Overzicht communicatiegaten
-- Analyse ontbrekende documenten
-`.trim();
-
-    return {
-      type: "discovery_request",
-      title: "Formeel Verzoek tot Inzage Documenten (Art. 843a Rv)",
-      content,
-      legalBasis: [
-        "Artikel 843a Wetboek van Burgerlijke Rechtsvordering",
-        "HR 27 april 2007, ECLI:NL:HR:2007:BA0963 (inzagerecht)",
-        "HR 6 oktober 2000, ECLI:NL:HR:2000:AA7512 (bewijsvermoeden)",
-      ],
-      deadline: this.formatDate(deadline),
-      consequences: [
-        "Kort geding procedure",
-        "Bewijsvermoeden (art. 843a lid 4 Rv)",
-        "Proceskosten",
-        "Schadevergoeding",
-      ],
-    };
+Yours faithfully,
+[Name]
+For ${data.clientName}`,
+      deadline,
+      ["Verify the legal basis and procedure", "Narrow each requested record by date, subject, and custodian", "Remove privileged or irrelevant categories"]
+    );
   }
 
-  /**
-   * Generate evidence preservation notice
-   */
   generatePreservationNotice(data: GapAnalysisData): GeneratedDocument {
-    const today = new Date();
+    const records = this.numbered(
+      data.missingDocuments.map((item) => item.type),
+      "No specific record categories have been identified. Define a proportionate scope before sending."
+    );
+    return this.document(
+      "preservation_notice",
+      "Draft records preservation request",
+      data,
+      `Subject: Request to preserve potentially relevant records for case ${data.caseId}
 
-    const content = `
-**FORMELE KENNISGEVING BEWIJSBEWARING**
+Dear Sir/Madam,
 
-Datum: ${this.formatDate(today)}
+On behalf of ${data.clientName}, I ask that reasonable steps be considered to preserve potentially relevant records while this matter is reviewed. The current workspace identifies these record categories:
 
-Aan: ${data.opponentName}
-${data.opponentAddress || ""}
+${records}
 
-Betreft: Formele kennisgeving bewijsbewaring
-Zaaknummer: ${data.caseId}
+Please confirm receipt and identify any material limitation affecting preservation, such as routine deletion, unavailable accounts, former custodians, or records held by another party.
 
-Geachte heer/mevrouw,
+This draft does not determine that a legal preservation duty exists, define its duration, or allege destruction or concealment. A qualified reviewer should verify the applicable duties, scope, custodians, systems, retention periods, and proportionality before sending.
 
-Namens mijn cliënt, ${data.clientName}, doe ik u hierbij een formele kennisgeving toekomen met betrekking tot de bewaring van bewijs.
-
-**1. VERPLICHTING TOT BEWIJSBEWARING**
-
-Hierbij stel ik u formeel in kennis dat u verplicht bent om alle documenten, gegevens en andere bewijsmiddelen die betrekking hebben op de rechtsbetrekking tussen partijen te bewaren.
-
-**2. TE BEWAREN MATERIAAL**
-
-Dit betreft onder meer, maar niet uitsluitend:
-- Alle e-mailcorrespondentie
-- Interne memo's en notities
-- Contracten en overeenkomsten
-- Personeelsdossiers
-- Financiële documenten
-- Digitale bestanden en back-ups
-- Metadata van elektronische documenten
-
-**3. JURIDISCHE CONSEQUENTIES**
-
-Indien u bewijsmateriaal vernietigt, wijzigt of anderszins ontoegankelijk maakt nadat u deze kennisgeving heeft ontvangen, kan dit leiden tot:
-
-a) **Bewijsvermoeden**: De rechter kan aannemen dat het vernietigde bewijs in het voordeel van mijn cliënt zou hebben gesproken.
-
-b) **Sancties wegens "spoliation of evidence"**: Vernietigen van bewijs na kennisgeving wordt beschouwd als onrechtmatig handelen.
-
-c) **Schadevergoeding**: U kunt aansprakelijk worden gesteld voor de schade die voortvloeit uit het verlies van bewijs.
-
-d) **Strafbare feiten**: In ernstige gevallen kan vernietiging van bewijs strafbaar zijn (art. 344 Sr - valsheid in geschrifte).
-
-**4. PRECEDENTEN**
-
-Nederlandse rechtspraak heeft herhaaldelijk geoordeeld dat het vernietigen van bewijs na kennisgeving tot nadelige gevolgen leidt:
-- Hof Amsterdam 17 april 2012, ECLI:NL:GHAMS:2012:BW2877
-- Rechtbank Rotterdam 15 juni 2016, ECLI:NL:RBROT:2016:4521
-
-**5. DUUR VAN BEWAARPLICHT**
-
-De bewaarplicht geldt vanaf heden tot het moment waarop de rechtsbetrekking tussen partijen definitief is beëindigd en alle rechtsmiddelen zijn uitgeput.
-
-**6. BEVESTIGING**
-
-Ik verzoek u om binnen 7 dagen schriftelijk te bevestigen dat u:
-a) Deze kennisgeving heeft ontvangen;
-b) Alle relevante bewijsmiddelen zult bewaren;
-c) Instructies heeft gegeven aan uw medewerkers om geen bewijs te vernietigen.
-
-Hoogachtend,
-
-[Advocaat naam]
-Namens ${data.clientName}
-`.trim();
-
-    return {
-      type: "preservation_notice",
-      title: "Formele Kennisgeving Bewijsbewaring",
-      content,
-      legalBasis: [
-        "Bewijsvermoeden bij vernietiging bewijs",
-        "Onrechtmatig handelen (art. 6:162 BW)",
-        "Valsheid in geschrifte (art. 344 Sr)",
-      ],
-      consequences: [
-        "Bewijsvermoeden ten gunste van cliënt",
-        "Schadevergoeding",
-        "Mogelijke strafrechtelijke gevolgen",
-      ],
-    };
+Yours faithfully,
+[Name]
+For ${data.clientName}`,
+      undefined,
+      ["Verify whether a preservation duty applies", "Define relevant systems, dates, and custodians", "Avoid requesting unrelated personal or privileged material"]
+    );
   }
 
-  /**
-   * Generate spoliation warning (when evidence has already been destroyed)
-   */
   generateSpoliationWarning(data: GapAnalysisData): GeneratedDocument {
-    const today = new Date();
+    const observations = this.numbered(
+      data.suspiciousPatterns.map((item) => `${item.pattern}${item.evidence ? ` (workspace references: ${item.evidence})` : ""}`),
+      "No record pattern is currently identified. Do not send this draft without adding verified facts."
+    );
+    return this.document(
+      "spoliation_warning",
+      "Draft missing-records clarification",
+      data,
+      `Subject: Clarification requested about records for case ${data.caseId}
 
-    const patternsText = data.suspiciousPatterns
-      .map((p, idx) => `${idx + 1}. ${p.pattern}\n   Bewijs: ${p.evidence}`)
-      .join("\n\n");
+Dear Sir/Madam,
 
-    const content = `
-**FORMELE WAARSCHUWING BEWIJSVERNIETIGING**
-**Spoliation of Evidence**
+The current case workspace contains the following record-availability questions:
 
-Datum: ${this.formatDate(today)}
+${observations}
 
-Aan: ${data.opponentName}
-${data.opponentAddress || ""}
+Please clarify whether the referenced records exist, where they are held, whether they remain accessible, and what searches have been performed. If records are unavailable, please explain when and why they became unavailable and identify any applicable retention process.
 
-Betreft: Formele waarschuwing bewijsvernietiging (spoliation)
-Zaaknummer: ${data.caseId}
+The observations above are generated from incomplete case data. Missing records or communication gaps do not by themselves show that records were destroyed or concealed, identify anyone's intent, establish liability, or determine any legal consequence. Those questions require source verification and legal review.
 
-Geachte heer/mevrouw,
-
-Namens mijn cliënt, ${data.clientName}, constateer ik met grote bezorgdheid dat er sprake lijkt te zijn van het vernietigen, wijzigen of achterhouden van bewijs.
-
-**1. GECONSTATEERDE BEWIJSVERNIETIGING**
-
-Op basis van analyse van de beschikbare informatie zijn de volgende verdachte patronen geconstateerd:
-
-${patternsText}
-
-**2. JURIDISCHE KWALIFICATIE**
-
-Het vernietigen of achterhouden van bewijs wordt in het Nederlands recht aangeduid als "spoliation of evidence" en wordt beschouwd als:
-a) Onrechtmatig handelen (art. 6:162 BW)
-b) Schending van de processuele goede trouw
-c) In ernstige gevallen: valsheid in geschrifte (art. 344 Sr)
-
-**3. BEWIJSVERMOEDEN**
-
-Op grond van vaste jurisprudentie geldt dat indien een partij bewijs vernietigt of achterhoudt, de rechter mag aannemen dat dit bewijs in het nadeel van die partij zou hebben gesproken.
-
-**Relevante jurisprudentie:**
-- HR 6 oktober 2000, ECLI:NL:HR:2000:AA7512
-- Hof Amsterdam 17 april 2012, ECLI:NL:GHAMS:2012:BW2877
-- Rechtbank Rotterdam 15 juni 2016, ECLI:NL:RBROT:2016:4521
-
-**4. JURIDISCHE CONSEQUENTIES**
-
-De geconstateerde bewijsvernietiging zal in de procedure tegen u worden gebruikt als:
-
-a) **Bewijs van kwade trouw**: Het vernietigen van bewijs toont aan dat u iets te verbergen heeft.
-
-b) **Bewijsvermoeden**: De rechter zal aannemen dat de vernietigde documenten de stelling van mijn cliënt ondersteunen.
-
-c) **Verzwarende omstandigheid**: Bij toewijzing van schadevergoeding kan de bewijsvernietiging leiden tot hogere schadevergoeding.
-
-d) **Proceskosten**: U zult worden veroordeeld in de volledige proceskosten.
-
-e) **Reputatieschade**: Bewijsvernietiging kan leiden tot publicatie in jurisprudentie.
-
-**5. LAATSTE KANS**
-
-Ondanks het voorgaande bied ik u hierbij een laatste kans om alsnog alle relevante documenten en informatie te verstrekken.
-
-Indien u binnen 7 dagen na dagtekening van deze brief alsnog volledig meewerkt en alle documenten verstrekt, zal ik dit in uw voordeel meewegen.
-
-**6. VERVOLGSTAPPEN**
-
-Indien u niet binnen de gestelde termijn alsnog meewerkt, zal ik:
-- Een beroep doen op bewijsvermoeden in de procedure
-- Schadevergoeding vorderen wegens bewijsvernietiging
-- Aangifte overwegen wegens valsheid in geschrifte
-- De bewijsvernietiging publiceren in de processtukken
-
-Hoogachtend,
-
-[Advocaat naam]
-Namens ${data.clientName}
-
-**Bijlagen:**
-- Analyse verdachte patronen
-- Overzicht ontbrekende documenten
-- Jurisprudentie bewijsvernietiging
-`.trim();
-
-    return {
-      type: "spoliation_warning",
-      title: "Formele Waarschuwing Bewijsvernietiging (Spoliation)",
-      content,
-      legalBasis: [
-        "Onrechtmatig handelen (art. 6:162 BW)",
-        "Bewijsvermoeden bij vernietiging",
-        "Valsheid in geschrifte (art. 344 Sr)",
-        "HR 6 oktober 2000, ECLI:NL:HR:2000:AA7512",
-      ],
-      consequences: [
-        "Bewijsvermoeden ten gunste van cliënt",
-        "Hogere schadevergoeding",
-        "Volledige proceskostenveroordeling",
-        "Mogelijke strafrechtelijke aangifte",
-        "Reputatieschade door publicatie",
-      ],
-    };
+Yours faithfully,
+[Name]
+For ${data.clientName}`,
+      undefined,
+      ["Verify every observation against the source documents", "Ask for clarification without alleging misconduct", "Have a qualified reviewer assess any legal significance"]
+    );
   }
 
-  /**
-   * Generate formal demand letter
-   */
   generateDemandLetter(data: GapAnalysisData, demandAmount?: number): GeneratedDocument {
-    const today = new Date();
-    const deadline = new Date(today);
-    deadline.setDate(deadline.getDate() + 14);
+    const deadline = this.suggestedResponseDate(14);
+    const openItems = this.numbered(
+      data.gaps.map((item) => `${item.description || item.type}${item.durationDays ? ` (${item.durationDays} days in the available record)` : ""}`),
+      "No open item is currently identified. Add verified facts and the requested resolution before sending."
+    );
+    const payment = demandAmount
+      ? `\nThe proposed resolution currently includes payment of EUR ${demandAmount.toLocaleString("nl-NL")}. Verify the amount, calculation, currency, payee, and legal basis before sending.\n`
+      : "";
+    return this.document(
+      "demand_letter",
+      "Draft request for resolution",
+      data,
+      `Subject: Proposed resolution of case ${data.caseId}
 
-    const gapsText = data.gaps
-      .map((gap, idx) => `${idx + 1}. ${gap.description}${gap.durationDays ? ` (${gap.durationDays} dagen geen reactie)` : ""}`)
-      .join("\n");
+Dear Sir/Madam,
 
-    const content = `
-**FORMELE AANMANING**
+On behalf of ${data.clientName}, I request a response concerning the following open items recorded in the current case workspace:
 
-Datum: ${this.formatDate(today)}
+${openItems}
+${payment}
+Please provide a substantive response by ${this.formatDate(deadline)}. This is a proposed response date, not a verified statutory or contractual deadline.
 
-Aan: ${data.opponentName}
-${data.opponentAddress || ""}
+This draft does not establish breach, default, damages, interest, costs, or entitlement to a remedy. The facts, requested outcome, legal basis, required formalities, recipients, and deadline must be checked for the specific matter before sending.
 
-Betreft: Formele aanmaning tot nakoming verplichtingen
-Zaaknummer: ${data.caseId}
+Yours faithfully,
+[Name]
+For ${data.clientName}`,
+      deadline,
+      ["Verify the facts and requested remedy", "Check required notice formalities and the correct recipient", "Confirm any amount and deadline from primary sources"]
+    );
+  }
 
-Geachte heer/mevrouw,
-
-Namens mijn cliënt, ${data.clientName}, stel ik u hierbij formeel in gebreke.
-
-**1. FEITEN**
-
-Tussen partijen bestaat een rechtsbetrekking waarbij u verplichtingen heeft jegens mijn cliënt. Ondanks herhaalde verzoeken heeft u nagelaten om aan deze verplichtingen te voldoen.
-
-**2. GECONSTATEERDE TEKORTKOMINGEN**
-
-${gapsText}
-
-**3. INGEBREKESTELLING**
-
-Hierbij stel ik u formeel in gebreke en som ik u om binnen 14 dagen na dagtekening van deze brief:
-a) Volledig te voldoen aan uw verplichtingen
-b) Alle gevraagde documenten te verstrekken
-c) Schriftelijk te reageren op alle openstaande vragen
-${demandAmount ? `d) Een bedrag van €${demandAmount.toLocaleString("nl-NL")} te betalen` : ""}
-
-**4. JURIDISCHE CONSEQUENTIES**
-
-Indien u niet binnen de gestelde termijn aan deze aanmaning voldoet, zal ik zonder nadere waarschuwing:
-- Een gerechtelijke procedure starten
-- Vergoeding vorderen van alle schade en kosten
-- Wettelijke rente vorderen vanaf de datum van deze aanmaning
-- Buitengerechtelijke incassokosten vorderen (15% met minimum €40)
-- Een beroep doen op bewijsvermoeden wegens uw non-coöperatie
-
-**5. KOSTEN**
-
-Alle kosten die voortvloeien uit uw nalatigheid, waaronder:
-- Buitengerechtelijke incassokosten
-- Gerechtelijke kosten
-- Advocaatkosten
-- Wettelijke rente
-komen voor uw rekening.
-
-**6. TERMIJN**
-
-Uiterlijke reactiedatum: ${this.formatDate(deadline)}
-
-Hoogachtend,
-
-[Advocaat naam]
-Namens ${data.clientName}
-`.trim();
-
+  private document(
+    type: GeneratedDocument["type"],
+    title: string,
+    data: GapAnalysisData,
+    body: string,
+    deadline?: Date,
+    reviewChecklist: string[] = []
+  ): GeneratedDocument {
     return {
-      type: "demand_letter",
-      title: "Formele Aanmaning",
-      content,
-      legalBasis: [
-        "Ingebrekestelling (art. 6:82 BW)",
-        "Wettelijke rente (art. 6:119 BW)",
-        "Buitengerechtelijke incassokosten (Besluit vergoeding voor buitengerechtelijke incassokosten)",
-      ],
-      deadline: this.formatDate(deadline),
-      consequences: [
-        "Gerechtelijke procedure",
-        "Schadevergoeding",
-        "Wettelijke rente",
-        "Buitengerechtelijke incassokosten (15%)",
-        "Proceskosten",
-      ],
+      type,
+      title,
+      content: `${REVIEW_HEADER}\n\nDate: ${this.formatDate(new Date())}\nTo: ${data.opponentName}\n${data.opponentAddress || "[Address to verify]"}\n\n${body}`,
+      legalBasis: [],
+      deadline: deadline ? this.formatDate(deadline) : undefined,
+      consequences: reviewChecklist,
     };
   }
 
-  /**
-   * Format date in Dutch format (DD-MM-YYYY)
-   */
+  private numbered(items: string[], emptyMessage: string): string {
+    return items.length > 0 ? items.map((item, index) => `${index + 1}. ${item}`).join("\n") : emptyMessage;
+  }
+
+  private suggestedResponseDate(days: number): Date {
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    return date;
+  }
+
   private formatDate(date: Date): string {
-    const day = date.getDate().toString().padStart(2, "0");
-    const month = (date.getMonth() + 1).toString().padStart(2, "0");
-    const year = date.getFullYear();
-    return `${day}-${month}-${year}`;
+    return [date.getDate(), date.getMonth() + 1, date.getFullYear()]
+      .map((part, index) => index < 2 ? String(part).padStart(2, "0") : String(part))
+      .join("-");
   }
 }
 
 export const legalDocumentGeneratorService = new LegalDocumentGeneratorService();
-

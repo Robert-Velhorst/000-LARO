@@ -6,6 +6,10 @@ import { analyzeDocumentBytes, DOCUMENT_ANALYSIS_VERSION, type DocumentAnalysisR
 import { getEvidenceFile } from "./evidence";
 import { documentAnalyses } from "./schema";
 import { storageRead } from "./storage";
+import { getWorkflowPreferences } from "./workflowPreferences";
+import { getLLMProviderDescriptors, isLLMProviderConfigured } from "./llm";
+
+const PROVIDER_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
 
 export function parseDocumentAnalysisResult(value: string): DocumentAnalysisResult {
   return JSON.parse(value) as DocumentAnalysisResult;
@@ -19,7 +23,7 @@ function parseMetadata(value: string | null): Record<string, unknown> {
 export async function analyzeStoredEvidence(options: {
   userId: string;
   evidenceId: string;
-  deepAnalysis: boolean;
+  deepAnalysis?: boolean;
   force?: boolean;
 }) {
   const db = await getDb();
@@ -28,6 +32,14 @@ export async function analyzeStoredEvidence(options: {
   await assertCaseOwnership(item.caseId, options.userId);
 
   const metadata = parseMetadata(item.metadata);
+  const preferences = await getWorkflowPreferences(options.userId);
+  const provider = preferences.analysisProvider === "local" ? undefined : preferences.analysisProvider;
+  const requestedDeepAnalysis = options.deepAnalysis ?? true;
+  const deepAnalysis = Boolean(
+    requestedDeepAnalysis &&
+    provider &&
+    preferences.shareRawDocumentContent
+  );
   const storageKey = metadata.storageKey;
   if (typeof storageKey !== "string" || !storageKey) {
     throw new Error("This evidence record has no stored source file to analyze");
@@ -42,19 +54,47 @@ export async function analyzeStoredEvidence(options: {
     ))
     .orderBy(desc(documentAnalyses.updatedAt))
     .limit(1);
-  const cachedResult = cached ? parseDocumentAnalysisResult(cached.result) : null;
-  const providerUpgradeNeeded = Boolean(
-    options.deepAnalysis && process.env.FORGE_API_KEY && cachedResult?.providerStatus !== "complete"
+  let cachedResult: DocumentAnalysisResult | null = null;
+  if (cached) {
+    try {
+      cachedResult = parseDocumentAnalysisResult(cached.result);
+    } catch {
+      // A corrupt cache must never make the source document permanently unanalyzable.
+    }
+  }
+  const requestedAnalysisProvider = deepAnalysis && provider ? provider : "local";
+  const requestedProviderModel = provider
+    ? getLLMProviderDescriptors().find((item) => item.id === provider)?.model ?? null
+    : null;
+  const providerMatches = cachedResult?.analysisProvider === requestedAnalysisProvider &&
+    (requestedAnalysisProvider === "local" || cachedResult?.providerModel === requestedProviderModel);
+  const cachedAgeMs = cached ? Math.max(0, Date.now() - cached.updatedAt.getTime()) : Number.POSITIVE_INFINITY;
+  const providerRetryNeeded = Boolean(
+    deepAnalysis &&
+    provider &&
+    providerMatches &&
+    isLLMProviderConfigured(provider) &&
+    (cachedResult?.providerStatus === "unavailable" || (
+      cachedResult?.providerStatus !== "complete" && cachedAgeMs >= PROVIDER_RETRY_COOLDOWN_MS
+    ))
   );
-  if (!options.force && cached && !providerUpgradeNeeded && (!sourceHash || cached.contentHash === sourceHash)) {
-    return { id: cached.id, cached: true, result: cachedResult! };
+  if (
+    !options.force &&
+    cached &&
+    cachedResult &&
+    providerMatches &&
+    !providerRetryNeeded &&
+    (!sourceHash || cached.contentHash === sourceHash)
+  ) {
+    return { id: cached.id, cached: true, result: cachedResult };
   }
 
   const bytes = await storageRead(storageKey);
   const result = await analyzeDocumentBytes({
     bytes,
     mimeType: item.mimeType || "application/octet-stream",
-    deepAnalysis: options.deepAnalysis,
+    deepAnalysis,
+    provider,
   });
   const id = cached?.id ?? randomUUID();
   const values = {
@@ -74,7 +114,17 @@ export async function analyzeStoredEvidence(options: {
     analyzedChars: result.analyzedChars,
     updatedAt: new Date(),
   };
-  if (cached) await db.update(documentAnalyses).set(values).where(eq(documentAnalyses.id, cached.id));
-  else await db.insert(documentAnalyses).values({ ...values, createdAt: new Date() });
-  return { id, cached: false, result };
+  await db.insert(documentAnalyses).values({ ...values, createdAt: cached?.createdAt ?? new Date() })
+    .onConflictDoUpdate({
+      target: [documentAnalyses.evidenceId, documentAnalyses.analysisVersion],
+      set: values,
+    });
+  const [stored] = await db.select({ id: documentAnalyses.id })
+    .from(documentAnalyses)
+    .where(and(
+      eq(documentAnalyses.evidenceId, item.id),
+      eq(documentAnalyses.analysisVersion, DOCUMENT_ANALYSIS_VERSION),
+    ))
+    .limit(1);
+  return { id: stored?.id ?? id, cached: false, result };
 }

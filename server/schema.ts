@@ -524,19 +524,25 @@ export const savedSearches = sqliteTable("saved_searches", {
   createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
 });
 
-export const userPreferences = sqliteTable("user_preferences", {
-  id: text("id").primaryKey(),
-  userId: text("userId").notNull(),
-  key: text("key"),
-  value: text("value"),
-  theme: text("theme"),
-  dashboardWidgets: text("dashboardWidgets"),
-  notificationSettings: text("notificationSettings"),
-  preferredLawyers: text("preferredLawyers"),
-  caseTemplates: text("caseTemplates"),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }).default(new Date()),
-  userPreferences: text("userPreferences"),
-});
+export const userPreferences = sqliteTable(
+  "user_preferences",
+  {
+    id: text("id").primaryKey(),
+    userId: text("userId").notNull(),
+    key: text("key"),
+    value: text("value"),
+    theme: text("theme"),
+    dashboardWidgets: text("dashboardWidgets"),
+    notificationSettings: text("notificationSettings"),
+    preferredLawyers: text("preferredLawyers"),
+    caseTemplates: text("caseTemplates"),
+    updatedAt: integer("updatedAt", { mode: "timestamp" }).default(new Date()),
+    userPreferences: text("userPreferences"),
+  },
+  (table) => ({
+    userKeyUnique: uniqueIndex("user_preferences_user_key_unique").on(table.userId, table.key),
+  }),
+);
 
 export const messageTemplates = sqliteTable("message_templates", {
   id: text("id").primaryKey(),

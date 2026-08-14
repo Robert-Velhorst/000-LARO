@@ -1,5 +1,5 @@
 import { load } from "cheerio";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getDb } from "./db";
 import {
@@ -485,6 +485,48 @@ export async function reviewOutreachTarget(options: {
     ));
   }
   return { success: true as const, targetType: options.targetType };
+}
+
+export async function reviewOutreachTargetsBatch(options: {
+  userId: string;
+  ids: string[];
+  targetType: OutreachTargetType;
+  status: "approved" | "rejected";
+  reviewNotes: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const ids = [...new Set(options.ids)];
+  if (ids.length !== options.ids.length) throw new Error("Duplicate outreach target IDs are not allowed");
+  return db.transaction((tx) => {
+    const rows = tx.select({ id: outreachDirectoryTargets.id })
+      .from(outreachDirectoryTargets)
+      .where(and(
+        eq(outreachDirectoryTargets.userId, options.userId),
+        eq(outreachDirectoryTargets.targetType, options.targetType),
+        inArray(outreachDirectoryTargets.id, ids),
+      ))
+      .all();
+    if (rows.length !== ids.length) throw new Error("One or more outreach targets were not found");
+    const now = new Date();
+    tx.update(outreachDirectoryTargets).set({
+      status: options.status,
+      reviewNotes: options.reviewNotes.trim() || null,
+      reviewedAt: now,
+      updatedAt: now,
+    }).where(and(
+      eq(outreachDirectoryTargets.userId, options.userId),
+      eq(outreachDirectoryTargets.targetType, options.targetType),
+      inArray(outreachDirectoryTargets.id, ids),
+    )).run();
+    if (options.status !== "approved") {
+      tx.delete(caseOutreachTargetMatches).where(and(
+        eq(caseOutreachTargetMatches.userId, options.userId),
+        inArray(caseOutreachTargetMatches.targetId, ids),
+      )).run();
+    }
+    return { success: true as const, reviewed: ids.length };
+  });
 }
 
 function scoreTarget(

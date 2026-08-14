@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { listenHttpServer } from '../../server/listen';
+import { closeHttpServer, listenHttpServer } from '../../server/listen';
 import {
   isDesktopDevelopmentMode,
   resolveDesktopServerPort,
@@ -35,6 +35,15 @@ describe('HTTP server binding', () => {
     await expect(listenHttpServer(second, port, '127.0.0.1')).rejects.toMatchObject({
       code: 'EADDRINUSE',
     });
+  });
+
+  it('closes a listening server idempotently', async () => {
+    const server = createServer((_request, response) => response.end('ok'));
+    servers.push(server);
+    await listenHttpServer(server, 0, '127.0.0.1');
+    await closeHttpServer(server);
+    expect(server.listening).toBe(false);
+    await expect(closeHttpServer(server)).resolves.toBeUndefined();
   });
 });
 

@@ -12,13 +12,14 @@ import { assertOutreachTransition } from "../stateMachines";
 import { cases as casesTable, outreachStatus, lawyers } from '../schema';
 import { eq, and, inArray } from "drizzle-orm";
 import { findCaseLawyersWithOfficialDirectory } from "../matching";
+import { getWorkflowPreferences } from "../workflowPreferences";
 
 // Phase 026 — outreach review/approval states.
 const OUTREACH_PENDING = "PendingApproval";
 const OUTREACH_APPROVED = "Approved";
 const OUTREACH_REJECTED = "Rejected";
 
-async function prepareOutreachDraftRows(caseId: string, maxResults: number) {
+async function prepareOutreachDraftRows(caseId: string, maxResults: number, userId: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -33,18 +34,36 @@ async function prepareOutreachDraftRows(caseId: string, maxResults: number) {
   }
 
   let created = 0;
+  const preferences = await getWorkflowPreferences(userId);
+  const initialStatus = preferences.messageApprovalMode === "automatic"
+    ? OUTREACH_APPROVED
+    : OUTREACH_PENDING;
   for (const match of matches) {
     const result = await db.insert(outreachStatus).values({
       id: nanoid(),
       caseId,
       lawyerId: match.id,
-      status: OUTREACH_PENDING,
+      status: initialStatus,
       createdAt: new Date(),
       updatedAt: new Date(),
     } as any).onConflictDoNothing();
     if ((result as any)?.changes ?? 1) created += 1;
   }
-  return { created, candidates: matches.length, directoryStatus };
+  let automaticallyApproved = initialStatus === OUTREACH_APPROVED ? created : 0;
+  if (initialStatus === OUTREACH_APPROVED) {
+    const upgraded = await db
+      .update(outreachStatus)
+      .set({ status: OUTREACH_APPROVED, updatedAt: new Date() })
+      .where(and(eq(outreachStatus.caseId, caseId), eq(outreachStatus.status, OUTREACH_PENDING)));
+    automaticallyApproved += Number(upgraded.changes || 0);
+  }
+  return {
+    created,
+    candidates: matches.length,
+    directoryStatus,
+    approvalMode: preferences.messageApprovalMode,
+    automaticallyApproved,
+  };
 }
 
 export const workflowRouter = router({
@@ -86,14 +105,14 @@ export const workflowRouter = router({
           .where(eq(casesTable.id, input.caseId));
       }
 
-      const drafts = await prepareOutreachDraftRows(input.caseId, input.maxResults);
+      const drafts = await prepareOutreachDraftRows(input.caseId, input.maxResults, ctx.user.id);
 
       await createAuditLog({
         userId: ctx.user.id,
         action: AUDIT_ACTIONS.OUTREACH_INITIATED,
         entityType: "case",
         entityId: input.caseId,
-        details: { from: existing[0]?.status ?? null, to: "Outreach", draftsPrepared: drafts.candidates },
+        details: { from: existing[0]?.status ?? null, to: "Outreach", draftsPrepared: drafts.candidates, approvalMode: drafts.approvalMode },
       });
 
       return { success: true, alreadyInitiated, ...drafts } as const;
@@ -115,14 +134,14 @@ export const workflowRouter = router({
       await assertCaseOwnership(input.caseId, ctx.user.id);
       await assertNotEmergencyStopped(); // Phase 104 — operator kill switch
       enforceRateLimit(ctx, "outreach-prepare", RATE_LIMITS.aiAnalysis);
-      const drafts = await prepareOutreachDraftRows(input.caseId, input.maxResults);
+      const drafts = await prepareOutreachDraftRows(input.caseId, input.maxResults, ctx.user.id);
 
       await createAuditLog({
         userId: ctx.user.id,
         action: AUDIT_ACTIONS.OUTREACH_INITIATED,
         entityType: "case",
         entityId: input.caseId,
-        details: { draftsPrepared: drafts.candidates },
+        details: { draftsPrepared: drafts.candidates, approvalMode: drafts.approvalMode },
       });
 
       return { success: true, ...drafts };
@@ -170,6 +189,32 @@ export const workflowRouter = router({
     .mutation(async ({ input, ctx }) => {
       await assertNotEmergencyStopped(); // Phase 104 — approval also halts under stop
       return setDraftStatus(ctx.user.id, input.outreachId, OUTREACH_APPROVED);
+    }),
+
+  approveDrafts: protectedProcedure
+    .input(z.object({
+      outreachIds: z.array(z.string().min(1)).min(1).max(50)
+        .refine((ids) => new Set(ids).size === ids.length, "Duplicate outreach draft IDs are not allowed"),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      await assertNotEmergencyStopped();
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
+      const ids = input.outreachIds;
+      const rows = await db.select({ id: outreachStatus.id, caseId: outreachStatus.caseId, status: outreachStatus.status })
+        .from(outreachStatus)
+        .where(inArray(outreachStatus.id, ids));
+      if (rows.length !== ids.length) throw new Error("One or more outreach drafts were not found");
+      for (const row of rows) {
+        if (!row.caseId) throw new Error("Outreach draft is not linked to a case");
+        await assertCaseOwnership(row.caseId, ctx.user.id);
+        assertOutreachTransition(row.status ?? null, OUTREACH_APPROVED);
+      }
+      const results = [];
+      for (const outreachId of ids) {
+        results.push(await setDraftStatus(ctx.user.id, outreachId, OUTREACH_APPROVED));
+      }
+      return { success: true as const, approved: results.length, sent: false as const };
     }),
 
   /** Phase 026 — reject a draft. */

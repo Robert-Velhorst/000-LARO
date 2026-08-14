@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "../_core/trpc";
 import { getDb } from "../db";
 import { assertCaseOwnership } from "../_core/authz";
@@ -14,6 +15,7 @@ import { assertCaseTransition } from "../stateMachines";
 import { createCaseId } from "../ids";
 import { collectManagedStorageKeys } from "../managedStorage";
 import { storageDelete } from "../storage";
+import { emitRealtimeDataChange } from "../realtime";
 
 export const casesRouter = router({
   // Phase 022 — search, filters, sorting, pagination. All server-side and
@@ -137,6 +139,7 @@ export const casesRouter = router({
         title: `Case created for ${input.clientName}`,
         body: `Classified as: ${classification.areas.join(", ")}. Review matched lawyers next.`,
       });
+      emitRealtimeDataChange(userId, { scope: "case", caseId });
 
       return { id: caseId, success: true, legalAreas: classification.areas, classificationConfidence: classification.confidence };
     }),
@@ -251,10 +254,13 @@ export const casesRouter = router({
       if (!c) throw new Error("Case not found");
 
       const classification = classifyLegalAreas(c.caseSummary || "", c.caseType || undefined);
-      await db
+      const updateResult = await db
         .update(casesTable)
         .set({ legalAreas: sanitizeLegalAreas(classification.areas), updatedAt: new Date() })
-        .where(and(eq(casesTable.id, input.caseId), eq(casesTable.userId, ctx.user.id)));
+        .where(eq(casesTable.id, input.caseId));
+      if (!Number((updateResult as any)?.changes ?? 0)) {
+        throw new TRPCError({ code: "CONFLICT", message: "Case changed before classification could be saved" });
+      }
 
       await createAuditLog({
         userId: ctx.user.id,
@@ -263,6 +269,7 @@ export const casesRouter = router({
         entityId: input.caseId,
         details: { classified: classification.areas, confidence: classification.confidence },
       });
+      emitRealtimeDataChange(ctx.user.id, { scope: "case", caseId: input.caseId });
 
       return { success: true, ...classification };
     }),
@@ -279,10 +286,10 @@ export const casesRouter = router({
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
+      await assertCaseOwnership(input.id, ctx.user.id);
 
       // Phase 059: validate the status transition against the case state machine.
       if (input.status) {
-        await assertCaseOwnership(input.id, ctx.user.id);
         const cur = (await db.select({ status: casesTable.status }).from(casesTable).where(eq(casesTable.id, input.id)).limit(1))[0];
         assertCaseTransition(cur?.status ?? null, input.status);
       }
@@ -295,9 +302,12 @@ export const casesRouter = router({
         updateData.legalAreas = sanitizeLegalAreas(input.legalAreas);
       }
 
-      await db.update(casesTable)
+      const updateResult = await db.update(casesTable)
         .set(updateData)
-        .where(and(eq(casesTable.id, input.id), eq(casesTable.userId, ctx.user.id)));
+        .where(eq(casesTable.id, input.id));
+      if (!Number((updateResult as any)?.changes ?? 0)) {
+        throw new TRPCError({ code: "CONFLICT", message: "Case changed before the update could be saved" });
+      }
 
       await createAuditLog({ // Phase 019
         userId: ctx.user.id,
@@ -306,6 +316,7 @@ export const casesRouter = router({
         entityId: input.id,
         details: { status: input.status, fields: Object.keys(updateData) },
       });
+      emitRealtimeDataChange(ctx.user.id, { scope: "case", caseId: input.id });
 
       return { success: true };
     }),
