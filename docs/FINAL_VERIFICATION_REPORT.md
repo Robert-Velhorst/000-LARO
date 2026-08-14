@@ -1,9 +1,8 @@
 # Final Verification Report
 
-Date: 2026-08-09
+Date: 2026-08-14
 Verification target: protected `main` merge commit
-`ed177f59d8fc01d05b14c5b84d72b5cc74b7e7bf`, based on starting commit
-`b5ae60787000f82b6a9e90a78c2c202674dc7dd1`
+`6110c3667185ccc1995e5ad4fae77de8d2e0f5a1`.
 
 This report separates reproducible repository evidence from target-environment
 acceptance. It supersedes the 2026-07-06 phase snapshot.
@@ -19,8 +18,8 @@ acceptance. It supersedes the 2026-07-06 phase snapshot.
 | Account-safety scan | 0 high-severity findings |
 | Renderer accessibility | 15 routes x 2 viewports; 0 serious/critical axe violations, unnamed controls, overflows, request failures, page errors, or console errors |
 | Isolated backup/delete/restore/reopen drill | Pass |
-| Target database readiness | SQLite integrity, declared foreign keys, 237 legacy relationship guards, invariants, reconciliation, duplicates, and demo markers clean |
-| Vitest | All 67 files exercised; 398 tests passed and 10 explicitly skipped; two suites that hit setup timeout in the full constrained-host run passed immediately in isolation |
+| Target database readiness | SQLite integrity, declared foreign keys, 240 legacy relationship guards, invariants, reconciliation, duplicates, and demo markers clean |
+| Vitest | 74 files and 422 tests passed in the complete blocking gate |
 | Python unittest discovery | 222 tests passed |
 | Runtime dependency audit | 0 known vulnerabilities |
 | Renderer, main, and server production builds | Pass |
@@ -30,8 +29,8 @@ acceptance. It supersedes the 2026-07-06 phase snapshot.
 | LARO-to-HAI connector | Dedicated read-only feed; hashed, expiring, revocable owner credential; bounded cursor; minimization and rate limit; LARO and HAI adapter tests pass |
 | Desktop scanner contract | Scoped 15-minute token; real bytes/hash; owner/MIME enforcement |
 | Branch CI policy | Node, Python, and renderer-accessibility checks run before merge |
-| Protected-main CI | Actions run `31289640812`; Node, Python, and renderer-accessibility jobs passed |
-| Windows package | Actions run `31289640843`; gate, build, ABI check, package, single-instance profile lock, checksum, and artifact upload passed |
+| Protected-main CI | Actions run `31758745261`; Node, Python, and renderer-accessibility jobs passed for merge commit `6110c36` |
+| Windows package | Actions run `31758745277`; gate, build, ABI check, package, single-instance profile lock, checksum, and artifact upload passed |
 | Packaged matching assets | Seven aligned legal categories; invalid legacy dataset absent |
 | Dependency graph | One canonical Node workspace; 0 open Dependabot alerts |
 
@@ -42,7 +41,7 @@ SQLite ABI itself after Electron packaging, runs the data-readiness gate, and
 preserves complete stdout/stderr for any failed step.
 
 A manifest-bound target recovery set was then created and validated against the
-current standalone JWT secret. Validation covered 54 tables and complete local
+current standalone JWT secret. Validation covered 55 tables and complete local
 evidence storage; publication and validation left no untracked SQLite temporary,
 WAL, or shared-memory sidecars.
 
@@ -135,13 +134,9 @@ disabled with a collection prompt while the case had no evidence. The inherited
 dark-theme recommendation contrast defect found during this pass was corrected
 and visually rechecked.
 
-The current local candidate `LARO Desktop 1.3.0.exe` is 151,855,902 bytes with
-SHA-256 `5d2bef95bf76adb258c0b1a38b9ef820937d2de9992c15dfea16059c0069198f`.
-It was built on 2026-08-09 and passed the Electron native SQLite check.
-
-The protected-main portable artifact is GitHub Actions artifact `9031062536`
-from run `31289640843`. Its executable is 151,920,228 bytes with SHA-256
-`c620deecd8ea4ddb171a7a95ad40bce8f2790f9bfa54a2c48187285b90c09125`;
+The protected-main portable artifact is GitHub Actions artifact `9204005016`
+from run `31758745277`. Its executable is 151,940,420 bytes with SHA-256
+`56484bd1cf5a2d5a371fc6cb129c956750721bf93a29080a5a2ea683d8180d55`;
 the downloaded executable matches its packaged checksum sidecar. The workflow
 passed the production gate, build, Electron ABI/database-binding check,
 portable packaging, packaged single-instance profile lock, artifact staging,
@@ -155,9 +150,15 @@ and SMTP authentication succeeds without sending a message. The Google web
 client is configured, but the owner's OAuth grant is not yet stored. The ngrok
 gateway now routes `https://laro-api-000.ngrok.app/laro` to LARO; public root,
 live, ready, health, and protected HAI route ownership were verified on
-2026-08-09.
+2026-08-14. A bounded 120-request public probe, issued in ten-request batches,
+returned 120 successful responses. Readiness p95 was 51.5 ms and health p95 was
+54.4 ms through ngrok. After the probe the container returned to 0% CPU and
+used 166.2 MiB resident memory.
 
-The deployed HAI bridge completed its live acceptance on 2026-08-09. A temporary
+The deployed HAI bridge completed its live acceptance on 2026-08-09 and its
+retained production credential was rechecked successfully on 2026-08-14. The
+health response remained `ready`, `hai:read`, and owner-bound; the bounded feed
+returned zero items because LARO still contains no case records. A temporary
 owner credential returned health 200 and a bounded feed, then returned 401
 immediately after revocation. A separate 90-day credential is retained only in
 HAI's protected ignored environment. HAI created source
@@ -169,8 +170,8 @@ and one revoked connector credential, two feed-read audit entries, two creation
 entries, one revocation entry, and no bootstrap secret file.
 
 Packaged clean-profile evidence for this release line also verified fresh local
-secrets and databases, all eight packaged migrations, healthy version `1.3.0`
-startup, SQLite integrity with zero foreign-key violations, and all 237 required
+secrets and databases, all nine packaged migrations, healthy version `1.3.0`
+startup, SQLite integrity with zero foreign-key violations, and all 240 required
 relationship guards. Packaged resources contain the current migrations,
 PDF/DOCX parsers, native parser dependency, consolidated managed-storage
 deletion, legacy-import archive and HAI credential schemas, and seven-category matching data.

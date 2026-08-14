@@ -1,6 +1,6 @@
 # Manual Verification Evidence
 
-Current as of 2026-08-09. This document supersedes the 2026-07-06 phase
+Current as of 2026-08-14. This document supersedes the 2026-07-06 phase
 snapshot; exact release evidence is maintained in
 `docs/FINAL_VERIFICATION_REPORT.md`.
 
@@ -24,7 +24,7 @@ snapshot; exact release evidence is maintained in
 - The current API deployment passes local live, ready, and health probes. Its
   actual standalone secret configuration and a clean target-database snapshot
   passed `npm run readiness:production`.
-- A complete manifest-bound target backup validates with 54 tables, the current
+- A complete manifest-bound target backup validates with 55 tables, the current
   standalone secret compatibility tag, complete local evidence coverage, and no
   untracked SQLite sidecars.
 - Gmail SMTP authentication was verified without sending a message. This proves
@@ -33,15 +33,21 @@ snapshot; exact release evidence is maintained in
 - The LARO-to-HAI connector contract is covered by real SQLite migration,
   token hashing, owner isolation, bounded cursor, minimization, revocation, and
   HAI source-ingestion tests.
-- Live cross-application acceptance passed on 2026-08-09: HAI reported the
+- Live cross-application acceptance passed on 2026-08-09 and the retained
+  connector was rechecked on 2026-08-14: HAI reported the
   adapter operational, created its owner-scoped source, completed a zero-item
   incremental sync against the truthfully empty LARO case database, and retained
   the read audit event. A temporary LARO credential changed from health 200 to
   401 after revocation; the retained credential exists only in HAI's protected
   ignored environment.
-- The current unsigned 151,855,902-byte Windows portable build has SHA-256
-  `5d2bef95bf76adb258c0b1a38b9ef820937d2de9992c15dfea16059c0069198f`;
-  Electron 43.1.0 loaded the native SQLite ABI 148 binding successfully.
+- The protected-main unsigned Windows artifact from Actions run `31758745277`
+  is 151,940,420 bytes with SHA-256
+  `56484bd1cf5a2d5a371fc6cb129c956750721bf93a29080a5a2ea683d8180d55`.
+  Its downloaded bytes match the checksum sidecar, and Electron 43.1.0 loaded
+  the native SQLite ABI 148 binding successfully.
+- A 120-request public health probe returned only HTTP 200 responses. Readiness
+  p95 was 51.5 ms and health p95 was 54.4 ms through ngrok; afterward the API
+  container returned to 0% CPU with 166.2 MiB resident memory.
 - The current real-browser audit passed all four scenarios, including all 15
   routes at both desktop and mobile sizes, locale persistence, responsive
   migration controls, and source-linked document reconstruction.
@@ -56,7 +62,7 @@ snapshot; exact release evidence is maintained in
   acceptance sequence remain pending.
 - The ngrok gateway now routes `https://laro-api-000.ngrok.app/laro` to LARO.
   Public root, live, ready, health, and OAuth callback routing were rechecked on
-  2026-08-08. The callback returned the expected 400 response for an intentionally
+  2026-08-14. The callback returned the expected 400 response for an intentionally
   invalid consent result, proving route ownership without creating a grant.
 - Optional inbound email, S3, and provider-backed AI are not selected for this
   release and remain disabled rather than being treated as verified.
