@@ -34,6 +34,9 @@ describe('production runtime operations', () => {
     expect(pkg.scripts['readiness:runtime']).toBe('node scripts/runtime-readiness.mjs');
     expect(dockerfile).toContain('COPY scripts/runtime-readiness.mjs ./scripts/runtime-readiness.mjs');
     expect(launcher).toContain('exec -T laro-server npm run readiness:runtime');
+    expect(launcher).toContain('function Get-LaroNgrokProcesses');
+    expect(launcher).toContain('$matchingProcesses = @(Get-LaroNgrokProcesses');
+    expect(launcher).not.toContain('$existingNgrok.Count -ne 1');
     expect(readiness).toContain("database.pragma('quick_check'");
     expect(readiness).toContain("path: '/api/integrations/hai/health'");
     expect(readiness).not.toContain('tsx');

@@ -186,6 +186,26 @@ function Get-NgrokFailureMessage {
     }
 }
 
+function Get-LaroNgrokProcesses {
+    param(
+        [Parameter(Mandatory)] [string]$TargetUrl,
+        [string]$ReservedUrl = ""
+    )
+
+    $targetPattern = [regex]::Escape($TargetUrl)
+    $reservedPattern = if ($ReservedUrl) { [regex]::Escape("--url=$ReservedUrl") } else { "" }
+    $matches = @(Get-CimInstance Win32_Process -Filter "Name='ngrok.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.CommandLine -match "(?:^|\s)http(?:\s|$)" -and
+            $_.CommandLine -match $targetPattern -and
+            $_.CommandLine -match [regex]::Escape("--name=laro-api") -and
+            (-not $reservedPattern -or $_.CommandLine -match $reservedPattern)
+        })
+    foreach ($match in $matches) {
+        Get-Process -Id $match.ProcessId -ErrorAction SilentlyContinue
+    }
+}
+
 function Wait-ForHttpsTunnel {
     param(
         [Parameter(Mandatory)] [Diagnostics.Process]$Process,
@@ -345,15 +365,20 @@ try {
     $httpsTunnel = $null
 }
 
-$existingNgrok = @(Get-Process ngrok -ErrorAction SilentlyContinue)
+$matchingProcesses = @(Get-LaroNgrokProcesses `
+    -TargetUrl "http://127.0.0.1:3000" `
+    -ReservedUrl $(if ($useDirectTunnel) { "" } else { $InternalUrl }))
 if ($httpsTunnel) {
-    if ($existingNgrok.Count -ne 1) {
+    if ($matchingProcesses.Count -ne 1) {
         throw "The LARO tunnel exists, but its local ngrok process could not be identified safely."
     }
-    $ngrokProcess = $existingNgrok[0]
+    $ngrokProcess = $matchingProcesses[0]
 } else {
-    if ($existingNgrok.Count -gt 0) {
-        throw "Another local ngrok process is already running without the expected LARO tunnel."
+    if ($matchingProcesses.Count -gt 0) {
+        throw "A LARO ngrok process is running without the expected tunnel. Stop that stale process before retrying."
+    }
+    if (@(Get-Process ngrok -ErrorAction SilentlyContinue).Count -gt 0) {
+        throw "Another local ngrok process owns the inspector while the LARO tunnel is absent. Start LARO after assigning a separate inspector endpoint."
     }
     $ngrokProcess = Start-Process -FilePath $ngrokExecutable `
         -ArgumentList $ngrokArguments `
