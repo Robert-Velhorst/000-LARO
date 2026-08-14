@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   EXTERNAL_LLM_PROVIDERS,
+  LLM_PROVIDERS,
   getLLMProviderDescriptors,
   invokeLLM,
 } from "../../server/llm";
@@ -16,12 +17,36 @@ describe("multi-provider LLM adapter", () => {
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
     const providers = getLLMProviderDescriptors();
 
-    expect(providers.map((provider) => provider.id)).toEqual(EXTERNAL_LLM_PROVIDERS);
+    expect(providers.map((provider) => provider.id)).toEqual(LLM_PROVIDERS);
+    expect(providers.filter((provider) => provider.id !== "ollama").map((provider) => provider.id)).toEqual(EXTERNAL_LLM_PROVIDERS);
     expect(providers.find((provider) => provider.id === "openai")).toMatchObject({
       configured: true,
       label: "OpenAI",
     });
     expect(JSON.stringify(providers)).not.toContain("test-openai-key");
+  });
+
+  it("uses Ollama only through a loopback endpoint and sends no authorization header", async () => {
+    vi.stubEnv("LARO_OLLAMA_MODEL", "qwen-test");
+    vi.stubEnv("LARO_OLLAMA_BASE_URL", "http://127.0.0.1:11434");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "ollama-response",
+      created: 1,
+      model: "qwen-test",
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await invokeLLM({ provider: "ollama", messages: [{ role: "user", content: "Analyze locally" }] });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://127.0.0.1:11434/v1/chat/completions");
+    expect(init.headers).not.toHaveProperty("authorization");
+    expect(init.redirect).toBe("error");
+
+    vi.stubEnv("LARO_OLLAMA_BASE_URL", "https://remote.example.com");
+    await expect(invokeLLM({ provider: "ollama", messages: [{ role: "user", content: "Do not send" }] }))
+      .rejects.toThrow("LARO_OLLAMA_MODEL is not configured");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("routes OpenAI-compatible requests only to the selected provider", async () => {

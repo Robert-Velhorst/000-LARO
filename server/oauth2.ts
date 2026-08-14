@@ -42,6 +42,7 @@ interface OAuthStatePayload {
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const TOKEN_EXCHANGE_DNS_RETRY_DELAYS_MS = [250, 750, 1_500] as const;
+const OAUTH_PROVIDER_TIMEOUT_MS = 20_000;
 
 export function isRetryableOAuthNetworkError(error: unknown): boolean {
   let current: unknown = error;
@@ -56,7 +57,7 @@ export function isRetryableOAuthNetworkError(error: unknown): boolean {
 async function fetchTokenEndpoint(url: string, init: RequestInit): Promise<Response> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await fetch(url, init);
+      return await fetch(url, { ...init, signal: AbortSignal.timeout(OAUTH_PROVIDER_TIMEOUT_MS) });
     } catch (error) {
       if (!isRetryableOAuthNetworkError(error) || attempt >= TOKEN_EXCHANGE_DNS_RETRY_DELAYS_MS.length) {
         throw error;
@@ -309,7 +310,9 @@ export async function getAccountInfo(
   if (provider === "gmail") {
     const r = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
       headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(OAUTH_PROVIDER_TIMEOUT_MS),
     });
+    if (!r.ok) throw new Error(`Google account lookup failed (${r.status})`);
     const d = (await r.json()) as { email?: string; name?: string; picture?: string };
     return {
       email: d.email || "",
@@ -319,7 +322,9 @@ export async function getAccountInfo(
   }
   const r = await fetch("https://graph.microsoft.com/v1.0/me", {
     headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(OAUTH_PROVIDER_TIMEOUT_MS),
   });
+  if (!r.ok) throw new Error(`Microsoft account lookup failed (${r.status})`);
   const d = (await r.json()) as { mail?: string; userPrincipalName?: string; displayName?: string };
   return {
     email: d.mail || d.userPrincipalName || "",

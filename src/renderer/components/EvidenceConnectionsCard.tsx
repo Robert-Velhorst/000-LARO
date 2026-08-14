@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import { useEffect, useRef, useState } from "react";
 import { isElectron } from "@/lib/electronApiShim";
 
-const OAUTH_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
+const OAUTH_WAIT_TIMEOUT_MS = 3 * 60 * 1_000;
 const OAUTH_WINDOW_CHECK_INTERVAL_MS = 750;
 
 // Get current user context (adjust based on your auth implementation)
@@ -219,6 +219,13 @@ export default function EvidenceConnectionsCard() {
     }
   };
 
+  const cancelConnection = () => {
+    oauthWindowRef.current?.close();
+    oauthWindowRef.current = null;
+    setConnectingPlatform(null);
+    toast.message("Google connection cancelled");
+  };
+
   const handleDisconnect = async (platformId: string) => {
     try {
       switch (platformId) {
@@ -332,20 +339,27 @@ export default function EvidenceConnectionsCard() {
                       Disconnect
                     </Button>
                   ) : (
-                    <Button
-                      variant="default"
-                      size="sm"
-                      className="flex-1"
-                      disabled={connectingPlatform !== null}
-                      onClick={() => handleConnect(platform.id)}
-                    >
+                    <>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="flex-1"
+                        disabled={connectingPlatform !== null}
+                        onClick={() => handleConnect(platform.id)}
+                      >
+                        {isConnecting ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <ExternalLink className="w-4 h-4 mr-2" />
+                        )}
+                        {isConnecting ? "Finishing Google connection..." : "Connect"}
+                      </Button>
                       {isConnecting ? (
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      ) : (
-                        <ExternalLink className="w-4 h-4 mr-2" />
-                      )}
-                      {isConnecting ? "Finishing Google connection..." : "Connect"}
-                    </Button>
+                        <Button variant="outline" size="sm" onClick={cancelConnection}>
+                          Cancel
+                        </Button>
+                      ) : null}
+                    </>
                   )}
                 </div>
                 </div>

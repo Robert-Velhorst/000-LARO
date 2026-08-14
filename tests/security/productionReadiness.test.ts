@@ -24,6 +24,7 @@ describe('production readiness regressions', () => {
       'a11y',
       'acceptance',
       'sim',
+      'evals',
     ];
     const pending = [join(ROOT, 'tests')];
     const testFiles: string[] = [];
@@ -154,8 +155,9 @@ describe('production readiness regressions', () => {
     expect(router).toContain('analyzeStoredEvidence');
     expect(router).toContain('generateCaseTimeline');
     expect(router).not.toContain('documentAnalysis stub');
-    expect(intelligence).toContain('Every finding must cite one or more supplied source IDs');
-    expect(intelligence).toContain('validCitationIds.has(id)');
+    expect(intelligence).toContain('Every finding must cite supplied source IDs and include one or more evidenceQuotes copied verbatim');
+    expect(intelligence).toContain('citationMap.has(id)');
+    expect(intelligence).toContain('findingHasLiteralSourceSupport');
     expect(collector).toContain('storageKey: storedMessage.key');
     expect(collector).toContain('contentHash: storedAttachment.sha256');
     expect(collector).toContain('analyzeImportedEvidence');
@@ -250,7 +252,8 @@ describe('production readiness regressions', () => {
     expect(connections).toContain('if (!oauthWindow && !isElectron())');
     expect(connections).toContain('refetchInterval: connectingPlatform === "gmail" ? 1_500 : false');
     expect(connections).toContain('refetchInterval: connectingPlatform === "google-drive" ? 1_500 : false');
-    expect(connections).toContain('OAUTH_WAIT_TIMEOUT_MS = 10 * 60 * 1_000');
+    expect(connections).toContain('OAUTH_WAIT_TIMEOUT_MS = 3 * 60 * 1_000');
+    expect(connections).toContain('onClick={cancelConnection}');
     expect(connections).toContain('document.addEventListener("visibilitychange", refreshOnReturn)');
     expect(connections).toContain('oauthWindowRef.current?.closed');
     expect(connections).toContain('Finishing Google connection...');
@@ -284,6 +287,8 @@ describe('production readiness regressions', () => {
     const { isAllowedOrigin } = await import('../../server/_core/csrf');
     expect(isAllowedOrigin('http://localhost:5173')).toBe(true);
     expect(isAllowedOrigin('http://127.0.0.1:5173')).toBe(true);
+    expect(isAllowedOrigin('http://localhost:5181')).toBe(true);
+    expect(isAllowedOrigin('http://127.0.0.1:5181')).toBe(true);
     expect(isAllowedOrigin('https://attacker.example')).toBe(false);
   });
 

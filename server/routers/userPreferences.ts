@@ -5,7 +5,7 @@ import { createAuditLog } from "../audit";
 import { getDb } from "../db";
 import { userPreferences } from "../schema";
 import { getWorkflowPreferences, updateWorkflowPreferences } from "../workflowPreferences";
-import { EXTERNAL_LLM_PROVIDERS } from "../llm";
+import { LLM_PROVIDERS } from "../llm";
 
 function parseJson<T>(raw: string | null | undefined, fallback: T): T {
   if (!raw) return fallback;
@@ -40,7 +40,7 @@ export const userPreferencesRouter = router({
     .input(
       z.object({
         analysisMode: z.enum(["local", "cloud"]).optional(),
-        analysisProvider: z.enum(["local", ...EXTERNAL_LLM_PROVIDERS]).optional(),
+        analysisProvider: z.enum(["local", ...LLM_PROVIDERS]).optional(),
         autoAnalyzeImports: z.boolean().optional(),
         shareRawDocumentContent: z.boolean().optional(),
         outreachReviewMode: z.enum(["each", "batch", "automatic"]).optional(),

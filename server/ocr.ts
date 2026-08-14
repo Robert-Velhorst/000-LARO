@@ -106,6 +106,48 @@ async function runOcr(bytes: Buffer, language: OcrLanguage): Promise<OcrResult> 
   }
 }
 
+async function runOcrBatch(images: Buffer[], language: OcrLanguage): Promise<OcrResult[]> {
+  if (!images.length) return [];
+  if (images.some((bytes) => !bytes.length || bytes.length > MAX_EVIDENCE_FILE_BYTES)) {
+    throw new Error("OCR images must each be between 1 byte and 7 MB");
+  }
+
+  await prepareLanguageData();
+  const languages = language === "nld+eng" ? ["nld", "eng"] : language;
+  const worker = await createWorker(languages, OEM.LSTM_ONLY, {
+    cachePath: OCR_CACHE_PATH,
+    corePath: corePath(),
+    gzip: true,
+    langPath: OCR_LANG_PATH,
+    workerPath: workerPath(),
+  });
+
+  try {
+    const results: OcrResult[] = [];
+    for (const bytes of images) {
+      const startedAt = Date.now();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("OCR exceeded the 120 second per-page processing limit")), OCR_TIMEOUT_MS);
+        });
+        const result = await Promise.race([worker.recognize(bytes, { rotateAuto: true }), timeout]);
+        results.push({
+          text: result.data.text,
+          confidence: Math.max(0, Math.min(100, result.data.confidence)),
+          language,
+          processingTimeMs: Date.now() - startedAt,
+        });
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+    return results;
+  } finally {
+    await worker.terminate().catch(() => undefined);
+  }
+}
+
 let ocrQueue: Promise<void> = Promise.resolve();
 
 export function extractImageText(bytes: Buffer, language?: string): Promise<OcrResult> {
@@ -113,6 +155,16 @@ export function extractImageText(bytes: Buffer, language?: string): Promise<OcrR
   const job = ocrQueue.then(
     () => runOcr(bytes, selectedLanguage),
     () => runOcr(bytes, selectedLanguage),
+  );
+  ocrQueue = job.then(() => undefined, () => undefined);
+  return job;
+}
+
+export function extractImageBatchText(images: Buffer[], language?: string): Promise<OcrResult[]> {
+  const selectedLanguage = normalizeLanguage(language);
+  const job = ocrQueue.then(
+    () => runOcrBatch(images, selectedLanguage),
+    () => runOcrBatch(images, selectedLanguage),
   );
   ocrQueue = job.then(() => undefined, () => undefined);
   return job;

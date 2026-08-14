@@ -4,6 +4,8 @@ import { z } from "zod";
 import { gapDetectionService } from "../gapDetection";
 import { kvkIntegrationService } from "../kvkIntegration";
 import { rechtspraakIntegrationService } from "../rechtspraakIntegration";
+import { searchOfficialLegislation } from "../wettenOverheid";
+import { createAuditLog } from "../audit";
 import { legalDocumentGeneratorService } from "../legalDocumentGenerator";
 import { getDb } from "../db";
 import {
@@ -423,6 +425,26 @@ export const gapAnalysisRouter = router({
       }
 
       return await rechtspraakIntegrationService.searchByCompany(input.companyName);
+    }),
+
+  searchLegislation: protectedProcedure
+    .input(z.object({
+      caseId: z.string().trim().min(1).max(128),
+      query: z.string().trim().min(3).max(200),
+      asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      limit: z.number().int().min(1).max(25).optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      await assertCaseOwnership(input.caseId, ctx.user.id);
+      const result = await searchOfficialLegislation(input);
+      await createAuditLog({
+        userId: ctx.user.id,
+        action: "legal_source.legislation_searched",
+        entityType: "case",
+        entityId: input.caseId,
+        details: { query: input.query, asOfDate: result.asOfDate, resultCount: result.results.length, source: result.source },
+      });
+      return result;
     }),
 
   /**

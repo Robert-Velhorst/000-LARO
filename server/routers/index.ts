@@ -587,10 +587,22 @@ export const appRouter = router({
       return caseStatusDistribution(ctx.user.id);
     }),
     // Not yet derived from real data — returned as explicit empty rather than fabricated.
-    getOutreachTrends: protectedProcedure.query(() => [] as Array<{ date: string; count: number }>),
-    getLawyerPerformance: protectedProcedure.query(() => [] as unknown[]),
-    getLawyerCapacity: protectedProcedure.query(() => [] as unknown[]),
-    getWorkloadMetrics: protectedProcedure.query(() => [] as unknown[]),
+    getOutreachTrends: protectedProcedure.query(async ({ ctx }) => {
+      const { outreachTrends } = await import("../analytics");
+      return outreachTrends(ctx.user.id);
+    }),
+    getLawyerPerformance: protectedProcedure.query(async ({ ctx }) => {
+      const { lawyerPerformance } = await import("../analytics");
+      return lawyerPerformance(ctx.user.id);
+    }),
+    getLawyerCapacity: protectedProcedure.query(async ({ ctx }) => {
+      const { lawyerCapacity } = await import("../analytics");
+      return lawyerCapacity(ctx.user.id);
+    }),
+    getWorkloadMetrics: protectedProcedure.query(async ({ ctx }) => {
+      const { workloadMetrics } = await import("../analytics");
+      return workloadMetrics(ctx.user.id);
+    }),
   }),
 
 

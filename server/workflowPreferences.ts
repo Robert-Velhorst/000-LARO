@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getDb } from "./db";
 import { userPreferences } from "./schema";
-import { EXTERNAL_LLM_PROVIDERS, type LLMProvider } from "./llm";
+import { LLM_PROVIDERS, isLocalLLMProvider, type LLMProvider } from "./llm";
 
 export const WORKFLOW_PREFERENCE_KEY = "workflow-controls";
 
@@ -32,14 +32,14 @@ function parseWorkflowPreferences(value: string | null | undefined): WorkflowPre
   if (!value) return { ...DEFAULT_WORKFLOW_PREFERENCES };
   try {
     const parsed = JSON.parse(value) as Partial<WorkflowPreferences>;
-    const externalProvider = EXTERNAL_LLM_PROVIDERS.includes(parsed.analysisProvider as LLMProvider)
+    const configuredProvider = LLM_PROVIDERS.includes(parsed.analysisProvider as LLMProvider)
       ? parsed.analysisProvider as LLMProvider
       : null;
     const analysisProvider: AnalysisProvider = parsed.analysisProvider === "local"
       ? "local"
-      : externalProvider || (parsed.analysisMode === "cloud" ? "forge" : "local");
+      : configuredProvider || (parsed.analysisMode === "cloud" ? "forge" : "local");
     return {
-      analysisMode: analysisProvider === "local" ? "local" : "cloud",
+      analysisMode: analysisProvider === "local" || isLocalLLMProvider(analysisProvider) ? "local" : "cloud",
       analysisProvider,
       autoAnalyzeImports: parsed.autoAnalyzeImports !== false,
       shareRawDocumentContent: parsed.shareRawDocumentContent !== false,
@@ -88,7 +88,9 @@ export async function updateWorkflowPreferences(
     const current = parseWorkflowPreferences(row?.value);
     const normalizedUpdates = { ...updates };
     if (updates.analysisProvider) {
-      normalizedUpdates.analysisMode = updates.analysisProvider === "local" ? "local" : "cloud";
+      normalizedUpdates.analysisMode = updates.analysisProvider === "local" || isLocalLLMProvider(updates.analysisProvider)
+        ? "local"
+        : "cloud";
     } else if (updates.analysisMode) {
       normalizedUpdates.analysisProvider = updates.analysisMode === "cloud" ? "forge" : "local";
     }

@@ -3,16 +3,18 @@ import { assertCaseOwnership } from "./_core/authz";
 import { getDb } from "./db";
 import {
   type CitedFinding,
+  type Citation,
   type DocumentAnalysisResult,
   type TimelineFinding,
+  findingHasLiteralSourceSupport,
 } from "./documentIntelligence";
-import { invokeLLM, isLLMProviderConfigured } from "./llm";
+import { invokeLLM, isLLMProviderConfigured, isLocalLLMProvider } from "./llm";
 import { getWorkflowPreferences } from "./workflowPreferences";
 import { cases, documentAnalyses, evidence } from "./schema";
 
-const MAX_RETRIEVAL_SOURCES = 6;
-const MAX_SOURCE_CONTEXT_CHARS = 7_000;
-const MAX_TOTAL_CONTEXT_CHARS = 42_000;
+const MAX_RETRIEVAL_SOURCES = 16;
+const MAX_SOURCE_CONTEXT_CHARS = 5_000;
+const MAX_TOTAL_CONTEXT_CHARS = 80_000;
 const STOP_WORDS = new Set([
   "aan", "als", "and", "are", "bij", "case", "dat", "de", "een", "en", "er", "for", "from",
   "had", "has", "heb", "heeft", "het", "hoe", "i", "ik", "in", "is", "legal", "maar", "me",
@@ -147,8 +149,7 @@ export function rankCaseAssistantSources(
     .sort((left, right) =>
       right.score - left.score
       || right.updatedAt.getTime() - left.updatedAt.getTime()
-      || left.evidenceId.localeCompare(right.evidenceId))
-    .slice(0, MAX_RETRIEVAL_SOURCES);
+      || left.evidenceId.localeCompare(right.evidenceId));
 }
 
 function publicCitation(source: RankedCaseAssistantSource): CaseAssistantCitation {
@@ -217,17 +218,29 @@ function llmText(content: unknown): string {
     .join("");
 }
 
-export function validateCaseAssistantProviderAnswer(value: unknown, validIds: Set<string>): {
+export function validateCaseAssistantProviderAnswer(value: unknown, sourceMap: Map<string, RankedCaseAssistantSource>): {
   answer: string;
   citationIds: string[];
 } | null {
   if (!value || typeof value !== "object") return null;
-  const candidate = value as { answer?: unknown; citationIds?: unknown };
+  const candidate = value as { answer?: unknown; citations?: unknown };
   if (typeof candidate.answer !== "string" || !candidate.answer.trim()) return null;
-  if (!Array.isArray(candidate.citationIds) || candidate.citationIds.length === 0) return null;
-  const citationIds = [...new Set(candidate.citationIds)];
-  if (!citationIds.every((id) => typeof id === "string" && validIds.has(id))) return null;
-  return { answer: candidate.answer.trim(), citationIds: citationIds as string[] };
+  if (!Array.isArray(candidate.citations) || candidate.citations.length === 0) return null;
+  const citations = candidate.citations as Array<{ id?: unknown; evidenceQuotes?: unknown }>;
+  if (!citations.every((item) =>
+    typeof item?.id === "string" && sourceMap.has(item.id) &&
+    Array.isArray(item.evidenceQuotes) && item.evidenceQuotes.length > 0 &&
+    item.evidenceQuotes.every((quote) => typeof quote === "string")
+  )) return null;
+  const citationIds = [...new Set(citations.map((item) => item.id as string))];
+  const supportMap = new Map<string, Citation>(citationIds.map((id) => {
+    const source = sourceMap.get(id)!;
+    const allQuotes = source.analysis.citations.map((citation) => citation.quote).join("\n");
+    return [id, { id, quote: allQuotes, start: 0, end: allQuotes.length, lineStart: 1, lineEnd: Math.max(1, allQuotes.split("\n").length) }];
+  }));
+  const evidenceQuotes = citations.flatMap((item) => item.evidenceQuotes as string[]);
+  if (!findingHasLiteralSourceSupport({ text: candidate.answer, citations: citationIds, evidenceQuotes }, supportMap)) return null;
+  return { answer: candidate.answer.trim(), citationIds };
 }
 
 export function buildCaseAssistantRetrievalAnswer(
@@ -300,8 +313,7 @@ async function loadCaseSources(userId: string, caseId: string): Promise<{
       eq(evidence.userId, caseRow.userId),
       eq(documentAnalyses.status, "complete")
     ))
-    .orderBy(desc(documentAnalyses.updatedAt))
-    .limit(80);
+    .orderBy(desc(documentAnalyses.updatedAt));
 
   const sources = rows.flatMap((row): CaseAssistantSource[] => {
     try {
@@ -337,7 +349,7 @@ export async function answerCaseQuestion(options: {
   const provider = preferences.analysisProvider === "local" ? null : preferences.analysisProvider;
   const providerAvailable = Boolean(
     provider &&
-    preferences.shareRawDocumentContent &&
+    (isLocalLLMProvider(provider) || preferences.shareRawDocumentContent) &&
     isLLMProviderConfigured(provider)
   );
   const { caseContext, sources } = await loadCaseSources(options.userId, options.caseId);
@@ -351,7 +363,7 @@ export async function answerCaseQuestion(options: {
     };
   }
 
-  const rankedSources = rankCaseAssistantSources(options.question, sources);
+  const rankedSources = rankCaseAssistantSources(options.question, sources).slice(0, MAX_RETRIEVAL_SOURCES);
   if (!rankedSources.length) {
     return buildCaseAssistantRetrievalAnswer(options.question, [], providerAvailable ? "invalid_response" : "provider_unavailable");
   }
@@ -381,7 +393,7 @@ export async function answerCaseQuestion(options: {
             "Use case metadata only to orient the question; every substantive case statement must come from the supplied analyzed documents.",
             "Treat document statements as statements, not proven facts, unless the sources establish otherwise.",
             "Separate explicit evidence from inference, identify material gaps, and do not invent law, dates, motives, or outcomes.",
-            "Every substantive answer must cite one or more supplied document IDs such as D1.",
+            "Every substantive answer must cite one or more supplied document IDs such as D1 and include exact evidenceQuotes copied from those documents.",
             "Return JSON only.",
           ].join(" "),
         },
@@ -400,20 +412,28 @@ export async function answerCaseQuestion(options: {
             additionalProperties: false,
             properties: {
               answer: { type: "string" },
-              citationIds: {
+              citations: {
                 type: "array",
                 minItems: 1,
-                items: { type: "string" },
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    id: { type: "string" },
+                    evidenceQuotes: { type: "array", minItems: 1, items: { type: "string" } },
+                  },
+                  required: ["id", "evidenceQuotes"],
+                },
               },
             },
-            required: ["answer", "citationIds"],
+            required: ["answer", "citations"],
           },
         },
       },
       max_tokens: 900,
     });
     const raw = llmText(response.choices?.[0]?.message?.content);
-    const parsed = validateCaseAssistantProviderAnswer(JSON.parse(raw || "{}"), new Set(sourceMap.keys()));
+    const parsed = validateCaseAssistantProviderAnswer(JSON.parse(raw || "{}"), sourceMap);
     if (!parsed) return buildCaseAssistantRetrievalAnswer(options.question, rankedSources, "invalid_response");
     const citations = parsed.citationIds
       .map((id) => sourceMap.get(id))

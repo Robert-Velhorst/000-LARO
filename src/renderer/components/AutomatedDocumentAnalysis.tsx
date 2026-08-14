@@ -32,6 +32,8 @@ type AnalysisView = {
   citation_count: number;
   claims: string[];
   obligations: string[];
+  contradictions: Array<{ statementA: string; statementB: string; explanation: string }>;
+  coverage: { sourceChars: number; analyzedChars: number; sourceChunks: number; analyzedChunks: number; complete: boolean };
 };
 
 function toAnalysisView(result: any, fileName: string): AnalysisView {
@@ -60,6 +62,14 @@ function toAnalysisView(result: any, fileName: string): AnalysisView {
     citation_count: result.citations.length,
     claims: result.claims.map((item: any) => item.text),
     obligations: result.obligations.map((item: any) => item.text),
+    contradictions: result.contradictions ?? [],
+    coverage: result.coverage ?? {
+      sourceChars: result.analyzedChars,
+      analyzedChars: result.analyzedChars,
+      sourceChunks: 1,
+      analyzedChunks: result.truncated ? 0 : 1,
+      complete: !result.truncated,
+    },
   };
 }
 
@@ -324,6 +334,11 @@ export function AutomatedDocumentAnalysis({ caseId, onAnalysisComplete }: Automa
                   <Badge variant="outline">OCR {analysisResult.extraction_confidence.toFixed(0)}%</Badge>
                 ) : null}
                 <Badge variant="outline">{analysisResult.provider_status.replace(/_/g, " ")}</Badge>
+                <Badge variant={analysisResult.coverage.complete ? "outline" : "destructive"}>
+                  {analysisResult.coverage.complete
+                    ? `Full source · ${analysisResult.coverage.analyzedChunks}/${analysisResult.coverage.sourceChunks} chunks`
+                    : `Partial source · ${analysisResult.coverage.analyzedChunks}/${analysisResult.coverage.sourceChunks} chunks`}
+                </Badge>
               </div>
               {analysisResult.provider_message && (
                 <p className="text-xs text-muted-foreground">{analysisResult.provider_message}</p>
@@ -455,7 +470,34 @@ export function AutomatedDocumentAnalysis({ caseId, onAnalysisComplete }: Automa
             </Alert>
           )}
 
-          {analysisResult.relevance_to_case === "high" && (
+          {analysisResult.contradictions.length > 0 && (
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Statements requiring reconciliation</AlertTitle>
+              <AlertDescription>
+                <ul className="mt-2 space-y-2">
+                  {analysisResult.contradictions.map((item, index) => (
+                    <li key={`${item.statementA}-${index}`}>
+                      <span className="font-medium">{item.statementA}</span>
+                      <span className="mx-1">versus</span>
+                      <span className="font-medium">{item.statementB}</span>
+                      <span className="block text-xs text-muted-foreground">{item.explanation}</span>
+                    </li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {!analysisResult.coverage.complete && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Analysis is incomplete</AlertTitle>
+              <AlertDescription>Some source chunks were not accepted. Reanalyze after checking the selected provider before relying on this document summary.</AlertDescription>
+            </Alert>
+          )}
+
+          {analysisResult.relevance_to_case === "high" && analysisResult.coverage.complete && (
             <Alert>
               <CheckCircle2 className="h-4 w-4" />
               <AlertTitle>Analysis complete</AlertTitle>

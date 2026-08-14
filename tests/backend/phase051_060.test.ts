@@ -5,7 +5,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { bootTestApp, sqliteAvailable, type TestApp } from '../helpers/app';
-import { buildUser, buildLawyer } from '../factories';
+import { buildUser, buildLawyer, buildCase } from '../factories';
 
 const suite = sqliteAvailable ? describe : describe.skip;
 
@@ -146,6 +146,33 @@ suite('Phases 051–060 — services', () => {
     expect(stats.totalCases).toBeGreaterThan(0);
     const dist = await caller.analytics.getLegalAreaDistribution();
     expect(dist.find((d: any) => d.area === 'Employment Law')).toBeTruthy();
+
+    await app.db.insert(app.schema.users).values(buildUser({ id: 'ANALYTICS_OTHER', email: 'analytics-other@example.com' }));
+    await app.db.insert(app.schema.cases).values(buildCase({
+      id: 'ANALYTICS_CASE_OTHER',
+      userId: 'ANALYTICS_OTHER',
+      clientName: 'Must remain private',
+    }));
+    await app.db.insert(app.schema.outreachStatus).values([
+      {
+        id: 'ANALYTICS_OUTREACH_OWN', caseId: 'PGC0', lawyerId: 'LWYR_5X', status: 'Interested',
+        responseReceived: 'Yes', responseTimeHours: '3.5', initialContact: new Date('2026-08-10T10:00:00Z'),
+        createdAt: new Date('2026-08-10T10:00:00Z'), updatedAt: new Date('2026-08-10T13:30:00Z'),
+      },
+      {
+        id: 'ANALYTICS_OUTREACH_OTHER', caseId: 'ANALYTICS_CASE_OTHER', lawyerId: 'LWYR_5X', status: 'Declined',
+        responseReceived: 'Yes', responseTimeHours: '9', initialContact: new Date('2026-08-11T10:00:00Z'),
+        createdAt: new Date('2026-08-11T10:00:00Z'), updatedAt: new Date('2026-08-11T19:00:00Z'),
+      },
+    ] as any);
+
+    expect(await caller.analytics.getOutreachTrends()).toEqual([{ date: '2026-08-10', count: 1 }]);
+    const performance = await caller.analytics.getLawyerPerformance();
+    expect(performance).toHaveLength(1);
+    expect(performance[0]).toMatchObject({ sent: 1, responses: 1, accepted: 1, averageResponseTimeHours: 3.5 });
+    expect(await caller.analytics.getLawyerCapacity()).toHaveLength(1);
+    const workload = await caller.analytics.getWorkloadMetrics();
+    expect(workload.some((row: any) => row.caseId === 'ANALYTICS_CASE_OTHER')).toBe(false);
   });
 
   it('Phase 054 — database guards reject new orphans and reconciliation stays clean', async () => {

@@ -284,16 +284,16 @@ export default function Settings() {
                       className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       value={workflowPreferences.data?.analysisProvider ?? "local"}
                       disabled={workflowPreferences.isLoading || analysisCapabilities.isLoading || updateWorkflowMutation.isPending}
-                      onChange={(event) => void updateWorkflow({ analysisProvider: event.target.value as "local" | "forge" | "openai" | "anthropic" | "google" | "deepseek" | "groq" | "together" })}
+                      onChange={(event) => void updateWorkflow({ analysisProvider: event.target.value as "local" | "ollama" | "forge" | "openai" | "anthropic" | "google" | "deepseek" | "groq" | "together" })}
                     >
-                      <option value="local">Local analysis - recommended, no usage cost</option>
+                      <option value="local">Local source extraction - no AI model</option>
                       {(analysisCapabilities.data?.providers || []).map((provider) => (
                         <option key={provider.id} value={provider.id} disabled={!provider.configured}>
                           {provider.label} - {provider.model}{provider.configured ? "" : " (not configured)"}
                         </option>
                       ))}
                     </select>
-                    <p className="text-xs text-muted-foreground">External analysis uses only the selected provider. LARO does not fall back to another paid service.</p>
+                    <p className="text-xs text-muted-foreground">Local Ollama keeps source text on this computer. External analysis uses only the selected provider and never falls back to another paid service.</p>
                   </label>
                   <div className="flex items-center justify-between gap-4 border border-border/60 p-4">
                     <div>
