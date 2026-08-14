@@ -1,6 +1,6 @@
 # Data Model, Ownership, and Persistence
 
-Current as of 2026-07-21.
+Current as of 2026-08-14.
 
 ## Topology
 
@@ -45,6 +45,9 @@ timeout. The scanner database declares its scan-to-file foreign key.
   `contentHash` / `hashAlgo` on reads.
 - Storage is deleted if evidence-record creation fails.
 - Reconciliation and invariant reports detect orphan or inconsistent records.
+- Data readiness checks strict historical counters for malformed, negative, or
+  JavaScript-unsafe values and verifies cross-counter relationships using
+  aggregate queries. Empty compatibility values remain accepted as zero.
 - Backup validation and an isolated delete/restore/reopen drill are release
   gates.
 
@@ -52,5 +55,6 @@ timeout. The scanner database declares its scan-to-file foreign key.
 
 Many relationships are still application-enforced rather than declared as SQL
 foreign keys. Adding constraints requires a reviewed migration after reconciling
-existing installations. Some historical money and count fields remain text and
-should be normalized through the same migration discipline.
+existing installations. Some historical money and count fields remain text. A
+non-mutating readiness gate now identifies incompatible count data before those
+columns are normalized through the same migration discipline.

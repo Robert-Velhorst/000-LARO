@@ -56,7 +56,9 @@ must not be represented as operational.
 3. Add platform-normalized pixel baselines for high-risk interaction states and
    extend focus-order coverage into complex route-specific case and evidence
    editors; shared-shell keyboard behavior is now blocking.
-4. Normalize historical text-backed numeric fields through a reviewed migration.
+4. Normalize historical text-backed numeric fields through a reviewed,
+   backup-tested migration; the production readiness gate now detects malformed,
+   unsafe, or internally inconsistent count data before conversion.
 5. Continue dependency review while preserving the enforced renderer bundle budgets.
 
 These items improve maintainability and coverage; they do not replace the

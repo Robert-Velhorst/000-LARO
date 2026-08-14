@@ -1,6 +1,7 @@
 import { getDb } from "./db";
 import { verifyInvariants, type Invariant } from "./invariants";
 import { reconcileReport, type ReconcileReport } from "./reconcile";
+import { assessNumericIntegrity, type NumericIntegrityReport } from "./numericIntegrity";
 
 export interface DataReadinessReport {
   ok: boolean;
@@ -8,6 +9,7 @@ export interface DataReadinessReport {
   foreignKeyViolations: number;
   invariants: Invariant[];
   reconciliation: ReconcileReport;
+  numericIntegrity: NumericIntegrityReport;
   demoLikeRecords: {
     users: number;
     cases: number;
@@ -33,6 +35,7 @@ export async function assessDataReadiness(): Promise<DataReadinessReport> {
   const foreignKeyViolations = (sqlite.pragma("foreign_key_check") as unknown[]).length;
   const invariantReport = await verifyInvariants();
   const reconciliation = await reconcileReport();
+  const numericIntegrity = assessNumericIntegrity(sqlite);
 
   // Exact development markers only. Do not reject ordinary example.com addresses,
   // which may be intentionally used in an isolated acceptance environment.
@@ -64,11 +67,13 @@ export async function assessDataReadiness(): Promise<DataReadinessReport> {
       foreignKeyViolations === 0 &&
       allInvariantsClean &&
       noReconciliationIssues &&
+      numericIntegrity.ok &&
       noDemoMarkers,
     sqliteIntegrity,
     foreignKeyViolations,
     invariants: invariantReport.invariants,
     reconciliation,
+    numericIntegrity,
     demoLikeRecords,
   };
 }
