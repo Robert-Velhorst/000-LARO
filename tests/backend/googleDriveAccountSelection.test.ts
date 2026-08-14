@@ -136,6 +136,33 @@ suite("Google Drive account selection", () => {
     expect(googleMocks.listRequests[1]).toMatchObject({ pageToken: "drive-page-two" });
   });
 
+  it("finds exact Drive names globally across every result page", async () => {
+    googleMocks.listRequests.length = 0;
+    googleMocks.listResponses.push(
+      {
+        data: {
+          files: [{ id: "exact-page-one", name: "Court's file.pdf", mimeType: "application/pdf" }],
+          nextPageToken: "exact-page-two",
+        },
+      },
+      {
+        data: {
+          files: [{ id: "exact-page-two", name: "Court's file.pdf", mimeType: "application/pdf" }],
+        },
+      },
+    );
+    const { findGoogleDriveFilesByExactName } = await import("../../server/googleDriveService");
+    const files = await findGoogleDriveFilesByExactName(
+      userId,
+      "Court's file.pdf",
+      "GOOGLE_DRIVE_SECOND",
+    );
+
+    expect(files.map((file) => file.id)).toEqual(["exact-page-one", "exact-page-two"]);
+    expect(googleMocks.listRequests[0].q).toContain("name = 'Court\\'s file.pdf'");
+    expect(googleMocks.listRequests[1]).toMatchObject({ pageToken: "exact-page-two" });
+  });
+
   it("persists the selected Drive account and folders with auto-collection settings", async () => {
     const caller = app.makeCaller({ id: userId, role: "user" });
     await expect(caller.autoCollection.upsertSettings({
