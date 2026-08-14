@@ -30,6 +30,7 @@ export const messages = {
   "nav.analytics": { nl: "Analyse", en: "Analytics" },
   "nav.settings": { nl: "Instellingen", en: "Settings" },
   "nav.signOut": { nl: "Afmelden", en: "Sign out" },
+  "nav.skipToContent": { nl: "Ga naar de hoofdinhoud", en: "Skip to main content" },
   "nav.expandSidebar": { nl: "Zijbalk uitklappen", en: "Expand sidebar" },
   "nav.collapseSidebar": { nl: "Zijbalk inklappen", en: "Collapse sidebar" },
   "nav.accountMenu": { nl: "Accountmenu openen", en: "Open account menu" },

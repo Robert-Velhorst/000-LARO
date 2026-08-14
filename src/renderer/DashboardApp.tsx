@@ -11,6 +11,7 @@ import { WebSocketProvider } from "@/contexts/WebSocketContext";
 import { useI18n } from "@/contexts/I18nContext";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import SkipNavigation from "@/components/SkipNavigation";
 
 const Home = lazy(() => import("@/components/Home"));
 const Cases = lazy(() => import("@/components/Cases"));
@@ -56,41 +57,44 @@ export default function DashboardApp() {
   }
 
   return (
-    <WebSocketProvider>
-    <Router {...(fileProtocol ? { hook: useHashLocation } : {})}>
-    <Suspense fallback={<DashboardSkeleton />}>
-    <Switch>
-      <Route path="/" component={Home} />
-      <Route path="/cases" component={Cases} />
-      <Route path="/evidence" component={Evidence} />
-      <Route path="/lawyers/:id" component={LawyerProfile} />
-      <Route path="/lawyers" component={Lawyers} />
-      <Route path="/outreach" component={OutreachAnalytics} />
-      <Route path="/help" component={Help} />
+    <>
+      <SkipNavigation />
+      <WebSocketProvider>
+        <Router {...(fileProtocol ? { hook: useHashLocation } : {})}>
+          <Suspense fallback={<DashboardSkeleton />}>
+            <Switch>
+              <Route path="/" component={Home} />
+              <Route path="/cases" component={Cases} />
+              <Route path="/evidence" component={Evidence} />
+              <Route path="/lawyers/:id" component={LawyerProfile} />
+              <Route path="/lawyers" component={Lawyers} />
+              <Route path="/outreach" component={OutreachAnalytics} />
+              <Route path="/help" component={Help} />
 
-      <Route path="/settings" component={Settings} />
-      <Route path="/email-settings" component={Settings} />
-      <Route path="/email-preferences" component={Settings} />
-      <Route path="/privacy" component={Privacy} />
+              <Route path="/settings" component={Settings} />
+              <Route path="/email-settings" component={Settings} />
+              <Route path="/email-preferences" component={Settings} />
+              <Route path="/privacy" component={Privacy} />
 
-      <Route path="/admin" component={Admin} />
-      <Route path="/admin-analytics" component={Admin} />
+              <Route path="/admin" component={Admin} />
+              <Route path="/admin-analytics" component={Admin} />
 
-      <Route path="/messages" component={Messages} />
-      <Route path="/email" component={Messages} />
-      <Route path="/analytics">
-        <OutreachAnalytics />
-      </Route>
+              <Route path="/messages" component={Messages} />
+              <Route path="/email" component={Messages} />
+              <Route path="/analytics">
+                <OutreachAnalytics />
+              </Route>
 
-      <Route>
-        <div className="p-8 text-center text-muted-foreground">
-          <p className="font-medium text-foreground">{t("route.notFound")}</p>
-          <p className="mt-2 text-sm">{t("route.notFoundHint")}</p>
-        </div>
-      </Route>
-    </Switch>
-    </Suspense>
-    </Router>
-    </WebSocketProvider>
+              <Route>
+                <div className="p-8 text-center text-muted-foreground">
+                  <p className="font-medium text-foreground">{t("route.notFound")}</p>
+                  <p className="mt-2 text-sm">{t("route.notFoundHint")}</p>
+                </div>
+              </Route>
+            </Switch>
+          </Suspense>
+        </Router>
+      </WebSocketProvider>
+    </>
   );
 }

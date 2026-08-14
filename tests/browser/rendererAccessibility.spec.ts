@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import Database from "better-sqlite3";
 import { resolve } from "node:path";
 
@@ -50,6 +50,55 @@ function formatViolations(
       return `${viewport} ${route}: ${violation.id} (${violation.impact}) ${violation.help}; ${targets}`;
     })
     .join("\n");
+}
+
+async function resetKeyboardFocus(page: Page) {
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  });
+}
+
+async function expectVisibleKeyboardFocus(page: Page, locator: Locator) {
+  await expect(locator).toBeFocused();
+  const focusState = await locator.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return {
+      width: rect.width,
+      height: rect.height,
+      insideViewport:
+        rect.left >= -1
+        && rect.top >= -1
+        && rect.right <= window.innerWidth + 1
+        && rect.bottom <= window.innerHeight + 1,
+      hasIndicator:
+        Number.parseFloat(style.outlineWidth) > 0
+        || (style.boxShadow !== "none" && style.boxShadow.trim() !== ""),
+    };
+  });
+  expect(focusState.width).toBeGreaterThan(0);
+  expect(focusState.height).toBeGreaterThan(0);
+  expect(focusState.insideViewport).toBe(true);
+  expect(focusState.hasIndicator).toBe(true);
+}
+
+async function expectInsideViewport(locator: Locator) {
+  const geometry = await locator.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      width: rect.width,
+      height: rect.height,
+      insideViewport:
+        rect.left >= -1
+        && rect.top >= -1
+        && rect.right <= window.innerWidth + 1
+        && rect.bottom <= window.innerHeight + 1,
+    };
+  });
+  expect(geometry.width).toBeGreaterThan(0);
+  expect(geometry.height).toBeGreaterThan(0);
+  expect(geometry.insideViewport).toBe(true);
 }
 
 function analysisResult(options: { party: string; date: string; title: string; text: string }) {
@@ -159,6 +208,106 @@ test("language selection changes the mounted shell and persists across reloads",
   await page.getByRole("group", { name: "Taal" }).getByRole("button", { name: "en", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await expect(page.getByText("My Cases", { exact: true })).toBeVisible();
+});
+
+test("keyboard navigation exposes the skip link, traps the mobile menu, and keeps interaction states visible", async ({ page }, testInfo) => {
+  await createAccount(page);
+
+  await page.setViewportSize(VIEWPORTS[0]);
+  await page.goto("/help", { waitUntil: "networkidle" });
+  await resetKeyboardFocus(page);
+
+  const skipLink = page.getByRole("link", { name: "Skip to main content" });
+  await page.keyboard.press("Tab");
+  await expectVisibleKeyboardFocus(page, skipLink);
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#main-content")).toBeFocused();
+
+  await page.goto("/help", { waitUntil: "networkidle" });
+  await resetKeyboardFocus(page);
+  const desktopFocusOrder = [
+    page.getByRole("link", { name: "Skip to main content" }),
+    page.getByRole("button", { name: "Collapse sidebar" }),
+    page.getByRole("button", { name: "Home", exact: true }),
+    page.getByRole("button", { name: "My Cases", exact: true }),
+    page.getByRole("button", { name: "Evidence", exact: true }),
+    page.getByRole("button", { name: "Outreach", exact: true }),
+    page.getByRole("button", { name: "Help & Resources", exact: true }),
+    page.getByRole("button", { name: "Open account menu" }),
+  ];
+  for (const control of desktopFocusOrder) {
+    await page.keyboard.press("Tab");
+    await expectVisibleKeyboardFocus(page, control);
+  }
+
+  const accountMenuTrigger = desktopFocusOrder[desktopFocusOrder.length - 1];
+  await page.keyboard.press("Enter");
+  const accountMenu = page.locator('[data-slot="dropdown-menu-content"]');
+  await expect(accountMenu).toBeVisible();
+  await expectInsideViewport(accountMenu);
+  await expect(accountMenu.locator(":focus")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(accountMenuTrigger).toBeFocused();
+
+  await page.setViewportSize(VIEWPORTS[1]);
+  await page.goto("/help", { waitUntil: "networkidle" });
+  await resetKeyboardFocus(page);
+  await page.keyboard.press("Tab");
+  await expectVisibleKeyboardFocus(page, skipLink);
+  await page.keyboard.press("Tab");
+  const mobileMenuTrigger = page.getByRole("button", { name: "Toggle sidebar" });
+  await expectVisibleKeyboardFocus(page, mobileMenuTrigger);
+  await page.keyboard.press("Enter");
+  await expect(mobileMenuTrigger).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#laro-mobile-sidebar")).toHaveAttribute("aria-hidden", "false");
+
+  const mobileMenuClose = page.getByRole("button", { name: "Collapse sidebar" });
+  await expectVisibleKeyboardFocus(page, mobileMenuClose);
+  await page.keyboard.press("Shift+Tab");
+  await expectVisibleKeyboardFocus(page, page.getByRole("button", { name: "Open account menu" }));
+  await page.keyboard.press("Escape");
+  await expect(mobileMenuTrigger).toBeFocused();
+
+  const notificationTrigger = page.getByRole("button", { name: /Open notifications/ });
+  await notificationTrigger.focus();
+  await expectVisibleKeyboardFocus(page, notificationTrigger);
+  await page.keyboard.press("Enter");
+  const notificationPopover = page.locator('[data-slot="popover-content"]');
+  await expect(notificationPopover).toBeVisible();
+  await expect(notificationPopover.getByText("Notifications", { exact: true })).toBeVisible();
+  await expectInsideViewport(notificationPopover);
+  await page.screenshot({ path: testInfo.outputPath("mobile-notification-keyboard.png"), fullPage: false });
+  await page.keyboard.press("Escape");
+  await expect(notificationTrigger).toBeFocused();
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize(VIEWPORTS[0]);
+  await page.goto("/help", { waitUntil: "networkidle" });
+  const firstFaq = page.getByRole("button", { name: "How does LARO find lawyers for my case?" });
+  await firstFaq.focus();
+  await expectVisibleKeyboardFocus(page, firstFaq);
+  await page.keyboard.press("Space");
+  await expect(firstFaq).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#faq-answer-0")).toBeVisible();
+  const motion = await firstFaq.evaluate((element) => {
+    const parseDurations = (value: string) => value.split(",").map((duration) => {
+      const normalized = duration.trim();
+      return normalized.endsWith("ms")
+        ? Number.parseFloat(normalized)
+        : Number.parseFloat(normalized) * 1_000;
+    });
+    const style = window.getComputedStyle(element);
+    return {
+      reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+      maximumDurationMs: Math.max(
+        ...parseDurations(style.animationDuration),
+        ...parseDurations(style.transitionDuration),
+      ),
+    };
+  });
+  expect(motion.reduced).toBe(true);
+  expect(motion.maximumDurationMs).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: testInfo.outputPath("desktop-faq-keyboard.png"), fullPage: false });
 });
 
 test("Settings presents an owned Flask migration without responsive overflow", async ({ page }) => {
