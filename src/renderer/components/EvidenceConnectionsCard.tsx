@@ -92,7 +92,13 @@ export default function EvidenceConnectionsCard() {
       oauthWindowRef.current?.close();
       oauthWindowRef.current = null;
       if (event.data.success === true) {
+        // The callback is emitted only after the account was saved. Finish the
+        // waiting state immediately, then refresh both capabilities in place.
+        setConnectingPlatform(null);
+        toast.success('Google successfully connected');
         void Promise.all([
+          refetchGmailStatus(),
+          refetchDriveStatus(),
           utils.gmailEnhanced.getStatus.invalidate(),
           utils.googleDrive.checkConnection.invalidate(),
         ]);
@@ -103,7 +109,7 @@ export default function EvidenceConnectionsCard() {
     };
     window.addEventListener('message', handleOAuthComplete);
     return () => window.removeEventListener('message', handleOAuthComplete);
-  }, [connectingPlatform, utils]);
+  }, [connectingPlatform, refetchDriveStatus, refetchGmailStatus, utils]);
 
   useEffect(() => {
     if (!connectingPlatform) return;
