@@ -22,6 +22,7 @@ release-acceptance.draft.json
 release-acceptance.local.json
 db-backups/
 flask-backups/
+.laro-backups/
 *.exe
 *.dmg
 *.AppImage

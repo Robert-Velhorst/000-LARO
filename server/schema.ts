@@ -113,7 +113,12 @@ export const cases = sqliteTable(
   },
   (t) => ({
     userIdx: index("cases_userId_idx").on(t.userId),
+    userCreatedIdx: index("cases_userId_createdAt_idx").on(t.userId, t.createdAt),
     userUpdatedIdx: index("cases_userId_updatedAt_idx").on(t.userId, t.updatedAt),
+    userStatusCreatedIdx: index("cases_userId_status_createdAt_idx").on(t.userId, t.status, t.createdAt),
+    userUrgencyCreatedIdx: index("cases_userId_urgency_createdAt_idx").on(t.userId, t.urgency, t.createdAt),
+    userStatusUrgencyCreatedIdx: index("cases_userId_status_urgency_createdAt_idx").on(t.userId, t.status, t.urgency, t.createdAt),
+    userClientNameIdx: index("cases_userId_clientName_idx").on(t.userId, t.clientName),
   })
 );
 

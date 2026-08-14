@@ -26,7 +26,7 @@ export const HELP_TOPICS: HelpTopic[] = [
   { id: "approval", title: "Prepare and approve outreach", step: 5,
     body: "Prepare outreach drafts, then review each one. Approving a draft marks it ready — nothing is sent automatically. You are always shown who will be contacted and a legal disclaimer first." },
   { id: "privacy", title: "Your data & privacy",
-    body: "All data stays on your device (and your own configured cloud storage). You can export everything or permanently delete your account and data from Settings → Privacy." },
+    body: "All data stays on your device (and your own configured cloud storage). You can export your data or erase the live account from Settings → Privacy. Recovery copies expire under the configured backup-retention policy." },
   { id: "disclaimer", title: "Important: not legal advice",
     body: "LARO provides assistance and preparation, not definitive legal advice. Always have generated documents and analyses reviewed by a qualified lawyer before relying on them." },
 ];

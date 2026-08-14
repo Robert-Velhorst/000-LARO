@@ -1,16 +1,17 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import path from 'path';
+import path from 'node:path';
 
 const devApiUrl = process.env.VITE_LARO_API_URL || 'http://127.0.0.1:3000';
 
 export default defineConfig({
   plugins: [react()],
+  envDir: process.env.VITE_LARO_IGNORE_DOTENV === 'true' ? false : undefined,
 
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src/renderer'),
-      'radix-ui': path.resolve(__dirname, './src/renderer/lib/radix-ui.ts'),
+      '@': path.resolve(import.meta.dirname, './src/renderer'),
+      'radix-ui': path.resolve(import.meta.dirname, './src/renderer/lib/radix-ui.ts'),
     },
   },
 

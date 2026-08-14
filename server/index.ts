@@ -37,7 +37,7 @@ import { corsMiddleware, csrfGuard } from './_core/csrf';
 import { appRouter } from './routers';
 import { createContext } from './context';
 import { compressionMiddleware } from './compression';
-import { initCronScheduler, stopCronScheduler } from './cronScheduler';
+import { getJobStatus, initCronScheduler, stopCronScheduler } from './cronScheduler';
 import oauth2CallbacksRouter from './oauth2Callbacks';
 import haiIntegrationRoutes from './haiIntegrationRoutes';
 import { closeDatabaseForMaintenance, getDb } from './db';
@@ -47,6 +47,8 @@ import { APP_VERSION } from './_core/version';
 import { EvidenceAccessError, readSignedEvidenceDownload } from './evidenceAccess';
 import { sanitizeFilename } from './storage';
 import { closeRealtimeServer, initializeRealtimeServer } from './realtime';
+import { getScheduledBackupHealth } from './scheduledBackup';
+import { getOperationalMetrics, operationalMetricsMiddleware } from './operationalMetrics';
 import {
   normalizePublicPathPrefix,
   publicPathPrefixMiddleware,
@@ -69,6 +71,7 @@ initializeRealtimeServer(httpServer, `${publicPathPrefix}/socket.io`);
 // A shared-domain gateway may expose this API below a dedicated prefix. Strip
 // it before routing while leaving direct loopback health checks unchanged.
 app.use(publicPathPrefixMiddleware);
+app.use(operationalMetricsMiddleware);
 
 // Phase 080 (D5) — strict CORS (never `*` with credentials) + CSRF origin guard.
 app.use(corsMiddleware);
@@ -144,9 +147,46 @@ app.get('/api/health', async (_req, res) => {
   } catch {
     dbReady = false;
   }
+  let backup;
+  try {
+    backup = getScheduledBackupHealth();
+  } catch (error) {
+    backup = {
+      configured: true,
+      status: 'failed',
+      destinationKind: null,
+      latestValidAt: null,
+      ageHours: null,
+      maxAgeHours: null,
+      retentionCount: null,
+      retentionDays: null,
+    };
+  }
+  const warnings = [
+    ...(!backup.configured ? ['Automatic recovery backups are not configured.'] : []),
+    ...(backup.status === 'stale' ? ['The latest verified recovery backup is stale.'] : []),
+    ...(backup.status === 'failed' ? ['The automatic recovery backup job needs attention.'] : []),
+    ...(backup.destinationKind === 'local' ? ['Recovery backups are stored locally and are not off-device.'] : []),
+  ];
+  const workers = getJobStatus().map((worker) => {
+    const failing = !!worker.lastErrorAt && (!worker.lastSuccessAt || worker.lastErrorAt > worker.lastSuccessAt);
+    return {
+      name: worker.name,
+      enabled: worker.enabled,
+      status: !worker.enabled ? 'disabled' : failing ? 'failed' : worker.lastSuccessAt ? 'healthy' : 'pending',
+      runs: worker.runs,
+      failures: worker.failures,
+      lastSuccessAt: worker.lastSuccessAt ? new Date(worker.lastSuccessAt).toISOString() : null,
+      lastErrorAt: worker.lastErrorAt ? new Date(worker.lastErrorAt).toISOString() : null,
+    };
+  });
   res.status(dbReady ? 200 : 503).json({
     status: dbReady ? 'healthy' : 'degraded',
     dbReady,
+    backup,
+    warnings,
+    operations: getOperationalMetrics(),
+    workers,
     version: APP_VERSION,
     timestamp: new Date().toISOString(),
   });

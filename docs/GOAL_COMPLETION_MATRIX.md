@@ -22,7 +22,7 @@ Ledger reconciled: 2026-07-15.
 | 000 | Repository integrity & true starting point | **Implemented** | Junk removed (5 files); integrity recorded; doc trail created. `docs/CODEX_WORKLOG.md`. |
 | 001 | Complete file & dependency audit | **Implemented** | `docs/DEPENDENCY_AUDIT.md`; 10 dead deps identified from import graph. |
 | 002 | Product definition & user outcome contract | **Implemented** | `docs/PRODUCT_DEFINITION.md` (honest capability table + safety boundary). |
-| 003 | Critical path definition & smoke test | **Implemented** | `docs/CRITICAL_PATH.md`; `tests/smoke/criticalPath.smoke.test.ts` + `vitest.config.ts`; current workflow coverage contains no placeholder todos. |
+| 003 | Critical path definition & smoke test | **Implemented** | `docs/CRITICAL_PATH.md`; `tests/smoke/criticalPath.smoke.test.ts` + `vitest.config.mts`; current workflow coverage contains no placeholder todos. |
 | 004 | Architecture decision & stack validation | **Implemented** | `docs/ARCHITECTURE.md`; `PROJECT_INFO.md` corrected to real stack. |
 | 005 | Data model, ownership & persistence | **Implemented** | `docs/DATA_MODEL.md`; WAL + `foreign_keys` + `busy_timeout`, unique `users.email`, 10 hot indexes in `server/db.ts`. |
 | 006 | Configuration validation & startup guards | **Implemented** | `assertSecurityConfig()` fail-fast + per-install secret bootstrap; `tests/smoke/configGuard.smoke.test.ts` (4 pass). |
