@@ -17,6 +17,9 @@ Advanced evidence views load only when selected; the default Evidence route is
 approximately 38 KB before gzip and uses lightweight native DOM/SVG summary
 charts. Release checks cap every JavaScript chunk at 200 KiB, the Evidence route
 at 80 KiB, and stylesheets at 100 KiB.
+Unmounted legacy analytics components and their Recharts/D3 runtime are not
+shipped; the supported analytics surfaces are Admin, Outreach Analytics, and
+the Evidence summary workspace listed below.
 
 ## Dashboard routes
 

@@ -20,6 +20,8 @@ Current as of 2026-08-14.
   outbound-send blocking.
 - Active HAI connector acceptance through the authenticated public LARO feed.
 - Route-level renderer splitting with release-blocking bundle budgets.
+- Removal of unmounted analytics prototypes and their unused Recharts/D3
+  production dependency tree.
 
 ## External Acceptance
 

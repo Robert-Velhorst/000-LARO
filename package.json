@@ -120,7 +120,6 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-dropzone": "^14.2.3",
-    "recharts": "^2.12.3",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "sonner": "^1.4.41",
