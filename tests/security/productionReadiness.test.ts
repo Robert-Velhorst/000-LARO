@@ -207,6 +207,7 @@ describe('production readiness regressions', () => {
     expect(main).toContain('sandbox: true');
     expect(callback).toContain("window.opener.postMessage({ type: 'laro:oauth-complete'");
     expect(callback).toContain("action.addEventListener('click', () => window.location.reload())");
+    expect(callback).toContain('const retryable = !tokenExchangeCompleted && isRetryableOAuthNetworkError(error)');
     expect(callback).toContain('window.close()');
     expect(connections).toContain("window.addEventListener('message', handleOAuthComplete)");
     expect(connections).toContain("window.open(result.authUrl, 'laro-google-oauth'");

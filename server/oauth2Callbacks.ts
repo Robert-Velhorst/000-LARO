@@ -79,6 +79,7 @@ function sendCallbackPage(
 
 function callbackHandler(provider: OAuthProvider) {
   return async (req: Request, res: Response) => {
+    let tokenExchangeCompleted = false;
     try {
       const code = typeof req.query.code === 'string' ? req.query.code : '';
       const state = typeof req.query.state === 'string' ? req.query.state : '';
@@ -94,6 +95,7 @@ function callbackHandler(provider: OAuthProvider) {
 
       const oauthState = consumeOAuthState(state, provider);
       const tokens = await exchangeCodeForTokens(provider, code, oauthState.codeVerifier);
+      tokenExchangeCompleted = true;
       const accountInfo = await getAccountInfo(provider, tokens.accessToken);
       if (!accountInfo.email) throw new Error('Provider profile did not include an email address');
       await saveEmailAccount(oauthState.userId, provider, tokens, accountInfo);
@@ -106,7 +108,7 @@ function callbackHandler(provider: OAuthProvider) {
       });
     } catch (error) {
       console.error(`[OAuth2] ${provider} callback failed:`, error);
-      const retryable = isRetryableOAuthNetworkError(error);
+      const retryable = !tokenExchangeCompleted && isRetryableOAuthNetworkError(error);
       sendCallbackPage(res, {
         success: false,
         title: 'Connection failed',
