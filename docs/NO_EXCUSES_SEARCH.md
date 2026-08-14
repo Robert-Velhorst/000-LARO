@@ -37,12 +37,13 @@ Descriptive words (mock/stub/placeholder/fake) needing human judgement. Triage o
 | `server/_core/env.ts` | 101 | `* in production and the secrets are still the shipped placeholders (or empty),` |
 | `server/_core/env.ts` | 133 | `* to the insecure placeholder. Returns a list of non-fatal warnings (e.g.` |
 
-## Markers in tests / scripts / renderer (166) — reported, not failing
+## Markers in tests / scripts / renderer (176) — reported, not failing
 
 These are informational and do not identify unsupported runtime behavior by themselves; test/script occurrences are usually the words "mock"/"fake" used descriptively.
 
 | File | Marker count |
 |---|---|
+| `tests/backend/googleDriveAccountSelection.test.ts` | 15 |
 | `scripts/no-excuses-scan.mjs` | 14 |
 | `tests/backend/multiProviderLLM.test.ts` | 14 |
 | `src/renderer/components/SmartSearchFilters.tsx` | 7 |
@@ -51,7 +52,6 @@ These are informational and do not identify unsupported runtime behavior by them
 | `tests/backend/realSend.test.ts` | 6 |
 | `src/renderer/components/AuthPage.tsx` | 5 |
 | `src/renderer/components/EvidenceFilters.tsx` | 5 |
-| `tests/backend/googleDriveAccountSelection.test.ts` | 5 |
 | `tests/backend/novaDirectory.test.ts` | 5 |
 | `tests/security/productionReadiness.test.ts` | 5 |
 | `src/renderer/components/EvidenceSearch.tsx` | 4 |

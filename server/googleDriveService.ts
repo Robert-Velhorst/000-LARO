@@ -214,6 +214,33 @@ export async function getAllFilesInFolder(
   return allFiles;
 }
 
+function escapeDriveQueryLiteral(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+/** Find exact filename matches across the selected account without walking folders. */
+export async function findGoogleDriveFilesByExactName(
+  userId: string,
+  exactFileName: string,
+  accountId?: string,
+): Promise<Array<{ id: string; name: string; mimeType?: string | null; size?: string | null; webViewLink?: string | null; modifiedTime?: string | null }>> {
+  const name = exactFileName.trim();
+  if (!name) return [];
+  const drive = await getDriveClient(userId, accountId);
+  const files: Array<{ id: string; name: string; mimeType?: string | null; size?: string | null; webViewLink?: string | null; modifiedTime?: string | null }> = [];
+  let pageToken: string | undefined;
+  do {
+    const response = await drive.files.list({
+      q: `name = '${escapeDriveQueryLiteral(name)}' and trashed = false and mimeType != 'application/vnd.google-apps.folder'`,
+      fields: 'nextPageToken, files(id, name, mimeType, size, webViewLink, modifiedTime)',
+      pageToken,
+    });
+    files.push(...((response.data.files || []) as typeof files));
+    pageToken = response.data.nextPageToken || undefined;
+  } while (pageToken);
+  return files.filter((file) => file.name?.trim().toLowerCase() === name.toLowerCase());
+}
+
 /**
  * Search files in Google Drive by query
  */

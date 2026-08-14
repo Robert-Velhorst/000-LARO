@@ -111,8 +111,9 @@ npm.cmd run acceptance:google-drive-evidence-live -- `
   --run-id <stable-drive-acceptance-run-id>
 ```
 
-`--drive-folder-id` is optional and defaults to `root`; the scan is recursive.
-In the API container, invoke
+`--drive-folder-id` is accepted for command compatibility, but exact-name
+acceptance uses an account-wide paginated Drive query and does not walk the
+folder tree. In the API container, invoke
 `/app/dist/server/server/liveGoogleDriveEvidenceAcceptance.js` with the same
 arguments. Exact-name selection is checked before any matching file is
 downloaded, and the operation fails unless exactly one Drive file is found. It

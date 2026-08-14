@@ -14,10 +14,14 @@ import {
 } from './schema';
 import { v4 as uuidv4 } from 'uuid';
 import { google } from 'googleapis';
-import { downloadAndUploadGoogleDriveFile, getGoogleDriveFileMetadata } from './googleDriveService';
+import {
+  downloadAndUploadGoogleDriveFile,
+  findGoogleDriveFilesByExactName,
+  getAllFilesInFolder,
+  getGoogleDriveFileMetadata,
+} from './googleDriveService';
 import { decryptToken, encryptToken, refreshGmailToken } from './emailOAuth';
 import { searchGmailEmails, getGmailMessage, getGmailAttachment } from './gmailService';
-import { getAllFilesInFolder } from './googleDriveService';
 import { storagePut } from './storage';
 import { createEvidenceFile } from './evidence';
 import { analyzeStoredEvidence } from './documentAnalysisService';
@@ -997,13 +1001,17 @@ async function pullFromDrive(
   const cred = await getFreshGmailAccessToken(userId, accountId);
   if (!cred) return { files: 0 };
 
-  const folders = folderIds.length > 0 ? folderIds : ['root'];
+  const normalizedExactFileName = exactFileName?.trim().toLowerCase();
+  const folders = normalizedExactFileName
+    ? ['exact-name-query']
+    : folderIds.length > 0 ? folderIds : ['root'];
   let downloaded = 0;
 
   for (const folderId of folders) {
     try {
-      const files = await getAllFilesInFolder(userId, folderId, true, cred.accountId);
-      const normalizedExactFileName = exactFileName?.trim().toLowerCase();
+      const files = normalizedExactFileName
+        ? await findGoogleDriveFilesByExactName(userId, exactFileName!, cred.accountId)
+        : await getAllFilesInFolder(userId, folderId, true, cred.accountId);
       const candidates = files.filter((file) => {
         if (!file.name || !file.id) return false;
         if (normalizedExactFileName) {
