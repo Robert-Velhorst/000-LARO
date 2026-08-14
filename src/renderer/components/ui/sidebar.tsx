@@ -176,6 +176,66 @@ function Sidebar({
   disableTransition?: boolean;
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
+  const mobileSidebarRef = React.useRef<HTMLElement>(null);
+  const restoreFocusRef = React.useRef<HTMLElement | null>(null);
+
+  React.useLayoutEffect(() => {
+    const sidebar = mobileSidebarRef.current;
+    if (!sidebar) return;
+    sidebar.inert = !openMobile;
+    if (!isMobile || !openMobile) return;
+
+    restoreFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+
+    const focusableSelector = [
+      "a[href]",
+      "button:not([disabled])",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "textarea:not([disabled])",
+      "[tabindex]:not([tabindex='-1'])",
+    ].join(",");
+    const getFocusable = () => Array.from(
+      sidebar.querySelectorAll<HTMLElement>(focusableSelector),
+    ).filter((element) => !element.hasAttribute("hidden") && element.getClientRects().length > 0);
+
+    sidebar.querySelector<HTMLElement>(focusableSelector)?.focus({ preventScroll: true });
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpenMobile(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = getFocusable();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        sidebar.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      const restoreTarget = restoreFocusRef.current;
+      if (restoreTarget?.isConnected) {
+        restoreTarget.focus();
+      }
+    };
+  }, [isMobile, openMobile, setOpenMobile]);
 
   if (collapsible === "none") {
     return (
@@ -203,26 +263,32 @@ function Sidebar({
           <button
             type="button"
             aria-label="Close menu"
+            aria-hidden="true"
+            tabIndex={-1}
             className="fixed inset-0 z-40 bg-black/50 md:hidden"
             onClick={() => setOpenMobile(false)}
           />
         ) : null}
         <aside
+          ref={mobileSidebarRef}
+          id="laro-mobile-sidebar"
           data-slot="sidebar"
           data-state={openMobile ? "expanded" : "collapsed"}
           data-collapsible={collapsible}
           data-variant={variant}
           data-side={side}
+          aria-hidden={!openMobile}
+          tabIndex={-1}
           className={cn(
             "fixed inset-y-0 z-50 flex h-svh flex-col border-r border-sidebar-accent/25 bg-sidebar text-sidebar-foreground md:hidden",
             side === "left" ? "left-0" : "right-0",
             "w-[min(100vw,var(--sidebar-width))]",
             transitionClass,
             openMobile
-              ? "translate-x-0"
+              ? "visible translate-x-0"
               : side === "left"
-                ? "-translate-x-full"
-                : "translate-x-full",
+                ? "invisible -translate-x-full pointer-events-none"
+                : "invisible translate-x-full pointer-events-none",
             className
           )}
           {...props}
@@ -328,18 +394,37 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
 function SidebarTrigger({
   className,
   onClick,
+  onKeyUp,
   ...props
 }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar } = useSidebar();
+  const { toggleSidebar, isMobile, openMobile } = useSidebar();
+  const focusMobileSidebar = React.useCallback(() => {
+    const sidebar = document.getElementById("laro-mobile-sidebar");
+    if (sidebar?.getAttribute("aria-hidden") === "false") {
+      sidebar.querySelector<HTMLElement>("button:not([disabled])")?.focus({ preventScroll: true });
+    }
+  }, []);
   return (
     <Button
       data-sidebar="trigger"
+      aria-controls={isMobile ? "laro-mobile-sidebar" : undefined}
+      aria-expanded={isMobile ? openMobile : undefined}
       variant="ghost"
       size="icon"
       className={cn("h-9 w-9", className)}
       onClick={(e) => {
+        const openingMobileSidebar = isMobile && !openMobile;
         toggleSidebar();
+        if (openingMobileSidebar) {
+          window.setTimeout(focusMobileSidebar, 50);
+        }
         onClick?.(e);
+      }}
+      onKeyUp={(event) => {
+        if (isMobile && openMobile && (event.key === "Enter" || event.key === " ")) {
+          focusMobileSidebar();
+        }
+        onKeyUp?.(event);
       }}
       {...props}
     >

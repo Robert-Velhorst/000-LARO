@@ -25,6 +25,10 @@ Current as of 2026-08-14.
 - Blocking accessibility coverage for all 15 mounted routes at desktop and
   mobile sizes, including axe, control naming, overflow, request, console, and
   page-error checks.
+- Blocking shared-shell keyboard coverage for localized skip navigation,
+  desktop focus order, mobile sidebar exclusion/trapping/Escape restoration,
+  overlay geometry and trigger restoration, keyboard FAQ state, and reduced
+  motion.
 - Removal of excluded legacy test files with broken imports or disconnected
   assertions; release coverage now lives only in explicitly maintained suites.
 
@@ -49,8 +53,9 @@ must not be represented as operational.
 1. Expand declared foreign keys after installed-data reconciliation; the
    production data-readiness gate now detects violations before migration.
 2. Complete renderer NL/EN string migration.
-3. Expand interaction-state visual regression and keyboard focus-order coverage
-   beyond the existing all-route axe and responsive browser gate.
+3. Add platform-normalized pixel baselines for high-risk interaction states and
+   extend focus-order coverage into complex route-specific case and evidence
+   editors; shared-shell keyboard behavior is now blocking.
 4. Normalize historical text-backed numeric fields through a reviewed migration.
 5. Continue dependency review while preserving the enforced renderer bundle budgets.
 

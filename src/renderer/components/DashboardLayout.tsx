@@ -229,7 +229,7 @@ function DashboardLayoutContent({
                     type="button"
                     onClick={toggleSidebar}
                     aria-label={t("nav.expandSidebar")}
-                    className="absolute inset-0 flex items-center justify-center rounded-lg bg-sidebar-accent/80 opacity-0 transition-opacity group-hover:opacity-100 focus:outline-none"
+                    className="absolute inset-0 flex items-center justify-center rounded-lg bg-sidebar-accent/80 opacity-0 transition-opacity group-hover:opacity-100 focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                   >
                     <PanelLeft className="h-4 w-4 text-sidebar-foreground" />
                   </button>
@@ -250,7 +250,7 @@ function DashboardLayoutContent({
                     type="button"
                     onClick={toggleSidebar}
                     aria-label={t("nav.collapseSidebar")}
-                    className="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus:outline-none"
+                    className="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                   >
                     <PanelLeft className="h-4 w-4" />
                   </button>
@@ -362,7 +362,7 @@ function DashboardLayoutContent({
             </div>
           </div>
         )}
-        <main id="main-content" className="min-w-0 flex-1 bg-black p-3 sm:p-6 md:p-8">
+        <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 bg-black p-3 outline-none sm:p-6 md:p-8">
           {children}
           <LegalAdviceNotice />
         </main>
