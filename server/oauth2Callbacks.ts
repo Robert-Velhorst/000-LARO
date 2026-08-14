@@ -4,6 +4,7 @@ import {
   consumeOAuthState,
   exchangeCodeForTokens,
   getAccountInfo,
+  isRetryableOAuthNetworkError,
   saveEmailAccount,
 } from './oauth2';
 
@@ -22,7 +23,7 @@ function escapeHtml(value: string): string {
 
 function sendCallbackPage(
   res: Response,
-  options: { success: boolean; title: string; message: string; status?: number }
+  options: { success: boolean; title: string; message: string; status?: number; retry?: boolean }
 ): void {
   const nonce = randomBytes(18).toString('base64');
   res.status(options.status ?? 200);
@@ -51,17 +52,26 @@ function sendCallbackPage(
       <div class="status" aria-hidden="true">${options.success ? '&#10003;' : '!'}</div>
       <h1>${escapeHtml(options.title)}</h1>
       <p id="message">${escapeHtml(options.message)}</p>
-      <button id="close" type="button">Close</button>
+      <button id="action" type="button">${options.retry ? 'Retry connection' : 'Close'}</button>
     </main>
     <script nonce="${nonce}">
+      const action = document.getElementById('action');
+      const notifyOpener = () => {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage({ type: 'laro:oauth-complete', success: ${options.success} }, '*');
+        }
+      };
       const closePage = () => {
+        notifyOpener();
         window.close();
         window.setTimeout(() => {
           document.getElementById('message').textContent = 'You can now close this browser tab and return to LARO.';
+          action.textContent = 'Close this tab';
         }, 250);
       };
-      document.getElementById('close').addEventListener('click', closePage);
-      window.setTimeout(closePage, 3000);
+      ${options.retry
+        ? "action.addEventListener('click', () => window.location.reload());"
+        : "action.addEventListener('click', closePage); window.setTimeout(closePage, 3000);"}
     </script>
   </body>
 </html>`);
@@ -96,11 +106,15 @@ function callbackHandler(provider: OAuthProvider) {
       });
     } catch (error) {
       console.error(`[OAuth2] ${provider} callback failed:`, error);
+      const retryable = isRetryableOAuthNetworkError(error);
       sendCallbackPage(res, {
         success: false,
         title: 'Connection failed',
-        message: 'The connection could not be completed. Return to LARO and try again.',
-        status: 500,
+        message: retryable
+          ? 'The provider could not be reached temporarily. Retry this connection without starting over.'
+          : 'The connection could not be completed. Return to LARO and try again.',
+        status: retryable ? 503 : 500,
+        retry: retryable,
       });
     }
   };

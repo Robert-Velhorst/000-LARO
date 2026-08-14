@@ -11,7 +11,8 @@ import {
   ExternalLink
 } from "lucide-react";
 import { toast } from "sonner";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { isElectron } from "@/lib/electronApiShim";
 
 // Get current user context (adjust based on your auth implementation)
 const useCurrentUser = () => {
@@ -40,6 +41,8 @@ export default function EvidenceConnectionsCard() {
   const currentUser = useCurrentUser();
   const utils = trpc.useContext();
   const [connectingPlatform, setConnectingPlatform] = useState<"gmail" | "google-drive" | null>(null);
+  const oauthWindowRef = useRef<Window | null>(null);
+  const oauthCallbackOriginRef = useRef<string | null>(null);
   
   // Query both capabilities because they share one owner-scoped Google grant.
   const { data: gmailStatus, isLoading: gmailLoading } = trpc.gmailEnhanced.getStatus.useQuery(undefined, {
@@ -62,14 +65,42 @@ export default function EvidenceConnectionsCard() {
 
   useEffect(() => {
     if (connectingPlatform === "gmail" && gmailStatus?.connected) {
+      oauthWindowRef.current?.close();
+      oauthWindowRef.current = null;
       toast.success("Gmail successfully connected");
       setConnectingPlatform(null);
     }
     if (connectingPlatform === "google-drive" && driveStatus?.connected) {
+      oauthWindowRef.current?.close();
+      oauthWindowRef.current = null;
       toast.success("Google Drive successfully connected");
       setConnectingPlatform(null);
     }
   }, [connectingPlatform, driveStatus?.connected, gmailStatus?.connected]);
+
+  useEffect(() => {
+    if (!connectingPlatform) return;
+    const handleOAuthComplete = (event: MessageEvent) => {
+      if (
+        event.origin !== oauthCallbackOriginRef.current ||
+        event.data?.type !== 'laro:oauth-complete'
+      ) return;
+
+      oauthWindowRef.current?.close();
+      oauthWindowRef.current = null;
+      if (event.data.success === true) {
+        void Promise.all([
+          utils.gmailEnhanced.getStatus.invalidate(),
+          utils.googleDrive.checkConnection.invalidate(),
+        ]);
+      } else {
+        setConnectingPlatform(null);
+        toast.error('The Google connection was not completed.');
+      }
+    };
+    window.addEventListener('message', handleOAuthComplete);
+    return () => window.removeEventListener('message', handleOAuthComplete);
+  }, [connectingPlatform, utils]);
 
   const platforms: PlatformConnection[] = [
     {
@@ -111,7 +142,17 @@ export default function EvidenceConnectionsCard() {
           return;
         }
         // Electron opens provider URLs in a sandboxed child window; the web build uses a browser tab.
-        window.open(result.authUrl, '_blank');
+        const authorizationUrl = new URL(result.authUrl);
+        const redirectUri = authorizationUrl.searchParams.get('redirect_uri');
+        if (!redirectUri) throw new Error('OAuth callback URL is missing');
+        oauthCallbackOriginRef.current = new URL(redirectUri).origin;
+        const oauthWindow = window.open(result.authUrl, 'laro-google-oauth', 'popup,width=520,height=720');
+        // Electron's main process denies the renderer popup and opens its own sandboxed window.
+        if (!oauthWindow && !isElectron()) {
+          toast.error('Your browser blocked the Google authorization window. Allow popups for LARO and try again.');
+          return;
+        }
+        oauthWindowRef.current = oauthWindow;
         setConnectingPlatform(platformId);
         toast.info('Opening authorization window. Please complete the OAuth flow.');
         return;
