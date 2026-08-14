@@ -22,6 +22,11 @@ Current as of 2026-08-14.
 - Route-level renderer splitting with release-blocking bundle budgets.
 - Removal of unmounted analytics prototypes and their unused Recharts/D3
   production dependency tree.
+- Blocking accessibility coverage for all 15 mounted routes at desktop and
+  mobile sizes, including axe, control naming, overflow, request, console, and
+  page-error checks.
+- Removal of excluded legacy test files with broken imports or disconnected
+  assertions; release coverage now lives only in explicitly maintained suites.
 
 ## External Acceptance
 
@@ -44,8 +49,8 @@ must not be represented as operational.
 1. Expand declared foreign keys after installed-data reconciliation; the
    production data-readiness gate now detects violations before migration.
 2. Complete renderer NL/EN string migration.
-3. Add component-level axe and visual-regression coverage across every mounted
-   screen.
+3. Expand interaction-state visual regression and keyboard focus-order coverage
+   beyond the existing all-route axe and responsive browser gate.
 4. Normalize historical text-backed numeric fields through a reviewed migration.
 5. Continue dependency review while preserving the enforced renderer bundle budgets.
 

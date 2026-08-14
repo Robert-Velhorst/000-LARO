@@ -1,6 +1,6 @@
 # Accessibility Review
 
-Date: 2026-07-17
+Date: 2026-08-14
 
 ## Implemented controls
 
@@ -26,13 +26,19 @@ Date: 2026-07-17
   controls, missing primary headings, horizontal overflow, page errors, failed
   requests, and console errors. GitHub Actions runs this as the
   `renderer-accessibility` job.
+- Vitest runs only maintained suite directories. A recursive release regression
+  check rejects test files outside those directories so excluded or broken
+  tests cannot be represented as passing coverage.
 
-## Packaged renderer audit
+## Renderer and package audit
 
-The final unsigned Windows executable was tested with a new local account in its
-bundled Chromium at 1440x900 and 390x844. The automated development-renderer
-audit covers the same supported Chromium surface. Fifteen mounted routes were
-checked at both sizes, including the consolidated Evidence workspace.
+The automated renderer audit exercises the Chromium surface used by Electron at
+1440x900 and 390x844, while the Windows workflow separately verifies packaging,
+the native database binding, and the packaged profile lock. The newest
+exact-main executable has not been launched in this task because native launch
+requires owner confirmation; that acceptance item remains explicit in the
+roadmap. Fifteen mounted routes were checked at both sizes, including the
+consolidated Evidence workspace.
 
 - Every route rendered meaningful content and an `h1`.
 - No visible button lacked an accessible name.
