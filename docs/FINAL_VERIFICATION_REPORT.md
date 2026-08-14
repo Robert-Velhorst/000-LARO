@@ -2,7 +2,7 @@
 
 Date: 2026-08-14
 Verification target: protected `main` merge commit
-`bd73a8ebc10e0d07d193e279e0364d5399b3a6f8`.
+`2d09077a68c5afeddf47ba1503cf5e7f67ca5ffa`.
 
 This report separates reproducible repository evidence from target-environment
 acceptance. It supersedes the 2026-07-06 phase snapshot.
@@ -18,8 +18,8 @@ acceptance. It supersedes the 2026-07-06 phase snapshot.
 | Account-safety scan | 0 high-severity findings |
 | Renderer accessibility | 15 routes x 2 viewports; 0 serious/critical axe violations, unnamed controls, overflows, request failures, page errors, or console errors |
 | Isolated backup/delete/restore/reopen drill | Pass |
-| Target database readiness | SQLite integrity, declared foreign keys, 240 legacy relationship guards, invariants, reconciliation, duplicates, and demo markers clean |
-| Vitest | 74 files and 422 tests passed in the complete blocking gate |
+| Target database readiness | SQLite integrity, declared foreign keys, 240 legacy relationship guards, invariants, reconciliation, duplicates, demo markers, 28 strict numeric fields, and 8 cross-counter constraints clean |
+| Vitest | 77 files and 438 tests passed in the complete blocking gate |
 | Python unittest discovery | 222 tests passed |
 | Runtime dependency audit | 0 known vulnerabilities |
 | Renderer, main, and server production builds | Pass |
@@ -29,8 +29,8 @@ acceptance. It supersedes the 2026-07-06 phase snapshot.
 | LARO-to-HAI connector | Dedicated read-only feed; hashed, expiring, revocable owner credential; bounded cursor; minimization and rate limit; LARO and HAI adapter tests pass |
 | Desktop scanner contract | Scoped 15-minute token; real bytes/hash; owner/MIME enforcement |
 | Branch CI policy | Node, Python, and renderer-accessibility checks run before merge |
-| Protected-main CI | Actions run `31761028471`; Node, Python, and renderer-accessibility jobs passed for merge commit `bd73a8e` |
-| Windows package | Actions run `31761028455`; gate, build, ABI check, package, single-instance profile lock, checksum, and artifact upload passed |
+| Protected-main CI | Actions run `31803372534`; Node, Python, and renderer-accessibility jobs passed for merge commit `2d09077` |
+| Windows package | Actions run `31803372455`; gate, build, ABI check, package, single-instance profile lock, checksum, and artifact upload passed |
 | Packaged matching assets | Seven aligned legal categories; invalid legacy dataset absent |
 | Dependency graph | One canonical Node workspace; 0 open Dependabot alerts |
 
@@ -134,9 +134,9 @@ disabled with a collection prompt while the case had no evidence. The inherited
 dark-theme recommendation contrast defect found during this pass was corrected
 and visually rechecked.
 
-The protected-main portable artifact is GitHub Actions artifact `9204816896`
-from run `31761028455`. Its executable is 151,942,295 bytes with SHA-256
-`134dc17e14f303a773ffb49956c56b49652e865286ae19f67eddcd7fd6f9b19d`;
+The protected-main portable artifact is GitHub Actions artifact `9220496086`
+from run `31803372455`. Its executable is 150,911,252 bytes with SHA-256
+`239d53499a930297bb8f9e6955614ab7f77b5134fcec6de4fe39be176ad0e281`;
 the downloaded executable matches its packaged checksum sidecar. The workflow
 passed the production gate, build, Electron ABI/database-binding check,
 portable packaging, packaged single-instance profile lock, artifact staging,
@@ -149,11 +149,16 @@ normal CI. Tagged pushes and manual workflow dispatch remain unaffected.
 The API-only Docker deployment was rebuilt on Node 22 from the current release
 line while retaining its explicitly named data volume. Local `/api/live`,
 `/api/ready`, and `/api/health` checks pass, the reported version is `1.3.0`,
-and SMTP authentication succeeds without sending a message. The Google web
-client is configured, but the owner's OAuth grant is not yet stored. The ngrok
-gateway now routes `https://laro-api-000.ngrok.app/laro` to LARO; public root,
-live, ready, health, and protected HAI route ownership were verified on
-2026-08-14. A bounded 120-request public probe, issued in ten-request batches,
+and the packaged `npm run db:readiness` command passes directly in the pruned
+production container. Google target acceptance completed Gmail profile and
+Drive root reads, persisted and reopened one Gmail evidence source with a
+matching hash, and verified disconnect revocation. A representative Drive-file
+import remains pending. Outbound SMTP acceptance delivered
+one approved message to the owner-controlled inbox, retained its audit record,
+and blocked duplicate dispatch. The ngrok gateway routes
+`https://laro-api-000.ngrok.app/laro` to LARO; public root, live, ready, health,
+and protected HAI route ownership were verified on 2026-08-14. A bounded
+120-request public probe, issued in ten-request batches,
 returned 120 successful responses. Readiness p95 was 51.5 ms and health p95 was
 54.4 ms through ngrok. After the probe the container returned to 0% CPU and
 used 166.2 MiB resident memory.
@@ -236,18 +241,21 @@ development renderer path from the launching shell.
 - `main` requires pull requests, strict Node/Python status checks, stale-review
   dismissal, resolved review conversations, and disallows force pushes/deletion.
 
-## External acceptance still required
+## External acceptance state
 
 | Gate | Current state | Required evidence |
 |---|---|---|
 | Trusted public Windows distribution | Deliberately out of scope | Configure Store or certificate signing only if platform publisher trust becomes a requirement; unsigned tagged delivery remains supported with a checksum and warning |
 | Public branding | Approved on 2026-07-21 | Owner-approved LARO timeline mark is stored in `build/icon.png` / `public/laro-logo.png`; release acceptance binds both files to SHA-256 `134ca32789b6dd24f0c39d461f0c405f1e1156475dceb0fa4e525373ab200a0f` |
-| Live providers | Google and outbound email selected; live checks pending | Complete the recorded Google checks (`credentials`, consent, Gmail/Drive read, evidence/source opening, revocation) and outbound-email checks (approved single delivery, audit record, duplicate blocking) with owner-controlled production accounts |
+| Live providers | Approved on 2026-08-14 for the recorded checks | Google credentials, consent, Gmail import, Drive root read, Gmail evidence/source opening, and revocation passed; a representative Drive-file import remains pending; outbound approved delivery, receipt, audit, and duplicate blocking passed |
+| Exact-main local Windows launch | Awaiting explicit owner authorization | Launch downloaded artifact `9220496086` on this Windows 11 host and confirm healthy startup; checksum, ABI, packaging, and single-instance behavior already pass in Actions |
 
 These external states are represented in `release-acceptance.json`. Normal
 development builds may retain pending gates, but the tagged release workflow
 requires a reviewed approver, timestamp, evidence, provider scope, and complete
-provider-specific checks before it can publish.
+provider-specific checks before it can publish. Public branding and the selected
+Google/outbound provider scope meet that record; no version tag was created in
+this verification pass.
 
 ## Residual engineering work
 
@@ -258,8 +266,8 @@ provider-specific checks before it can publish.
 - Historical tables use non-destructive database relationship triggers until a
   future backup-tested migration can replace them with native foreign keys;
   reconciliation remains the explicit repair path for pre-existing drift.
-- Route-level lazy loading keeps the production entry chunk near 276 KB before
-  gzip; the largest route chunk is near 266 KB.
+- Route-level lazy loading keeps the production entry chunk near 162 KB before
+  gzip; the largest route chunk is near 166 KB.
 - The persisted NL/EN runtime covers authentication, application navigation,
   legal safety messaging, and the complete desktop scanner workflow. Source,
   provider, and user-authored content retains its original language. Firefox
@@ -272,5 +280,6 @@ The repository is a verified unsigned release candidate: the code,
 tests, recovery path, packaged startup, authenticated realtime channel, and
 tested user flow are operational. Public signing and Store certification are not
 part of the selected distribution path. Windows may show an unknown-publisher
-warning. Live-provider and public-brand acceptance remain environment and owner
-gates respectively and continue to block a versioned release until recorded.
+warning. Live-provider and public-brand acceptance are recorded. The exact-main
+portable artifact is checksum-verified but remains unexecuted on this host until
+the owner explicitly authorizes launching newly downloaded software.

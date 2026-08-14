@@ -502,7 +502,7 @@ unknown-publisher warning. Optional Store and direct-signing routes remain avail
   legal or factual causation; unanalysed documents remain visible and flagged.
 - Real external sending is intentionally disabled by default and should remain disabled until the target environment, provider, approval UI, emergency stop, and audit trail have been reviewed.
 - The current lockfile audits cleanly; run `npm run audit:deps` again for every release because registry advisories change over time.
-- Dashboard routes are loaded on demand. The production entry chunk is about 276 KB before gzip (85 KB gzip); the largest route chunk is about 444 KB before gzip.
+- Dashboard routes are loaded on demand. The production entry chunk is about 162 KB before gzip (49 KB gzip); the largest route chunk is about 166 KB before gzip (40 KB gzip).
 - The internal portable Windows artifact is not Authenticode-signed and must not be distributed as a trusted public installer. No Store or paid-certificate route is currently active; Windows may display an unknown-publisher warning for internal builds.
 - Historical phase and verification documents in `docs/` are dated snapshots. Prefer current code, tests, this README, and a fresh `npm run gate` when status statements differ.
 
