@@ -13,7 +13,20 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $envPath = Join-Path $root ".env"
 $runtimePath = Join-Path $root ".laro-ngrok.json"
-$providerConfigPath = Join-Path $root ".laro-provider-config.json"
+$legacyProviderConfigPath = Join-Path $root ".laro-provider-config.json"
+$desktopProviderConfigPath = if ($env:APPDATA) {
+    Join-Path (Join-Path $env:APPDATA "LARO Desktop") "provider-config.json"
+} else {
+    ""
+}
+$providerConfigPath = if (
+    $desktopProviderConfigPath -and
+    (Test-Path -LiteralPath $desktopProviderConfigPath)
+) {
+    $desktopProviderConfigPath
+} else {
+    $legacyProviderConfigPath
+}
 $ngrokLogPath = Join-Path $env:TEMP "laro-ngrok-$PID.log"
 
 function Set-EnvValue {

@@ -19,6 +19,7 @@ import { isDesktopDevelopmentMode, resolveDesktopServerPort } from './desktopPor
 import { acquireSingleInstanceLock } from './singleInstance';
 import { installDenyByDefaultPermissions } from './sessionPermissions';
 import { ensureDesktopSecrets } from './desktopSecrets';
+import { loadProtectedProviderConfig } from './providerConfig';
 // NOTE: server/index.ts reads `.env` (dotenv) at import time, so it is imported
 // lazily in startApp() AFTER we pin NODE_ENV from app.isPackaged. This guarantees
 // a packaged build runs the server in production mode even if the bundled .env
@@ -300,6 +301,29 @@ if (ownsDesktopProfile) app.whenReady().then(async () => {
   const userDataPath = app.getPath('userData');
   if (!fs.existsSync(userDataPath)) {
     fs.mkdirSync(userDataPath, { recursive: true });
+  }
+
+  try {
+    const providerConfig = loadProtectedProviderConfig({
+      userDataPath,
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      cwd: process.cwd(),
+    });
+    if (providerConfig.loaded) {
+      log.info(
+        `[Electron] Protected provider configuration loaded (${providerConfig.appliedKeys.length} settings).`,
+      );
+    }
+  } catch (error) {
+    log.error('[Electron] Protected provider configuration failed:', error);
+    dialog.showErrorBox(
+      'Provider Configuration Error',
+      'LARO could not securely load the configured Google or outbound-email settings. ' +
+        'Reconfigure the protected provider store before starting LARO.',
+    );
+    app.quit();
+    return;
   }
 
   // Set database path for the server (better-sqlite3)

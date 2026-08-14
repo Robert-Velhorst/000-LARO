@@ -402,6 +402,20 @@ non-echoing prompts instead of placing them in `.env`:
 .\scripts\start-ngrok-api.ps1 -SkipBuild
 ```
 
+The protected store is shared by the standalone desktop and ngrok launcher at
+`%APPDATA%\LARO Desktop\provider-config.json`. LARO decrypts it only in memory
+for the current Windows user. The configuration command migrates the earlier
+worktree-local `.laro-provider-config.json` automatically, so portable Windows
+builds do not depend on the repository directory. Desktop Google consent uses
+the stable loopback callback
+`http://127.0.0.1:8768/api/oauth/gmail/callback`; register that exact URI in the
+Google OAuth client alongside the ngrok callback.
+
+Database backup/restore and live-provider acceptance commands use compiled
+runtime entry points when `dist/server` exists and fall back to local `tsx`
+sources only in a development checkout. The same documented commands therefore
+work inside the pruned production Docker image as well as from source.
+
 Windows desktop packaging uses:
 
 ```powershell

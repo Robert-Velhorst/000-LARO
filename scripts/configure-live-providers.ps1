@@ -5,6 +5,7 @@ param(
     [switch]$Status,
     [string]$GoogleClientId = "",
     [Security.SecureString]$GoogleClientSecret,
+    [string]$GoogleDesktopRedirectBaseUrl = "http://127.0.0.1:8768",
     [string]$SmtpHost = "smtp.gmail.com",
     [ValidateRange(1, 65535)] [int]$SmtpPort = 587,
     [string]$SmtpUser = "",
@@ -14,7 +15,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$configPath = Join-Path $root ".laro-provider-config.json"
+$legacyConfigPath = Join-Path $root ".laro-provider-config.json"
+if (-not $env:APPDATA) {
+    throw "APPDATA is unavailable; the Windows provider configuration location cannot be resolved."
+}
+$configDirectory = Join-Path $env:APPDATA "LARO Desktop"
+$configPath = Join-Path $configDirectory "provider-config.json"
 
 if ($env:OS -ne "Windows_NT") {
     throw "This command requires Windows DPAPI."
@@ -90,7 +96,14 @@ function Normalize-SmtpPassword {
 }
 
 function Read-ProviderConfig {
-    if (-not (Test-Path -LiteralPath $configPath)) {
+    $sourcePath = if (Test-Path -LiteralPath $configPath) {
+        $configPath
+    } elseif (Test-Path -LiteralPath $legacyConfigPath) {
+        $legacyConfigPath
+    } else {
+        $null
+    }
+    if (-not $sourcePath) {
         return [ordered]@{
             schemaVersion = 1
             google = $null
@@ -99,7 +112,7 @@ function Read-ProviderConfig {
         }
     }
 
-    $existing = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+    $existing = Get-Content -LiteralPath $sourcePath -Raw | ConvertFrom-Json
     if ($existing.schemaVersion -ne 1) {
         throw "Unsupported provider configuration version."
     }
@@ -115,6 +128,7 @@ function Write-ProviderConfig {
     param([Parameter(Mandatory)] [Collections.IDictionary]$Config)
 
     $Config.updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+    New-Item -ItemType Directory -Path $configDirectory -Force | Out-Null
     $temporaryPath = "$configPath.tmp-$PID"
     try {
         $Config | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $temporaryPath -Encoding utf8
@@ -149,10 +163,45 @@ function Write-ProviderStatus {
             $null
         }
         protectedBy = "Windows DPAPI CurrentUser"
+        storagePath = $configPath
     } | ConvertTo-Json
 }
 
+function Assert-DesktopRedirectBaseUrl {
+    param([Parameter(Mandatory)] [string]$Value)
+
+    try {
+        $uri = [Uri]$Value
+    } catch {
+        throw "GoogleDesktopRedirectBaseUrl must be a valid loopback HTTP origin."
+    }
+    if (
+        $uri.Scheme -ne "http" -or
+        $uri.Host -notin "127.0.0.1", "localhost", "::1" -or
+        $uri.IsDefaultPort -or
+        $uri.AbsolutePath -ne "/" -or
+        $uri.Query -or
+        $uri.Fragment -or
+        $uri.UserInfo
+    ) {
+        throw "GoogleDesktopRedirectBaseUrl must be a loopback HTTP origin with an explicit port."
+    }
+}
+
 $config = Read-ProviderConfig
+$configNeedsWrite = -not (Test-Path -LiteralPath $configPath) -and (Test-Path -LiteralPath $legacyConfigPath)
+if ($config.google -and -not $config.google.desktopRedirectBaseUrl) {
+    Assert-DesktopRedirectBaseUrl -Value $GoogleDesktopRedirectBaseUrl
+    $config.google = [ordered]@{
+        clientId = $config.google.clientId
+        clientSecretProtected = $config.google.clientSecretProtected
+        desktopRedirectBaseUrl = $GoogleDesktopRedirectBaseUrl
+    }
+    $configNeedsWrite = $true
+}
+if ($configNeedsWrite) {
+    Write-ProviderConfig -Config $config
+}
 
 if ($Google) {
     $GoogleClientId = Read-RequiredText -Prompt "Google web OAuth client ID" -Value $GoogleClientId
@@ -166,9 +215,11 @@ if ($Google) {
         throw "Google client secret is missing or too short."
     }
     Assert-GoogleClientSecret -Value $GoogleClientSecret
+    Assert-DesktopRedirectBaseUrl -Value $GoogleDesktopRedirectBaseUrl
     $config.google = [ordered]@{
         clientId = $GoogleClientId
         clientSecretProtected = Protect-Secret -Value $GoogleClientSecret
+        desktopRedirectBaseUrl = $GoogleDesktopRedirectBaseUrl
     }
 }
 
