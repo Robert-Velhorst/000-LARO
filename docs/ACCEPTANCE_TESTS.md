@@ -1,6 +1,6 @@
 # Acceptance Test Matrix
 
-Current as of 2026-08-03. Automated criteria exercise real tRPC procedures and
+Current as of 2026-08-14. Automated criteria exercise real tRPC procedures and
 temporary SQLite databases; they do not contact external people or accounts.
 
 | ID | Criterion | Evidence | Status |
@@ -34,13 +34,15 @@ temporary SQLite databases; they do not contact external people or accounts.
 
 ## Target-Environment Acceptance
 
-| ID | Criterion | Required evidence |
-| --- | --- | --- |
-| M1 | Live outreach delivery | Approved test recipient receives one message; duplicate send produces no second message |
-| M2 | Gmail/Drive intake | Target OAuth client connects, pull completes, and imported records retain provenance |
-| M3 | Optional trusted public Windows release | When public distribution is selected: a Store-signed package or version-matched portable release with valid Authenticode signature, approved icon, and matching SHA-256 checksum |
+| ID | Criterion | Required evidence | Current state |
+| --- | --- | --- | --- |
+| M1 | Live outreach delivery | Approved test recipient receives one message; duplicate send produces no second message | Passed 2026-08-14: one controlled inbox receipt, audit record, and duplicate block |
+| M2 | Gmail/Drive intake | Target OAuth client connects, pull completes, and imported records retain provenance | Partial: Gmail import/provenance and Drive root connectivity passed; representative Drive-file import remains pending |
+| M3 | Optional trusted public Windows release | When public distribution is selected: a Store-signed package or version-matched portable release with valid Authenticode signature, approved icon, and matching SHA-256 checksum | Out of scope for selected unsigned internal distribution |
 
-M1-M2 require organization-controlled credentials and accounts and must be
-recorded for the target environment rather than replaced by local test doubles.
+M1 requires organization-controlled credentials and was recorded for this target
+environment rather than replaced by local test doubles. M2 is not complete until
+a representative Drive file is imported and its provenance is verified. Any
+future deployment target must repeat both criteria.
 M3 is intentionally out of scope for the current unsigned internal distribution
 path and becomes required only if trusted public Windows distribution is enabled.

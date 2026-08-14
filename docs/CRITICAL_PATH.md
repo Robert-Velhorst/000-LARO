@@ -1,6 +1,6 @@
 # Critical Path
 
-Current as of 2026-07-16. This document describes the shipped Electron/tRPC
+Current as of 2026-08-14. This document describes the shipped Electron/tRPC
 runtime. Provider-backed steps remain conditional on target credentials.
 
 ## Canonical Flow
@@ -44,10 +44,14 @@ source document.
 
 ## External Acceptance
 
-Repository tests use an injected delivery provider and cannot prove receipt by a
-real mailbox. Before a live rollout, use an approved test recipient to verify the
-configured SMTP/SendGrid account, then restore the feature flag to its intended
-state. Google intake likewise requires target OAuth credentials and consent.
+Repository tests use injected delivery and Google boundaries and cannot by
+themselves prove a target account. The selected production scope completed its
+separate owner-controlled acceptance on 2026-08-14: Google consent, Gmail/Drive
+root reads, persisted Gmail evidence/source verification, and revocation passed;
+a representative Drive-file import remains pending. Outbound SMTP delivered
+once, retained its audit record, and blocked duplicate dispatch. Future
+credentials or deployment targets must repeat those checks rather than
+inheriting this approval.
 
 Run the complete repository proof with:
 
