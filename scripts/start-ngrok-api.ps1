@@ -390,6 +390,10 @@ try {
     if ($localHealth.status -ne "healthy") {
         throw "LARO local health verification did not report healthy."
     }
+    & docker compose -p $ComposeProjectName exec -T laro-server npm run readiness:runtime
+    if ($LASTEXITCODE -ne 0) {
+        throw "LARO runtime readiness verification failed."
+    }
     $publicHealth = $null
     if (-not $SkipPublicCheck) {
         $publicHealth = Wait-ForJsonEndpoint -Uri "$publicBaseUrl/api/health" -Attempts 30

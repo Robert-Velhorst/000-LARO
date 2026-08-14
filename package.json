@@ -61,6 +61,7 @@
     "preflight": "node scripts/prod-preflight.mjs",
     "readiness": "npm run rebuild:node && node scripts/operator-readiness.mjs",
     "readiness:production": "npm run rebuild:node && node scripts/operator-readiness.mjs --production",
+    "readiness:runtime": "node scripts/runtime-readiness.mjs",
     "regression:baseline": "node scripts/regression-baseline.mjs"
   },
   "dependencies": {

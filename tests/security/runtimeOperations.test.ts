@@ -19,6 +19,20 @@ describe('production runtime operations', () => {
     expect(dockerfile).toContain('COPY scripts/run-built-operation.mjs ./scripts/run-built-operation.mjs');
   });
 
+  it('ships and enforces lean runtime readiness during ngrok deployment', () => {
+    const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+    const dockerfile = readFileSync(path.join(ROOT, 'Dockerfile'), 'utf8');
+    const launcher = readFileSync(path.join(ROOT, 'scripts/start-ngrok-api.ps1'), 'utf8');
+    const readiness = readFileSync(path.join(ROOT, 'scripts/runtime-readiness.mjs'), 'utf8');
+
+    expect(pkg.scripts['readiness:runtime']).toBe('node scripts/runtime-readiness.mjs');
+    expect(dockerfile).toContain('COPY scripts/runtime-readiness.mjs ./scripts/runtime-readiness.mjs');
+    expect(launcher).toContain('exec -T laro-server npm run readiness:runtime');
+    expect(readiness).toContain("database.pragma('quick_check'");
+    expect(readiness).toContain("path: '/api/integrations/hai/health'");
+    expect(readiness).not.toContain('tsx');
+  });
+
   it('packages and initializes the Windows DPAPI provider reader before the server import', () => {
     const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
     const main = readFileSync(path.join(ROOT, 'src-main/index.ts'), 'utf8');
