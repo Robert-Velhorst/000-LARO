@@ -1,4 +1,5 @@
 import { MAX_BOOTSTRAP_TOKEN_LENGTH } from "../signupPolicy";
+import { resolveOutboundEmailConfiguration } from "../emailConfig";
 
 /**
  * Environment configuration
@@ -103,6 +104,30 @@ export const ENV = {
 export const INSECURE_JWT_DEFAULT = 'change-this-secret';
 export const INSECURE_COOKIE_DEFAULT = 'change-this-cookie-secret';
 
+const SUPPORTED_REQUIRED_LIVE_PROVIDERS = new Set(['google', 'outboundEmail']);
+
+function requiredLiveProviders(): { providers: Set<string>; unknown: string[] } {
+  const values = (process.env.LARO_REQUIRED_LIVE_PROVIDERS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return {
+    providers: new Set(values.filter((value) => SUPPORTED_REQUIRED_LIVE_PROVIDERS.has(value))),
+    unknown: values.filter((value) => !SUPPORTED_REQUIRED_LIVE_PROVIDERS.has(value)),
+  };
+}
+
+function normalizeConfiguredUrl(value: string | undefined): URL | null {
+  try {
+    const url = new URL((value || '').trim());
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return null;
+    url.pathname = url.pathname === '/' ? '' : url.pathname.replace(/\/+$/, '');
+    return url;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Throws in production when security-critical secrets are missing or still set
  * to the insecure placeholder. Returns a list of non-fatal warnings (e.g.
@@ -115,6 +140,7 @@ export function assertSecurityConfig(): string[] {
 
   if (ENV.isProd) {
     const failures: string[] = [];
+    const requiredProviders = requiredLiveProviders();
     if (jwtInsecure) failures.push('JWT_SECRET is missing or set to the insecure default');
     if (cookieInsecure) failures.push('COOKIE_SECRET is missing or set to the insecure default');
     if (
@@ -130,12 +156,48 @@ export function assertSecurityConfig(): string[] {
     ) {
       failures.push(`STANDALONE_SIGNUP_TOKEN must contain at most ${MAX_BOOTSTRAP_TOKEN_LENGTH} characters`);
     }
+    if (requiredProviders.unknown.length > 0) {
+      failures.push(`LARO_REQUIRED_LIVE_PROVIDERS contains unsupported values: ${requiredProviders.unknown.join(', ')}`);
+    }
+    if (
+      requiredProviders.providers.has('google') &&
+      (!ENV.GOOGLE_CLIENT_ID || !ENV.GOOGLE_CLIENT_SECRET)
+    ) {
+      failures.push('Google is required for this deployment but GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET were not loaded');
+    }
+    if (
+      requiredProviders.providers.has('outboundEmail') &&
+      !resolveOutboundEmailConfiguration().configured
+    ) {
+      failures.push('Outbound email is required for this deployment but no complete SMTP or SendGrid configuration was loaded');
+    }
+    if (process.env.LARO_PUBLIC_DEPLOYMENT_REQUIRED === 'true') {
+      const publicBaseUrl = normalizeConfiguredUrl(process.env.LARO_PUBLIC_BASE_URL);
+      const oauthBaseUrl = normalizeConfiguredUrl(process.env.OAUTH_REDIRECT_BASE_URL);
+      const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const expectedPrefix = publicBaseUrl?.pathname || '';
+      const configuredPrefix = (process.env.PUBLIC_PATH_PREFIX || '').replace(/\/+$/, '');
+      if (!ENV.SERVER_ONLY) failures.push('Public deployment contract requires SERVER_ONLY=true');
+      if (!publicBaseUrl) failures.push('LARO_PUBLIC_BASE_URL must be a plain HTTPS URL for the public deployment');
+      if (!oauthBaseUrl || oauthBaseUrl?.toString() !== publicBaseUrl?.toString()) {
+        failures.push('OAUTH_REDIRECT_BASE_URL must exactly match LARO_PUBLIC_BASE_URL for the public deployment');
+      }
+      if (publicBaseUrl && !allowedOrigins.includes(publicBaseUrl.origin)) {
+        failures.push('ALLOWED_ORIGINS must include the exact public deployment origin');
+      }
+      if (publicBaseUrl && configuredPrefix !== expectedPrefix) {
+        failures.push('PUBLIC_PATH_PREFIX must match the path in LARO_PUBLIC_BASE_URL');
+      }
+    }
     if (failures.length > 0) {
       throw new ConfigError(
-        `[config] Refusing to start in production with insecure secrets:\n` +
+        `[config] Refusing to start in production with an invalid runtime contract:\n` +
           failures.map((f) => `  - ${f}`).join('\n') +
-          `\nSet strong random values (the desktop build generates these automatically; ` +
-          `for a standalone server set JWT_SECRET and COOKIE_SECRET env vars).`
+          `\nResolve every listed configuration failure before restarting. The desktop build ` +
+          `generates local signing secrets automatically; public deployments must use the protected launcher.`
       );
     }
   } else {

@@ -60,4 +60,56 @@ describe('Phase 006 — assertSecurityConfig', () => {
     expect(() => { warnings = assertSecurityConfig(); }).not.toThrow();
     expect(warnings.some((w) => w.includes('JWT_SECRET'))).toBe(true);
   });
+
+  it('refuses a production deployment when accepted providers were not loaded', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.JWT_SECRET = 'j'.repeat(48);
+    process.env.COOKIE_SECRET = 'c'.repeat(48);
+    process.env.LARO_REQUIRED_LIVE_PROVIDERS = 'google,outboundEmail';
+    delete process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_SECRET;
+    delete process.env.SMTP_HOST;
+    delete process.env.SENDGRID_API_KEY;
+    const { assertSecurityConfig } = await loadEnv();
+
+    expect(() => assertSecurityConfig()).toThrow(/Google is required/);
+    expect(() => assertSecurityConfig()).toThrow(/Outbound email is required/);
+  });
+
+  it('accepts a complete required-provider and public-route contract', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.SERVER_ONLY = 'true';
+    process.env.JWT_SECRET = 'j'.repeat(48);
+    process.env.COOKIE_SECRET = 'c'.repeat(48);
+    process.env.LARO_REQUIRED_LIVE_PROVIDERS = 'google,outboundEmail';
+    process.env.GOOGLE_CLIENT_ID = '123-client.apps.googleusercontent.com';
+    process.env.GOOGLE_CLIENT_SECRET = 'google-client-secret-value';
+    process.env.SMTP_HOST = 'smtp.example.test';
+    process.env.SMTP_USER = 'owner@example.test';
+    process.env.SMTP_PASS = 'smtp-secret';
+    process.env.SMTP_FROM = 'owner@example.test';
+    process.env.LARO_PUBLIC_DEPLOYMENT_REQUIRED = 'true';
+    process.env.LARO_PUBLIC_BASE_URL = 'https://example.ngrok.app/laro';
+    process.env.OAUTH_REDIRECT_BASE_URL = 'https://example.ngrok.app/laro';
+    process.env.ALLOWED_ORIGINS = 'https://example.ngrok.app';
+    process.env.PUBLIC_PATH_PREFIX = '/laro';
+    const { assertSecurityConfig } = await loadEnv();
+
+    expect(() => assertSecurityConfig()).not.toThrow();
+  });
+
+  it('refuses a public deployment whose OAuth callback base drifted from its route', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.SERVER_ONLY = 'true';
+    process.env.JWT_SECRET = 'j'.repeat(48);
+    process.env.COOKIE_SECRET = 'c'.repeat(48);
+    process.env.LARO_PUBLIC_DEPLOYMENT_REQUIRED = 'true';
+    process.env.LARO_PUBLIC_BASE_URL = 'https://example.ngrok.app/laro';
+    process.env.OAUTH_REDIRECT_BASE_URL = 'https://example.ngrok.app';
+    process.env.ALLOWED_ORIGINS = 'https://example.ngrok.app';
+    process.env.PUBLIC_PATH_PREFIX = '/laro';
+    const { assertSecurityConfig } = await loadEnv();
+
+    expect(() => assertSecurityConfig()).toThrow(/must exactly match LARO_PUBLIC_BASE_URL/);
+  });
 });

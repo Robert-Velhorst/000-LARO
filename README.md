@@ -322,6 +322,13 @@ The Docker image compiles and runs the standalone Express/tRPC API server on Nod
 docker compose up --build
 ```
 
+Use the plain Compose command only for a local provider-free server. After the
+ngrok launcher has verified a public deployment, it persists a non-secret
+runtime contract in `.env`; subsequent restarts must use
+`scripts/start-ngrok-api.ps1` so DPAPI-protected Google and SMTP credentials are
+loaded. A plain Compose restart then fails closed instead of silently disabling
+an accepted provider or changing the public callback path.
+
 SQLite and local evidence persist in the `laro-data` volume. Health endpoints are available at `/api/live`, `/api/ready`, and `/api/health`.
 Run `npm run readiness:runtime` inside the API container to verify the lean
 production runtime, database, evidence volume, version, and HAI authentication

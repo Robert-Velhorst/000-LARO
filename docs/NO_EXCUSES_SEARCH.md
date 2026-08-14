@@ -33,9 +33,9 @@ Descriptive words (mock/stub/placeholder/fake) needing human judgement. Triage o
 | `server/routers/index.ts` | 410 | `// stub): computes genuine clarifications the user must resolve BEFORE outreach` |
 | `server/routers/matching.ts` | 22 | `*  - If no lawyers are seeded/entered, the result is genuinely empty (no fakes).` |
 | `server/storage.ts` | 10 | `*    fake `/local/<key>` URL. That silent data loss is fixed.` |
-| `server/_core/env.ts` | 96 | `* Insecure placeholder values that must never be used to sign real sessions.` |
-| `server/_core/env.ts` | 100 | `* in production and the secrets are still the shipped placeholders (or empty),` |
-| `server/_core/env.ts` | 108 | `* to the insecure placeholder. Returns a list of non-fatal warnings (e.g.` |
+| `server/_core/env.ts` | 97 | `* Insecure placeholder values that must never be used to sign real sessions.` |
+| `server/_core/env.ts` | 101 | `* in production and the secrets are still the shipped placeholders (or empty),` |
+| `server/_core/env.ts` | 133 | `* to the insecure placeholder. Returns a list of non-fatal warnings (e.g.` |
 
 ## Markers in tests / scripts / renderer (229) — reported, not failing
 

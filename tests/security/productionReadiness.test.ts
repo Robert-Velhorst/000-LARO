@@ -390,6 +390,8 @@ describe('production readiness regressions', () => {
     expect(compose).toContain('ALLOWED_ORIGINS: ${LARO_PUBLIC_ORIGIN:-}');
     expect(compose).toContain('OAUTH_REDIRECT_BASE_URL: ${LARO_PUBLIC_BASE_URL:-http://127.0.0.1:3000}');
     expect(compose).toContain('PUBLIC_PATH_PREFIX: ${LARO_PUBLIC_PATH_PREFIX:-}');
+    expect(compose).toContain('LARO_PUBLIC_DEPLOYMENT_REQUIRED: ${LARO_PUBLIC_DEPLOYMENT_REQUIRED:-false}');
+    expect(compose).toContain('LARO_REQUIRED_LIVE_PROVIDERS: ${LARO_REQUIRED_LIVE_PROVIDERS:-}');
     expect(compose).toContain('GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}');
     expect(compose).toContain('SMTP_PASS: ${SMTP_PASS:-}');
     expect(ngrokLauncher).toContain('http://127.0.0.1:4040/api/tunnels');
@@ -399,6 +401,8 @@ describe('production readiness regressions', () => {
     expect(ngrokLauncher).not.toContain('npm.cmd run setup');
     expect(ngrokLauncher).toContain('$env:LARO_PUBLIC_ORIGIN = $publicOrigin');
     expect(ngrokLauncher).toContain('$env:LARO_PUBLIC_BASE_URL = $publicBaseUrl');
+    expect(ngrokLauncher).toContain('$env:LARO_PUBLIC_DEPLOYMENT_REQUIRED = "true"');
+    expect(ngrokLauncher).toContain('-Name "LARO_REQUIRED_LIVE_PROVIDERS"');
     expect(ngrokLauncher).toContain('$env:LARO_APP_VERSION = $packageMetadata.version');
     expect(ngrokLauncher).toContain('[switch]$DirectPublicTunnel');
     expect(ngrokLauncher).toContain('LARO_NGROK_MODE');

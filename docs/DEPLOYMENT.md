@@ -26,6 +26,12 @@ docker compose up --build          # http://localhost:3000
 npm run docker:build && npm run docker:run
 ```
 
+This plain Compose start is for a local provider-free server. Once a public
+ngrok deployment has been verified, restart it through
+`scripts/start-ngrok-api.ps1`; that launcher decrypts the protected provider
+configuration and enforces the persisted public route. Direct Compose starts
+then fail closed if required Google or outbound-mail credentials are absent.
+
 - Healthcheck: the container polls `/api/health`.
 - Runtime readiness: `npm run readiness:runtime` verifies production secrets,
   SQLite integrity and migrations, evidence-volume read/write, API health and
