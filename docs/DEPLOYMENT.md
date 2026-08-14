@@ -158,14 +158,27 @@ prompts:
 .\scripts\start-ngrok-api.ps1 -SkipBuild
 ```
 
-The command stores provider secrets in ignored `.laro-provider-config.json`
-using Windows DPAPI `CurrentUser` protection, restricts that file to the current
-Windows account and `SYSTEM`, and prints only configured/not-configured status.
-The launcher decrypts values in memory and passes them to the container; it does
-not copy provider secrets into `.env` or runtime metadata. The protected file is
-bound to the Windows user profile and is intentionally excluded from backups and
-source control. Re-enter and rotate the credentials after moving to another
-machine or Windows account.
+The command stores provider secrets in
+`%APPDATA%\LARO Desktop\provider-config.json` using Windows DPAPI `CurrentUser`
+protection, restricts that file to the current Windows account and `SYSTEM`, and
+prints only configured/not-configured status. It migrates an existing ignored
+worktree-local `.laro-provider-config.json` into that canonical location. Both
+the standalone Electron app and ngrok launcher decrypt values only in memory;
+the launcher passes them to the container without copying provider secrets into
+`.env` or runtime metadata. The protected file is bound to the Windows user
+profile and is intentionally excluded from backups and source control. Re-enter
+and rotate the credentials after moving to another machine or Windows account.
+The protected Google record also pins the desktop callback origin to
+`http://127.0.0.1:8768`; authorize
+`http://127.0.0.1:8768/api/oauth/gmail/callback` in Google Cloud. The ngrok
+launcher intentionally replaces that origin with the public `/laro` callback
+inside the API container.
+
+The Docker image includes compiled backup and live-provider acceptance entry
+points plus the small runtime dispatcher used by the normal npm commands. This
+keeps `npm run db:backup`, `npm run db:validate`, and
+`npm run acceptance:providers` operational after development dependencies are
+pruned from the image.
 
 For Gmail SMTP, use `smtp.gmail.com`, port `587`, the sending Gmail address, and
 a Google app password. A normal Google account password must not be used. LARO

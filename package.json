@@ -32,9 +32,9 @@
     "setup": "node scripts/setup.mjs",
     "doctor": "node scripts/doctor.mjs",
     "audit:deps": "npm audit",
-    "db:backup": "tsx scripts/backup.ts",
-    "db:restore": "tsx scripts/backup.ts --restore",
-    "db:validate": "tsx scripts/backup.ts --validate",
+    "db:backup": "node scripts/run-built-operation.mjs backup",
+    "db:restore": "node scripts/run-built-operation.mjs backup --restore",
+    "db:validate": "node scripts/run-built-operation.mjs backup --validate",
     "db:readiness": "npm run rebuild:node && tsx scripts/data-readiness.ts",
     "recovery:drill": "tsx scripts/recovery-drill.ts",
     "flask:backup": "python scripts/flask_recovery.py backup",
@@ -50,9 +50,9 @@
     "verify:electron-native": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/verify-electron-sqlite.cjs",
     "release:prepare": "node scripts/prepare-release-acceptance.mjs",
     "release:check": "node scripts/release-acceptance.mjs",
-    "acceptance:providers": "tsx server/liveProviderAcceptance.ts",
-    "acceptance:outbound-live": "tsx server/liveOutboundAcceptance.ts",
-    "acceptance:google-evidence-live": "tsx server/liveGoogleEvidenceAcceptance.ts",
+    "acceptance:providers": "node scripts/run-built-operation.mjs acceptance:providers",
+    "acceptance:outbound-live": "node scripts/run-built-operation.mjs acceptance:outbound-live",
+    "acceptance:google-evidence-live": "node scripts/run-built-operation.mjs acceptance:google-evidence-live",
     "traceability": "node scripts/traceability.mjs --write",
     "gate": "node scripts/stabilization-gate.mjs",
     "verify": "npm run gate",
@@ -186,6 +186,10 @@
       "node_modules/wasm-feature-detect/**/*"
     ],
     "extraResources": [
+      {
+        "from": "scripts/read-protected-provider-config.ps1",
+        "to": "scripts/read-protected-provider-config.ps1"
+      },
       {
         "from": "assets",
         "to": "assets",

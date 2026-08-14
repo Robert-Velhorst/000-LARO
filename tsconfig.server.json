@@ -8,5 +8,10 @@
     "composite": true,
     "declaration": true
   },
-  "include": ["server/**/*", "shared/**/*"]
+  "include": [
+    "server/**/*",
+    "shared/**/*",
+    "scripts/backup.ts",
+    "scripts/backupArguments.ts"
+  ]
 }
