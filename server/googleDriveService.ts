@@ -188,25 +188,26 @@ export async function getAllFilesInFolder(
   const allFiles: Array<{ id: string; name: string; mimeType?: string | null; size?: string | null; webViewLink?: string | null; modifiedTime?: string | null }> = [];
 
   async function scanFolder(currentFolderId: string) {
-    // Get all items in this folder
-    const response = await drive.files.list({
-      q: `'${currentFolderId}' in parents and trashed = false`,
-      fields: 'files(id, name, mimeType, size, webViewLink, modifiedTime)',
-    });
+    let pageToken: string | undefined;
+    do {
+      const response = await drive.files.list({
+        q: `'${currentFolderId}' in parents and trashed = false`,
+        fields: 'nextPageToken, files(id, name, mimeType, size, webViewLink, modifiedTime)',
+        pageToken,
+      });
 
-    const items = response.data.files || [];
-    
-    for (const item of items) {
-      if (item.mimeType === 'application/vnd.google-apps.folder') {
-        // It's a folder
-        if (recursive) {
-          await scanFolder(item.id!);
+      const items = response.data.files || [];
+      for (const item of items) {
+        if (item.mimeType === 'application/vnd.google-apps.folder') {
+          if (recursive) {
+            await scanFolder(item.id!);
+          }
+        } else {
+          allFiles.push(item as any);
         }
-      } else {
-        // It's a file
-        allFiles.push(item as any);
       }
-    }
+      pageToken = response.data.nextPageToken || undefined;
+    } while (pageToken);
   }
   
   await scanFolder(folderId);

@@ -1072,6 +1072,7 @@ async function pullFromDrive(
             id: uuidv4(),
             userId,
             caseId,
+            accountId: cred.accountId,
             googleFileId: file.id,
             fileName: fileData.fileName,
             mimeType: fileData.mimeType,

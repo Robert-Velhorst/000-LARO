@@ -231,6 +231,7 @@ export async function runLiveGoogleDriveEvidenceAcceptance(
   ));
   if (
     driveRows.length !== 1 ||
+    driveRows[0].accountId !== options.googleAccountId ||
     driveRows[0].googleFileId !== sourceId ||
     driveRows[0].s3Key !== storageKey
   ) {

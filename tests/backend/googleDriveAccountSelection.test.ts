@@ -4,6 +4,8 @@ import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 
 const googleMocks = vi.hoisted(() => ({
   credentials: [] as Array<Record<string, unknown>>,
+  listRequests: [] as Array<Record<string, unknown>>,
+  listResponses: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("googleapis", () => ({
@@ -17,7 +19,12 @@ vi.mock("googleapis", () => ({
     },
     drive: vi.fn().mockReturnValue({
       files: {
-        list: vi.fn().mockResolvedValue({ data: { files: [{ id: "folder", name: "Folder" }] } }),
+        list: vi.fn().mockImplementation((request: Record<string, unknown>) => {
+          googleMocks.listRequests.push(request);
+          return Promise.resolve(
+            googleMocks.listResponses.shift() ?? { data: { files: [{ id: "folder", name: "Folder" }] } },
+          );
+        }),
       },
     }),
   },
@@ -104,6 +111,29 @@ suite("Google Drive account selection", () => {
     await expect(
       listGoogleDriveFolders(userId, undefined, "GOOGLE_DRIVE_OTHER_OWNER"),
     ).rejects.toThrow("Selected Google account is not connected");
+  });
+
+  it("reads every Drive listing page before returning folder files", async () => {
+    googleMocks.listRequests.length = 0;
+    googleMocks.listResponses.push(
+      {
+        data: {
+          files: [{ id: "file-page-one", name: "Page one.pdf", mimeType: "application/pdf" }],
+          nextPageToken: "drive-page-two",
+        },
+      },
+      {
+        data: {
+          files: [{ id: "file-page-two", name: "Page two.pdf", mimeType: "application/pdf" }],
+        },
+      },
+    );
+    const { getAllFilesInFolder } = await import("../../server/googleDriveService");
+    const files = await getAllFilesInFolder(userId, "root", false, "GOOGLE_DRIVE_SECOND");
+
+    expect(files.map((file) => file.id)).toEqual(["file-page-one", "file-page-two"]);
+    expect(googleMocks.listRequests).toHaveLength(2);
+    expect(googleMocks.listRequests[1]).toMatchObject({ pageToken: "drive-page-two" });
   });
 
   it("persists the selected Drive account and folders with auto-collection settings", async () => {
