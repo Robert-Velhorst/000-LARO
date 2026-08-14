@@ -35,6 +35,9 @@ describe('production runtime operations', () => {
     expect(dockerfile).toContain('COPY scripts/runtime-readiness.mjs ./scripts/runtime-readiness.mjs');
     expect(launcher).toContain('exec -T laro-server npm run readiness:runtime');
     expect(launcher).toContain('function Get-LaroNgrokProcesses');
+    expect(launcher).toContain('function Test-CommandLineHasArgument');
+    expect(launcher).toContain('[regex]::Escape($Argument) + "(?=\\s|$)"');
+    expect(launcher).toContain('Test-CommandLineHasArgument -CommandLine $_.CommandLine -Argument "--name=laro-api"');
     expect(launcher).toContain('$matchingProcesses = @(Get-LaroNgrokProcesses');
     expect(launcher).not.toContain('$existingNgrok.Count -ne 1');
     expect(readiness).toContain("database.pragma('quick_check'");

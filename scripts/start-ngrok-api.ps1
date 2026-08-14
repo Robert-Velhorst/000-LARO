@@ -186,20 +186,29 @@ function Get-NgrokFailureMessage {
     }
 }
 
+function Test-CommandLineHasArgument {
+    param(
+        [Parameter(Mandatory)] [string]$CommandLine,
+        [Parameter(Mandatory)] [string]$Argument
+    )
+
+    $argumentPattern = "(?:^|\s)" + [regex]::Escape($Argument) + "(?=\s|$)"
+    return $CommandLine -match $argumentPattern
+}
+
 function Get-LaroNgrokProcesses {
     param(
         [Parameter(Mandatory)] [string]$TargetUrl,
         [string]$ReservedUrl = ""
     )
 
-    $targetPattern = [regex]::Escape($TargetUrl)
-    $reservedPattern = if ($ReservedUrl) { [regex]::Escape("--url=$ReservedUrl") } else { "" }
     $matches = @(Get-CimInstance Win32_Process -Filter "Name='ngrok.exe'" -ErrorAction SilentlyContinue |
         Where-Object {
-            $_.CommandLine -match "(?:^|\s)http(?:\s|$)" -and
-            $_.CommandLine -match $targetPattern -and
-            $_.CommandLine -match [regex]::Escape("--name=laro-api") -and
-            (-not $reservedPattern -or $_.CommandLine -match $reservedPattern)
+            (Test-CommandLineHasArgument -CommandLine $_.CommandLine -Argument "http") -and
+            (Test-CommandLineHasArgument -CommandLine $_.CommandLine -Argument $TargetUrl) -and
+            (Test-CommandLineHasArgument -CommandLine $_.CommandLine -Argument "--name=laro-api") -and
+            (-not $ReservedUrl -or
+                (Test-CommandLineHasArgument -CommandLine $_.CommandLine -Argument "--url=$ReservedUrl"))
         })
     foreach ($match in $matches) {
         Get-Process -Id $match.ProcessId -ErrorAction SilentlyContinue
