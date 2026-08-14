@@ -41,6 +41,34 @@ interface OAuthStatePayload {
 }
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const TOKEN_EXCHANGE_DNS_RETRY_DELAYS_MS = [250, 750, 1_500] as const;
+
+export function isRetryableOAuthNetworkError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current instanceof Error; depth += 1) {
+    const code = (current as Error & { code?: string }).code;
+    if (code === "EAI_AGAIN" || code === "ENOTFOUND" || code === "EAI_FAIL") return true;
+    current = (current as Error & { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+async function fetchTokenEndpoint(url: string, init: RequestInit): Promise<Response> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fetch(url, init);
+    } catch (error) {
+      if (!isRetryableOAuthNetworkError(error) || attempt >= TOKEN_EXCHANGE_DNS_RETRY_DELAYS_MS.length) {
+        throw error;
+      }
+      const delayMs = TOKEN_EXCHANGE_DNS_RETRY_DELAYS_MS[attempt];
+      console.warn(`[OAuth2] Token endpoint DNS lookup failed; retrying in ${delayMs}ms.`);
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, delayMs);
+      });
+    }
+  }
+}
 
 function getOAuthRedirectBaseUrl(): string {
   const raw = process.env.OAUTH_REDIRECT_BASE_URL || 'http://localhost:3000';
@@ -227,7 +255,7 @@ export async function exchangeCodeForTokens(
     if (config.clientSecret) {
       body.set("client_secret", config.clientSecret);
     }
-    const res = await fetch("https://oauth2.googleapis.com/token", {
+    const res = await fetchTokenEndpoint("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
@@ -256,7 +284,7 @@ export async function exchangeCodeForTokens(
   } else if (config.clientSecret) {
     body.set("client_secret", config.clientSecret);
   }
-  const res = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+  const res = await fetchTokenEndpoint("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,

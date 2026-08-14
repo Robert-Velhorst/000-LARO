@@ -205,8 +205,13 @@ describe('production readiness regressions', () => {
     expect(main).toContain('nodeIntegration: false');
     expect(main).toContain('contextIsolation: true');
     expect(main).toContain('sandbox: true');
-    expect(callback).toContain("document.getElementById('close').addEventListener('click', closePage)");
+    expect(callback).toContain("window.opener.postMessage({ type: 'laro:oauth-complete'");
+    expect(callback).toContain("action.addEventListener('click', () => window.location.reload())");
+    expect(callback).toContain('const retryable = !tokenExchangeCompleted && isRetryableOAuthNetworkError(error)');
     expect(callback).toContain('window.close()');
+    expect(connections).toContain("window.addEventListener('message', handleOAuthComplete)");
+    expect(connections).toContain("window.open(result.authUrl, 'laro-google-oauth'");
+    expect(connections).toContain('if (!oauthWindow && !isElectron())');
     expect(connections).toContain('refetchInterval: connectingPlatform === "gmail" ? 1_500 : false');
     expect(connections).toContain('refetchInterval: connectingPlatform === "google-drive" ? 1_500 : false');
   });
