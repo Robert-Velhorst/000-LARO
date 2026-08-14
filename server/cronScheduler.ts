@@ -1,6 +1,12 @@
 import cron from 'node-cron';
 import { runAutoCollectionForAllCases } from './autoCollectionService';
 import { retryWithBackoff } from './retry';
+import { logOperationalEvent } from './operationalMetrics';
+import {
+  readScheduledBackupConfig,
+  refreshScheduledBackupState,
+  runScheduledBackup,
+} from './scheduledBackup';
 
 /**
  * Phase 016 — background jobs, schedulers, and workers.
@@ -36,6 +42,7 @@ export const CRON_SCHEDULES = {
   outreachHeartbeat: '0 * * * *',
   reminders: '0 8 * * *',
   retention: '30 3 * * *',
+  backup: '15 1 * * *',
 } as const;
 
 function ensureStatus(name: string): JobStatus {
@@ -85,17 +92,28 @@ export async function runJob(
       jitter: () => 0, // deterministic backoff for the scheduler
       onRetry: ({ attempt, delayMs, err }) => {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[Cron] Job "${name}" failed (attempt ${attempt}/${retries + 1}); retrying in ${delayMs}ms:`, msg);
+        logOperationalEvent('warn', 'worker_retry', {
+          worker: name,
+          attempt,
+          attempts: retries + 1,
+          delayMs,
+          error: msg.slice(0, 500),
+        });
       },
     });
     s.lastSuccessAt = nowMs();
     s.lastError = null;
+    logOperationalEvent('info', 'worker_success', { worker: name, run: s.runs });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     s.failures += 1;
     s.lastErrorAt = nowMs();
     s.lastError = msg;
-    console.error(`[Cron] Job "${name}" failed after ${retries + 1} attempts:`, msg);
+    logOperationalEvent('error', 'worker_failed', {
+      worker: name,
+      attempts: retries + 1,
+      error: msg.slice(0, 500),
+    });
   }
 }
 
@@ -118,6 +136,7 @@ export function initCronScheduler() {
   ensureStatus('outreach-heartbeat');
   ensureStatus('reminders');
   ensureStatus('retention');
+  ensureStatus('backup');
 
   // Daily auto-collection at 02:00.
   scheduledTasks.push(cron.schedule(CRON_SCHEDULES.autoCollection, () => {
@@ -155,6 +174,20 @@ export function initCronScheduler() {
   scheduledTasks.push(cron.schedule(CRON_SCHEDULES.retention, () => {
     void runJob('retention', runRetention, { retries: 1 });
   }));
+
+  const backupConfig = readScheduledBackupConfig();
+  const backupHealth = refreshScheduledBackupState(backupConfig);
+  if (backupConfig) {
+    if (backupHealth.status !== 'healthy') {
+      void runJob('backup', () => runScheduledBackup(backupConfig), { retries: 1 });
+    }
+    scheduledTasks.push(cron.schedule(CRON_SCHEDULES.backup, () => {
+      void runJob('backup', () => runScheduledBackup(backupConfig), { retries: 1 });
+    }));
+  } else {
+    const status = ensureStatus('backup');
+    status.enabled = false;
+  }
 
   console.log('[Cron] Scheduled tasks loaded:', getJobStatus().map((j) => j.name).join(', '));
 }

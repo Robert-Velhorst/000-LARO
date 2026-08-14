@@ -210,6 +210,37 @@ test("language selection changes the mounted shell and persists across reloads",
   await expect(page.getByText("My Cases", { exact: true })).toBeVisible();
 });
 
+test("core workflows reflow at 200 percent zoom and remain operable in forced colors", async ({ page }) => {
+  await createAccount(page);
+
+  // A 640 CSS-pixel viewport represents a 1280-pixel desktop viewed at 200%.
+  await page.setViewportSize({ width: 640, height: 720 });
+  for (const route of ["/", "/cases", "/evidence", "/outreach", "/settings"]) {
+    await page.goto(route, { waitUntil: "networkidle" });
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1))
+      .toBe(true);
+  }
+
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.goto("/help", { waitUntil: "networkidle" });
+  const menuTrigger = page.getByRole("button", { name: "Toggle sidebar" });
+  await menuTrigger.focus();
+  await expectVisibleKeyboardFocus(page, menuTrigger);
+  await page.keyboard.press("Enter");
+  await expect(menuTrigger).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#laro-mobile-sidebar")).toHaveAttribute("aria-hidden", "false");
+
+  const analysis = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  const blocking = analysis.violations.filter(
+    (violation) => violation.impact === "serious" || violation.impact === "critical",
+  );
+  expect(blocking, formatViolations("/help", "forced-colors", blocking)).toEqual([]);
+});
+
 test("keyboard navigation exposes the skip link, traps the mobile menu, and keeps interaction states visible", async ({ page }, testInfo) => {
   await createAccount(page);
 

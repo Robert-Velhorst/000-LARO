@@ -64,6 +64,13 @@
       "when": 1786665600000,
       "tag": "0008_unique_keyed_preferences",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1786748400000,
+      "tag": "0009_case_list_indexes",
+      "breakpoints": true
     }
   ]
 }

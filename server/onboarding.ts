@@ -19,7 +19,7 @@ export const ONBOARDING_STEPS: OnboardingStep[] = [
   { key: "welcome", order: 1, title: "Welcome to LARO",
     body: "LARO helps you understand your legal issue, find suitable lawyers, and prepare outreach. It never contacts anyone without your explicit approval." },
   { key: "privacy", order: 2, title: "Your data stays yours",
-    body: "Your data is stored locally. You can export or permanently delete everything at any time from Settings → Privacy." },
+    body: "Your data is stored locally. You can export it or erase the live account from Settings → Privacy; recovery copies expire under the configured backup-retention policy." },
   { key: "create-case", order: 3, title: "Describe your case",
     body: "Create a case and describe the problem in plain words. LARO classifies it into legal areas automatically." },
   { key: "evidence", order: 4, title: "Add evidence",

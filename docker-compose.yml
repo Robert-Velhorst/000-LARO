@@ -33,8 +33,14 @@ services:
       SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
       DATABASE_URL: /data/laro-server.sqlite
       LOCAL_STORAGE_DIR: /data/uploads
+      LARO_BACKUP_DIRECTORY: /backups
+      LARO_BACKUP_DESTINATION_KIND: ${LARO_BACKUP_DESTINATION_KIND:-local}
+      LARO_BACKUP_RETENTION_COUNT: ${LARO_BACKUP_RETENTION_COUNT:-14}
+      LARO_BACKUP_RETENTION_DAYS: ${LARO_BACKUP_RETENTION_DAYS:-30}
+      LARO_BACKUP_MAX_AGE_HOURS: ${LARO_BACKUP_MAX_AGE_HOURS:-30}
     volumes:
       - laro-data:/data
+      - ${LARO_BACKUP_HOST_DIRECTORY:-./.laro-backups}:/backups
     restart: unless-stopped
 
 volumes:

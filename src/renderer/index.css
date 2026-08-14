@@ -60,3 +60,49 @@ code {
     transition-duration: 0.01ms !important;
   }
 }
+
+@media (forced-colors: active) {
+  *,
+  *::before,
+  *::after {
+    color: CanvasText !important;
+    border-color: CanvasText !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  :focus-visible {
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px !important;
+  }
+
+  a {
+    color: LinkText !important;
+  }
+
+  ::placeholder,
+  [aria-disabled='true'],
+  :disabled {
+    color: GrayText !important;
+  }
+
+  button,
+  [role='button'],
+  input,
+  textarea,
+  select,
+  a {
+    forced-color-adjust: auto;
+  }
+
+  [aria-current='page'],
+  [data-state='active'],
+  [data-active='true'],
+  [aria-current='page'] *,
+  [data-state='active'] *,
+  [data-active='true'] * {
+    color: HighlightText !important;
+    background-color: Highlight !important;
+    border-color: Highlight !important;
+  }
+}

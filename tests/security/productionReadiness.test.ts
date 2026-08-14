@@ -41,7 +41,7 @@ describe('production readiness regressions', () => {
     const excludedTestFiles = testFiles
       .filter((path) => !maintainedSuites.some((suite) => path.startsWith(`${suite}/`)))
       .sort();
-    const config = readFileSync(join(ROOT, 'vitest.config.ts'), 'utf8');
+    const config = readFileSync(join(ROOT, 'vitest.config.mts'), 'utf8');
 
     expect(excludedTestFiles).toEqual([]);
     for (const suite of maintainedSuites) {
@@ -231,16 +231,13 @@ describe('production readiness regressions', () => {
     expect(JSON.stringify({ google, microsoft, legacyGoogle })).not.toMatch(/gmail\.send|gmail\.labels|Mail\.Send/);
   });
 
-  it('opens OAuth in a sandboxed closeable desktop window and refreshes connection state', () => {
+  it('opens OAuth in the system browser and refreshes desktop connection state', () => {
     const main = readFileSync(join(ROOT, 'src-main/index.ts'), 'utf8');
     const callback = readFileSync(join(ROOT, 'server/oauth2Callbacks.ts'), 'utf8');
     const connections = readFileSync(join(ROOT, 'src/renderer/components/EvidenceConnectionsCard.tsx'), 'utf8');
-    expect(main).toContain('async function openOAuthWindow');
-    expect(main).toContain("url.hostname === 'accounts.google.com'");
-    expect(main).toContain("url.hostname === 'login.microsoftonline.com'");
-    expect(main).toContain('nodeIntegration: false');
-    expect(main).toContain('contextIsolation: true');
-    expect(main).toContain('sandbox: true');
+    expect(main).not.toContain('async function openOAuthWindow');
+    expect(main).toContain('void openExternalUrl(url)');
+    expect(main).toContain("if (isOAuthProviderUrl(url))");
     expect(callback).toContain("window.opener.postMessage({ type: 'laro:oauth-complete'");
     expect(callback).toContain("'Cross-Origin-Opener-Policy', 'unsafe-none'");
     expect(callback).toContain("'Referrer-Policy', 'no-referrer'");
@@ -257,6 +254,17 @@ describe('production readiness regressions', () => {
     expect(connections).toContain('document.addEventListener("visibilitychange", refreshOnReturn)');
     expect(connections).toContain('oauthWindowRef.current?.closed');
     expect(connections).toContain('Finishing Google connection...');
+  });
+
+  it('discloses bounded backup retention instead of promising immediate permanent erasure', () => {
+    const privacy = readFileSync(join(ROOT, 'src/renderer/components/Privacy.tsx'), 'utf8');
+    const cases = readFileSync(join(ROOT, 'src/renderer/components/Cases.tsx'), 'utf8');
+    const help = readFileSync(join(ROOT, 'server/help.ts'), 'utf8');
+    const onboarding = readFileSync(join(ROOT, 'server/onboarding.ts'), 'utf8');
+    const combined = [privacy, cases, help, onboarding].join('\n');
+    expect(combined).not.toContain('permanently delete everything');
+    expect(privacy).toContain('Recovery backups may retain prior copies');
+    expect(cases).toContain('Recovery backups may retain prior copies');
   });
 
   it('refreshes the evidence query used by the case workspace after a keyword pull', () => {
@@ -483,7 +491,7 @@ describe('production readiness regressions', () => {
   });
 
   it('allows an isolated development API port instead of hardcoding the proxy target', () => {
-    const vite = readFileSync(join(ROOT, 'vite.config.ts'), 'utf8');
+    const vite = readFileSync(join(ROOT, 'vite.config.mts'), 'utf8');
     expect(vite).toContain("process.env.VITE_LARO_API_URL || 'http://127.0.0.1:3000'");
     expect(vite.match(/target: devApiUrl/g)).toHaveLength(2);
   });
@@ -681,7 +689,7 @@ describe('production readiness regressions', () => {
     const client = readFileSync(join(ROOT, 'src/renderer/contexts/WebSocketContext.tsx'), 'utf8');
     const dashboard = readFileSync(join(ROOT, 'src/renderer/DashboardApp.tsx'), 'utf8');
     const notificationCenter = readFileSync(join(ROOT, 'src/renderer/components/NotificationCenter.tsx'), 'utf8');
-    const vite = readFileSync(join(ROOT, 'vite.config.ts'), 'utf8');
+    const vite = readFileSync(join(ROOT, 'vite.config.mts'), 'utf8');
     expect(server).toContain('initializeRealtimeServer(httpServer, `${publicPathPrefix}/socket.io`)');
     expect(realtime).toContain('path = "/socket.io"');
     expect(realtime).toContain('jwt.verify(token, ENV.JWT_SECRET)');

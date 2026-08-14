@@ -44,6 +44,43 @@ The default destination is a timestamped file under `db-backups` beside the live
 database. Keep every set member together on access-controlled or encrypted
 storage. The desktop sidecar contains secret key material.
 
+## Automatic Recovery Sets
+
+The packaged desktop and Docker API schedule the same recovery-ready set format
+described above every day at 01:15. At startup, LARO validates existing scheduled
+sets and creates a catch-up set when none is current. It immediately validates a
+new set before counting it as healthy. Runs do not overlap.
+
+Docker mounts `${LARO_BACKUP_HOST_DIRECTORY:-./.laro-backups}` at `/backups`.
+The desktop defaults to `<userData>/backups`. Both defaults are local copies;
+they protect against database corruption and accidental application-state loss,
+but not device loss. For real off-device protection, point the Docker host path
+at a protected synced or network destination and label it accurately:
+
+```dotenv
+LARO_BACKUP_HOST_DIRECTORY=C:\Users\owner\OneDrive\LARO Backups
+LARO_BACKUP_DESTINATION_KIND=synced
+LARO_BACKUP_RETENTION_COUNT=14
+LARO_BACKUP_RETENTION_DAYS=30
+LARO_BACKUP_MAX_AGE_HOURS=30
+```
+
+`LARO_BACKUP_RETENTION_COUNT` accepts 2-60 sets and defaults to 14.
+`LARO_BACKUP_RETENTION_DAYS` accepts 1-365 days and defaults to 30. Account and
+case erasure applies to live data immediately; recovery copies expire under
+this bounded policy and must remain access-controlled until then.
+`LARO_BACKUP_MAX_AGE_HOURS` accepts 6-168 hours and defaults to 30. Invalid
+values stop scheduler initialization rather than silently weakening the policy.
+Retention deletes only older files whose exact scheduled filename and complete
+manifest still validate. Unknown, malformed, or corrupt files are preserved for
+operator review.
+
+`/api/health` reports whether automatic backups are configured, the declared
+destination kind, latest verified timestamp, age, freshness threshold, retention
+count, and failure state. It never exposes the destination path or calls `local`
+storage off-device. Manual `db:backup`, validation, restore, and recovery-drill
+commands remain available for release and incident operations.
+
 ## Electron Validate
 
 ```powershell

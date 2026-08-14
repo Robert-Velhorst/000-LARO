@@ -470,11 +470,11 @@ export default function Cases() {
             <DialogTitle>Delete this case?</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This will permanently delete{" "}
+            This will erase{" "}
             <span className="font-medium text-foreground">
               {caseToDelete?.name}
             </span>{" "}
-            and all its evidence, outreach, deadlines, and related data. This cannot be undone.
+            and all its live evidence, outreach, deadlines, and related data. Recovery backups may retain prior copies until the configured retention period expires (30 days by default).
           </p>
           <div className="flex justify-end gap-2 pt-2">
             <Button
@@ -497,7 +497,7 @@ export default function Cases() {
                 }
               }}
             >
-              {deleteCase.isLoading ? "Deleting…" : "Delete permanently"}
+              {deleteCase.isLoading ? "Deleting…" : "Erase case"}
             </Button>
           </div>
         </DialogContent>

@@ -76,7 +76,7 @@ export default function Privacy() {
           <Card className="border-destructive/50">
             <CardHeader><CardTitle className="flex items-center gap-2 text-base text-destructive"><Trash2 className="h-4 w-4" />Erase account</CardTitle></CardHeader>
             <CardContent className="space-y-4">
-              <Alert variant="destructive"><AlertDescription>This permanently removes the account and its owned records. The action cannot be undone.</AlertDescription></Alert>
+              <Alert variant="destructive"><AlertDescription>The live account and its owned records are erased immediately. Recovery backups may retain prior copies until the configured retention period expires (30 days by default).</AlertDescription></Alert>
               {!showDelete ? (
                 <Button variant="destructive" onClick={() => setShowDelete(true)}>Start account deletion</Button>
               ) : (
@@ -84,7 +84,7 @@ export default function Privacy() {
                   <Input aria-label="Confirm signed-in email" type="email" value={confirmEmail} onChange={(event) => setConfirmEmail(event.target.value)} placeholder={me.data?.email || "Signed-in email"} autoComplete="email" />
                   <div className="flex gap-2">
                     <Button variant="outline" onClick={() => { setShowDelete(false); setConfirmEmail(""); }}>Cancel</Button>
-                    <Button variant="destructive" onClick={removeAccount} disabled={deleteData.isPending}>{deleteData.isPending ? "Deleting..." : "Delete permanently"}</Button>
+                    <Button variant="destructive" onClick={removeAccount} disabled={deleteData.isPending}>{deleteData.isPending ? "Deleting..." : "Erase account"}</Button>
                   </div>
                 </div>
               )}

@@ -329,7 +329,23 @@ runtime contract in `.env`; subsequent restarts must use
 loaded. A plain Compose restart then fails closed instead of silently disabling
 an accepted provider or changing the public callback path.
 
-SQLite and local evidence persist in the `laro-data` volume. Health endpoints are available at `/api/live`, `/api/ready`, and `/api/health`.
+SQLite and local evidence persist in the `laro-data` volume. Docker also writes
+daily recovery-ready backup sets to the host-mounted `.laro-backups` directory
+by default. This default is a same-device copy, not an off-device backup. Set
+`LARO_BACKUP_HOST_DIRECTORY` to a protected OneDrive or network location and
+set `LARO_BACKUP_DESTINATION_KIND` to `synced` or `network` only when that
+description is true. The packaged desktop creates same-device sets under its
+application-data `backups` directory.
+Validated sets expire after 30 days by default, in addition to the 14-set count
+limit. Account and case erasure removes live data immediately; older recovery
+copies age out under this bounded backup-retention policy.
+
+Health endpoints are available at `/api/live`, `/api/ready`, and `/api/health`.
+The health summary reports non-sensitive request latency/error aggregates,
+worker run/failure state, and backup freshness. It warns when backups are local,
+stale, failed, or not configured without exposing paths, credentials, cases, or
+document identifiers. Liveness and readiness remain independent of backup
+destination health so a stale copy cannot cause a restart loop.
 Run `npm run readiness:runtime` inside the API container to verify the lean
 production runtime, database, evidence volume, version, and HAI authentication
 boundary without installing development dependencies.
