@@ -113,8 +113,18 @@ function markDispatchUncertain(db: any, guardKey: string, dispatchState: string)
 const defaultSender: EmailSender = async (email) => {
   const { sendSystemEmail } = await import("./systemEmail");
   const r = await sendSystemEmail({ to: email.to, subject: email.subject, text: email.text } as any);
-  return { delivered: !!r.delivered, provider: r.provider };
+  return { delivered: !!r.delivered, provider: r.provider, providerMessageId: r.providerMessageId };
 };
+
+function readOutreachMetadata(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 export async function listUncertainOutreachDispatches(): Promise<UncertainDispatchRecord[]> {
   const db = await getDb();
@@ -359,6 +369,14 @@ export async function sendApprovedOutreach(
         status: "Sent",
         initialContact: row.initialContact ?? sentAt,
         lastContact: sentAt,
+        metadata: JSON.stringify({
+          ...readOutreachMetadata(row.metadata),
+          outboundProvider: result.provider,
+          outboundProviderMessageId: result.providerMessageId ?? null,
+          outboundRecipient: to,
+          outboundSubject: subject,
+          outboundSentAt: sentAt.toISOString(),
+        }),
         updatedAt: sentAt,
       }).where(eq(outreachStatus.id, outreachId)).run();
 

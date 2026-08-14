@@ -23,6 +23,7 @@ export default defineConfig({
       'tests/a11y/**/*.test.ts',
       'tests/acceptance/**/*.test.ts',
       'tests/sim/**/*.test.ts',
+      'tests/evals/**/*.test.ts',
     ],
     testTimeout: 30_000,
     // Migration-backed setup can cross one minute on constrained Windows hosts;

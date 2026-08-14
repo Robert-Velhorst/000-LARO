@@ -7,11 +7,12 @@ import {
   isSupportedImageOcrMimeType,
 } from "../shared/evidenceFiles";
 import { getLLMProviderDescriptors, invokeLLM, isLLMProviderConfigured, type LLMProvider } from "./llm";
-import { extractImageText } from "./ocr";
+import { extractImageBatchText, extractImageText } from "./ocr";
 
-export const DOCUMENT_ANALYSIS_VERSION = "2.2.0";
-const MAX_ANALYSIS_CHARS = 250_000;
-const MAX_PROVIDER_CHARS = 100_000;
+export const DOCUMENT_ANALYSIS_VERSION = "3.0.0";
+const MAX_ANALYSIS_CHARS = 8 * 1024 * 1024;
+const MAX_PROVIDER_CHUNK_CHARS = 60_000;
+const MAX_CITATIONS = 10_000;
 
 export type Citation = {
   id: string;
@@ -36,17 +37,24 @@ export type TimelineFinding = CitedFinding & {
   category: "employment" | "termination" | "communication" | "legal" | "financial" | "other";
 };
 
+export type ContradictionFinding = {
+  statementA: string;
+  statementB: string;
+  explanation: string;
+  citations: string[];
+};
+
 export type DocumentAnalysisResult = {
   schemaVersion: 2;
   analysisVersion: string;
   contentHash: string;
   status: "complete";
-  extractionMethod: "plain_text" | "html" | "pdf_text" | "docx_text" | "email_text" | "ocr_text";
+  extractionMethod: "plain_text" | "html" | "pdf_text" | "pdf_ocr" | "docx_text" | "email_text" | "ocr_text";
   extractionConfidence: number | null;
   /** Missing on analyses created before provider-aware cache invalidation. */
   analysisProvider?: "local" | LLMProvider;
   providerModel?: string | null;
-  providerStatus: "not_requested" | "unavailable" | "complete" | "invalid_response" | "failed";
+  providerStatus: "not_requested" | "unavailable" | "complete" | "partial" | "invalid_response" | "failed";
   providerMessage: string | null;
   documentType: string;
   confidence: number;
@@ -54,6 +62,13 @@ export type DocumentAnalysisResult = {
   analyzedChars: number;
   analyzedWords: number;
   truncated: boolean;
+  coverage: {
+    sourceChars: number;
+    analyzedChars: number;
+    sourceChunks: number;
+    analyzedChunks: number;
+    complete: boolean;
+  };
   citations: Citation[];
   parties: CitedFinding[];
   dates: CitedFinding[];
@@ -63,6 +78,7 @@ export type DocumentAnalysisResult = {
   legalIssues: CitedFinding[];
   riskFlags: CitedFinding[];
   timelineEvents: TimelineFinding[];
+  contradictions: ContradictionFinding[];
 };
 
 type ExtractionResult = {
@@ -134,7 +150,33 @@ export async function extractDocumentText(bytes: Buffer, mimeType: string): Prom
     const parser = new PDFParse({ data: new Uint8Array(bytes) });
     try {
       const result = await parser.getText();
-      return { text: normalizeText(result.text), method: "pdf_text", confidence: null };
+      const pages = result.pages.map((page) => normalizeText(page.text));
+      const missingPages = pages
+        .map((text, index) => ({ text, pageNumber: index + 1 }))
+        .filter((page) => page.text.replace(/[^\p{L}\p{N}]/gu, "").length < 20);
+      if (!missingPages.length) {
+        return { text: normalizeText(result.text), method: "pdf_text", confidence: null };
+      }
+
+      const rendered = await parser.getScreenshot({
+        partial: missingPages.map((page) => page.pageNumber),
+        desiredWidth: 1800,
+        imageDataUrl: false,
+        imageBuffer: true,
+      });
+      const recognized = await extractImageBatchText(rendered.pages.map((page) => Buffer.from(page.data)));
+      const ocrByPage = new Map(rendered.pages.map((page, index) => [page.pageNumber, recognized[index]]));
+      const merged = pages.map((text, index) => {
+        const pageNumber = index + 1;
+        const ocr = ocrByPage.get(pageNumber);
+        return `[PDF page ${pageNumber}]\n${text || normalizeText(ocr?.text || "")}`;
+      });
+      const confidences = recognized.map((item) => item.confidence);
+      return {
+        text: normalizeText(merged.join("\n\n")),
+        method: "pdf_ocr",
+        confidence: confidences.length ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length : null,
+      };
     } finally {
       await parser.destroy();
     }
@@ -183,7 +225,7 @@ function buildCitations(text: string): Citation[] {
         lineStart: lineForOffset(start),
         lineEnd: lineForOffset(end),
       });
-      if (citations.length >= 500) return citations;
+      if (citations.length >= MAX_CITATIONS) return citations;
     }
   }
   return citations;
@@ -322,7 +364,9 @@ function deterministicAnalysis(extraction: ExtractionResult): DocumentAnalysisRe
     const citation = citations.find((item) => pattern.test(item.quote));
     if (citation) legalIssues.push({ text: issue, citations: [citation.id] });
   }
-  const summarySegments = citations.slice(0, 3);
+  const summarySegments = citations.length <= 3
+    ? citations
+    : [citations[0], citations[Math.floor(citations.length / 2)], citations[citations.length - 1]];
   return {
     schemaVersion: 2,
     analysisVersion: DOCUMENT_ANALYSIS_VERSION,
@@ -340,6 +384,13 @@ function deterministicAnalysis(extraction: ExtractionResult): DocumentAnalysisRe
     analyzedChars: analyzedText.length,
     analyzedWords: analyzedText.match(/[\p{L}\p{N}]+(?:['\u2019-][\p{L}\p{N}]+)*/gu)?.length ?? 0,
     truncated,
+    coverage: {
+      sourceChars: text.length,
+      analyzedChars: analyzedText.length,
+      sourceChunks: citations.length,
+      analyzedChunks: citations.length,
+      complete: !truncated,
+    },
     citations,
     parties: extractParties(citations),
     dates,
@@ -349,13 +400,22 @@ function deterministicAnalysis(extraction: ExtractionResult): DocumentAnalysisRe
     legalIssues,
     riskFlags: contextualFindings(citations, RISK_PATTERN),
     timelineEvents: buildTimeline(citations, dates),
+    contradictions: [],
   };
 }
 
-type AiFinding = { text: string; citations: string[] };
+type AiFinding = { text: string; citations: string[]; evidenceQuotes: string[] };
+type AiContradiction = {
+  statementA: string;
+  statementB: string;
+  explanation: string;
+  citations: string[];
+  evidenceQuotes: string[];
+};
 type AiResult = {
   summary: string;
   summaryCitations: string[];
+  summaryEvidenceQuotes: string[];
   documentType: string;
   legalIssues: AiFinding[];
   parties: AiFinding[];
@@ -363,29 +423,210 @@ type AiResult = {
   obligations: AiFinding[];
   riskFlags: AiFinding[];
   timelineEvents: Array<AiFinding & { date: string; title: string; actor: string | null; importance: TimelineFinding["importance"]; category: TimelineFinding["category"] }>;
+  contradictions: AiContradiction[];
 };
 
-function validateAiResult(value: unknown, validCitationIds: Set<string>): value is AiResult {
+const SUPPORT_STOP_WORDS = new Set([
+  "and", "the", "that", "this", "with", "from", "voor", "door", "het", "een", "van", "dat", "die", "deze", "zijn", "haar",
+  "also", "alsof", "maar", "niet", "naar", "over", "onder", "zoals", "because", "because", "which", "where", "when", "then",
+]);
+
+function normalizeSupportText(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("nl-NL").replace(/\s+/g, " ").trim();
+}
+
+function materialAnchors(value: string): string[] {
+  return [...new Set(value.match(/(?:ECLI:[A-Z0-9:.]+|\b\d{1,4}(?:[.,/-]\d{1,4})+\b|[€$£]\s?\d[\d.,]*|\b\d[\d.,]*\s?(?:EUR|EURO|USD|GBP)\b|\b(?:twee|drie|vier|vijf|zes|zeven|acht|negen|tien|elf|twaalf|dertien|veertien|vijftien|zestien|zeventien|achttien|negentien|twintig|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\b)/gi) ?? [])]
+    .map(normalizeSupportText);
+}
+
+function meaningfulTokens(value: string): string[] {
+  return [...new Set(normalizeSupportText(value).match(/[\p{L}\p{N}]{4,}/gu) ?? [])]
+    .filter((token) => !SUPPORT_STOP_WORDS.has(token));
+}
+
+export function findingHasLiteralSourceSupport(
+  finding: { text: string; citations: string[]; evidenceQuotes: string[] },
+  citationMap: Map<string, Citation>,
+): boolean {
+  if (!finding.text.trim() || !finding.citations.length || !finding.evidenceQuotes.length) return false;
+  const citedSources = finding.citations.map((id) => citationMap.get(id)).filter((item): item is Citation => Boolean(item));
+  if (citedSources.length !== finding.citations.length) return false;
+  const normalizedSources = citedSources.map((citation) => normalizeSupportText(citation.quote));
+  const exactQuotes = finding.evidenceQuotes.map(normalizeSupportText).filter((quote) => quote.length >= 12);
+  if (exactQuotes.length !== finding.evidenceQuotes.length) return false;
+  if (!exactQuotes.every((quote) => normalizedSources.some((source) => source.includes(quote)))) return false;
+
+  const evidence = exactQuotes.join(" ");
+  if (!materialAnchors(finding.text).every((anchor) => evidence.includes(anchor))) return false;
+  const tokens = meaningfulTokens(finding.text);
+  if (!tokens.length) return true;
+  const overlap = tokens.filter((token) => evidence.includes(token)).length;
+  return overlap >= Math.min(2, Math.max(1, Math.ceil(tokens.length * 0.12)));
+}
+
+function validateAiResult(value: unknown, citationMap: Map<string, Citation>): value is AiResult {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<AiResult>;
   if (
     typeof candidate.summary !== "string" ||
     typeof candidate.documentType !== "string" ||
     !Array.isArray(candidate.summaryCitations) ||
+    !Array.isArray(candidate.summaryEvidenceQuotes) ||
     candidate.summaryCitations.length === 0 ||
-    !candidate.summaryCitations.every((id) => typeof id === "string" && validCitationIds.has(id))
+    !candidate.summaryCitations.every((id) => typeof id === "string" && citationMap.has(id)) ||
+    !findingHasLiteralSourceSupport({
+      text: candidate.summary,
+      citations: candidate.summaryCitations as string[],
+      evidenceQuotes: candidate.summaryEvidenceQuotes as string[],
+    }, citationMap)
   ) return false;
   const groups = [candidate.legalIssues, candidate.parties, candidate.claims, candidate.obligations, candidate.riskFlags, candidate.timelineEvents];
   if (!groups.every((group) => Array.isArray(group) && group.every((item) =>
-    item && typeof item.text === "string" && Array.isArray(item.citations) && item.citations.length > 0 &&
-    item.citations.every((id) => typeof id === "string" && validCitationIds.has(id))
+    item && typeof item.text === "string" && Array.isArray(item.citations) && Array.isArray(item.evidenceQuotes) &&
+    findingHasLiteralSourceSupport(item as AiFinding, citationMap)
   ))) return false;
-  return candidate.timelineEvents!.every((event) =>
+  if (!candidate.timelineEvents!.every((event) =>
     typeof event.date === "string" && typeof event.title === "string" &&
     (typeof event.actor === "string" || event.actor === null) &&
     ["critical", "high", "medium", "low"].includes(event.importance) &&
     ["employment", "termination", "communication", "legal", "financial", "other"].includes(event.category)
+  )) return false;
+  return Array.isArray(candidate.contradictions) && candidate.contradictions.every((item) =>
+    item && typeof item.statementA === "string" && typeof item.statementB === "string" &&
+    typeof item.explanation === "string" && Array.isArray(item.citations) && Array.isArray(item.evidenceQuotes) &&
+    findingHasLiteralSourceSupport({ text: `${item.statementA} ${item.statementB}`, citations: item.citations, evidenceQuotes: item.evidenceQuotes }, citationMap)
   );
+}
+
+function providerChunks(citations: Citation[]): Citation[][] {
+  const chunks: Citation[][] = [];
+  let current: Citation[] = [];
+  let chars = 0;
+  for (const citation of citations) {
+    const renderedLength = citation.id.length + citation.quote.length + 4;
+    if (current.length && chars + renderedLength > MAX_PROVIDER_CHUNK_CHARS) {
+      chunks.push(current);
+      current = [];
+      chars = 0;
+    }
+    current.push(citation);
+    chars += renderedLength;
+  }
+  if (current.length) chunks.push(current);
+  return chunks;
+}
+
+const FINDING_SCHEMA = {
+  type: "object", additionalProperties: false,
+  properties: {
+    text: { type: "string" },
+    citations: { type: "array", minItems: 1, items: { type: "string" } },
+    evidenceQuotes: { type: "array", minItems: 1, items: { type: "string" } },
+  },
+  required: ["text", "citations", "evidenceQuotes"],
+};
+
+async function analyzeProviderChunk(provider: LLMProvider, citations: Citation[]): Promise<AiResult> {
+  const sourceText = citations.map((citation) => `[${citation.id}] ${citation.quote}`).join("\n");
+  const response = await invokeLLM({
+    provider,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "Analyze this portion of a legal document conservatively.",
+          "Every finding must cite supplied source IDs and include one or more evidenceQuotes copied verbatim from those cited passages.",
+          "Separate allegations from established facts. Do not invent law, dates, motives, causation, or outcomes.",
+          "Identify materially inconsistent statements in contradictions; do not call ordinary differences contradictions.",
+          "Return every required JSON field even when its array is empty. Return JSON only.",
+        ].join(" "),
+      },
+      { role: "user", content: sourceText },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "source_grounded_legal_document_analysis_v3",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string" },
+            summaryCitations: { type: "array", minItems: 1, items: { type: "string" } },
+            summaryEvidenceQuotes: { type: "array", minItems: 1, items: { type: "string" } },
+            documentType: { type: "string" },
+            legalIssues: { type: "array", items: { $ref: "#/$defs/finding" } },
+            parties: { type: "array", items: { $ref: "#/$defs/finding" } },
+            claims: { type: "array", items: { $ref: "#/$defs/finding" } },
+            obligations: { type: "array", items: { $ref: "#/$defs/finding" } },
+            riskFlags: { type: "array", items: { $ref: "#/$defs/finding" } },
+            timelineEvents: {
+              type: "array",
+              items: {
+                type: "object", additionalProperties: false,
+                properties: {
+                  ...FINDING_SCHEMA.properties,
+                  date: { type: "string" }, title: { type: "string" }, actor: { type: ["string", "null"] },
+                  importance: { type: "string", enum: ["critical", "high", "medium", "low"] },
+                  category: { type: "string", enum: ["employment", "termination", "communication", "legal", "financial", "other"] },
+                },
+                required: [...FINDING_SCHEMA.required, "date", "title", "actor", "importance", "category"],
+              },
+            },
+            contradictions: {
+              type: "array",
+              items: {
+                type: "object", additionalProperties: false,
+                properties: {
+                  statementA: { type: "string" }, statementB: { type: "string" }, explanation: { type: "string" },
+                  citations: { type: "array", minItems: 2, items: { type: "string" } },
+                  evidenceQuotes: { type: "array", minItems: 2, items: { type: "string" } },
+                },
+                required: ["statementA", "statementB", "explanation", "citations", "evidenceQuotes"],
+              },
+            },
+          },
+          required: ["summary", "summaryCitations", "summaryEvidenceQuotes", "documentType", "legalIssues", "parties", "claims", "obligations", "riskFlags", "timelineEvents", "contradictions"],
+          $defs: { finding: FINDING_SCHEMA },
+        },
+      },
+    },
+  });
+  const content = response.choices[0]?.message.content;
+  const parsed = typeof content === "string" ? JSON.parse(content) : content;
+  const citationMap = new Map(citations.map((citation) => [citation.id, citation]));
+  if (!validateAiResult(parsed, citationMap)) throw new Error("UNSUPPORTED_PROVIDER_FINDINGS");
+  return parsed;
+}
+
+async function analyzeProviderChunks(provider: LLMProvider, chunks: Citation[][]): Promise<Array<{ result?: AiResult; error?: string }>> {
+  const outcomes: Array<{ result?: AiResult; error?: string }> = new Array(chunks.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(2, chunks.length) }, async () => {
+    while (next < chunks.length) {
+      const index = next;
+      next += 1;
+      try {
+        outcomes[index] = { result: await analyzeProviderChunk(provider, chunks[index]) };
+      } catch (error) {
+        outcomes[index] = { error: error instanceof Error ? error.message.slice(0, 300) : "Provider chunk failed" };
+      }
+    }
+  });
+  await Promise.all(workers);
+  return outcomes;
+}
+
+function uniqueContradictions(items: AiContradiction[]): ContradictionFinding[] {
+  const seen = new Set<string>();
+  return items.flatMap((item) => {
+    const key = `${normalizeSupportText(item.statementA)}|${normalizeSupportText(item.statementB)}|${item.citations.join(",")}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{ statementA: item.statementA, statementB: item.statementB, explanation: item.explanation, citations: item.citations }];
+  });
 }
 
 async function enrichAnalysis(base: DocumentAnalysisResult, provider: LLMProvider): Promise<DocumentAnalysisResult> {
@@ -399,106 +640,45 @@ async function enrichAnalysis(base: DocumentAnalysisResult, provider: LLMProvide
       providerMessage: `${provider} is selected but not configured; local source extraction completed.`,
     };
   }
-  const providerCitations: Citation[] = [];
-  let providerLength = 0;
-  for (const citation of base.citations) {
-    const renderedLength = citation.id.length + citation.quote.length + 4;
-    if (providerLength + renderedLength > MAX_PROVIDER_CHARS) break;
-    providerCitations.push(citation);
-    providerLength += renderedLength;
-  }
-  const sourceText = providerCitations.map((citation) => `[${citation.id}] ${citation.quote}`).join("\n");
-  try {
-    const response = await invokeLLM({
-      provider,
-      messages: [
-        {
-          role: "system",
-          content: "Analyze the legal document conservatively. Every finding must cite one or more supplied source IDs. Separate allegations from established facts, do not invent law or dates, and identify obligations, deadlines, risks, parties, and dated events. Return JSON only.",
-        },
-        { role: "user", content: sourceText },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "source_grounded_legal_document_analysis",
-          strict: true,
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              summary: { type: "string" },
-              summaryCitations: { type: "array", minItems: 1, items: { type: "string" } },
-              documentType: { type: "string" },
-              legalIssues: { type: "array", items: { $ref: "#/$defs/finding" } },
-              parties: { type: "array", items: { $ref: "#/$defs/finding" } },
-              claims: { type: "array", items: { $ref: "#/$defs/finding" } },
-              obligations: { type: "array", items: { $ref: "#/$defs/finding" } },
-              riskFlags: { type: "array", items: { $ref: "#/$defs/finding" } },
-              timelineEvents: {
-                type: "array",
-                items: {
-                  type: "object",
-                  additionalProperties: false,
-                  properties: {
-                    text: { type: "string" }, citations: { type: "array", minItems: 1, items: { type: "string" } },
-                    date: { type: "string" }, title: { type: "string" }, actor: { type: ["string", "null"] },
-                    importance: { type: "string", enum: ["critical", "high", "medium", "low"] },
-                    category: { type: "string", enum: ["employment", "termination", "communication", "legal", "financial", "other"] },
-                  },
-                  required: ["text", "citations", "date", "title", "actor", "importance", "category"],
-                },
-              },
-            },
-            required: ["summary", "summaryCitations", "documentType", "legalIssues", "parties", "claims", "obligations", "riskFlags", "timelineEvents"],
-            $defs: {
-              finding: {
-                type: "object", additionalProperties: false,
-                properties: { text: { type: "string" }, citations: { type: "array", minItems: 1, items: { type: "string" } } },
-                required: ["text", "citations"],
-              },
-            },
-          },
-        },
-      },
-    });
-    const content = response.choices[0]?.message.content;
-    const parsed = typeof content === "string" ? JSON.parse(content) : content;
-    const validIds = new Set(providerCitations.map((citation) => citation.id));
-    if (!validateAiResult(parsed, validIds)) {
-      return {
-        ...base,
-        analysisProvider: provider,
-        providerModel,
-        providerStatus: "invalid_response",
-        providerMessage: "Deep analysis was discarded because one or more findings lacked valid source citations.",
-      };
-    }
+  const chunks = providerChunks(base.citations);
+  const outcomes = await analyzeProviderChunks(provider, chunks);
+  const valid = outcomes.flatMap((outcome) => outcome.result ? [outcome.result] : []);
+  const failures = outcomes.filter((outcome) => !outcome.result);
+  if (!valid.length) {
+    const unsupported = failures.some((failure) => failure.error === "UNSUPPORTED_PROVIDER_FINDINGS");
     return {
       ...base,
       analysisProvider: provider,
       providerModel,
-      providerStatus: "complete",
-      providerMessage: null,
-      summary: parsed.summary,
-      documentType: parsed.documentType,
-      confidence: Math.max(base.confidence, 80),
-      legalIssues: uniqueFindings([...base.legalIssues, ...parsed.legalIssues]),
-      parties: uniqueFindings([...base.parties, ...parsed.parties]),
-      claims: uniqueFindings([...base.claims, ...parsed.claims]),
-      obligations: uniqueFindings([...base.obligations, ...parsed.obligations]),
-      riskFlags: uniqueFindings([...base.riskFlags, ...parsed.riskFlags]),
-      timelineEvents: parsed.timelineEvents,
-    };
-  } catch (error) {
-    return {
-      ...base,
-      analysisProvider: provider,
-      providerModel,
-      providerStatus: "failed",
-      providerMessage: error instanceof Error ? error.message.slice(0, 300) : "Deep analysis provider failed.",
+      providerStatus: unsupported ? "invalid_response" : "failed",
+      providerMessage: unsupported
+        ? "Deep analysis was discarded because findings lacked literal support in their cited passages."
+        : failures[0]?.error || "Deep analysis provider failed.",
+      coverage: { ...base.coverage, sourceChunks: chunks.length, analyzedChunks: 0, complete: false },
     };
   }
+
+  const status = failures.length ? "partial" as const : "complete" as const;
+  const chunkSummary = valid.map((result, index) => `Part ${index + 1}: ${result.summary.trim()}`).join("\n\n");
+  return {
+    ...base,
+    analysisProvider: provider,
+    providerModel,
+    providerStatus: status,
+    providerMessage: failures.length
+      ? `${failures.length} of ${chunks.length} source chunk(s) were rejected or failed; unsupported content was not retained.`
+      : null,
+    summary: chunkSummary.slice(0, 8_000),
+    documentType: valid.map((result) => result.documentType).find((value) => value && value !== "legal document") || valid[0].documentType,
+    legalIssues: uniqueFindings([...base.legalIssues, ...valid.flatMap((result) => result.legalIssues)]),
+    parties: uniqueFindings([...base.parties, ...valid.flatMap((result) => result.parties)]),
+    claims: uniqueFindings([...base.claims, ...valid.flatMap((result) => result.claims)]),
+    obligations: uniqueFindings([...base.obligations, ...valid.flatMap((result) => result.obligations)]),
+    riskFlags: uniqueFindings([...base.riskFlags, ...valid.flatMap((result) => result.riskFlags)]),
+    timelineEvents: valid.flatMap((result) => result.timelineEvents),
+    contradictions: uniqueContradictions(valid.flatMap((result) => result.contradictions)),
+    coverage: { ...base.coverage, sourceChunks: chunks.length, analyzedChunks: valid.length, complete: !failures.length && base.coverage.complete },
+  };
 }
 
 export async function analyzeDocumentBytes(options: {

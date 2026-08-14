@@ -39,6 +39,7 @@ describe('OAuth token exchange network resilience', () => {
       expiresIn: 3600,
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ signal: expect.any(AbortSignal) });
   });
 
   it('does not retry an ambiguous transport failure', async () => {

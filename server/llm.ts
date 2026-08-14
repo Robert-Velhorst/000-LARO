@@ -79,7 +79,15 @@ export const EXTERNAL_LLM_PROVIDERS = [
   "together",
 ] as const;
 
-export type LLMProvider = typeof EXTERNAL_LLM_PROVIDERS[number];
+export const LOCAL_LLM_PROVIDERS = ["ollama"] as const;
+export const LLM_PROVIDERS = [...LOCAL_LLM_PROVIDERS, ...EXTERNAL_LLM_PROVIDERS] as const;
+
+export type ExternalLLMProvider = typeof EXTERNAL_LLM_PROVIDERS[number];
+export type LLMProvider = typeof LLM_PROVIDERS[number];
+
+export function isLocalLLMProvider(provider: LLMProvider): boolean {
+  return (LOCAL_LLM_PROVIDERS as readonly string[]).includes(provider);
+}
 
 export type LLMProviderDescriptor = {
   id: LLMProvider;
@@ -235,7 +243,20 @@ type ProviderConfig = LLMProviderDescriptor & {
   keyName: string;
   nativeAnthropic?: boolean;
   jsonSchema?: boolean;
+  localOnly?: boolean;
 };
+
+function loopbackOllamaUrl(): string | null {
+  const raw = (process.env.LARO_OLLAMA_BASE_URL || "http://127.0.0.1:11434").trim();
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:") return null;
+    if (!["127.0.0.1", "localhost", "::1", "[::1]"].includes(url.hostname)) return null;
+    return `${url.origin.replace(/\/$/, "")}/v1/chat/completions`;
+  } catch {
+    return null;
+  }
+}
 
 function providerConfigs(): Record<LLMProvider, ProviderConfig> {
   const forgeKey = process.env.FORGE_API_KEY || ENV.forgeApiKey;
@@ -246,7 +267,13 @@ function providerConfigs(): Record<LLMProvider, ProviderConfig> {
   const deepseekKey = process.env.DEEPSEEK_API_KEY || ENV.DEEPSEEK_API_KEY;
   const groqKey = process.env.GROQ_API_KEY || ENV.GROQ_API_KEY;
   const togetherKey = process.env.TOGETHER_API_KEY || ENV.TOGETHER_API_KEY;
+  const ollamaModel = (process.env.LARO_OLLAMA_MODEL || "").trim();
+  const ollamaUrl = loopbackOllamaUrl();
   return {
+    ollama: {
+      id: "ollama", label: "Local Ollama", apiKey: "", keyName: "LARO_OLLAMA_MODEL",
+      model: ollamaModel || "not configured", url: ollamaUrl || "", configured: Boolean(ollamaModel && ollamaUrl), localOnly: true,
+    },
     forge: {
       id: "forge", label: "Forge-compatible", apiKey: forgeKey, keyName: "FORGE_API_KEY",
       model: process.env.LARO_FORGE_MODEL || "gemini-2.5-flash", url: `${forgeBase}/v1/chat/completions`, configured: Boolean(forgeKey), jsonSchema: true,
@@ -280,7 +307,7 @@ function providerConfigs(): Record<LLMProvider, ProviderConfig> {
 
 export function getLLMProviderDescriptors(): LLMProviderDescriptor[] {
   const configs = providerConfigs();
-  return EXTERNAL_LLM_PROVIDERS.map((id) => {
+  return LLM_PROVIDERS.map((id) => {
     const { label, model, configured } = configs[id];
     return { id, label, model, configured };
   });
@@ -292,7 +319,7 @@ export function isLLMProviderConfigured(provider: LLMProvider): boolean {
 
 function getProviderConfig(provider: LLMProvider): ProviderConfig {
   const config = providerConfigs()[provider];
-  if (!config.apiKey) {
+  if (!config.configured || (!config.localOnly && !config.apiKey)) {
     throw new Error(`${config.keyName} is not configured; ${config.label} analysis is unavailable`);
   }
   return config;
@@ -476,8 +503,9 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${config.apiKey}`,
+      ...(config.localOnly ? {} : { authorization: `Bearer ${config.apiKey}` }),
     },
+    redirect: config.localOnly ? "error" : "follow",
     body: JSON.stringify(payload),
   });
 

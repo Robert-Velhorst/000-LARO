@@ -7,7 +7,7 @@ import { getEvidenceFile } from "./evidence";
 import { documentAnalyses } from "./schema";
 import { storageRead } from "./storage";
 import { getWorkflowPreferences } from "./workflowPreferences";
-import { getLLMProviderDescriptors, isLLMProviderConfigured } from "./llm";
+import { getLLMProviderDescriptors, isLLMProviderConfigured, isLocalLLMProvider } from "./llm";
 
 const PROVIDER_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
 
@@ -38,7 +38,7 @@ export async function analyzeStoredEvidence(options: {
   const deepAnalysis = Boolean(
     requestedDeepAnalysis &&
     provider &&
-    preferences.shareRawDocumentContent
+    (isLocalLLMProvider(provider) || preferences.shareRawDocumentContent)
   );
   const storageKey = metadata.storageKey;
   if (typeof storageKey !== "string" || !storageKey) {

@@ -26,6 +26,7 @@ function analysis(over: Partial<DocumentAnalysisResult> = {}): DocumentAnalysisR
     analyzedChars: 100,
     analyzedWords: 14,
     truncated: false,
+    coverage: { sourceChars: 100, analyzedChars: 100, sourceChunks: 1, analyzedChunks: 1, complete: true },
     citations: [{ id: "S1", quote: "Bezwaar moet binnen zes weken worden ingediend.", start: 0, end: 48, lineStart: 1, lineEnd: 1 }],
     parties: [{ text: "Gemeente Utrecht", citations: ["S1"] }],
     dates: [],
@@ -43,6 +44,7 @@ function analysis(over: Partial<DocumentAnalysisResult> = {}): DocumentAnalysisR
       importance: "high",
       category: "legal",
     }],
+    contradictions: [],
     ...over,
   };
 }
@@ -112,23 +114,23 @@ describe("case assistant evidence retrieval", () => {
     expect(fallback.notice).not.toContain("source citations");
   });
 
-  it("accepts only provider answers that retain supplied document IDs", () => {
-    const validIds = new Set(["D1", "D2"]);
+  it("accepts only provider answers with literal evidence from supplied documents", () => {
+    const sourceMap = new Map([["D1", { ...source("decision"), score: 10, matchedTerms: ["bezwaar"] }]]);
     expect(validateCaseAssistantProviderAnswer({
-      answer: "The decision records an objection deadline.",
-      citationIds: ["D1"],
-    }, validIds)).toEqual({
-      answer: "The decision records an objection deadline.",
+      answer: "Bezwaar moet binnen zes weken worden ingediend.",
+      citations: [{ id: "D1", evidenceQuotes: ["Bezwaar moet binnen zes weken worden ingediend."] }],
+    }, sourceMap)).toEqual({
+      answer: "Bezwaar moet binnen zes weken worden ingediend.",
       citationIds: ["D1"],
     });
     expect(validateCaseAssistantProviderAnswer({
       answer: "Unsupported answer.",
-      citationIds: ["D9"],
-    }, validIds)).toBeNull();
+      citations: [{ id: "D9", evidenceQuotes: ["Unsupported answer."] }],
+    }, sourceMap)).toBeNull();
     expect(validateCaseAssistantProviderAnswer({
-      answer: "Uncited answer.",
-      citationIds: [],
-    }, validIds)).toBeNull();
+      answer: "Bezwaar moet binnen twaalf weken worden ingediend.",
+      citations: [{ id: "D1", evidenceQuotes: ["Bezwaar moet binnen zes weken worden ingediend."] }],
+    }, sourceMap)).toBeNull();
   });
 });
 

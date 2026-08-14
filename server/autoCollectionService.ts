@@ -29,6 +29,7 @@ import { supportsDocumentAnalysisMime } from './documentIntelligence';
 import { getWorkflowPreferences } from './workflowPreferences';
 import { getStoredGmailEvidenceState, resolveGmailAccountIds } from './gmailCollectionPolicy';
 import { emitRealtimeDataChange } from './realtime';
+import { linkInboundOutreachReply } from './inboundOutreach';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -839,6 +840,25 @@ async function pullFromGmail(
         if (payload.parts) payload.parts.forEach(collectBody);
       };
       collectBody(msg.payload);
+      try {
+        await linkInboundOutreachReply({
+          userId,
+          caseId,
+          message: {
+            gmailMessageId: msg.id,
+            gmailThreadId: (msg as any).threadId,
+            from,
+            subject,
+            body,
+            receivedAt: date,
+            messageId: headers['message-id'],
+            inReplyTo: headers['in-reply-to'],
+            references: headers.references,
+          },
+        });
+      } catch (error) {
+        errors.push(`Reply linking for "${subject}" failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
       messageWords = Math.max(1, countWords(`${from} ${subject} ${body}`));
       onProgress?.({
         phase: 'gmail',

@@ -1,0 +1,62 @@
+[
+  {
+    "id": "administrative-objection",
+    "text": "Besluit van 14 juli 2026. Het bestuursorgaan stelt dat EUR 1.250,00 verschuldigd is. U moet binnen 6 weken bezwaar maken.",
+    "expectedIssue": "administrative law",
+    "expectedDate": "2026-07-14",
+    "expectedAmount": "EUR 1.250,00",
+    "expectedObligationTerm": "bezwaar"
+  },
+  {
+    "id": "employment-dismissal",
+    "text": "De werkgever verklaart op 1 augustus 2026 dat de arbeidsovereenkomst wordt opgezegd. De werknemer moet uiterlijk 15 augustus 2026 reageren.",
+    "expectedIssue": "employment law",
+    "expectedDate": "2026-08-01",
+    "expectedObligationTerm": "uiterlijk"
+  },
+  {
+    "id": "tenancy-rent",
+    "text": "De verhuurder stelt op 03-09-2026 dat de huurder EUR 800 huurprijs moet betalen binnen 14 dagen.",
+    "expectedIssue": "tenancy law",
+    "expectedDate": "2026-09-03",
+    "expectedAmount": "EUR 800",
+    "expectedObligationTerm": "moet"
+  },
+  {
+    "id": "consumer-warranty",
+    "text": "De consument verklaart op 4 oktober 2026 dat de verkoper de garantie moet nakomen en EUR 450 moet terugbetalen.",
+    "expectedIssue": "consumer law",
+    "expectedDate": "2026-10-04",
+    "expectedAmount": "EUR 450",
+    "expectedObligationTerm": "garantie"
+  },
+  {
+    "id": "family-maintenance",
+    "text": "Volgens de beschikking van 5 november 2026 moet de ouder EUR 600 alimentatie per maand betalen.",
+    "expectedIssue": "family law",
+    "expectedDate": "2026-11-05",
+    "expectedAmount": "EUR 600",
+    "expectedObligationTerm": "moet"
+  },
+  {
+    "id": "criminal-summons",
+    "text": "De verdachte verklaart op 6 december 2026 dat de dagvaarding onjuist is. Hij moet op 20 december 2026 verschijnen.",
+    "expectedIssue": "criminal law",
+    "expectedDate": "2026-12-06",
+    "expectedObligationTerm": "moet"
+  },
+  {
+    "id": "immigration-permit",
+    "text": "De IND stelt in het besluit van 7 januari 2027 dat de verblijfsvergunning wordt geweigerd. Betrokkene moet binnen 4 weken bezwaar maken.",
+    "expectedIssue": "immigration law",
+    "expectedDate": "2027-01-07",
+    "expectedObligationTerm": "bezwaar"
+  },
+  {
+    "id": "privacy-request",
+    "text": "De verwerkingsverantwoordelijke verklaart op 8 februari 2027 dat persoonsgegevens zijn verwerkt. Volgens de AVG moet binnen 30 dagen worden gereageerd.",
+    "expectedIssue": "privacy law",
+    "expectedDate": "2027-02-08",
+    "expectedObligationTerm": "moet"
+  }
+]

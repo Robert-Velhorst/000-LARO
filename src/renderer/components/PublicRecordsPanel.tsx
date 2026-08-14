@@ -20,6 +20,7 @@ import {
   MapPin,
   Briefcase,
   ExternalLink,
+  BookOpen,
 } from "lucide-react";
 
 interface PublicRecordsPanelProps {
@@ -31,12 +32,15 @@ interface PublicRecordsPanelProps {
 export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRecordsPanelProps) {
   const [searchKvk, setSearchKvk] = useState(kvkNumber || "");
   const [searchCompany, setSearchCompany] = useState(companyName || "");
+  const [legislationQuery, setLegislationQuery] = useState("");
+  const [legislationDate, setLegislationDate] = useState(() => new Date().toISOString().slice(0, 10));
 
   // KvK lookup mutation
   const kvkLookup = trpc.gapAnalysis.lookupCompany.useMutation();
 
   // Court records search mutation
   const courtRecordsSearch = trpc.gapAnalysis.searchCourtRecords.useMutation();
+  const legislationSearch = trpc.gapAnalysis.searchLegislation.useMutation();
 
   // Opponent history query
   const { data: opponentHistory, refetch: refetchHistory } =
@@ -68,7 +72,7 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
   return (
     <div className="space-y-6">
       <Tabs defaultValue="kvk" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="kvk">
             <Building2 className="w-4 h-4 mr-2" />
             KvK Business Registry
@@ -76,6 +80,10 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
           <TabsTrigger value="court">
             <Gavel className="w-4 h-4 mr-2" />
             Court Records
+          </TabsTrigger>
+          <TabsTrigger value="legislation">
+            <BookOpen className="w-4 h-4 mr-2" />
+            Legislation
           </TabsTrigger>
         </TabsList>
 
@@ -419,6 +427,57 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="legislation" className="space-y-4">
+          <section className="border-y border-border/60 py-5" aria-labelledby="legislation-search-title">
+            <div className="mb-4">
+              <h3 id="legislation-search-title" className="font-semibold">Official Dutch legislation</h3>
+              <p className="text-sm text-muted-foreground">Search consolidated legislation in KOOP's Basiswettenbestand for the version valid on a specific date.</p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_11rem_auto] md:items-end">
+              <div className="space-y-2">
+                <Label htmlFor="legislation-query">Law or regulation</Label>
+                <Input id="legislation-query" value={legislationQuery} onChange={(event) => setLegislationQuery(event.target.value)} placeholder="Algemene wet bestuursrecht" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="legislation-date">Valid on</Label>
+                <Input id="legislation-date" type="date" value={legislationDate} onChange={(event) => setLegislationDate(event.target.value)} />
+              </div>
+              <Button
+                type="button"
+                disabled={legislationSearch.isPending || legislationQuery.trim().length < 3 || !legislationDate}
+                onClick={() => legislationSearch.mutate({ caseId, query: legislationQuery.trim(), asOfDate: legislationDate, limit: 15 })}
+              >
+                <Search className="mr-2 h-4 w-4" />
+                {legislationSearch.isPending ? "Searching..." : "Search"}
+              </Button>
+            </div>
+            {legislationSearch.error ? (
+              <Alert variant="destructive" className="mt-4"><AlertTriangle className="h-4 w-4" /><AlertDescription>{legislationSearch.error.message}</AlertDescription></Alert>
+            ) : null}
+            {legislationSearch.data ? (
+              <div className="mt-5 space-y-3">
+                <p className="text-xs text-muted-foreground">{legislationSearch.data.coverageNotice}</p>
+                {legislationSearch.data.results.length ? legislationSearch.data.results.map((result) => (
+                  <article key={result.identifier} className="border-t border-border/60 pt-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h4 className="font-medium">{result.title}</h4>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {result.identifier} · {result.type || "regeling"} · geldig {result.effectiveFrom || "onbekend"} tot {result.effectiveUntil === "9999-12-31" ? "heden" : result.effectiveUntil || "onbekend"}
+                        </p>
+                        {result.legalAreas.length ? <p className="mt-1 text-xs text-muted-foreground">{result.legalAreas.join(" · ")}</p> : null}
+                      </div>
+                      <a href={result.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+                        Open official source <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                      </a>
+                    </div>
+                  </article>
+                )) : <p className="text-sm text-muted-foreground">No legislation matched this title and validity date.</p>}
+              </div>
+            ) : null}
+          </section>
         </TabsContent>
       </Tabs>
     </div>

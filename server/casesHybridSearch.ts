@@ -1,7 +1,7 @@
 import { and, eq, like, or } from "drizzle-orm";
 import { getDb } from "./db";
 import { cases } from "./schema";
-import { invokeLLM, isLLMProviderConfigured } from "./llm";
+import { invokeLLM, isLLMProviderConfigured, isLocalLLMProvider } from "./llm";
 import { globalSearch } from "./globalSearch";
 import { getWorkflowPreferences } from "./workflowPreferences";
 
@@ -26,7 +26,7 @@ async function expandCaseSearchTerms(query: string, userId: string): Promise<str
 
   const preferences = await getWorkflowPreferences(userId);
   const provider = preferences.analysisProvider === "local" ? null : preferences.analysisProvider;
-  const hasLlm = Boolean(provider && preferences.shareRawDocumentContent && isLLMProviderConfigured(provider));
+  const hasLlm = Boolean(provider && (isLocalLLMProvider(provider) || preferences.shareRawDocumentContent) && isLLMProviderConfigured(provider));
 
   if (!hasLlm) {
     return tokenizeHeuristic(trimmed);

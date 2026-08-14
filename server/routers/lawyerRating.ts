@@ -4,7 +4,7 @@ import { getDb } from '../db';
 import { protectedProcedure, router } from '../_core/trpc';
 import { lawyerRatings, lawyerInteractions, ratingCalculationLogs, lawyers, cases } from '../schema';
 import { nanoid } from 'nanoid';
-import { invokeLLM, isLLMProviderConfigured, type LLMProvider } from '../llm';
+import { invokeLLM, isLLMProviderConfigured, isLocalLLMProvider, type LLMProvider } from '../llm';
 import { getWorkflowPreferences } from '../workflowPreferences';
 
 const responseAnalysisSchema = z.object({
@@ -86,7 +86,7 @@ export async function recordLawyerInteraction(data: {
       const [caseOwner] = await db.select({ userId: cases.userId }).from(cases).where(eq(cases.id, data.caseId)).limit(1);
       const preferences = caseOwner?.userId ? await getWorkflowPreferences(caseOwner.userId) : null;
       const provider = preferences?.analysisProvider === "local" ? null : preferences?.analysisProvider;
-      if (provider && preferences?.shareRawDocumentContent && isLLMProviderConfigured(provider)) {
+      if (provider && (isLocalLLMProvider(provider) || preferences?.shareRawDocumentContent) && isLLMProviderConfigured(provider)) {
         aiScores = await analyzeResponseQuality(data.responseText, provider);
       }
     } catch (error) {

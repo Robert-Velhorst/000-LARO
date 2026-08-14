@@ -10,7 +10,7 @@ import { DOCUMENT_ANALYSIS_VERSION, supportedDocumentAnalysisMimeTypes } from ".
 import { getDb } from "../db";
 import { documentAnalyses, evidence, timeline as persistedTimeline } from "../schema";
 import { getWorkflowPreferences } from "../workflowPreferences";
-import { getLLMProviderDescriptors, invokeLLM, isLLMProviderConfigured } from "../llm";
+import { getLLMProviderDescriptors, invokeLLM, isLLMProviderConfigured, isLocalLLMProvider } from "../llm";
 import { createAuditLog } from "../audit";
 
 const timelineCategorySchema = z.enum(["employment", "termination", "communication", "legal", "financial", "other"]);
@@ -125,10 +125,10 @@ export const documentAnalysisRouter = router({
       await assertCaseOwnership(input.caseId, ctx.user.id);
       const preferences = await getWorkflowPreferences(ctx.user.id);
       const provider = preferences.analysisProvider === "local" ? null : preferences.analysisProvider;
-      if (!provider || !preferences.shareRawDocumentContent || !isLLMProviderConfigured(provider)) {
+      if (!provider || (!isLocalLLMProvider(provider) && !preferences.shareRawDocumentContent) || !isLLMProviderConfigured(provider)) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: "Natural-language timeline editing needs full-source cloud analysis and a configured external provider selected in Settings.",
+          message: "Natural-language timeline editing needs configured local analysis or full-source cloud analysis selected in Settings.",
         });
       }
       const db = await getDb();
