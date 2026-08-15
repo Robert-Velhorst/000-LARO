@@ -5,7 +5,7 @@
  * Exercised through the real API (createCaller) so the ownership guards and
  * protected procedures are actually invoked.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { bootTestApp, sqliteAvailable, type TestApp } from '../helpers/app';
 import { buildUser } from '../factories';
 
@@ -53,6 +53,39 @@ suite('Phase 046 — cross-user isolation', () => {
     await expect(app.makeCaller(B).outreach.byCaseId(caseId)).rejects.toBeTruthy();
     await expect(app.makeCaller(B).gapAnalysis.getGaps({ caseId })).rejects.toBeTruthy();
     await expect(app.makeCaller(B).cases.progress({ caseId })).rejects.toBeTruthy();
+  });
+
+  it('B cannot disconnect Trello from A\'s case', async () => {
+    await app.db.insert(app.schema.evidenceSources).values({
+      id: 'VICTIM_TRELLO_SOURCE',
+      caseId,
+      userId: A.id,
+      sourceType: 'Trello',
+      sourceName: 'Victim board',
+      status: 'connected',
+    });
+
+    await expect(app.makeCaller(B).trelloEnhanced.disconnect({ caseId })).rejects.toBeTruthy();
+
+    const remaining = await app.db.select()
+      .from(app.schema.evidenceSources)
+      .where((await import('drizzle-orm')).eq(app.schema.evidenceSources.id, 'VICTIM_TRELLO_SOURCE'));
+    expect(remaining).toHaveLength(1);
+  });
+
+  it('B cannot reach Trello through any route scoped to A\'s case', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 500 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const caller = app.makeCaller(B).trelloEnhanced;
+    try {
+      await expect(caller.listBoards({ caseId, token: 'attacker-token' })).rejects.toBeTruthy();
+      await expect(caller.listLists({ caseId, boardId: 'board', token: 'attacker-token' })).rejects.toBeTruthy();
+      await expect(caller.listCards({ caseId, boardId: 'board', listId: 'list', token: 'attacker-token' })).rejects.toBeTruthy();
+      await expect(caller.syncBoards({ caseId, token: 'attacker-token' })).rejects.toBeTruthy();
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('B cannot read, configure, or start evidence collection on A\'s case', async () => {

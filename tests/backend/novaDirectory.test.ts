@@ -7,9 +7,17 @@ import {
   type NovaLawyerCandidate,
 } from "../../server/novaDirectory";
 
+const { lookupMock } = vi.hoisted(() => ({
+  lookupMock: vi.fn().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]),
+}));
+
+vi.mock("node:dns/promises", () => ({ lookup: lookupMock }));
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  lookupMock.mockReset();
+  lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
 });
 
 const SEARCH_HTML = `
@@ -49,6 +57,21 @@ describe("NOvA public directory adapter", () => {
       distanceKm: 12.4,
       profileUrl: `${NOVA_BASE_URL}/advocaten/12345`,
     });
+  });
+
+  it("drops profile links that leave the official NOvA origin", () => {
+    const maliciousHtml = SEARCH_HTML.replace(
+      'href="/advocaten/12345"',
+      'href="https://attacker.example/advocaten/12345"',
+    );
+
+    expect(parseNovaSearchResults(
+      maliciousHtml,
+      ["Employment Law"],
+      `${NOVA_BASE_URL}/zoeken?type=advocaten`,
+      "2026-07-16T12:00:00.000Z",
+      null,
+    )).toEqual([]);
   });
 
   it("enriches a candidate from an official profile without inventing unavailable fields", () => {
@@ -138,5 +161,20 @@ describe("NOvA public directory adapter", () => {
       filtersApplied: { legalAreas: true, financedLegalAid: true },
     });
     expect(result.candidates[0].financedLegalAid).toBe(true);
+  });
+
+  it("does not query NOvA when the official hostname resolves privately", async () => {
+    lookupMock.mockResolvedValueOnce([{ address: "169.254.169.254", family: 4 }]);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await searchNovaDirectory({
+      legalAreas: ["Employment Law"],
+      maxResults: 1,
+      enrichProfiles: false,
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.report.status).toBe("unavailable");
   });
 });

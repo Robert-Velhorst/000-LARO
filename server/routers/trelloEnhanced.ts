@@ -12,6 +12,7 @@ import { router, protectedProcedure } from '../_core/trpc';
 import { getDb } from '../db';
 import { evidenceSources } from '../schema';
 import { eq, and } from 'drizzle-orm';
+import { assertCaseOwnership } from '../_core/authz';
 import {
   getTrelloAuthorizationUrl,
   getTrelloBoards,
@@ -124,6 +125,7 @@ export const trelloEnhancedRouter = router({
     )
     .query(async ({ input, ctx }) => {
       try {
+        await assertCaseOwnership(input.caseId, ctx.user.id);
         const boards = await getTrelloBoards(input.token);
         
         return {
@@ -150,6 +152,7 @@ export const trelloEnhancedRouter = router({
     )
     .query(async ({ input, ctx }) => {
       try {
+        await assertCaseOwnership(input.caseId, ctx.user.id);
         const lists = await getTrelloLists(input.boardId, input.token);
         
         return {
@@ -177,6 +180,7 @@ export const trelloEnhancedRouter = router({
     )
     .query(async ({ input, ctx }) => {
       try {
+        await assertCaseOwnership(input.caseId, ctx.user.id);
         const cards = await getTrelloCards(input.listId, input.boardId, input.token);
         
         return {
@@ -203,6 +207,7 @@ export const trelloEnhancedRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
+        await assertCaseOwnership(input.caseId, ctx.user.id);
         const db = await getDb();
         if (!db) {
           throw new Error('Database not available');
@@ -264,6 +269,7 @@ export const trelloEnhancedRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       try {
+        await assertCaseOwnership(input.caseId, ctx.user.id);
         const db = await getDb();
         if (!db) {
           throw new Error('Database not available');

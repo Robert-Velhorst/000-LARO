@@ -1,4 +1,5 @@
 import { load } from "cheerio";
+import { fetchTrustedRemote } from "./trustedRemoteFetch";
 import { getDb } from "./db";
 import { lawyers } from "./schema";
 
@@ -147,15 +148,13 @@ function subjectIdsForLegalAreas(legalAreas: string[]): number[] {
 }
 
 async function fetchWithTimeout(url: string, headers: Record<string, string>): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, { headers, signal: controller.signal });
-    if (!response.ok) throw new Error(`NOvA returned HTTP ${response.status}`);
-    return response;
-  } finally {
-    clearTimeout(timeout);
-  }
+  const response = await fetchTrustedRemote(url, {
+    allowedHosts: [new URL(NOVA_BASE_URL).hostname],
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    init: { headers },
+  });
+  if (!response.ok) throw new Error(`NOvA returned HTTP ${response.status}`);
+  return response;
 }
 
 function officialHeaders(jsonResponse = false): Record<string, string> {
@@ -232,6 +231,17 @@ function absoluteNovaUrl(pathOrUrl: string): string {
   }
 }
 
+function officialNovaUrl(pathOrUrl: string): string | null {
+  try {
+    const url = new URL(pathOrUrl, NOVA_BASE_URL);
+    return url.protocol === "https:" && url.origin === new URL(NOVA_BASE_URL).origin
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function parseNovaSearchResults(
   html: string,
   requestedAreas: string[],
@@ -251,8 +261,9 @@ export function parseNovaSearchResults(
     const specializationAssociations = unique(result.find(".specialisations li").toArray().map((node) => cleanText($(node).text())).filter((value) => value && value.toLowerCase() !== "geen"));
     const distanceText = cleanText(result.find(".heading .align-right").first().text()).replace(",", ".");
     const distanceMatch = distanceText.match(/([0-9]+(?:\.[0-9]+)?)\s*km/i);
-    const novaId = profilePath.split("/").filter(Boolean).pop();
-    if (!novaId) return [];
+    const profileUrl = officialNovaUrl(profilePath);
+    const novaId = profileUrl ? new URL(profileUrl).pathname.split("/").filter(Boolean).pop() : null;
+    if (!novaId || !profileUrl) return [];
     return [{
       novaId,
       name: cleanText(profile.text()),
@@ -261,7 +272,7 @@ export function parseNovaSearchResults(
       officialLegalAreas,
       canonicalLegalAreas: canonicalAreasForOfficialLabels(officialLegalAreas, requestedAreas),
       specializationAssociations,
-      profileUrl: absoluteNovaUrl(profilePath),
+      profileUrl,
       searchUrl,
       distanceKm: distanceMatch ? Number(distanceMatch[1]) : null,
       email: null,
