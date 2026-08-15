@@ -1,6 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { trpc } from "@/lib/trpc";
 import { 
   Mail, 
@@ -8,14 +9,13 @@ import {
   CheckCircle2,
   XCircle,
   Loader2,
-  ExternalLink
+  ExternalLink,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useEffect, useRef, useState } from "react";
-import { isElectron } from "@/lib/electronApiShim";
-
-const OAUTH_WAIT_TIMEOUT_MS = 3 * 60 * 1_000;
-const OAUTH_WINDOW_CHECK_INTERVAL_MS = 750;
+import { useCallback, useState } from "react";
+import { useGoogleOAuthConnection } from "@/hooks/useGoogleOAuthConnection";
 
 // Get current user context (adjust based on your auth implementation)
 const useCurrentUser = () => {
@@ -44,19 +44,25 @@ export default function EvidenceConnectionsCard() {
   const currentUser = useCurrentUser();
   const utils = trpc.useContext();
   const [connectingPlatform, setConnectingPlatform] = useState<"gmail" | "google-drive" | null>(null);
-  const oauthWindowRef = useRef<Window | null>(null);
-  const oauthCallbackOriginRef = useRef<string | null>(null);
   
   // Query both capabilities because they share one owner-scoped Google grant.
-  const { data: gmailStatus, isLoading: gmailLoading, refetch: refetchGmailStatus } = trpc.gmailEnhanced.getStatus.useQuery(undefined, {
+  const {
+    data: gmailStatus,
+    error: gmailStatusError,
+    isLoading: gmailLoading,
+    refetch: refetchGmailStatus,
+  } = trpc.gmailEnhanced.getStatus.useQuery(undefined, {
     enabled: !!currentUser,
     refetchOnWindowFocus: true,
-    refetchInterval: connectingPlatform === "gmail" ? 1_500 : false,
   });
-  const { data: driveStatus, isLoading: driveLoading, refetch: refetchDriveStatus } = trpc.googleDrive.checkConnection.useQuery(undefined, {
+  const {
+    data: driveStatus,
+    error: driveStatusError,
+    isLoading: driveLoading,
+    refetch: refetchDriveStatus,
+  } = trpc.googleDrive.checkConnection.useQuery(undefined, {
     enabled: !!currentUser,
     refetchOnWindowFocus: true,
-    refetchInterval: connectingPlatform === "google-drive" ? 1_500 : false,
   });
   // OAuth URL mutations
   const gmailOAuthMutation = trpc.gmailEnhanced.getOAuthUrl.useMutation();
@@ -66,96 +72,35 @@ export default function EvidenceConnectionsCard() {
   const gmailDisconnectMutation = trpc.gmailEnhanced.disconnect.useMutation();
   const driveDisconnectMutation = trpc.googleDriveEnhanced.disconnect.useMutation();
 
-  useEffect(() => {
-    if (connectingPlatform === "gmail" && gmailStatus?.connected) {
-      oauthWindowRef.current?.close();
-      oauthWindowRef.current = null;
-      toast.success("Gmail successfully connected");
-      setConnectingPlatform(null);
-    }
-    if (connectingPlatform === "google-drive" && driveStatus?.connected) {
-      oauthWindowRef.current?.close();
-      oauthWindowRef.current = null;
-      toast.success("Google Drive successfully connected");
-      setConnectingPlatform(null);
-    }
-  }, [connectingPlatform, driveStatus?.connected, gmailStatus?.connected]);
+  const refreshGoogleConnection = useCallback(async () => {
+    const [gmailResult, driveResult] = await Promise.all([
+      refetchGmailStatus(),
+      refetchDriveStatus(),
+    ]);
+    return Boolean(gmailResult.data?.connected || driveResult.data?.connected);
+  }, [refetchDriveStatus, refetchGmailStatus]);
 
-  useEffect(() => {
-    if (!connectingPlatform) return;
-    const handleOAuthComplete = (event: MessageEvent) => {
-      if (
-        event.origin !== oauthCallbackOriginRef.current ||
-        event.data?.type !== 'laro:oauth-complete'
-      ) return;
+  const handleGoogleConnected = useCallback(() => {
+    setConnectingPlatform(null);
+    void Promise.all([
+      utils.gmailEnhanced.getStatus.invalidate(),
+      utils.googleDrive.checkConnection.invalidate(),
+    ]);
+  }, [utils]);
 
-      oauthWindowRef.current?.close();
-      oauthWindowRef.current = null;
-      if (event.data.success === true) {
-        // The callback is emitted only after the account was saved. Finish the
-        // waiting state immediately, then refresh both capabilities in place.
-        setConnectingPlatform(null);
-        toast.success('Google successfully connected');
-        void Promise.all([
-          refetchGmailStatus(),
-          refetchDriveStatus(),
-          utils.gmailEnhanced.getStatus.invalidate(),
-          utils.googleDrive.checkConnection.invalidate(),
-        ]);
-      } else {
-        setConnectingPlatform(null);
-        toast.error('The Google connection was not completed.');
-      }
-    };
-    window.addEventListener('message', handleOAuthComplete);
-    return () => window.removeEventListener('message', handleOAuthComplete);
-  }, [connectingPlatform, refetchDriveStatus, refetchGmailStatus, utils]);
-
-  useEffect(() => {
-    if (!connectingPlatform) return;
-
-    let checkingClosedWindow = false;
-    const refreshConnection = async () => {
-      const [gmailResult, driveResult] = await Promise.all([
-        refetchGmailStatus(),
-        refetchDriveStatus(),
-      ]);
-      return Boolean(gmailResult.data?.connected || driveResult.data?.connected);
-    };
-    const refreshOnReturn = () => {
-      if (document.visibilityState === "visible") void refreshConnection();
-    };
-    const windowCheck = window.setInterval(() => {
-      if (!oauthWindowRef.current?.closed || checkingClosedWindow) return;
-      oauthWindowRef.current = null;
-      checkingClosedWindow = true;
-      void refreshConnection()
-        .then((connected) => {
-          if (!connected) {
-            setConnectingPlatform(null);
-            toast.error("Google authorization closed before the connection completed.");
-          }
-        })
-        .finally(() => {
-          checkingClosedWindow = false;
-        });
-    }, OAUTH_WINDOW_CHECK_INTERVAL_MS);
-    const timeout = window.setTimeout(() => {
-      oauthWindowRef.current?.close();
-      oauthWindowRef.current = null;
-      setConnectingPlatform(null);
-      toast.error("Google authorization timed out. Please try again.");
-    }, OAUTH_WAIT_TIMEOUT_MS);
-
-    window.addEventListener("focus", refreshOnReturn);
-    document.addEventListener("visibilitychange", refreshOnReturn);
-    return () => {
-      window.clearInterval(windowCheck);
-      window.clearTimeout(timeout);
-      window.removeEventListener("focus", refreshOnReturn);
-      document.removeEventListener("visibilitychange", refreshOnReturn);
-    };
-  }, [connectingPlatform, refetchDriveStatus, refetchGmailStatus]);
+  const {
+    connecting,
+    beginConnection,
+    cancelConnection: cancelGoogleOAuth,
+  } = useGoogleOAuthConnection({
+    connected: connectingPlatform === "gmail"
+      ? Boolean(gmailStatus?.connected)
+      : connectingPlatform === "google-drive"
+        ? Boolean(driveStatus?.connected)
+        : false,
+    refreshConnection: refreshGoogleConnection,
+    onConnected: handleGoogleConnected,
+  });
 
   const platforms: PlatformConnection[] = [
     {
@@ -196,20 +141,7 @@ export default function EvidenceConnectionsCard() {
           toast.error(result.reason || 'Google OAuth is unavailable.');
           return;
         }
-        // Electron opens provider URLs in a sandboxed child window; the web build uses a browser tab.
-        const authorizationUrl = new URL(result.authUrl);
-        const redirectUri = authorizationUrl.searchParams.get('redirect_uri');
-        if (!redirectUri) throw new Error('OAuth callback URL is missing');
-        oauthCallbackOriginRef.current = new URL(redirectUri).origin;
-        const oauthWindow = window.open(result.authUrl, 'laro-google-oauth', 'popup,width=520,height=720');
-        // Electron's main process denies the renderer popup and opens its own sandboxed window.
-        if (!oauthWindow && !isElectron()) {
-          toast.error('Your browser blocked the Google authorization window. Allow popups for LARO and try again.');
-          return;
-        }
-        oauthWindowRef.current = oauthWindow;
-        setConnectingPlatform(platformId);
-        toast.info('Opening authorization window. Please complete the OAuth flow.');
+        if (beginConnection(result.authUrl)) setConnectingPlatform(platformId);
         return;
       }
 
@@ -220,10 +152,8 @@ export default function EvidenceConnectionsCard() {
   };
 
   const cancelConnection = () => {
-    oauthWindowRef.current?.close();
-    oauthWindowRef.current = null;
+    cancelGoogleOAuth();
     setConnectingPlatform(null);
-    toast.message("Google connection cancelled");
   };
 
   const handleDisconnect = async (platformId: string) => {
@@ -265,6 +195,7 @@ export default function EvidenceConnectionsCard() {
   };
 
   const isLoading = gmailLoading || driveLoading;
+  const statusUnavailable = Boolean(gmailStatusError || driveStatusError);
 
   return (
     <Card>
@@ -275,14 +206,30 @@ export default function EvidenceConnectionsCard() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
+        {statusUnavailable ? (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+              <span>Google connection status could not be loaded. No connection changes were made.</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void Promise.all([refetchGmailStatus(), refetchDriveStatus()])}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {platforms.map((platform) => {
-              const isConnecting = connectingPlatform === platform.id;
+              const isConnecting = connecting && connectingPlatform === platform.id;
               return (
                 <div
                   key={platform.id}
@@ -344,7 +291,7 @@ export default function EvidenceConnectionsCard() {
                         variant="default"
                         size="sm"
                         className="flex-1"
-                        disabled={connectingPlatform !== null}
+                        disabled={connecting}
                         onClick={() => handleConnect(platform.id)}
                       >
                         {isConnecting ? (

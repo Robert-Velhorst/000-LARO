@@ -235,6 +235,8 @@ describe('production readiness regressions', () => {
     const main = readFileSync(join(ROOT, 'src-main/index.ts'), 'utf8');
     const callback = readFileSync(join(ROOT, 'server/oauth2Callbacks.ts'), 'utf8');
     const connections = readFileSync(join(ROOT, 'src/renderer/components/EvidenceConnectionsCard.tsx'), 'utf8');
+    const caseDetails = readFileSync(join(ROOT, 'src/renderer/components/EnhancedCaseDetailsDialog.tsx'), 'utf8');
+    const oauthFlow = readFileSync(join(ROOT, 'src/renderer/hooks/useGoogleOAuthConnection.ts'), 'utf8');
     expect(main).not.toContain('async function openOAuthWindow');
     expect(main).toContain('void openExternalUrl(url)');
     expect(main).toContain("if (isOAuthProviderUrl(url))");
@@ -244,16 +246,22 @@ describe('production readiness regressions', () => {
     expect(callback).toContain("action.addEventListener('click', () => window.location.reload())");
     expect(callback).toContain('const retryable = !tokenExchangeCompleted && isRetryableOAuthNetworkError(error)');
     expect(callback).toContain('window.close()');
-    expect(connections).toContain("window.addEventListener('message', handleOAuthComplete)");
-    expect(connections).toContain("window.open(result.authUrl, 'laro-google-oauth'");
-    expect(connections).toContain('if (!oauthWindow && !isElectron())');
-    expect(connections).toContain('refetchInterval: connectingPlatform === "gmail" ? 1_500 : false');
-    expect(connections).toContain('refetchInterval: connectingPlatform === "google-drive" ? 1_500 : false');
-    expect(connections).toContain('OAUTH_WAIT_TIMEOUT_MS = 3 * 60 * 1_000');
+    expect(oauthFlow).toContain("window.addEventListener('message', handleOAuthComplete)");
+    expect(oauthFlow).toContain("window.open(authUrl, 'laro-google-oauth'");
+    expect(oauthFlow).toContain('if (!oauthWindow && !isElectron())');
+    expect(oauthFlow).toContain('OAUTH_STATUS_POLL_INTERVAL_MS = 1_500');
+    expect(oauthFlow).toContain('OAUTH_WAIT_TIMEOUT_MS = 3 * 60 * 1_000');
     expect(connections).toContain('onClick={cancelConnection}');
-    expect(connections).toContain('document.addEventListener("visibilitychange", refreshOnReturn)');
-    expect(connections).toContain('oauthWindowRef.current?.closed');
+    expect(caseDetails).toContain('onClick={cancelGoogleConnection}');
+    expect(caseDetails).toContain('connectingGoogle ? "Finishing Google connection..." : "Connect Google"');
+    expect(oauthFlow).toContain('document.addEventListener("visibilitychange", refreshOnReturn)');
+    expect(oauthFlow).toContain('oauthWindowRef.current?.closed');
     expect(connections).toContain('Finishing Google connection...');
+    expect(connections).toContain('Google connection status could not be loaded.');
+    expect(caseDetails).toContain('Google status unavailable');
+    expect(existsSync(join(ROOT, 'src/renderer/components/GmailSimple.tsx'))).toBe(false);
+    expect(existsSync(join(ROOT, 'src/renderer/components/GoogleDriveSimple.tsx'))).toBe(false);
+    expect(existsSync(join(ROOT, 'src/renderer/components/GoogleDriveIntegration.tsx'))).toBe(false);
   });
 
   it('discloses bounded backup retention instead of promising immediate permanent erasure', () => {
