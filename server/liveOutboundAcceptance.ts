@@ -27,6 +27,8 @@ import {
 } from "./schema";
 import { assertNotEmergencyStopped } from "./systemState";
 import { verifyOutboundEmailConnection } from "./systemEmail";
+import { approveOutreachMessage, readOutreachMetadata } from "./outreachApproval";
+import { LEGAL_DISCLAIMER } from "../shared/const";
 
 interface AcceptanceOptions {
   userId: string;
@@ -297,14 +299,38 @@ export async function runLiveOutboundAcceptance(
   }).onConflictDoNothing();
 
   const [prepared] = await db.select().from(outreachStatus).where(eq(outreachStatus.id, ids.outreachId)).limit(1);
-  if (!prepared || prepared.caseId !== ids.caseId || prepared.lawyerId !== ids.lawyerId || prepared.metadata !== metadata) {
+  const preparedMetadata = readOutreachMetadata(prepared?.metadata ?? null);
+  if (
+    !prepared ||
+    prepared.caseId !== ids.caseId ||
+    prepared.lawyerId !== ids.lawyerId ||
+    preparedMetadata.kind !== "provider_acceptance" ||
+    preparedMetadata.runId !== options.runId
+  ) {
     throw new Error("Acceptance record collision detected; no message was sent");
   }
   if (prepared.status === "PendingApproval") {
     const approvedAt = new Date();
+    const approvedMessage = approveOutreachMessage({
+      outreachId: ids.outreachId,
+      caseId: ids.caseId,
+      to: recipient,
+      subject: acceptanceMessage.subject,
+      text: acceptanceMessage.text,
+      disclaimer: LEGAL_DISCLAIMER,
+      approvedBy: options.userId,
+      approvedAt: approvedAt.toISOString(),
+    });
     db.transaction((tx: any) => {
-      tx.update(outreachStatus).set({ status: "Approved", updatedAt: approvedAt })
-        .where(eq(outreachStatus.id, ids.outreachId)).run();
+      const status = tx.update(outreachStatus).set({
+        status: "Approved",
+        metadata: JSON.stringify({ ...preparedMetadata, approvedMessage }),
+        updatedAt: approvedAt,
+      }).where(and(
+        eq(outreachStatus.id, ids.outreachId),
+        eq(outreachStatus.status, "PendingApproval"),
+      )).run();
+      if (Number(status.changes || 0) !== 1) throw new Error("Acceptance draft changed before approval");
       tx.insert(auditLogs).values({
         id: nanoid(),
         userId: options.userId,
@@ -315,7 +341,7 @@ export async function runLiveOutboundAcceptance(
         createdAt: approvedAt,
       }).run();
     });
-  } else if (!["Approved", "Sent"].includes(prepared.status || "")) {
+  } else if (!["Approved", "Dispatching", "Sent"].includes(prepared.status || "")) {
     throw new Error(`Acceptance outreach is in unexpected state ${prepared.status || "unknown"}`);
   }
 
@@ -349,7 +375,7 @@ export async function runLiveOutboundAcceptance(
     ))).filter((entry) => {
       try {
         const details = JSON.parse(entry.details || "{}");
-        return details.from === "Approved" && details.to === "Sent";
+        return details.from === "Dispatching" && details.to === "Sent";
       } catch {
         return false;
       }

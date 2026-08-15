@@ -352,7 +352,7 @@ export default function Settings() {
                   >
                     <option value="each">Approve every message</option>
                     <option value="batch">Approve reviewed batches</option>
-                    <option value="automatic">Pre-approve drafts; sending still requires action</option>
+                    <option value="automatic">Prepare drafts automatically; approval remains required</option>
                   </select>
                 </label>
                 <Alert className="md:col-span-2">

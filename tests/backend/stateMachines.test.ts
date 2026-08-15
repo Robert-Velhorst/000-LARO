@@ -34,7 +34,10 @@ describe('Phase 059 — outreach state machine', () => {
     expect(canTransitionOutreach('PendingApproval', 'Sent')).toBe(false);
     expect(() => assertOutreachTransition('PendingApproval', 'Sent')).toThrow();
   });
-  it('allows Approved -> Sent', () => {
-    expect(canTransitionOutreach('Approved', 'Sent')).toBe(true);
+  it('requires a dispatch claim before an approved message can be sent', () => {
+    expect(canTransitionOutreach('Approved', 'Dispatching')).toBe(true);
+    expect(canTransitionOutreach('Approved', 'Sent')).toBe(false);
+    expect(canTransitionOutreach('Dispatching', 'Sent')).toBe(true);
+    expect(canTransitionOutreach('Dispatching', 'Approved')).toBe(true);
   });
 });

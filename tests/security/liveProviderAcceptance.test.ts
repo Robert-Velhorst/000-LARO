@@ -122,7 +122,7 @@ suite("live provider acceptance evidence", () => {
         action: "outreach.status_changed",
         entityType: "outreach",
         entityId: outreachId,
-        details: JSON.stringify({ from: "Approved", to: "Sent", provider: "smtp" }),
+        details: JSON.stringify({ from: "Dispatching", to: "Sent", provider: "smtp" }),
         createdAt: now,
       },
     ]);

@@ -89,7 +89,8 @@ suite('Phase 081 — non-technical user journey simulation', () => {
     const queue = await me().workflow.reviewQueue({ caseId });
     expect(queue.length).toBeGreaterThan(0);
 
-    const approved = await me().workflow.approveDraft({ outreachId: queue[0].id });
+    const review = await me().workflow.preSendReview({ outreachId: queue[0].id });
+    const approved = await me().workflow.approveDraft({ outreachId: queue[0].id, approvalHash: review.message.approvalHash });
     expect(approved.status).toBe('Approved');
     // The core safety promise a non-technical user relies on:
     expect(approved.sent).toBe(false);

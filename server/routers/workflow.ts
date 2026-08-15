@@ -10,9 +10,10 @@ import { getFlag } from "../featureFlags";
 import { assertNotEmergencyStopped } from "../systemState";
 import { assertOutreachTransition } from "../stateMachines";
 import { cases as casesTable, outreachStatus, lawyers } from '../schema';
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, isNull } from "drizzle-orm";
 import { findCaseLawyersWithOfficialDirectory } from "../matching";
 import { getWorkflowPreferences } from "../workflowPreferences";
+import { approveOutreachMessage, buildOutreachMessage, readApprovedOutreachMessage, readOutreachMetadata } from "../outreachApproval";
 
 // Phase 026 — outreach review/approval states.
 const OUTREACH_PENDING = "PendingApproval";
@@ -35,9 +36,9 @@ async function prepareOutreachDraftRows(caseId: string, maxResults: number, user
 
   let created = 0;
   const preferences = await getWorkflowPreferences(userId);
-  const initialStatus = preferences.messageApprovalMode === "automatic"
-    ? OUTREACH_APPROVED
-    : OUTREACH_PENDING;
+  // External messages always require a human approval snapshot. The historical
+  // "automatic" preference may automate draft preparation, never approval.
+  const initialStatus = OUTREACH_PENDING;
   for (const match of matches) {
     const result = await db.insert(outreachStatus).values({
       id: nanoid(),
@@ -49,20 +50,12 @@ async function prepareOutreachDraftRows(caseId: string, maxResults: number, user
     } as any).onConflictDoNothing();
     if ((result as any)?.changes ?? 1) created += 1;
   }
-  let automaticallyApproved = initialStatus === OUTREACH_APPROVED ? created : 0;
-  if (initialStatus === OUTREACH_APPROVED) {
-    const upgraded = await db
-      .update(outreachStatus)
-      .set({ status: OUTREACH_APPROVED, updatedAt: new Date() })
-      .where(and(eq(outreachStatus.caseId, caseId), eq(outreachStatus.status, OUTREACH_PENDING)));
-    automaticallyApproved += Number(upgraded.changes || 0);
-  }
   return {
     created,
     candidates: matches.length,
     directoryStatus,
     approvalMode: preferences.messageApprovalMode,
-    automaticallyApproved,
+    automaticallyApproved: 0,
   };
 }
 
@@ -185,22 +178,25 @@ export const workflowRouter = router({
 
   /** Phase 026 — approve a draft (marks ready; does NOT send). */
   approveDraft: protectedProcedure
-    .input(z.object({ outreachId: z.string() }))
+    .input(z.object({ outreachId: z.string(), approvalHash: z.string().regex(/^[a-f0-9]{64}$/) }))
     .mutation(async ({ input, ctx }) => {
       await assertNotEmergencyStopped(); // Phase 104 — approval also halts under stop
-      return setDraftStatus(ctx.user.id, input.outreachId, OUTREACH_APPROVED);
+      return setDraftStatus(ctx.user.id, input.outreachId, OUTREACH_APPROVED, input.approvalHash);
     }),
 
   approveDrafts: protectedProcedure
     .input(z.object({
-      outreachIds: z.array(z.string().min(1)).min(1).max(50)
-        .refine((ids) => new Set(ids).size === ids.length, "Duplicate outreach draft IDs are not allowed"),
+      approvals: z.array(z.object({
+        outreachId: z.string().min(1),
+        approvalHash: z.string().regex(/^[a-f0-9]{64}$/),
+      })).min(1).max(50)
+        .refine((items) => new Set(items.map((item) => item.outreachId)).size === items.length, "Duplicate outreach draft IDs are not allowed"),
     }))
     .mutation(async ({ input, ctx }) => {
       await assertNotEmergencyStopped();
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      const ids = input.outreachIds;
+      const ids = input.approvals.map((item) => item.outreachId);
       const rows = await db.select({ id: outreachStatus.id, caseId: outreachStatus.caseId, status: outreachStatus.status })
         .from(outreachStatus)
         .where(inArray(outreachStatus.id, ids));
@@ -211,8 +207,8 @@ export const workflowRouter = router({
         assertOutreachTransition(row.status ?? null, OUTREACH_APPROVED);
       }
       const results = [];
-      for (const outreachId of ids) {
-        results.push(await setDraftStatus(ctx.user.id, outreachId, OUTREACH_APPROVED));
+      for (const approval of input.approvals) {
+        results.push(await setDraftStatus(ctx.user.id, approval.outreachId, OUTREACH_APPROVED, approval.approvalHash));
       }
       return { success: true as const, approved: results.length, sent: false as const };
     }),
@@ -271,6 +267,7 @@ export const workflowRouter = router({
             id: outreachStatus.id,
             caseId: outreachStatus.caseId,
             status: outreachStatus.status,
+            metadata: outreachStatus.metadata,
             lawyerName: lawyers.name,
             lawyerEmail: lawyers.email,
           })
@@ -283,8 +280,15 @@ export const workflowRouter = router({
       await assertCaseOwnership(row.caseId, ctx.user.id);
 
       const caseRow = (await db.select().from(casesTable).where(eq(casesTable.id, row.caseId)).limit(1))[0];
-      const { LEGAL_DISCLAIMER } = await import("../../shared/const");
       const sendEnabled = await getFlag("outreach.send.enabled");
+      const approvedMessage = readApprovedOutreachMessage(row.metadata, row.id, row.caseId);
+      const message = approvedMessage ?? buildOutreachMessage({
+        outreachId: row.id,
+        caseId: row.caseId,
+        caseType: caseRow?.caseType,
+        lawyerName: row.lawyerName,
+        lawyerEmail: row.lawyerEmail,
+      });
 
       return {
         outreachId: row.id,
@@ -299,12 +303,13 @@ export const workflowRouter = router({
         whatRemainsManual: sendEnabled
           ? "You must approve this draft; sending is performed only after approval."
           : "Sending is currently disabled by the operator (outreach.send.enabled=false). Nothing can be sent.",
-        disclaimer: LEGAL_DISCLAIMER,
+        disclaimer: message.disclaimer,
+        message,
       };
     }),
 });
 
-async function setDraftStatus(userId: string, outreachId: string, newStatus: string) {
+async function setDraftStatus(userId: string, outreachId: string, newStatus: string, expectedApprovalHash?: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -318,11 +323,47 @@ async function setDraftStatus(userId: string, outreachId: string, newStatus: str
 
   // Phase 059: enforce the outreach state machine (PendingApproval -> Approved/Rejected).
   assertOutreachTransition(row.status ?? null, newStatus);
-
-  await db
+  const updatedAt = new Date();
+  let metadata = row.metadata;
+  if (newStatus === OUTREACH_APPROVED) {
+    const [lawyer] = await db.select().from(lawyers).where(eq(lawyers.id, row.lawyerId!)).limit(1);
+    const [caseRow] = await db.select().from(casesTable).where(eq(casesTable.id, row.caseId)).limit(1);
+    const message = buildOutreachMessage({
+      outreachId,
+      caseId: row.caseId,
+      caseType: caseRow?.caseType,
+      lawyerName: lawyer?.name,
+      lawyerEmail: lawyer?.email,
+    });
+    if (!expectedApprovalHash || expectedApprovalHash !== message.approvalHash) {
+      const { TRPCError } = await import("@trpc/server");
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "The outreach message changed after review. Review the current recipient and message before approving.",
+      });
+    }
+    metadata = JSON.stringify({
+      ...readOutreachMetadata(row.metadata),
+      approvedMessage: approveOutreachMessage({
+        outreachId,
+        caseId: row.caseId,
+        ...message,
+        approvedBy: userId,
+        approvedAt: updatedAt.toISOString(),
+      }),
+    });
+  }
+  const result = await db
     .update(outreachStatus)
-    .set({ status: newStatus, updatedAt: new Date() })
-    .where(eq(outreachStatus.id, outreachId));
+    .set({ status: newStatus, metadata, updatedAt })
+    .where(and(
+      eq(outreachStatus.id, outreachId),
+      row.status == null ? isNull(outreachStatus.status) : eq(outreachStatus.status, row.status),
+    ));
+  if (Number(result.changes || 0) !== 1) {
+    const { TRPCError } = await import("@trpc/server");
+    throw new TRPCError({ code: "CONFLICT", message: "The outreach draft changed before this action completed. Refresh and try again." });
+  }
 
   await createAuditLog({
     userId,

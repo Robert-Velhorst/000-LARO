@@ -12,6 +12,10 @@ suite('Real outreach send (011/026/017)', () => {
   let app: TestApp;
   const U = { id: 'USR_SEND', name: 'S', role: 'user', email: 's@example.com' };
   let outreachId: string;
+  const approveReviewedDraft = async (caller: any, id: string) => {
+    const review = await caller.workflow.preSendReview({ outreachId: id });
+    return caller.workflow.approveDraft({ outreachId: id, approvalHash: review.message.approvalHash });
+  };
 
   beforeAll(async () => {
     app = await bootTestApp();
@@ -22,12 +26,148 @@ suite('Real outreach send (011/026/017)', () => {
     await app.makeCaller(U).workflow.prepareDrafts({ caseId: 'CASE_SEND' });
     const q = await app.makeCaller(U).workflow.reviewQueue({ caseId: 'CASE_SEND' });
     outreachId = q[0].id;
-    await app.makeCaller(U).workflow.approveDraft({ outreachId });
+    await approveReviewedDraft(app.makeCaller(U), outreachId);
   });
   afterAll(() => app?.cleanup());
 
   it('refuses to send while the feature flag is OFF (default)', async () => {
     await expect(app.makeCaller(U).workflow.sendApproved({ outreachId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('binds approval to the exact recipient, subject, and body shown for review', async () => {
+    const caller = app.makeCaller(U);
+    await app.db.insert(app.schema.cases).values(buildCase({
+      id: 'CASE_SEND_BOUND',
+      userId: U.id,
+      caseType: 'Housing',
+    }));
+    await caller.workflow.prepareDrafts({ caseId: 'CASE_SEND_BOUND' });
+    const queue = await caller.workflow.reviewQueue({ caseId: 'CASE_SEND_BOUND' });
+    const boundId = queue[0].id;
+    const review = await caller.workflow.preSendReview({ outreachId: boundId });
+    expect(review).toMatchObject({
+      message: {
+        to: 'lawyer@law.example',
+        subject: 'Legal assistance enquiry - Housing',
+      },
+    });
+    expect(review.message.text).toContain('Housing matter');
+    expect(review.message.approvalHash).toMatch(/^[a-f0-9]{64}$/);
+
+    await caller.workflow.approveDraft({ outreachId: boundId, approvalHash: review.message.approvalHash });
+    const [approvedRow] = await app.db.select().from(app.schema.outreachStatus).where(
+      (await import('drizzle-orm')).eq(app.schema.outreachStatus.id, boundId),
+    );
+    expect(JSON.parse(approvedRow.metadata)).toMatchObject({
+      approvedMessage: {
+        to: review.message.to,
+        subject: review.message.subject,
+        text: review.message.text,
+        approvalHash: review.message.approvalHash,
+        approvedBy: U.id,
+      },
+    });
+
+    await app.db.update(app.schema.lawyers).set({ email: 'changed@law.example', name: 'Changed Name' }).where(
+      (await import('drizzle-orm')).eq(app.schema.lawyers.id, 'LW_SEND'),
+    );
+    await app.db.update(app.schema.cases).set({ caseType: 'Changed case type' }).where(
+      (await import('drizzle-orm')).eq(app.schema.cases.id, 'CASE_SEND_BOUND'),
+    );
+
+    const { setFlag } = await import('../../server/featureFlags');
+    await setFlag('outreach.send.enabled', true);
+    const { sendApprovedOutreach } = await import('../../server/outreachSend');
+    const sent: any[] = [];
+    await sendApprovedOutreach(U.id, boundId, async (email) => {
+      sent.push(email);
+      return { delivered: true, provider: 'fake' };
+    });
+    expect(sent).toEqual([{
+      to: review.message.to,
+      subject: review.message.subject,
+      text: review.message.text,
+    }]);
+    await setFlag('outreach.send.enabled', false);
+    await app.db.update(app.schema.lawyers).set({ email: 'lawyer@law.example', name: 'Lawyer LW_SEND' }).where(
+      (await import('drizzle-orm')).eq(app.schema.lawyers.id, 'LW_SEND'),
+    );
+  });
+
+  it('rejects approval when the reviewed message changed before confirmation', async () => {
+    const caller = app.makeCaller(U);
+    await app.db.insert(app.schema.cases).values(buildCase({ id: 'CASE_SEND_STALE_REVIEW', userId: U.id }));
+    await caller.workflow.prepareDrafts({ caseId: 'CASE_SEND_STALE_REVIEW' });
+    const queue = await caller.workflow.reviewQueue({ caseId: 'CASE_SEND_STALE_REVIEW' });
+    const outreachId = queue[0].id;
+    const review = await caller.workflow.preSendReview({ outreachId });
+    await app.db.update(app.schema.lawyers).set({ email: 'new-recipient@law.example' }).where(
+      (await import('drizzle-orm')).eq(app.schema.lawyers.id, 'LW_SEND'),
+    );
+
+    await expect(caller.workflow.approveDraft({
+      outreachId,
+      approvalHash: review.message.approvalHash,
+    })).rejects.toMatchObject({ code: 'CONFLICT' });
+    await app.db.update(app.schema.lawyers).set({ email: 'lawyer@law.example' }).where(
+      (await import('drizzle-orm')).eq(app.schema.lawyers.id, 'LW_SEND'),
+    );
+  });
+
+  it('rejects an approved message whose stored content was altered', async () => {
+    const caller = app.makeCaller(U);
+    await app.db.insert(app.schema.cases).values(buildCase({ id: 'CASE_SEND_TAMPERED', userId: U.id }));
+    await caller.workflow.prepareDrafts({ caseId: 'CASE_SEND_TAMPERED' });
+    const queue = await caller.workflow.reviewQueue({ caseId: 'CASE_SEND_TAMPERED' });
+    const outreachId = queue[0].id;
+    await approveReviewedDraft(caller, outreachId);
+    const [row] = await app.db.select().from(app.schema.outreachStatus).where(
+      (await import('drizzle-orm')).eq(app.schema.outreachStatus.id, outreachId),
+    );
+    const metadata = JSON.parse(row.metadata);
+    metadata.approvedMessage.to = 'attacker@example.com';
+    await app.db.update(app.schema.outreachStatus).set({ metadata: JSON.stringify(metadata) }).where(
+      (await import('drizzle-orm')).eq(app.schema.outreachStatus.id, outreachId),
+    );
+
+    const { setFlag } = await import('../../server/featureFlags');
+    await setFlag('outreach.send.enabled', true);
+    const { sendApprovedOutreach } = await import('../../server/outreachSend');
+    await expect(sendApprovedOutreach(U.id, outreachId, async () => ({ delivered: true, provider: 'fake' })))
+      .rejects.toMatchObject({ code: 'PRECONDITION_FAILED' });
+    await setFlag('outreach.send.enabled', false);
+  });
+
+  it('does not allow rejection after an approved send has been claimed', async () => {
+    const caller = app.makeCaller(U);
+    await app.db.insert(app.schema.cases).values(buildCase({ id: 'CASE_SEND_RACE', userId: U.id }));
+    await caller.workflow.prepareDrafts({ caseId: 'CASE_SEND_RACE' });
+    const queue = await caller.workflow.reviewQueue({ caseId: 'CASE_SEND_RACE' });
+    const raceId = queue[0].id;
+    await approveReviewedDraft(caller, raceId);
+
+    const { setFlag } = await import('../../server/featureFlags');
+    await setFlag('outreach.send.enabled', true);
+    const { sendApprovedOutreach } = await import('../../server/outreachSend');
+    let releaseSender!: () => void;
+    let markStarted!: () => void;
+    const senderStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+    const senderReleased = new Promise<void>((resolve) => { releaseSender = resolve; });
+    const sendPromise = sendApprovedOutreach(U.id, raceId, async () => {
+      markStarted();
+      await senderReleased;
+      return { delivered: true, provider: 'fake' };
+    });
+    await senderStarted;
+
+    await expect(caller.workflow.rejectDraft({ outreachId: raceId })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    releaseSender();
+    await expect(sendPromise).resolves.toMatchObject({ sent: true });
+    const [row] = await app.db.select().from(app.schema.outreachStatus).where(
+      (await import('drizzle-orm')).eq(app.schema.outreachStatus.id, raceId),
+    );
+    expect(row.status).toBe('Sent');
+    await setFlag('outreach.send.enabled', false);
   });
 
   it('sends via the real path when enabled + provider present, then is idempotent', async () => {
@@ -91,7 +231,7 @@ suite('Real outreach send (011/026/017)', () => {
     await app.makeCaller(U).workflow.prepareDrafts({ caseId: 'CASE_SEND_UNCERTAIN' });
     const queue = await app.makeCaller(U).workflow.reviewQueue({ caseId: 'CASE_SEND_UNCERTAIN' });
     const uncertainId = queue[0].id;
-    await app.makeCaller(U).workflow.approveDraft({ outreachId: uncertainId });
+    await approveReviewedDraft(app.makeCaller(U), uncertainId);
 
     const { sendApprovedOutreach } = await import('../../server/outreachSend');
     const ambiguousSender = async () => {
@@ -120,7 +260,7 @@ suite('Real outreach send (011/026/017)', () => {
     await expect(app.makeCaller(U).admin.uncertainOutreachDispatches()).rejects.toMatchObject({ code: 'FORBIDDEN' });
     const ADMIN = { id: 'ADMIN_SEND_RECOVERY', name: 'Operator', role: 'admin', email: 'operator@example.com' };
     const pending = await app.makeCaller(ADMIN).admin.uncertainOutreachDispatches();
-    expect(pending).toContainEqual(expect.objectContaining({ outreachId: uncertainId, outreachStatus: 'Approved' }));
+    expect(pending).toContainEqual(expect.objectContaining({ outreachId: uncertainId, outreachStatus: 'Dispatching' }));
     await app.makeCaller(ADMIN).admin.resolveUncertainOutreachDispatch({
       outreachId: uncertainId,
       outcome: 'not_delivered',
@@ -141,7 +281,7 @@ suite('Real outreach send (011/026/017)', () => {
     await app.makeCaller(U).workflow.prepareDrafts({ caseId: 'CASE_SEND_CONFIRMED' });
     const queue = await app.makeCaller(U).workflow.reviewQueue({ caseId: 'CASE_SEND_CONFIRMED' });
     const confirmedId = queue[0].id;
-    await app.makeCaller(U).workflow.approveDraft({ outreachId: confirmedId });
+    await approveReviewedDraft(app.makeCaller(U), confirmedId);
 
     const { sendApprovedOutreach } = await import('../../server/outreachSend');
     await expect(sendApprovedOutreach(U.id, confirmedId, async () => {
@@ -208,14 +348,14 @@ suite('Real outreach send (011/026/017)', () => {
     expect(caseRow.status).toBe('Matched');
 
     const metrics = await app.makeCaller(U).outreachAnalytics.getOverallMetrics();
-    expect(metrics.sent).toBe(3);
+    expect(metrics.sent).toBe(5);
     expect(metrics.responses).toBe(1);
     expect(metrics.interested).toBe(1);
-    expect(metrics.overallResponseRate).toBeCloseTo(100 / 3);
+    expect(metrics.overallResponseRate).toBeCloseTo(100 / 5);
 
     const lawyers = await app.makeCaller(U).outreachAnalytics.getResponseRateByLawyer({ limit: 10 });
     expect(lawyers[0]).toMatchObject({ lawyerId: 'LW_SEND', responses: 1 });
-    expect(lawyers[0].responseRate).toBeCloseTo(100 / 3);
+    expect(lawyers[0].responseRate).toBeCloseTo(100 / 5);
   });
 
   it('fails honestly (no fake success) when no provider is configured', async () => {
@@ -226,7 +366,7 @@ suite('Real outreach send (011/026/017)', () => {
     await app.makeCaller(U).workflow.prepareDrafts({ caseId: 'CASE_SEND2' });
     const q = await app.makeCaller(U).workflow.reviewQueue({ caseId: 'CASE_SEND2' });
     const oid = q[0].id;
-    await app.makeCaller(U).workflow.approveDraft({ outreachId: oid });
+    await approveReviewedDraft(app.makeCaller(U), oid);
 
     const { sendApprovedOutreach } = await import('../../server/outreachSend');
     const noProvider = async () => ({ delivered: false, provider: 'console' });

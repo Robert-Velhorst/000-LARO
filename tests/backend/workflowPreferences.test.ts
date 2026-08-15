@@ -112,7 +112,7 @@ suite("persisted workflow controls", () => {
     });
   });
 
-  it("supports batch and automatic draft approval without claiming that a message was sent", async () => {
+  it("supports batch approval but keeps automatic external messages pending", async () => {
     const caller = app.makeCaller(owner);
     await app.db.insert(app.schema.cases).values(buildCase({ id: "CASE_WORKFLOW_OUTREACH", userId: owner.id }));
     await app.db.insert(app.schema.lawyers).values([
@@ -124,12 +124,21 @@ suite("persisted workflow controls", () => {
     await caller.workflow.initiateOutreach({ caseId: "CASE_WORKFLOW_OUTREACH", maxResults: 2 });
     const queue = await caller.workflow.reviewQueue({ caseId: "CASE_WORKFLOW_OUTREACH" });
     expect(queue).toHaveLength(2);
+    const reviews = await Promise.all(queue.map((item: any) => caller.workflow.preSendReview({ outreachId: item.id })));
     await expect(caller.workflow.approveDrafts({
-      outreachIds: [queue[0].id, "OUTREACH_NOT_OWNED"],
+      approvals: [
+        { outreachId: queue[0].id, approvalHash: reviews[0].message.approvalHash },
+        { outreachId: "OUTREACH_NOT_OWNED", approvalHash: reviews[0].message.approvalHash },
+      ],
     })).rejects.toThrow("not found");
     const unchangedRows = await caller.outreach.byCaseId("CASE_WORKFLOW_OUTREACH");
     expect(unchangedRows.every((row: any) => row.status === "PendingApproval")).toBe(true);
-    const approved = await caller.workflow.approveDrafts({ outreachIds: queue.map((item: any) => item.id) });
+    const approved = await caller.workflow.approveDrafts({
+      approvals: reviews.map((review: any) => ({
+        outreachId: review.outreachId,
+        approvalHash: review.message.approvalHash,
+      })),
+    });
     expect(approved).toEqual({ success: true, approved: 2, sent: false });
 
     const rows = await caller.outreach.byCaseId("CASE_WORKFLOW_OUTREACH");
@@ -139,9 +148,9 @@ suite("persisted workflow controls", () => {
     await app.db.insert(app.schema.cases).values(buildCase({ id: "CASE_WORKFLOW_AUTO", userId: owner.id }));
     await caller.userPreferences.updateWorkflow({ messageApprovalMode: "automatic" });
     const automatic = await caller.workflow.initiateOutreach({ caseId: "CASE_WORKFLOW_AUTO", maxResults: 1 });
-    expect(automatic.automaticallyApproved).toBe(1);
+    expect(automatic.automaticallyApproved).toBe(0);
     const autoRows = await caller.outreach.byCaseId("CASE_WORKFLOW_AUTO");
-    expect(autoRows[0]).toMatchObject({ status: "Approved", initialContact: null });
+    expect(autoRows[0]).toMatchObject({ status: "PendingApproval", initialContact: null });
     expect(await app.db.select().from(app.schema.emailActivity)).toHaveLength(0);
   });
 });
