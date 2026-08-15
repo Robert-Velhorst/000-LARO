@@ -181,6 +181,24 @@ function ensureSupportTicketsTable(sqlite: InstanceType<typeof Database>) {
   }
 }
 
+export function ensureStorageDeletionQueueTable(sqlite: InstanceType<typeof Database>) {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS storage_deletion_queue (
+      id TEXT PRIMARY KEY NOT NULL,
+      storageKey TEXT NOT NULL,
+      attempts INTEGER DEFAULT 0 NOT NULL,
+      lastError TEXT,
+      nextAttemptAt INTEGER NOT NULL,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS storage_deletion_queue_storageKey_unique
+      ON storage_deletion_queue(storageKey);
+    CREATE INDEX IF NOT EXISTS storage_deletion_queue_nextAttemptAt_idx
+      ON storage_deletion_queue(nextAttemptAt);
+  `);
+}
+
 function ensureAllTablesColumns(sqlite: InstanceType<typeof Database>) {
   for (const key of Object.keys(schema)) {
     const table = (schema as any)[key];
@@ -399,6 +417,10 @@ export async function getDb() {
             msg
           );
         }
+
+        // Destructive evidence operations require this queue. Repair it before
+        // migration recovery can stamp journal entries on an installed DB.
+        ensureStorageDeletionQueueTable(sqlite);
 
         // Recovery: if any expected core table is missing after migrate(), the
         // bookkeeping is out of sync with reality (stale userData DB, partial

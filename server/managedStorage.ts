@@ -35,7 +35,11 @@ export function collectManagedStorageKeys(
 ): string[] {
   const tables = (sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>)
     .map((table) => table.name)
-    .filter((name) => !name.startsWith("sqlite_") && !name.startsWith("__"));
+    .filter((name) =>
+      !name.startsWith("sqlite_")
+      && !name.startsWith("__")
+      && name !== "storage_deletion_queue"
+    );
   const keys = new Set<string>();
 
   for (const table of tables) {

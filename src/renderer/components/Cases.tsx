@@ -105,8 +105,12 @@ export default function Cases() {
   const createCase = trpc.cases.create.useMutation();
   const utils = trpc.useUtils();
   const deleteCase = trpc.cases.delete.useMutation({
-    onSuccess: () => {
-      toast.success("Case deleted");
+    onSuccess: (result) => {
+      if (result.deletionStatus === "storage_cleanup_pending") {
+        toast.warning("Case records deleted. Storage cleanup is pending and will retry automatically.");
+      } else {
+        toast.success("Case deleted");
+      }
       utils.cases.list.invalidate();
     },
     onError: (err) => {

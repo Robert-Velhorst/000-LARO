@@ -43,6 +43,7 @@ export const CRON_SCHEDULES = {
   reminders: '0 8 * * *',
   retention: '30 3 * * *',
   backup: '15 1 * * *',
+  storageDeletion: '*/15 * * * *',
 } as const;
 
 function ensureStatus(name: string): JobStatus {
@@ -65,6 +66,19 @@ function ensureStatus(name: string): JobStatus {
 
 export function getJobStatus(): JobStatus[] {
   return Array.from(jobStatus.values());
+}
+
+export async function runStorageDeletionSweep(): Promise<void> {
+  const { processQueuedStorageDeletions } = await import('./storageDeletionQueue');
+  const report = await processQueuedStorageDeletions();
+  if (report.processed > 0) {
+    console.log(
+      `[Cron] Storage deletion: removed ${report.deleted}, retained ${report.retained}, failed ${report.failed}, pending ${report.pending}.`
+    );
+  }
+  if (report.failed > 0) {
+    throw new Error(`Storage deletion failed for ${report.failed} object(s); ${report.pending} remain queued.`);
+  }
 }
 
 /**
@@ -137,6 +151,7 @@ export function initCronScheduler() {
   ensureStatus('reminders');
   ensureStatus('retention');
   ensureStatus('backup');
+  ensureStatus('storage-deletion');
 
   // Daily auto-collection at 02:00.
   scheduledTasks.push(cron.schedule(CRON_SCHEDULES.autoCollection, () => {
@@ -188,6 +203,11 @@ export function initCronScheduler() {
     const status = ensureStatus('backup');
     status.enabled = false;
   }
+
+  void runJob('storage-deletion', runStorageDeletionSweep, { retries: 1 });
+  scheduledTasks.push(cron.schedule(CRON_SCHEDULES.storageDeletion, () => {
+    void runJob('storage-deletion', runStorageDeletionSweep, { retries: 1 });
+  }));
 
   console.log('[Cron] Scheduled tasks loaded:', getJobStatus().map((j) => j.name).join(', '));
 }

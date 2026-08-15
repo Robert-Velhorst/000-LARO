@@ -40,7 +40,14 @@ export default function Privacy() {
       return;
     }
     try {
-      await deleteData.mutateAsync({ confirm: true });
+      const result = await deleteData.mutateAsync({ confirm: true });
+      if (result.erasureStatus === "storage_cleanup_pending") {
+        toast.warning("Account records erased. Storage cleanup is still pending and will retry automatically.", {
+          duration: 8_000,
+        });
+        window.setTimeout(() => window.location.assign("/"), 2_500);
+        return;
+      }
       window.location.assign("/");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Account deletion failed");

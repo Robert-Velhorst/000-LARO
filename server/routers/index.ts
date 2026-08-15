@@ -640,7 +640,7 @@ export const appRouter = router({
           const { getSessionCookieOptions } = await import("../cookies");
           ctx.res.clearCookie(COOKIE_NAME, { ...getSessionCookieOptions(ctx.req), maxAge: -1 });
         } catch { /* ignore */ }
-        return { success: true, ...result };
+        return { success: result.storageCleanupPending === 0, ...result };
       }),
     updateConsent: protectedProcedure
       .input(

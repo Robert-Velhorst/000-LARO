@@ -14,7 +14,7 @@ import { caseIntakeSchema } from "../../shared/validation";
 import { assertCaseTransition } from "../stateMachines";
 import { createCaseId } from "../ids";
 import { collectManagedStorageKeys } from "../managedStorage";
-import { storageDelete } from "../storage";
+import { enqueueStorageDeletions, processQueuedStorageDeletions } from "../storageDeletionQueue";
 import { emitRealtimeDataChange } from "../realtime";
 
 export const casesRouter = router({
@@ -349,7 +349,6 @@ export const casesRouter = router({
       }
 
       const storageKeys = collectManagedStorageKeys(sqliteDb, { caseIds: [input.id] });
-      for (const key of storageKeys) await storageDelete(key);
 
       // NB: filter internal tables in JS. A SQL `LIKE '__%'` would treat `_` as
       // a wildcard and exclude EVERY table (breaking the cascade) — that was a
@@ -373,6 +372,7 @@ export const casesRouter = router({
       }
 
       const tx = sqliteDb.transaction((caseId: string, userId: string) => {
+        enqueueStorageDeletions(sqliteDb, storageKeys);
         for (const tableName of tablesWithCaseId) {
           sqliteDb.prepare(`DELETE FROM "${tableName}" WHERE caseId = ?`).run(caseId);
         }
@@ -383,6 +383,8 @@ export const casesRouter = router({
 
       tx(input.id, ctx.user.id);
 
+      const cleanup = await processQueuedStorageDeletions({ storageKeys });
+
       await createAuditLog({ // Phase 019
         userId: ctx.user.id,
         action: AUDIT_ACTIONS.CASE_DELETED,
@@ -391,7 +393,11 @@ export const casesRouter = router({
         details: { cascadedTables: tablesWithCaseId },
       });
 
-      return { success: true };
+      return {
+        success: cleanup.requestedPending === 0,
+        deletionStatus: cleanup.requestedPending > 0 ? "storage_cleanup_pending" as const : "completed" as const,
+        storageCleanupPending: cleanup.requestedPending,
+      };
     }),
 
   outreachProgress: protectedProcedure

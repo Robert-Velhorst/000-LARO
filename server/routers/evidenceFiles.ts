@@ -15,6 +15,7 @@ import { randomUUID } from "crypto";
 import { assertCaseOwnership } from "../_core/authz";
 import { sanitizeFilename, storageDelete, storagePut } from "../storage";
 import { managedStorageKeyFromMetadata } from "../managedStorage";
+import { processQueuedStorageDeletions } from "../storageDeletionQueue";
 import {
   isSupportedEvidenceMimeType,
   MAX_EVIDENCE_BASE64_CHARS,
@@ -140,10 +141,13 @@ export const evidenceFilesRouter = router({
       const userId = ctx.user.id;
       const file = await getEvidenceFile(userId, input.id);
       if (!file) return { success: false };
-      const storageKey = managedStorageKeyFromMetadata(file.metadata);
-      if (storageKey) await storageDelete(storageKey);
-      const success = await deleteEvidenceFile(userId, input.id);
-      return { success };
+      const result = await deleteEvidenceFile(userId, input.id);
+      const cleanup = await processQueuedStorageDeletions({ storageKeys: result.storageKeys });
+      return {
+        success: result.deleted && cleanup.requestedPending === 0,
+        deletionStatus: cleanup.requestedPending > 0 ? "storage_cleanup_pending" as const : "completed" as const,
+        storageCleanupPending: cleanup.requestedPending,
+      };
     }),
 
   // By case
