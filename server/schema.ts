@@ -511,6 +511,23 @@ export const systemConfig = sqliteTable("system_config", {
   updatedAt: integer("updatedAt", { mode: "timestamp" }).default(new Date()),
 });
 
+export const storageDeletionQueue = sqliteTable(
+  "storage_deletion_queue",
+  {
+    id: text("id").primaryKey(),
+    storageKey: text("storageKey").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("lastError"),
+    nextAttemptAt: integer("nextAttemptAt", { mode: "timestamp" }).notNull(),
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+  },
+  (table) => ({
+    storageKeyUnique: uniqueIndex("storage_deletion_queue_storageKey_unique").on(table.storageKey),
+    nextAttemptIdx: index("storage_deletion_queue_nextAttemptAt_idx").on(table.nextAttemptAt),
+  }),
+);
+
 export const clarificationQuestions = sqliteTable("clarification_questions", {
   id: text("id").primaryKey(),
   caseId: text("caseId"),

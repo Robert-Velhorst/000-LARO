@@ -14,7 +14,7 @@
  */
 import { getDb } from "./db";
 import { collectManagedStorageKeys } from "./managedStorage";
-import { storageDelete } from "./storage";
+import { enqueueStorageDeletions, processQueuedStorageDeletions } from "./storageDeletionQueue";
 
 function rawClient(db: any): any {
   return db.$client ?? db.session?.client ?? null;
@@ -129,7 +129,11 @@ export async function exportUserData(userId: string): Promise<Record<string, any
  * per-table deletion counts. Runs in a transaction so a partial failure rolls
  * back.
  */
-export async function deleteUserData(userId: string): Promise<{ deleted: Record<string, number> }> {
+export async function deleteUserData(userId: string): Promise<{
+  deleted: Record<string, number>;
+  storageCleanupPending: number;
+  erasureStatus: "completed" | "storage_cleanup_pending";
+}> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const sqlite = rawClient(db);
@@ -150,13 +154,9 @@ export async function deleteUserData(userId: string): Promise<{ deleted: Record<
   const userCaseIds = (sqlite.prepare("SELECT id FROM cases WHERE userId = ?").all(userId) as Array<{ id: string }>).map((r) => r.id);
   const storageKeys = collectManagedStorageKeys(sqlite, { userId, caseIds: userCaseIds });
 
-  // Storage cannot participate in the SQLite transaction. Delete every owned
-  // object before removing its metadata, and abort the erasure if any provider
-  // refuses a deletion. A retry is then safe because storageDelete is idempotent.
-  for (const key of storageKeys) await storageDelete(key);
-
   const deleted: Record<string, number> = {};
   const tx = sqlite.transaction(() => {
+    enqueueStorageDeletions(sqlite, storageKeys);
     // 1. Purge caseId-scoped children for the cases captured above.
     if (userCaseIds.length > 0) {
       const placeholders = userCaseIds.map(() => "?").join(",");
@@ -178,5 +178,11 @@ export async function deleteUserData(userId: string): Promise<{ deleted: Record<
   });
   tx();
 
-  return { deleted };
+  const cleanup = await processQueuedStorageDeletions({ storageKeys });
+
+  return {
+    deleted,
+    storageCleanupPending: cleanup.requestedPending,
+    erasureStatus: cleanup.requestedPending > 0 ? "storage_cleanup_pending" : "completed",
+  };
 }

@@ -36,8 +36,12 @@ export function EvidenceCollection({ caseId, onEvidenceUpdated }: EvidenceCollec
     if (!confirm("Are you sure you want to delete this evidence?")) return;
 
     try {
-      await deleteMutation.mutateAsync({ id });
-      toast.success("Evidence deleted");
+      const result = await deleteMutation.mutateAsync({ id });
+      if (result.deletionStatus === "storage_cleanup_pending") {
+        toast.warning("Evidence record deleted. Storage cleanup is pending and will retry automatically.");
+      } else {
+        toast.success("Evidence deleted");
+      }
       await invalidateEvidenceQueries();
       await refetch();
     } catch (error) {

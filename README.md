@@ -213,6 +213,7 @@ The Flask password-login path stores users and hashed bearer sessions in the ign
 - Bundle approval is tied to the exact persisted case snapshot. Later evidence, analysis, outreach, draft, or case changes invalidate that approval.
 - Bundle manifests include SHA-256 digests and omit credential-shaped fields and machine-local paths from structured exports.
 - GDPR exports omit password, reset-token, OAuth-token, API-key, secret, authorization, and cookie fields across every owner table. Optional privacy preferences persist per account and are included in export and erasure.
+- Evidence, case, and account erasure commit metadata removal together with a durable managed-storage deletion job. Provider failures remain queued for immediate and 15-minute retry, shared objects are retained while another record references them, and account erasure reports pending storage cleanup instead of claiming completion.
 - Audit retention uses a bounded 30-3650 day configuration, catches up after startup, and runs daily without deleting owner business data.
 
 See [Operator Runbook](docs/OPERATOR_RUNBOOK.md), [Security](docs/SECURITY.md), [Privacy](docs/PRIVACY.md), and [Threat Model](docs/THREAT_MODEL.md) before operating with real case data.

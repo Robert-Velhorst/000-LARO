@@ -3,6 +3,8 @@ import { and, desc, eq, like, or, sql } from "drizzle-orm";
 import { getDb } from "./db";
 import { evidence } from "./schema";
 import { emitRealtimeDataChange } from "./realtime";
+import { managedStorageKeyFromMetadata } from "./managedStorage";
+import { enqueueStorageDeletions } from "./storageDeletionQueue";
 
 export type EvidenceFileRow = typeof evidence.$inferSelect;
 export type EvidenceFileView = EvidenceFileRow & {
@@ -125,13 +127,30 @@ export async function createEvidenceFile(
   return id;
 }
 
-export async function deleteEvidenceFile(userId: string, id: string): Promise<boolean> {
+export async function deleteEvidenceFile(
+  userId: string,
+  id: string,
+): Promise<{ deleted: boolean; storageKeys: string[] }> {
   const db = await getDb();
-  if (!db) return false;
-  const res = await db.delete(evidence).where(and(eq(evidence.id, id), eq(evidence.userId, userId)));
-  const deleted = Number((res as unknown as { changes?: number }).changes ?? 0) > 0;
+  if (!db) return { deleted: false, storageKeys: [] };
+  const sqlite: any = (db as any).$client ?? (db as any).session?.client;
+  if (!sqlite) throw new Error("Storage engine not available for evidence deletion");
+
+  const tx = sqlite.transaction(() => {
+    const row = sqlite.prepare("SELECT metadata FROM evidence WHERE id = ? AND userId = ?").get(id, userId) as
+      | { metadata: string | null }
+      | undefined;
+    if (!row) return { deleted: false, storageKeys: [] };
+    const storageKey = managedStorageKeyFromMetadata(row.metadata);
+    const storageKeys = storageKey ? [storageKey] : [];
+    enqueueStorageDeletions(sqlite, storageKeys);
+    const result = sqlite.prepare("DELETE FROM evidence WHERE id = ? AND userId = ?").run(id, userId);
+    return { deleted: Number(result.changes ?? 0) > 0, storageKeys };
+  });
+  const result = tx() as { deleted: boolean; storageKeys: string[] };
+  const deleted = result.deleted;
   if (deleted) emitRealtimeDataChange(userId, { scope: "evidence" });
-  return deleted;
+  return result;
 }
 
 export async function getEvidenceFilesByCase(userId: string, caseId: string): Promise<EvidenceFileView[]> {
