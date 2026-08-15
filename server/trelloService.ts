@@ -9,6 +9,7 @@ import { getDb } from './db';
 import { evidenceSources, evidenceItems } from './schema';
 import { v4 as uuidv4 } from 'uuid';
 import { eq, and } from 'drizzle-orm';
+import { fetchTrustedRemote } from './trustedRemoteFetch';
 
 export interface TrelloBoard {
   id: string;
@@ -234,13 +235,24 @@ export async function getTrelloComments(cardId: string, token: string): Promise<
  */
 export async function downloadTrelloAttachment(
   attachmentUrl: string,
-  fileName: string
+  fileName: string,
+  options: { maxBytes?: number; timeoutMs?: number; token?: string } = {},
 ): Promise<{ key: string; url: string } | null> {
   try {
-    const response = await fetch(attachmentUrl);
+    const config = getTrelloOAuthConfig();
+    const initialHost = new URL(attachmentUrl).hostname.toLowerCase();
+    const authorization = options.token && config.apiKey && ['trello.com', 'api.trello.com'].includes(initialHost)
+      ? `OAuth oauth_consumer_key="${config.apiKey}", oauth_token="${options.token}"`
+      : null;
+    const response = await fetchTrustedRemote(attachmentUrl, {
+      allowedHosts: ['trello.com', 'api.trello.com', 'trello-attachments.s3.amazonaws.com'],
+      maxBytes: options.maxBytes ?? 25 * 1024 * 1024,
+      timeoutMs: options.timeoutMs,
+      init: authorization ? { headers: { Authorization: authorization } } : undefined,
+    });
 
     if (!response.ok) {
-      console.warn('[Trello] Failed to download attachment:', attachmentUrl);
+      console.warn('[Trello] Failed to download attachment:', response.status);
       return null;
     }
 
@@ -383,7 +395,7 @@ ${comments.map(c => `- ${c.memberCreator?.fullName || 'Unknown'} (${c.date}): ${
               if (card.attachments && card.attachments.length > 0) {
                 for (const attachment of card.attachments) {
                   try {
-                    const result = await downloadTrelloAttachment(attachment.url, attachment.name);
+                    const result = await downloadTrelloAttachment(attachment.url, attachment.name, { token });
                     if (result) {
                       progress.totalAttachments++;
 
@@ -403,6 +415,8 @@ ${comments.map(c => `- ${c.memberCreator?.fullName || 'Unknown'} (${c.date}): ${
                         }),
                         createdAt: new Date(),
                       });
+                    } else {
+                      progress.errors.push(`Failed to download attachment ${attachment.name}`);
                     }
                   } catch (error) {
                     progress.errors.push(`Failed to download attachment ${attachment.name}: ${error}`);
