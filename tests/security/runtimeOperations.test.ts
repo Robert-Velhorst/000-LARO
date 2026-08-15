@@ -35,6 +35,11 @@ describe('production runtime operations', () => {
     expect(dockerfile).toContain('COPY scripts/runtime-readiness.mjs ./scripts/runtime-readiness.mjs');
     expect(launcher).toContain('exec -T laro-server npm run readiness:runtime');
     expect(launcher).toContain('function Get-LaroNgrokProcesses');
+    expect(launcher).toContain('function Find-ExistingLaroHttpsTunnel');
+    expect(launcher).toContain('[int]$Attempts = 4');
+    expect(launcher).toContain('[int]$DelayMilliseconds = 500');
+    expect(launcher).toContain('$httpsTunnel = Find-ExistingLaroHttpsTunnel `');
+    expect(launcher).not.toContain('$existingState = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 3');
     expect(launcher).toContain('function Test-CommandLineHasArgument');
     expect(launcher).toContain('[regex]::Escape($Argument) + "(?=\\s|$)"');
     expect(launcher).toContain('Test-CommandLineHasArgument -CommandLine $_.CommandLine -Argument "--name=laro-api"');

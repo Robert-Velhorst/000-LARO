@@ -215,6 +215,34 @@ function Get-LaroNgrokProcesses {
     }
 }
 
+function Find-ExistingLaroHttpsTunnel {
+    param(
+        [string]$ExpectedUrl = "",
+        [int]$Attempts = 4,
+        [int]$DelayMilliseconds = 500
+    )
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            $state = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 3
+            $httpsTunnel = @($state.tunnels) |
+                Where-Object {
+                    $_.name -eq "laro-api" -and
+                    $_.public_url -match "^https://" -and
+                    (-not $ExpectedUrl -or $_.public_url.TrimEnd("/") -eq $ExpectedUrl.TrimEnd("/"))
+                } |
+                Select-Object -First 1
+            if ($httpsTunnel) { return $httpsTunnel }
+        } catch {
+            # The local ngrok inspector can briefly lag while its tunnel remains healthy.
+        }
+        if ($attempt -lt $Attempts) {
+            Start-Sleep -Milliseconds $DelayMilliseconds
+        }
+    }
+    return $null
+}
+
 function Wait-ForHttpsTunnel {
     param(
         [Parameter(Mandatory)] [Diagnostics.Process]$Process,
@@ -358,21 +386,10 @@ $ngrokArguments = @(
 if (-not $useDirectTunnel) { $ngrokArguments += "--url=$InternalUrl" }
 
 $ngrokProcess = $null
-$httpsTunnel = $null
 $startedNgrok = $false
 
-try {
-    $existingState = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 3
-    $httpsTunnel = @($existingState.tunnels) |
-        Where-Object {
-            $_.name -eq "laro-api" -and
-            $_.public_url -match "^https://" -and
-            ($useDirectTunnel -or $_.public_url.TrimEnd("/") -eq $InternalUrl)
-        } |
-        Select-Object -First 1
-} catch {
-    $httpsTunnel = $null
-}
+$httpsTunnel = Find-ExistingLaroHttpsTunnel `
+    -ExpectedUrl $(if ($useDirectTunnel) { "" } else { $InternalUrl })
 
 $matchingProcesses = @(Get-LaroNgrokProcesses `
     -TargetUrl "http://127.0.0.1:3000" `
