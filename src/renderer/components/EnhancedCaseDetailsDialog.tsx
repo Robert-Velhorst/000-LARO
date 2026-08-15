@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { MultiAreaOutreachProgress } from "@/components/OutreachProgressBar";
 import {
@@ -54,6 +54,7 @@ import {
   ExternalLink,
   Database,
   AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 import { LegalAreasSelect } from "@/components/LegalAreasSelect";
 import { EvidenceCollection } from "@/components/EvidenceCollection";
@@ -72,6 +73,7 @@ import { exportCaseSummary, printCaseSummary } from "@/lib/export";
 import { getElectronAPI, isElectron } from "@/lib/electronApiShim";
 import CaseStatusWorkflow from "@/components/CaseStatusWorkflow";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useGoogleOAuthConnection } from "@/hooks/useGoogleOAuthConnection";
 
 interface EnhancedCaseDetailsDialogProps {
   caseId: string;
@@ -95,13 +97,27 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
   const [dateEnd, setDateEnd] = useState("");
   const [pullJobId, setPullJobId] = useState<string | null>(null);
   const [handledJobId, setHandledJobId] = useState<string | null>(null);
-  const [connectingGoogle, setConnectingGoogle] = useState(false);
 
   const utils = trpc.useUtils();
 
-  const { data: driveStatus } = trpc.googleDrive.checkConnection.useQuery(undefined, {
+  const {
+    data: driveStatus,
+    error: driveStatusError,
+    refetch: refetchDriveStatus,
+  } = trpc.googleDrive.checkConnection.useQuery(undefined, {
     refetchOnWindowFocus: true,
-    refetchInterval: connectingGoogle ? 1_500 : false,
+  });
+  const refreshGoogleConnection = useCallback(async () => {
+    const result = await refetchDriveStatus();
+    return Boolean(result.data?.connected);
+  }, [refetchDriveStatus]);
+  const {
+    connecting: connectingGoogle,
+    beginConnection: beginGoogleConnection,
+    cancelConnection: cancelGoogleConnection,
+  } = useGoogleOAuthConnection({
+    connected: Boolean(driveStatus?.connected),
+    refreshConnection: refreshGoogleConnection,
   });
   const { data: localFolderData, refetch: refetchLocalFolders } =
     trpc.autoCollection.getLocalFolders.useQuery({ caseId });
@@ -122,17 +138,6 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
   useEffect(() => {
     if (!pullJobId && activePullJob.data?.id) setPullJobId(activePullJob.data.id);
   }, [activePullJob.data?.id, pullJobId]);
-
-  useEffect(() => {
-    if (!connectingGoogle) return;
-    if (driveStatus?.connected) {
-      setConnectingGoogle(false);
-      toast.success("Google connected");
-      return;
-    }
-    const timeout = window.setTimeout(() => setConnectingGoogle(false), 5 * 60_000);
-    return () => window.clearTimeout(timeout);
-  }, [connectingGoogle, driveStatus?.connected]);
 
   useEffect(() => {
     if (!currentJob || pullActive || handledJobId === currentJob.id) return;
@@ -196,9 +201,7 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
   const connectMutation = trpc.googleDrive.connect.useMutation({
     onSuccess: (data) => {
       if (data?.authUrl) {
-        window.open(data.authUrl, "_blank", "width=520,height=720");
-        setConnectingGoogle(true);
-        toast.message("Complete the Google sign-in in the new window");
+        beginGoogleConnection(data.authUrl);
       } else {
         toast.error("No auth URL returned");
       }
@@ -369,14 +372,36 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
             <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
               Gmail & Drive
             </div>
-            {driveStatus?.connected ? (
+            {driveStatusError ? (
+              <Button size="sm" variant="outline" onClick={() => void refetchDriveStatus()}>
+                <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                Google status unavailable - retry
+              </Button>
+            ) : driveStatus?.connected ? (
               <Badge variant="outline" className="border-green-500/40 text-green-400">
                 <CheckCircle2 className="w-3 h-3 mr-1" /> Connected
               </Badge>
             ) : (
-              <Button size="sm" variant="outline" onClick={handleConnectDrive}>
-                Connect Google
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleConnectDrive}
+                  disabled={connectingGoogle || connectMutation.isPending}
+                >
+                  {(connectingGoogle || connectMutation.isPending) ? (
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ExternalLink className="mr-2 h-3.5 w-3.5" />
+                  )}
+                  {connectingGoogle ? "Finishing Google connection..." : "Connect Google"}
+                </Button>
+                {connectingGoogle ? (
+                  <Button size="sm" variant="ghost" onClick={cancelGoogleConnection}>
+                    Cancel
+                  </Button>
+                ) : null}
+              </div>
             )}
           </div>
 

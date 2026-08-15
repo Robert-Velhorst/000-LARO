@@ -84,31 +84,30 @@ export const googleDriveRouter = router({
       await assertCaseOwnership(input.caseId, ctx.user.id);
       const db = await getDb();
       if (!db) {
-        return { connected: false, status: null };
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
       }
 
       const accounts = await db
         .select()
         .from(emailAccounts)
-        .where(and(eq(emailAccounts.userId, ctx.user.id), eq(emailAccounts.provider, "gmail")));
+        .where(and(
+          eq(emailAccounts.userId, ctx.user.id),
+          eq(emailAccounts.provider, "gmail"),
+          eq(emailAccounts.status, "connected"),
+        ));
 
       const connected = accounts.length > 0;
 
       // Count Drive-sourced evidence for the case.
-      let itemsCollected = 0;
-      try {
-        const rows = await db
-          .select()
-          .from(evidence)
-          .where(and(
-            eq(evidence.caseId, input.caseId),
-            eq(evidence.userId, ctx.user.id),
-            eq(evidence.source, "google_drive")
-          ));
-        itemsCollected = rows.length;
-      } catch {
-        itemsCollected = 0;
-      }
+      const rows = await db
+        .select()
+        .from(evidence)
+        .where(and(
+          eq(evidence.caseId, input.caseId),
+          eq(evidence.userId, ctx.user.id),
+          eq(evidence.source, "google_drive")
+        ));
+      const itemsCollected = rows.length;
 
       return {
         connected,
@@ -260,7 +259,11 @@ export const googleDriveRouter = router({
     const accounts = await db
       .select()
       .from(emailAccounts)
-      .where(and(eq(emailAccounts.userId, ctx.user.id), eq(emailAccounts.provider, "gmail")));
+      .where(and(
+        eq(emailAccounts.userId, ctx.user.id),
+        eq(emailAccounts.provider, "gmail"),
+        eq(emailAccounts.status, "connected"),
+      ));
 
     return {
       connected: accounts.length > 0,

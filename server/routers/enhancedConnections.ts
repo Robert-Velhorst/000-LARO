@@ -52,47 +52,47 @@ const createEnhancedConnectionRouter = (providerName: string) => {
     getStatus: protectedProcedure
       .input(z.object({ caseId: z.string().optional() }).optional())
       .query(async ({ input, ctx }) => {
-        try {
-          const db = await getDb();
-          if (!db) return { connected: false };
-
-          const oauthProvider = providerName === 'Gmail' || providerName === 'GoogleDrive'
-            ? 'gmail'
-            : providerName === 'Outlook' || providerName === 'OneDrive'
-              ? 'outlook'
-              : null;
-          if (oauthProvider) {
-            const accounts = await db.select().from(emailAccounts).where(
-              and(eq(emailAccounts.userId, ctx.user.id), eq(emailAccounts.provider, oauthProvider))
-            ).limit(1);
-            if (accounts[0]) {
-              return {
-                connected: accounts[0].status === 'connected',
-                itemCount: 1,
-                lastSync: accounts[0].connectedAt,
-              };
-            }
-          }
-
-          const conditions = [
-            eq(evidenceSources.userId, ctx.user.id),
-            eq(evidenceSources.sourceType, providerName)
-          ];
-          if (input?.caseId) conditions.push(eq(evidenceSources.caseId, input.caseId));
-
-          const sources = await db.select().from(evidenceSources).where(and(...conditions)).limit(1);
-          if (sources.length === 0) return { connected: false };
-
-          const source = sources[0];
-          const metadata = source.metadata ? JSON.parse(source.metadata) : {};
-          return {
-            connected: source.status === 'connected',
-            itemCount: source.itemCount || 0,
-            lastSync: source.lastSyncedAt,
-          };
-        } catch (error) {
-          return { connected: false };
+        const db = await getDb();
+        if (!db) {
+          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
         }
+
+        const oauthProvider = providerName === 'Gmail' || providerName === 'GoogleDrive'
+          ? 'gmail'
+          : providerName === 'Outlook' || providerName === 'OneDrive'
+            ? 'outlook'
+            : null;
+        if (oauthProvider) {
+          const accounts = await db.select().from(emailAccounts).where(and(
+            eq(emailAccounts.userId, ctx.user.id),
+            eq(emailAccounts.provider, oauthProvider),
+            eq(emailAccounts.status, 'connected'),
+          ));
+          const account = accounts[0];
+          return {
+            connected: accounts.length > 0,
+            accountCount: accounts.length,
+            email: account?.email ?? undefined,
+            displayName: account?.displayName ?? undefined,
+            lastSync: account?.connectedAt ?? undefined,
+          };
+        }
+
+        const conditions = [
+          eq(evidenceSources.userId, ctx.user.id),
+          eq(evidenceSources.sourceType, providerName)
+        ];
+        if (input?.caseId) conditions.push(eq(evidenceSources.caseId, input.caseId));
+
+        const sources = await db.select().from(evidenceSources).where(and(...conditions)).limit(1);
+        if (sources.length === 0) return { connected: false };
+
+        const source = sources[0];
+        return {
+          connected: source.status === 'connected',
+          itemCount: source.itemCount || 0,
+          lastSync: source.lastSyncedAt,
+        };
       }),
 
     getOAuthUrl: protectedProcedure
