@@ -46,7 +46,8 @@ suite('Phase 044 — acceptance criteria', () => {
     const caller = app.makeCaller(U);
     await caller.workflow.prepareDrafts({ caseId });
     const q = await caller.workflow.reviewQueue({ caseId });
-    const approved = await caller.workflow.approveDraft({ outreachId: q[0].id });
+    const review = await caller.workflow.preSendReview({ outreachId: q[0].id });
+    const approved = await caller.workflow.approveDraft({ outreachId: q[0].id, approvalHash: review.message.approvalHash });
     expect(approved.sent).toBe(false);
   });
 

@@ -32,6 +32,7 @@ import { assertOutreachTransition } from "./stateMachines";
 import { createAuditLog, AUDIT_ACTIONS } from "./audit";
 import { assertCaseOwnership } from "./_core/authz";
 import { createNotification } from "./notifications";
+import { readApprovedOutreachMessage, readOutreachMetadata } from "./outreachApproval";
 
 export interface SendResult {
   outreachId: string;
@@ -76,28 +77,44 @@ function readDispatchGuard(db: any, guardKey: string): string | null {
   return guard?.value ?? null;
 }
 
-function claimDispatch(db: any, guardKey: string, dispatchId: string): boolean {
-  return db.transaction((tx: any) => {
-    const result = tx
-      .insert(systemConfig)
-      .values({
-        configKey: guardKey,
-        configValue: `dispatching:${dispatchId}`,
-        updatedAt: new Date(),
-      })
-      .onConflictDoNothing()
-      .run();
-    return Number(result.changes || 0) === 1;
-  });
+class DispatchClaimConflict extends Error {}
+
+function claimDispatch(db: any, guardKey: string, dispatchId: string, outreachId: string): boolean {
+  try {
+    db.transaction((tx: any) => {
+      const now = new Date();
+      const guard = tx
+        .insert(systemConfig)
+        .values({ configKey: guardKey, configValue: `dispatching:${dispatchId}`, updatedAt: now })
+        .onConflictDoNothing()
+        .run();
+      if (Number(guard.changes || 0) !== 1) throw new DispatchClaimConflict();
+      const status = tx.update(outreachStatus)
+        .set({ status: "Dispatching", updatedAt: now })
+        .where(and(eq(outreachStatus.id, outreachId), eq(outreachStatus.status, "Approved")))
+        .run();
+      if (Number(status.changes || 0) !== 1) throw new DispatchClaimConflict();
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof DispatchClaimConflict) return false;
+    throw error;
+  }
 }
 
-function releaseUndeliveredClaim(db: any, guardKey: string, dispatchState: string): void {
-  db.delete(systemConfig)
-    .where(and(
-      eq(systemConfig.configKey, guardKey),
-      eq(systemConfig.configValue, dispatchState),
-    ))
-    .run();
+function releaseUndeliveredClaim(db: any, guardKey: string, dispatchState: string, outreachId: string): void {
+  db.transaction((tx: any) => {
+    const guard = tx.delete(systemConfig)
+      .where(and(eq(systemConfig.configKey, guardKey), eq(systemConfig.configValue, dispatchState)))
+      .run();
+    const status = tx.update(outreachStatus)
+      .set({ status: "Approved", updatedAt: new Date() })
+      .where(and(eq(outreachStatus.id, outreachId), eq(outreachStatus.status, "Dispatching")))
+      .run();
+    if (Number(guard.changes || 0) !== 1 || Number(status.changes || 0) !== 1) {
+      throw new Error("Outreach dispatch claim changed before it could be released");
+    }
+  });
 }
 
 function markDispatchUncertain(db: any, guardKey: string, dispatchState: string): void {
@@ -115,16 +132,6 @@ const defaultSender: EmailSender = async (email) => {
   const r = await sendSystemEmail({ to: email.to, subject: email.subject, text: email.text } as any);
   return { delivered: !!r.delivered, provider: r.provider, providerMessageId: r.providerMessageId };
 };
-
-function readOutreachMetadata(raw: string | null): Record<string, unknown> {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
 
 export async function listUncertainOutreachDispatches(): Promise<UncertainDispatchRecord[]> {
   const db = await getDb();
@@ -191,9 +198,13 @@ export async function resolveUncertainOutreachDispatch(options: {
     const { TRPCError } = await import("@trpc/server");
     throw new TRPCError({ code: "NOT_FOUND", message: "Outreach record not found." });
   }
-  if (options.outcome === "delivered" && !["Approved", "Sent"].includes(row.status || "")) {
+  if (options.outcome === "delivered" && !["Dispatching", "Sent"].includes(row.status || "")) {
     const { TRPCError } = await import("@trpc/server");
     throw new TRPCError({ code: "CONFLICT", message: `Cannot confirm delivery from outreach state ${row.status || "unknown"}.` });
+  }
+  if (options.outcome === "not_delivered" && row.status !== "Dispatching") {
+    const { TRPCError } = await import("@trpc/server");
+    throw new TRPCError({ code: "CONFLICT", message: `Cannot release delivery from outreach state ${row.status || "unknown"}.` });
   }
 
   const resolvedAt = new Date();
@@ -210,21 +221,28 @@ export async function resolveUncertainOutreachDispatch(options: {
       throw new Error("Outreach dispatch state changed before recovery was finalized");
     }
 
-    if (options.outcome === "delivered" && row.status === "Approved") {
-      assertOutreachTransition("Approved", "Sent");
-      tx.update(outreachStatus).set({
-        status: "Sent",
-        initialContact: row.initialContact ?? resolvedAt,
-        lastContact: resolvedAt,
+    const recoveredStatus = options.outcome === "delivered" ? "Sent" : "Approved";
+    if (row.status === "Dispatching") {
+      assertOutreachTransition("Dispatching", recoveredStatus);
+      const statusMutation = tx.update(outreachStatus).set({
+        status: recoveredStatus,
+        initialContact: options.outcome === "delivered" ? row.initialContact ?? resolvedAt : row.initialContact,
+        lastContact: options.outcome === "delivered" ? resolvedAt : row.lastContact,
         updatedAt: resolvedAt,
-      }).where(eq(outreachStatus.id, options.outreachId)).run();
+      }).where(and(
+        eq(outreachStatus.id, options.outreachId),
+        eq(outreachStatus.status, "Dispatching"),
+      )).run();
+      if (Number(statusMutation.changes || 0) !== 1) {
+        throw new Error("Outreach status changed before recovery was finalized");
+      }
       tx.insert(auditLogs).values({
         id: nanoid(),
         userId: options.operatorUserId,
         action: AUDIT_ACTIONS.OUTREACH_STATUS_CHANGED,
         entityType: "outreach",
         entityId: options.outreachId,
-        details: JSON.stringify({ from: "Approved", to: "Sent", provider: "operator-verified", recovery: true }),
+        details: JSON.stringify({ from: "Dispatching", to: recoveredStatus, provider: "operator-verified", recovery: true }),
         createdAt: resolvedAt,
       }).run();
     }
@@ -250,7 +268,7 @@ export async function resolveUncertainOutreachDispatch(options: {
     outreachId: options.outreachId,
     outcome: options.outcome,
     canRetry: options.outcome === "not_delivered",
-    status: options.outcome === "delivered" ? "Sent" : row.status,
+    status: options.outcome === "delivered" ? "Sent" : "Approved",
   };
 }
 
@@ -308,27 +326,26 @@ export async function sendApprovedOutreach(
     throw new TRPCError({ code: "BAD_REQUEST", message: `Draft must be Approved before sending (current: ${row.status}).` });
   }
 
-  // Resolve recipient (the matched lawyer's email).
-  const lawyer = (await db.select().from(lawyersTable).where(eq(lawyersTable.id, row.lawyerId!)).limit(1))[0];
-  const to = (lawyer as any)?.email;
-  if (!to) {
+  const approvedMessage = readApprovedOutreachMessage(row.metadata, outreachId, row.caseId);
+  if (!approvedMessage) {
     const { TRPCError } = await import("@trpc/server");
-    throw new TRPCError({ code: "BAD_REQUEST", message: "Matched lawyer has no email address; cannot send." });
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "This draft has no valid approved message snapshot. Return it to review and approve the exact message before sending.",
+    });
   }
-
-  const [caseRow] = await db.select().from(casesTable).where(eq(casesTable.id, row.caseId)).limit(1);
-  const subject = messageOverride?.subject || `Legal assistance enquiry — ${(caseRow as any)?.caseType || "case"}`;
-  const text = messageOverride?.text || (
-    `Hello ${(lawyer as any)?.name || "there"},\n\n` +
-    `A prospective client is seeking assistance with a ${(caseRow as any)?.caseType || "legal"} matter. ` +
-    `They would like to know if you are able to help.\n\n` +
-    `(Sent via LARO after explicit user approval. This is not legal advice.)`
-  );
+  if (messageOverride && (
+    messageOverride.subject !== approvedMessage.subject || messageOverride.text !== approvedMessage.text
+  )) {
+    const { TRPCError } = await import("@trpc/server");
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "The requested message differs from the approved message snapshot." });
+  }
+  const { to, subject, text } = approvedMessage;
 
   // Transmit. If no provider is configured, delivered=false → fail honestly.
   const dispatchId = nanoid();
   const dispatchState = `dispatching:${dispatchId}`;
-  if (!claimDispatch(db, guardKey, dispatchId)) {
+  if (!claimDispatch(db, guardKey, dispatchId, outreachId)) {
     const { TRPCError } = await import("@trpc/server");
     throw new TRPCError({
       code: "CONFLICT",
@@ -344,13 +361,13 @@ export async function sendApprovedOutreach(
     throw error;
   }
   if (!result.delivered) {
-    releaseUndeliveredClaim(db, guardKey, dispatchState);
+    releaseUndeliveredClaim(db, guardKey, dispatchState, outreachId);
     const { TRPCError } = await import("@trpc/server");
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No email provider is configured; nothing was sent. Configure SendGrid/SMTP." });
   }
 
   // Mark Sent (idempotently) + record.
-  assertOutreachTransition(row.status ?? null, "Sent");
+  assertOutreachTransition("Dispatching", "Sent");
   const sentAt = new Date();
   try {
     db.transaction((tx: any) => {
@@ -365,7 +382,7 @@ export async function sendApprovedOutreach(
         throw new Error("Outreach dispatch reservation was lost before finalization");
       }
 
-      tx.update(outreachStatus).set({
+      const statusUpdate = tx.update(outreachStatus).set({
         status: "Sent",
         initialContact: row.initialContact ?? sentAt,
         lastContact: sentAt,
@@ -378,7 +395,13 @@ export async function sendApprovedOutreach(
           outboundSentAt: sentAt.toISOString(),
         }),
         updatedAt: sentAt,
-      }).where(eq(outreachStatus.id, outreachId)).run();
+      }).where(and(
+        eq(outreachStatus.id, outreachId),
+        eq(outreachStatus.status, "Dispatching"),
+      )).run();
+      if (Number(statusUpdate.changes || 0) !== 1) {
+        throw new Error("Outreach dispatch status changed before finalization");
+      }
 
       tx.insert(auditLogs).values({
         id: nanoid(),
@@ -386,7 +409,7 @@ export async function sendApprovedOutreach(
         action: AUDIT_ACTIONS.OUTREACH_STATUS_CHANGED,
         entityType: "outreach",
         entityId: outreachId,
-        details: JSON.stringify({ from: "Approved", to: "Sent", provider: result.provider }),
+        details: JSON.stringify({ from: "Dispatching", to: "Sent", provider: result.provider }),
         createdAt: sentAt,
       }).run();
     });

@@ -303,7 +303,7 @@ export async function collectLiveProviderAcceptance(
   const sentAudits = ownerAudits.filter((entry) => {
     if (entry.action !== AUDIT_ACTIONS.OUTREACH_STATUS_CHANGED || !entry.entityId) return false;
     const details = parsedAuditDetails(entry.details);
-    return details.from === "Approved" && details.to === "Sent";
+    return details.from === "Dispatching" && details.to === "Sent";
   });
   const sentIds = new Set(sentAudits.flatMap((entry) => entry.entityId ? [entry.entityId] : []));
   const sentAuditCountById = new Map<string, number>();

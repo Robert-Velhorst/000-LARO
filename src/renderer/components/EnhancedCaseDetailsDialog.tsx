@@ -563,6 +563,12 @@ export default function EnhancedCaseDetailsDialog({
   });
   const [isEditing, setIsEditing] = useState(false);
   const [editedCase, setEditedCase] = useState<any>(null);
+  const [outreachReview, setOutreachReview] = useState<{
+    action: "approve" | "approve-batch" | "send";
+    entries: any[];
+  } | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const utils = trpc.useUtils();
 
   const [activeTab, setActiveTab] = useState(() => {
     const saved = localStorage.getItem(`case-tab-${caseId}`);
@@ -634,11 +640,11 @@ export default function EnhancedCaseDetailsDialog({
   });
 
   const approveDraftMutation = trpc.workflow.approveDraft.useMutation({
-    onSuccess: () => { toast.success("Draft approved; nothing has been sent yet"); refetchOutreach(); },
+    onSuccess: () => { setOutreachReview(null); toast.success("Draft approved; nothing has been sent yet"); refetchOutreach(); },
     onError: (error) => toast.error(error.message),
   });
   const approveDraftsMutation = trpc.workflow.approveDrafts.useMutation({
-    onSuccess: (result) => { toast.success(`${result.approved} drafts approved; nothing has been sent yet`); refetchOutreach(); },
+    onSuccess: (result) => { setOutreachReview(null); toast.success(`${result.approved} drafts approved; nothing has been sent yet`); refetchOutreach(); },
     onError: (error) => toast.error(error.message),
   });
   const rejectDraftMutation = trpc.workflow.rejectDraft.useMutation({
@@ -646,7 +652,7 @@ export default function EnhancedCaseDetailsDialog({
     onError: (error) => toast.error(error.message),
   });
   const sendApprovedMutation = trpc.workflow.sendApproved.useMutation({
-    onSuccess: () => { toast.success("Outreach sent"); refetchOutreach(); },
+    onSuccess: () => { setOutreachReview(null); toast.success("Outreach sent"); refetchOutreach(); },
     onError: (error) => toast.error(error.message),
   });
   const recordResponseMutation = trpc.workflow.recordResponse.useMutation({
@@ -666,10 +672,39 @@ export default function EnhancedCaseDetailsDialog({
     if (!editedCase || !caseId) return;
     updateCaseMutation.mutate({ id: caseId, caseSummary: editedCase.caseSummary, urgency: editedCase.urgency });
   };
-  const handleSendApproved = (outreach: any) => {
-    const recipient = outreach.lawyerEmail || outreach.lawyerName || "this lawyer";
-    if (window.confirm(`Send the approved outreach to ${recipient}? This external action cannot be recalled.`)) {
-      sendApprovedMutation.mutate({ outreachId: outreach.id });
+  const openOutreachReview = async (
+    outreachIds: string[],
+    action: "approve" | "approve-batch" | "send",
+  ) => {
+    setReviewLoading(true);
+    try {
+      const entries = await Promise.all(outreachIds.map((outreachId) =>
+        utils.workflow.preSendReview.fetch({ outreachId })
+      ));
+      setOutreachReview({ action, entries });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not load the exact outreach message");
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+  const confirmOutreachReview = () => {
+    if (!outreachReview) return;
+    const outreachIds = outreachReview.entries.map((entry) => entry.outreachId);
+    if (outreachReview.action === "approve") {
+      approveDraftMutation.mutate({
+        outreachId: outreachIds[0],
+        approvalHash: outreachReview.entries[0].message.approvalHash,
+      });
+    } else if (outreachReview.action === "approve-batch") {
+      approveDraftsMutation.mutate({
+        approvals: outreachReview.entries.map((entry) => ({
+          outreachId: entry.outreachId,
+          approvalHash: entry.message.approvalHash,
+        })),
+      });
+    } else {
+      sendApprovedMutation.mutate({ outreachId: outreachIds[0] });
     }
   };
   const handleRecordResponse = (outreachId: string, response: "Interested" | "Declined") => {
@@ -704,6 +739,7 @@ export default function EnhancedCaseDetailsDialog({
 
   /* ═══════════════════════ RENDER ═══════════════════════ */
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
@@ -1283,8 +1319,8 @@ export default function EnhancedCaseDetailsDialog({
                             <MessageSquare className="w-4 h-4 text-muted-foreground/60" /> Lawyer outreach
                           </CardTitle>
                           {workflowPreferences.data?.messageApprovalMode === "batch" && pendingOutreachIds.length > 1 ? (
-                            <Button size="sm" variant="outline" disabled={approveDraftsMutation.isPending} onClick={() => approveDraftsMutation.mutate({ outreachIds: pendingOutreachIds })}>
-                              {approveDraftsMutation.isPending ? "Approving..." : `Approve ${pendingOutreachIds.length} drafts`}
+                            <Button size="sm" variant="outline" disabled={approveDraftsMutation.isPending || reviewLoading} onClick={() => void openOutreachReview(pendingOutreachIds, "approve-batch")}>
+                              {reviewLoading ? "Loading..." : `Review ${pendingOutreachIds.length} drafts`}
                             </Button>
                           ) : null}
                         </div>
@@ -1302,7 +1338,7 @@ export default function EnhancedCaseDetailsDialog({
                                 </div>
                                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                                   {outreach.distanceKm !== null && outreach.distanceKm !== undefined ? <span>Distance: {outreach.distanceKm} km</span> : null}
-                                  {outreach.initialContact ? <span>Contact: {new Date(outreach.initialContact).toLocaleDateString()}</span> : <span>Not sent</span>}
+                                  {outreach.initialContact ? <span>Contact: {new Date(outreach.initialContact).toLocaleDateString()}</span> : outreach.status === "Dispatching" ? <span>Delivery awaiting confirmation</span> : <span>Not sent</span>}
                                   <span>Follow-ups: {outreach.followUpsSent}</span>
                                 </div>
                                 {outreach.response && (
@@ -1312,11 +1348,16 @@ export default function EnhancedCaseDetailsDialog({
                                   {outreach.status === "PendingApproval" && (
                                     <>
                                       <Button size="sm" variant="outline" onClick={() => rejectDraftMutation.mutate({ outreachId: outreach.id })}>Reject</Button>
-                                      <Button size="sm" onClick={() => approveDraftMutation.mutate({ outreachId: outreach.id })}>Approve</Button>
+                                      <Button size="sm" disabled={reviewLoading} onClick={() => void openOutreachReview([outreach.id], "approve")}>Review &amp; approve</Button>
                                     </>
                                   )}
                                   {outreach.status === "Approved" && (
-                                    <Button size="sm" onClick={() => handleSendApproved(outreach)} disabled={sendApprovedMutation.isPending}>Review &amp; send</Button>
+                                    <Button size="sm" onClick={() => void openOutreachReview([outreach.id], "send")} disabled={sendApprovedMutation.isPending || reviewLoading}>Review &amp; send</Button>
+                                  )}
+                                  {outreach.status === "Dispatching" && (
+                                    <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                                      <Loader2 className="h-4 w-4 animate-spin" /> Verifying delivery
+                                    </span>
                                   )}
                                   {outreach.status === "Sent" && (
                                     <>
@@ -1352,5 +1393,45 @@ export default function EnhancedCaseDetailsDialog({
         </div>
       </DialogContent>
     </Dialog>
+    <Dialog open={Boolean(outreachReview)} onOpenChange={(nextOpen) => { if (!nextOpen) setOutreachReview(null); }}>
+      <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>
+            {outreachReview?.action === "send" ? "Confirm external email" : "Review outreach message"}
+          </DialogTitle>
+          <DialogDescription>
+            Verify every recipient and the complete message. Approval is bound to exactly this content.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="divide-y divide-border/50">
+          {outreachReview?.entries.map((entry) => (
+            <section key={entry.outreachId} className="space-y-3 py-4 first:pt-0 last:pb-0">
+              <div className="grid gap-3 text-sm sm:grid-cols-[7rem_1fr]">
+                <span className="font-medium text-muted-foreground">Recipient</span>
+                <span className="break-all">{entry.message.to}</span>
+                <span className="font-medium text-muted-foreground">Subject</span>
+                <span className="break-words">{entry.message.subject}</span>
+              </div>
+              <div>
+                <p className="mb-2 text-sm font-medium text-muted-foreground">Message</p>
+                <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/50 bg-muted/30 p-3 font-sans text-sm leading-6">
+                  {entry.message.text}
+                </pre>
+              </div>
+            </section>
+          ))}
+        </div>
+        <div className="flex flex-wrap justify-end gap-2 border-t border-border/50 pt-4">
+          <Button variant="outline" onClick={() => setOutreachReview(null)}>Cancel</Button>
+          <Button
+            onClick={confirmOutreachReview}
+            disabled={approveDraftMutation.isPending || approveDraftsMutation.isPending || sendApprovedMutation.isPending}
+          >
+            {outreachReview?.action === "send" ? "Send email" : outreachReview?.action === "approve-batch" ? "Approve reviewed batch" : "Approve message"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

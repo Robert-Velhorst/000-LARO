@@ -68,7 +68,8 @@ suite('Phase 043 — critical-path e2e', () => {
     const queue = await caller.workflow.reviewQueue({ caseId });
     expect(queue.length).toBeGreaterThan(0);
 
-    const approved = await caller.workflow.approveDraft({ outreachId: queue[0].id });
+    const review = await caller.workflow.preSendReview({ outreachId: queue[0].id });
+    const approved = await caller.workflow.approveDraft({ outreachId: queue[0].id, approvalHash: review.message.approvalHash });
     expect(approved.status).toBe('Approved');
     expect(approved.sent).toBe(false); // safety boundary: nothing is sent
 

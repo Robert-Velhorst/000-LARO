@@ -24,6 +24,7 @@ const CASE_TRANSITIONS: Record<CaseState, CaseState[]> = {
 export const OUTREACH_STATES = [
   "PendingApproval",
   "Approved",
+  "Dispatching",
   "Rejected",
   "Sent",
   "Interested",
@@ -34,7 +35,8 @@ export type OutreachState = (typeof OUTREACH_STATES)[number];
 
 const OUTREACH_TRANSITIONS: Record<OutreachState, OutreachState[]> = {
   PendingApproval: ["Approved", "Rejected"],
-  Approved: ["Sent", "Rejected"], // may still be pulled before send
+  Approved: ["Dispatching", "Rejected"], // may still be pulled before dispatch is claimed
+  Dispatching: ["Sent", "Approved"], // Approved is recovery after confirmed non-delivery
   Rejected: [], // terminal
   Sent: ["Interested", "Declined", "NoResponse"],
   Interested: ["Declined", "NoResponse"],
