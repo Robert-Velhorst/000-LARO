@@ -1,359 +1,502 @@
 # LARO: Legal Aid Reach Out
 
-LARO is a local-first legal case workspace for collecting evidence, understanding source documents, building a reviewable chronology, matching support, and preparing controlled outreach. Its core design principle is provenance: findings should lead back to the document and passage that support them.
+![LARO logo](public/laro-logo.png)
 
-LARO assists with organization and preparation. It is not a lawyer, does not provide definitive legal advice, and must not present generated analysis as a confirmed legal conclusion. External communication is never implicit: approval, feature, provider, ownership, and emergency-stop checks protect the send path.
+LARO is a local-first legal case workspace for turning scattered documents into
+an organized, source-linked case record. It helps a case owner collect evidence,
+read and compare documents, reconstruct what happened over time, identify
+potential support, prepare outreach, and export an auditable case package.
 
-## Current Architecture
+LARO is designed around one rule: **a conclusion should lead back to the source
+that supports it**. Extracted events, summaries, legal observations, and inferred
+document relationships remain reviewable suggestions. Raw source documents are
+not hidden or discarded.
 
-This repository has one maintained Express/tRPC application architecture with
-two production deployment modes: the Electron desktop and an API-only Docker
-service. The Flask command center is retained as a legacy review and migration
-source so existing source-linked ledgers can be moved without treating two
-databases as concurrent authorities.
+> [!IMPORTANT]
+> LARO is an assistance and preparation tool. It is not a lawyer, does not give
+> definitive legal advice, and does not determine the legal truth or likely
+> outcome of a case. Generated work must be reviewed by a qualified person.
 
-| Runtime | Primary use | Source | Default address | Persistence |
-| --- | --- | --- | --- | --- |
-| Electron desktop + Express/tRPC | Desktop case workflow, connectors, matching, controlled outreach, administration | `src-main/`, `src/renderer/`, `server/` | `http://localhost:3000` inside Electron | SQLite via Drizzle plus local or S3 evidence storage |
-| Express/tRPC API-only service | Authenticated remote API and provider operations through a controlled gateway | `server/`, `Dockerfile`, `docker-compose.yml` | Loopback Docker port routed through the configured HTTPS gateway | SQLite and local evidence in the persistent Docker volume, or configured S3 |
-| Legacy Flask migration source | Review/export an existing source-linked legal ledger before owner-bound migration | `app.py`, `legal_ledger.py`, `frontend/` | `http://127.0.0.1:8768/case_command_center.html` | `instance/laro_ledger.sqlite3` plus ignored local uploads and token vault |
+## Contents
 
-The Electron main process starts the Express/tRPC server and React renderer together. `npm run dev:server` runs only that API server. The Flask launcher remains loopback-only for legacy review. Stop both applications before applying the one-way Flask-to-desktop migration; after migration, Electron is authoritative.
+- [LARO at a glance](#laro-at-a-glance)
+- [Core principles](#core-principles)
+- [How a case moves through LARO](#how-a-case-moves-through-laro)
+- [Capabilities](#capabilities)
+- [User interface](#user-interface)
+- [Architecture](#architecture)
+- [Installation and quick start](#installation-and-quick-start)
+- [Configuration](#configuration)
+- [Google and outbound email](#google-and-outbound-email)
+- [API-only and ngrok deployment](#api-only-and-ngrok-deployment)
+- [Security, privacy, and recovery](#security-privacy-and-recovery)
+- [Developer guide](#developer-guide)
+- [Testing and production readiness](#testing-and-production-readiness)
+- [Legacy Flask migration](#legacy-flask-migration)
+- [Known limitations](#known-limitations)
+- [Troubleshooting](#troubleshooting)
+- [Documentation index](#documentation-index)
+
+## LARO at a Glance
+
+### Who It Is For
+
+| Reader | What LARO provides |
+| --- | --- |
+| A person with a legal matter | One place to organize the case, evidence, chronology, possible lawyers, support organizations, media contacts, and reviewed outreach |
+| A legal professional or case worker | Source-linked document analysis, evidence comparisons, case reconstruction, missing-record review, deadlines, obligations, and exportable case material |
+| An operator | Provider configuration, health checks, audit history, emergency controls, backups, retention, and controlled deployment |
+| A software developer | A React/Electron desktop app, Express/tRPC API, SQLite/Drizzle data layer, deterministic intelligence, provider adapters, tests, and release gates |
+
+### What It Does
+
+- Stores owned cases and their evidence in a structured workspace.
+- Imports evidence from uploads, selected local folders, Gmail, and Google Drive
+  when those providers are configured.
+- Extracts text and builds source-grounded summaries, events, parties, dates,
+  amounts, claims, obligations, legal issues, risks, and source spans.
+- Answers case questions from completed analyses while preserving references.
+- Builds chronological, horizontal, vertical, Gantt, story, and metro-style
+  Papertrail views with direct access to source documents.
+- Searches and ranks lawyers through the official Dutch NOvA public directory.
+- Maintains reviewable directories for media and support organizations.
+- Prepares outreach and tracks responses without silently contacting anyone.
+- Exports evidence and provenance in reviewable packages.
+
+### What It Does Not Do
+
+- It does not replace a lawyer or establish facts, liability, motive, evidence
+  destruction, or a legal outcome.
+- It does not treat AI output as confirmed evidence.
+- It does not automatically approve or send an external message.
+- It does not claim that target discovery is exhaustive.
+- It does not provide a trusted, publicly signed Windows installer. The current
+  distribution target is an unsigned internal portable build.
+- It does not make every configured connector operational. Microsoft collection
+  and Trello OAuth remain unavailable until their complete flows are accepted.
+
+## Core Principles
+
+1. **Source before summary.** Evidence retains its origin, content hash, and a
+   retrievable managed copy. Findings point to extracted source spans.
+2. **Raw evidence remains part of the record.** Analysis adds a review layer; it
+   does not replace or exclude the underlying document.
+3. **Local-first by default.** Core case work and deterministic analysis do not
+   require a paid AI provider. Optional cloud providers are selected explicitly.
+4. **Human review before consequence.** Suggestions, timeline corrections,
+   shortlists, messages, and exports remain reviewable.
+5. **No implicit external action.** Sending requires ownership, exact-message
+   approval, an enabled flag, a released emergency stop, a configured provider,
+   and an unused dispatch guard.
+6. **Unknown stays unknown.** Missing lawyer capacity, availability, performance,
+   or provider state receives no invented value.
+7. **Fail closed.** Missing credentials, invalid citations, stale approvals,
+   unsupported formats, storage failures, and uncertain delivery do not produce
+   false success states.
+8. **One production data authority.** Electron/Express is authoritative after a
+   legacy Flask workspace has been migrated. Bidirectional editing is unsupported.
+
+## How a Case Moves Through LARO
+
+1. **Create a case.** Describe the situation in ordinary language. LARO stores
+   the draft, creates the case, and classifies relevant legal areas.
+2. **Collect evidence.** Upload files, select a local folder, or connect Gmail and
+   Drive. Imported items retain source metadata and SHA-256 provenance.
+3. **Review and link.** Case-neutral documents can remain in an inbox until a
+   user accepts a deterministic case suggestion. Nothing is silently linked.
+4. **Analyze documents.** Supported evidence is extracted locally and turned
+   into versioned, source-linked suggestions. Existing stored documents do not
+   need to be uploaded again.
+5. **Understand the history.** Use the timeline, story, Gantt chart, or metro map
+   to inspect who said or did what, when, and in which document.
+6. **Identify gaps.** Review missing records, contradictions, deadlines,
+   obligations, and open loops. Completeness is not case strength.
+7. **Find support.** Search lawyers with official filters and match reviewed
+   media or organization targets against the case.
+8. **Prepare outreach.** Review the exact recipient, subject, body, disclaimer,
+   and content hash before approval.
+9. **Send deliberately.** Approval still does not send. A separate send action
+   uses the immutable approved message and guarded provider path.
+10. **Track and export.** Record responses, inspect analytics, export the case,
+    or exercise account and case erasure controls.
 
 ## Capabilities
 
-### Case and evidence work
+### Case Management
 
-- Persist cases, parties, identifiers, status, risk, deadlines, obligations, open loops, claims, positions, and audit history.
-- Upload or stage PDF, DOCX, HTML, text, email-shaped, and Drive-shaped records while retaining source metadata and content hashes.
-- Keep case-neutral documents in an inbox until a user reviews deterministic case suggestions and explicitly links them.
-- Pull selected Gmail and Google Drive records through real read-only OAuth when credentials are configured; multi-account owners explicitly choose which Drive account each folder belongs to.
-- Run desktop keyword pulls as persisted, resumable jobs with live source phase,
-  extracted-word and item counts, percentage, and estimated seconds remaining.
-- Deduplicate imported evidence while preserving source URIs and locally retrievable files.
-- Open managed local evidence through ownership-gated, five-minute signed HTTP
-  links that verify the stored SHA-256 hash and never expose a desktop or
-  container filesystem path. Configured S3 storage continues to use provider-
-  signed URLs.
-- Scan only folders selected through the native desktop picker, review the discovered files, and upload only the selected evidence.
-- Standalone servers reject local-folder collection unless the path resolves
-  inside an operator-configured `LOCAL_SCAN_ROOTS` allowlist.
-- Store actual scanner bytes under the owned case with SHA-256 provenance; scanner credentials expire after 15 minutes and cannot call other protected APIs.
-- Persist Gmail messages, attachments, local files, and Drive files under the same evidence contract; Google-native documents are exported to analyzable PDF while retaining their source identity.
-- Score case evidence against persisted case context and source-linked document analyses, with the score, matched terms, method, and reasoning retained in evidence metadata.
-- Export a case-scoped CSV index or ZIP evidence package containing provenance metadata, analyses, and every available managed source document.
+- Owned cases with status, urgency, legal areas, parties, identifiers, claims,
+  positions, deadlines, obligations, risks, notes, and audit history.
+- Draft autosave and restore during case intake.
+- Search, filtering, saved searches, notifications, and activity history.
+- Case-scoped checks on documents, analysis, timelines, matching, outreach,
+  exports, and destructive actions.
+- Case and account data exports.
 
-### Document intelligence and Papertrail
+### Evidence Collection and Provenance
 
-- Extract readable text and create review-only suggestions for events, claims, evidence links, contradictions, deadlines, obligations, and missing evidence.
-- Analyze TXT, CSV, HTML, EML, PDF, DOCX, and JPEG/PNG/GIF/WebP/BMP image evidence locally in the desktop runtime; Dutch and English image OCR feeds the same versioned summaries, parties, dates, amounts, claims, obligations, legal issues, risks, and source spans. Scanned PDFs must first be converted to images.
-- Run local citation extraction automatically for supported Gmail, Drive, and folder imports; optional deep analysis is accepted only when every finding cites a real extracted source segment.
-- Ask case questions against the most relevant completed document analyses. Answers
-  must preserve valid document IDs, expose direct source controls, and fall back
-  to deterministic evidence matches when the optional model provider is
-  unavailable or returns invalid citations.
-- Analyze one or all pending stored case documents from the Analysis workspace;
-  documents uploaded through the normal Evidence flow do not need to be
-  uploaded again.
-- Run full-source deterministic comparisons or optional loopback-only Ollama analysis in bounded batches.
-- Reject uncited model observations; retained suggestions include literal source support and remain unconfirmed until reviewed.
-- Build who-said-or-did-what-and-when timelines with actor, action, affected party, event type, date, summary, and direct document access.
-- Reconstruct the case history as a metro-style document map: every real case
-  document is a dated station, event categories form route lines, and provider
-  metadata or literal document references form solid directional links.
-- Show similarity-based relationships only as dashed suggestions with a
-  confidence threshold and reviewable basis. LARO does not relabel similarity
-  as proven influence or causation.
-- Trace a selected document backward and forward, filter routes, switch between
-  horizontal and vertical maps, zoom, and use an accessible chronological list;
-  each station retains a direct source-document control.
-- Focus the reconstruction on one source-derived participant or legal topic and
-  inspect every dated action retained for the selected document.
-- Read the evidence as neutral date-ordered story phases, jump to source-backed
-  key moments, and inspect connected chains with separate verified and inferred
-  link counts. These views never infer motive or a legal outcome.
-- Browse source-linked legal events horizontally or vertically, source documents,
-  and operational case activity from one Timeline workspace.
-- Inspect the same evidence history as a metro map, chronological list, or Gantt chart. Natural-language timeline corrections are stored as audited overlays; source evidence remains immutable.
-- Generate source-linked case summaries, lawyer briefings, red-line drafts, and approval-bound case bundles.
+| Source | Current behavior |
+| --- | --- |
+| Direct upload | Validates type/size, stores real bytes locally or in S3, computes SHA-256, and rolls back if record creation fails |
+| Desktop folder | Uses the native folder picker, requires a case, presents files for review, and uploads only selected files |
+| Standalone folder | Accepts only paths under operator-configured `LOCAL_SCAN_ROOTS` |
+| Gmail | Uses read-only Google OAuth, imports messages/attachments, retains Gmail identity, and supports bounded filtered pulls |
+| Google Drive | Uses read-only OAuth, supports explicit account/folder selection, and exports Google-native documents to PDF before analysis |
+| Inbox | Holds case-neutral evidence until the owner explicitly links it |
 
-### Matching and outreach
+Keyword pulls are persisted jobs rather than page-bound tasks. Their state can
+survive navigation or reload and includes source phase, reviewed items,
+extracted words and characters, elapsed time, percentage, ETA, result, and
+failure detail.
 
-- Query the official NOvA public lawyer finder from the desktop case workspace, retain source/profile provenance, and rank lawyers using the case's legal fields plus only attributes that are actually available. Unknown capacity, availability, or performance receives no invented score.
-- Apply official legal-area, city/postcode, radius, specialization-association, and financed-legal-aid filters. City/postcode sharing is explicit; LARO does not send case prose or a client's stored address to NOvA.
-- Use one desktop Outreach workspace for analytics, lawyers, media, and organizations. Media and organization candidates follow the owner's per-item, batch, or automatic shortlist-review setting; preparing a shortlist never sends a message.
-- Discover or manually import media/organization candidates from bounded public searches, deduplicate them per owner and category, and rank only approved records against the selected case. Discovery sends canonical legal-area queries, never case prose, and does not claim exhaustive internet coverage.
-- Legacy Flask outreach records are archived during migration but are never inserted into a live desktop send queue.
-- Track outreach totals, progress, responses, acceptance, and pending work per case.
-- Prepare and approve outreach drafts without sending them automatically.
-- Send an approved desktop-runtime lawyer outreach only when the global emergency stop is released, `outreach.send.enabled` is enabled, the caller owns the case, a real email provider is configured, and the idempotency guard has not already recorded the send.
-- Resolve an ambiguous provider outcome from the admin operations view only after checking provider activity. Confirmed delivery finalizes the send-once guard without retransmission; confirmed non-delivery safely permits a controlled retry, and both decisions are audited.
-- Prove the target environment's outbound path with an explicit owner self-test that verifies one Gmail inbox copy, exercises duplicate prevention, stores only signed redacted acceptance evidence, and removes its temporary case/outreach records.
-- Prove the target environment's Google intake with an explicit owner self-test
-  that reuses the labelled outbound message, exercises the real Gmail collector,
-  deterministic email analysis, signed source retrieval, and source-open audit,
-  then stores only signed redacted proof and removes the temporary case and bytes.
+Managed local files open through owner-checked, short-lived signed URLs. The
+server verifies the stored hash and does not expose a filesystem path. S3-backed
+evidence uses provider-signed URLs.
 
-## Prerequisites
+Supported desktop analysis inputs:
 
-- Windows 10/11 for the primary desktop and PowerShell workflow.
-- Node.js 22.12 or newer in the Node 22 LTS line. CI, Electron 43, and the native-module rebuild scripts use this baseline.
-- Python 3.11 or newer only when reviewing, recovering, or migrating a legacy Flask workspace.
-- C++ build tools may be needed if npm cannot obtain a compatible native binary.
-- Optional: a local [Ollama](https://ollama.com/) installation for deeper local document reading.
-- Optional: provider credentials for Google, Microsoft, S3, Trello, Telegram, AI models, or outbound email.
+- TXT, CSV, HTML, and EML
+- PDF and DOCX
+- JPEG, PNG, GIF, WebP, and BMP through Dutch/English OCR
 
-## Desktop Quick Start
+PDF extraction reads embedded text first. Pages with too little readable text
+are rendered and passed through Dutch/English OCR, then merged back into the
+page-ordered result. OCR quality still depends on scan quality and layout.
 
-From the repository root in PowerShell:
+### Document Intelligence
+
+The maintained desktop runtime performs deterministic extraction first. It can
+retain summaries, document types, parties, contacts, dates, amounts, legal
+references, claims, positions, obligations, deadlines, risks, legal issues,
+chronology, events, contradictions, and literal source spans.
+
+Optional provider enrichment is accepted only when every retained observation
+cites an extracted source segment belonging to that document. Unknown or
+uncited findings are discarded. Cache entries bind to the source hash, analysis
+version, provider, and model, so a changed input triggers fresh analysis.
+
+The case question interface searches completed analyses. A valid answer keeps
+document IDs and source controls. If an optional model is unavailable or returns
+invalid citations, LARO falls back to deterministic matches rather than
+inventing an answer.
+
+### Timelines, Gantt, and Papertrail
+
+LARO offers several views over the same evidence:
+
+- a neutral chronological story grouped into date-ordered phases;
+- source-linked legal events in horizontal or vertical orientation;
+- a Gantt-style view for dated work, deadlines, and activity;
+- source-document chronology and operational case activity;
+- an accessible chronological list;
+- a metro-style reconstruction inspired by Paper-trail Visualizer.
+
+In the metro map, documents are stations and event categories are route lines.
+Solid directional links come from provider metadata or literal document
+references. Dashed links are bounded similarity suggestions based on shared
+parties, issues, terms, route, and chronology. They include a basis and
+confidence and are not proof of influence or causation.
+
+Users can filter routes, change orientation, zoom, trace a station backward or
+forward, focus on an analyzed participant or topic, inspect source-derived
+actions, and open the document. Natural-language corrections are audited
+overlays; source evidence remains immutable.
+
+### Lawyer Matching
+
+- Queries the official NOvA public lawyer finder from the case workspace.
+- Supports official legal area, city/postcode, radius, specialization
+  association, and financed-legal-aid filters.
+- Sends filter terms, not the case narrative or stored client address.
+- Retains official profile/source provenance.
+- Ranks with case-derived legal fields and only available data.
+- Does not invent capacity, availability, performance, or quality.
+
+Matching is decision support, not an endorsement or availability guarantee.
+
+### Media and Organization Matching
+
+The Outreach workspace includes owner-scoped directories for media programs,
+newsrooms, journalists, advocacy groups, support organizations, associations,
+and relevant lobbies.
+
+Candidates can be entered manually or found through bounded public searches.
+Discovery sends canonical legal-area queries, never private case prose. New
+candidates start pending, are deduplicated, and require review before case
+matching. Automatic mode may build a shortlist; it never sends a message.
+
+This is a curated review aid, not a comprehensive or continuously verified
+database of every possible target on the internet.
+
+### Outreach and Analytics
+
+```text
+PendingApproval -> Approved -> Dispatching -> Sent
+        |             |             |
+        +-> Rejected  +-> Rejected   +-> Approved after confirmed non-delivery
+```
+
+- Drafts can be reviewed individually or as a batch.
+- Historical `automatic` mode means draft preparation only. Human approval is
+  still required.
+- Approval hashes outreach ID, case ID, recipient, subject, complete body, and
+  disclaimer. Stale or modified content requires a new review.
+- Dispatch claims a message atomically before provider contact, preventing
+  duplicate sends and send/reject races.
+- Provider exceptions remain uncertain instead of being silently retried. An
+  operator verifies provider activity and records delivered or not delivered.
+- `outreach.send.enabled` is off by default. The emergency stop overrides it.
+- Analytics use owned records for prepared, approved, sent, responses, interest,
+  declines, follow-ups, progress, and response rates.
+
+### Export, Privacy, and Erasure
+
+- Case-scoped CSV evidence index.
+- ZIP package with available source bytes, provenance, analyses, and manifest.
+- Case/account data export without credential-shaped fields.
+- Case/account erasure with managed-storage deletion tracking and retry.
+- Shared-object retention while another record still references it.
+- Bounded audit and backup retention.
+
+PDF evidence-package export is not implemented and remains labelled unavailable.
+
+## User Interface
+
+The interface uses progressive disclosure: ordinary tasks appear first, while
+advanced analysis and operational controls remain available without crowding
+the primary workflow.
+
+| Area | Purpose |
+| --- | --- |
+| Home | Owned case overview, activity, and next actions |
+| Cases | Create, filter, open, update, export, or erase a case |
+| Case command center | Evidence, analysis, timelines, gaps, progress, outreach, communications, and exports |
+| Evidence | Upload, collect, search, filter, score, compare, validate, and export |
+| Analysis | Analyze pending documents, inspect findings, and ask grounded questions |
+| Timeline | Legal events, documents, activity, story, Gantt, and Papertrail reconstruction |
+| Lawyers | Directory, official filters, comparison, and profiles |
+| Outreach | Overview analytics plus Lawyers, Media, and Organizations |
+| Messages and Email | Persisted communications and configured account workflows |
+| Settings | Account, language, workflow, analysis provider, integrations, and HAI |
+| Privacy | Data export, privacy preferences, and account erasure |
+| Admin | Health, invariants, flags, retention, emergency stop, and uncertain dispatches |
+| Help | Guidance, error catalog, and legal boundary |
+
+The shipped dashboard supports Dutch and English for authentication, navigation,
+legal safety messaging, and the scanner. Source and user text retain their
+original language.
+
+## Architecture
+
+```text
+Electron main process
+  -> creates/loads installation secrets
+  -> opens and migrates SQLite
+  -> starts Express/tRPC on loopback
+  -> loads the React renderer
+  -> provides narrow native IPC
+
+React renderer -> /api/trpc with an HTTP-only session
+
+Express/tRPC server
+  -> enforces authentication, roles, ownership, limits, and state machines
+  -> reads/writes SQLite through Drizzle
+  -> stores evidence locally or in S3
+  -> owns provider credentials and external calls
+```
+
+| Layer | Technology | Source |
+| --- | --- | --- |
+| Desktop shell | Electron 43 | `src-main/` |
+| Interface | React 18, Vite 8, Tailwind, Radix UI, TanStack Query | `src/renderer/` |
+| API | Express, tRPC, Zod | `server/` |
+| Persistence | SQLite, better-sqlite3, Drizzle | `server/schema.ts`, `drizzle/` |
+| Evidence storage | Confined local storage or AWS S3 | server storage modules |
+| Extraction | pdf-parse, Mammoth, Cheerio, Tesseract.js, local parsers | analysis modules |
+| Legacy source | Flask, SQLAlchemy, local encrypted vault | `app.py`, `legal_ledger.py`, `frontend/` |
+
+### Deployment Modes
+
+| Mode | Includes | Intended use |
+| --- | --- | --- |
+| Electron desktop | UI, API, database, native picker, local provider config | Primary local workspace |
+| API-only Docker | Express/tRPC, SQLite/evidence volumes, operations | Controlled remote/API integration |
+| Legacy Flask | Old command center and ledger | Offline review and one-way migration |
+
+Docker does not include Electron or Flask. The API-only ngrok deployment does
+not publish the Electron interface.
+
+### Data and Ownership
+
+- `laro-server.sqlite` is the maintained application database.
+- `laro-agent.db` stores scanner progress/review state.
+- Evidence lives under Electron user data, in Docker volumes, or in S3.
+- Owner rows carry `userId`; case children pass `assertCaseOwnership`.
+- Lawyers are global reference data; private matches/outreach are owner-scoped.
+- Media and organization directories are owner-scoped.
+- Provider tokens stay server-side, encrypted, and absent from API responses.
+- SQLite uses WAL, foreign-key enforcement, migrations, a busy timeout, and
+  additional relationship guards for historical tables.
+
+## Installation and Quick Start
+
+### Requirements
+
+- Windows 10/11 for the primary desktop and packaging workflow.
+- Node.js `>=22.12 <23` and npm.
+- Python 3.11+ only for legacy Flask review, migration, and Python tests.
+- C++ build tools only if npm cannot obtain a native SQLite binary.
+- Optional Docker Desktop and provider credentials.
+
+### Desktop Development
 
 ```powershell
 npm ci
 npm run setup
+npm run doctor
 npm run dev
 ```
 
-`npm run setup` creates `.env` from `.env.example` only when `.env` does not already exist. It never overwrites existing configuration. The packaged desktop app atomically creates durable local JWT and cookie secrets in its Electron user-data directory; standalone production server operation requires strong values in `.env`. Keep `laro-secrets.json` with its matching database backup because it also protects encrypted provider tokens. A desktop single-instance lock prevents concurrent processes from opening that shared profile; a later launch restores and focuses the existing window. Electron browser permissions are denied by default because LARO uses reviewed native IPC for local-file selection and external links instead of browser device APIs.
-
-API-only deployments do not expose unrestricted registration. Their first
-account requires a one-time `STANDALONE_SIGNUP_TOKEN` of 32-256 random
-characters and becomes the administrator. After that owner exists, standalone
-enrollment stays closed even when the token remains configured. Packaged desktop
-signup is unchanged.
-
-Useful desktop commands:
+`npm run setup` creates `.env` from `.env.example` only when absent. It never
+overwrites existing configuration.
 
 ```powershell
-npm run dev:server       # Express/tRPC API only, port 3000
-npm run doctor           # environment and native-module checks
-npm run lint             # TypeScript/TSX correctness lint
-npm test                 # Vitest suite
-npm run gate             # blocking quality and safety gates
-npm run test:a11y:browser # 15-route Playwright/axe renderer audit
-npm run build            # renderer, main process, and server builds
-npm run dist:win         # Windows package
-npm run release:prepare  # non-approved brand/provider acceptance draft
-npm run acceptance:providers # non-destructive provider evidence report
-npm run acceptance:google-evidence-live # controlled Gmail intake/source proof
+npm run dev:server      # Express/tRPC only
+npm run dev:renderer    # Vite renderer only
+npm run build           # all production builds
+npm run dist:win        # unsigned Windows portable package
 ```
 
-## Legacy Flask Review
+Packaged desktop generates durable per-install secrets under Electron user data.
+A standalone server requires strong `JWT_SECRET` and `COOKIE_SECRET` values.
 
-From the repository root in PowerShell:
+### First Account
 
-```powershell
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env
-.\run_local.ps1
-```
+- Packaged desktop signup creates a local owner through the UI.
+- API-only deployment requires a one-time 32-256 character
+  `STANDALONE_SIGNUP_TOKEN`; the first account becomes administrator.
+- Standalone enrollment closes after the first owner exists.
 
-Open [http://127.0.0.1:8768/case_command_center.html](http://127.0.0.1:8768/case_command_center.html). To use another local port:
-
-```powershell
-.\run_local.ps1 -Port 8770
-```
-
-The convenience session bootstrap is loopback-only and accepts only `LARO_LOCAL_ACCOUNT_EMAIL` (default `robert.local@laro`). It is not a remote authentication mechanism. Do not operate Flask and Electron as parallel authoritative workspaces. Follow [Flask To Desktop Migration](docs/FLASK_TO_DESKTOP_MIGRATION.md) after review.
+Current Windows artifacts are unsigned and intended for internal distribution
+after checksum verification. Windows may show an unknown-publisher warning.
 
 ## Configuration
 
-Copy `.env.example` to `.env`; never commit real secrets. The template is grouped by runtime:
+Copy `.env.example` to `.env` and set only what the runtime needs. Never commit
+secrets, databases, token vaults, or evidence.
 
 | Area | Important variables |
 | --- | --- |
-| Desktop server | `NODE_ENV`, `HOST`, `PORT`, `API_BODY_LIMIT`, `JWT_SECRET`, `COOKIE_SECRET` |
-| HAI connector | `LARO_PUBLIC_BASE_URL` (set automatically by the ngrok launcher); credentials are created and revoked in Settings |
-| Development renderer | `VITE_LARO_API_URL` (API proxy target when it is not `http://127.0.0.1:3000`) |
-| Desktop data | `DATABASE_URL`, `LOCAL_STORAGE_DIR`, `AWS_S3_*` |
-| Standalone local scan | `LOCAL_SCAN_ROOTS` (path-delimited allowlist; desktop uses the native folder picker) |
-| Provider-backed desktop AI | Select a configured provider in **Settings > Workflow**. Supported keys: `FORGE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `TOGETHER_API_KEY`. Model IDs have matching `LARO_*_MODEL` overrides in `.env.example`. |
-| Optional active connectors | `TELEGRAM_BOT_TOKEN`, `SENDGRID_API_KEY`, `SMTP_*` |
-| Reserved Microsoft connector config | `MICROSOFT_*` (collection remains unavailable until implemented and accepted) |
-| Flask server | `LARO_FLASK_PORT`, `LARO_HOST`, `LARO_DEBUG`, `SECRET_KEY` |
-| Flask ledger | `LARO_LEDGER_DATABASE_URL`, `LARO_UPLOAD_ROOT`, `LARO_MAX_UPLOAD_BYTES`, `LARO_BUNDLE_MAX_BYTES` |
-| Flask identity and vault | `LARO_AUTH_DATABASE_PATH`, `LARO_LOCAL_ACCOUNT_EMAIL`, `LARO_TOKEN_STORE_DIR`, `LARO_TOKEN_ENCRYPTION_KEY` |
-| Flask password reset | `LARO_PASSWORD_RESET_URL_TEMPLATE`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`, `SMTP_STARTTLS` |
-| Local analysis | `LARO_ANALYSIS_PROVIDER`, `LARO_OLLAMA_BASE_URL`, `LARO_OLLAMA_MODEL`, `LARO_LOCAL_ANALYSIS_MAX_CHARS` |
-| Google intake | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` |
+| Runtime | `NODE_ENV`, `HOST`, `PORT`, `SERVER_ONLY`, `API_BODY_LIMIT` |
+| Auth | `JWT_SECRET`, `COOKIE_SECRET`, `STANDALONE_SIGNUP_TOKEN`, `ALLOWED_ORIGINS` |
+| Public path | `PUBLIC_PATH_PREFIX`, `LARO_PUBLIC_BASE_URL`, `LARO_PUBLIC_ORIGIN`, `LARO_PUBLIC_PATH_PREFIX` |
+| Data | `DATABASE_URL`, `LOCAL_STORAGE_DIR`, `LOCAL_SCAN_ROOTS`, `AWS_S3_*` |
+| Backups | `LARO_BACKUP_HOST_DIRECTORY`, destination kind, retention, and maximum age |
+| Audit | `AUDIT_RETENTION_DAYS` (30-3650) |
+| Google | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OAUTH_REDIRECT_BASE_URL`, legacy `GOOGLE_REDIRECT_URI` |
+| Email | `SENDGRID_API_KEY`, `EMAIL_FROM`, or `SMTP_*` |
+| Desktop AI | Provider keys and matching `LARO_*_MODEL` values |
+| Legacy Flask | `LARO_FLASK_PORT`, `LARO_HOST`, `SECRET_KEY`, ledger/upload/auth/token variables |
+| Legacy Ollama | `LARO_ANALYSIS_PROVIDER`, loopback base URL, model, timeout, and batch size |
 
-Keep `LARO_HOST` and `LARO_OLLAMA_BASE_URL` on loopback for the local Flask workflow. The Flask analysis engine rejects a non-loopback Ollama endpoint.
-Document-analysis cache entries are bound to the source hash, analysis version,
-selected provider, and selected model. Changing any of those inputs triggers a
-fresh analysis instead of silently reusing a result from another configuration.
+### Analysis Providers
 
-### Google Gmail and Drive
+Local deterministic analysis is the default and needs no API key. The owner can
+select one configured provider in **Settings > Workflow**.
 
-For legacy Flask review before migration, configure a Google OAuth client with this callback:
+| Provider | Credential | Model override |
+| --- | --- | --- |
+| Forge | `FORGE_API_KEY`, optional `FORGE_API_URL` | `LARO_FORGE_MODEL` |
+| OpenAI | `OPENAI_API_KEY` | `LARO_OPENAI_MODEL` |
+| Anthropic | `ANTHROPIC_API_KEY` | `LARO_ANTHROPIC_MODEL` |
+| Google Gemini | `GOOGLE_GEMINI_API_KEY` | `LARO_GOOGLE_MODEL` |
+| DeepSeek | `DEEPSEEK_API_KEY` | `LARO_DEEPSEEK_MODEL` |
+| Groq | `GROQ_API_KEY` | `LARO_GROQ_MODEL` |
+| Together | `TOGETHER_API_KEY` | `LARO_TOGETHER_MODEL` |
+
+Credentials make a provider available; they do not prove live acceptance.
+
+### Connector Status
+
+| Connector | State |
+| --- | --- |
+| Gmail and Drive | Implemented with read-only Google OAuth |
+| NOvA lawyer finder | Implemented through the official public directory |
+| SMTP and SendGrid | Implemented; sending disabled by default |
+| AWS S3 | Optional managed evidence storage |
+| HAI | Owner-bound, revocable, read-only feed |
+| KvK public records | Supported official open-data contract |
+| Telegram | Bot/API and desktop-export import paths are available when configured; bot history is limited by Telegram and target verification is still required |
+| Microsoft/OneDrive/Outlook | Reserved configuration; collection unavailable |
+| Trello OAuth | Unavailable until durable token lifecycle is complete |
+| Google Calendar/Contacts | Not implemented as LARO evidence connectors |
+
+## Google and Outbound Email
+
+The Google connector requests Gmail read, Drive read, and account-email identity.
+It does not request send, delete, calendar, or contacts access.
+
+Desktop loopback callback:
 
 ```text
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-GOOGLE_REDIRECT_URI=http://127.0.0.1:8768/api/google/oauth/callback
+http://127.0.0.1:8768/api/oauth/gmail/callback
 ```
 
-After OAuth succeeds, the UI updates its connection state without a manual page refresh. Pulls run as durable jobs and report persisted source, document, word, character, elapsed-time, and ETA progress. Imported records retain their original URI and read audit. Raw refresh credentials are encrypted in the ignored local `tokens/` vault; the ledger stores connection metadata and a token fingerprint, not the raw token.
+Gateway callback:
 
-The production Electron connector requests only Gmail read, Drive read, and
-account-email identity access. Disconnect revokes the durable Google grant
-before deleting the owner-scoped encrypted credential; a provider failure keeps
-the credential available for a safe retry.
+```text
+https://<gateway-domain>/<prefix>/api/oauth/gmail/callback
+```
 
-The Flask password-login path stores users and hashed bearer sessions in the ignored SQLite auth database. It does not seed sample accounts. Password reset tokens are stored only as SHA-256 digests, expire after 15 minutes, are single-use, invalidate existing sessions, and are delivered only through configured SMTP or an application-injected delivery hook.
+After consent, status updates without page reload. Disconnect revokes the Google
+grant before deleting local encrypted credentials. If revocation fails, the
+credential remains for retry and no false success is recorded.
 
-## Review and Safety Model
+### Protected Windows Configuration
 
-- Extracted events and legal observations are suggestions, not confirmed facts.
-- Every retained AI observation must cite source text; uncited model output is discarded.
-- Evidence-gap scores measure record completeness, not case strength or the likelihood of a legal outcome. Missing records and silence can only reduce completeness and never establish motive, destruction, concealment, or liability.
-- Generated records requests, preservation requests, missing-record clarifications, and resolution letters are factual review drafts. They contain no invented authorities or automatic findings of misconduct and must be reviewed before use.
-- Case ownership is enforced on authenticated case, document, approval, audit, and matching routes.
-- Approving a draft does not send it.
-- Desktop outreach send is off by default through `outreach.send.enabled` and is overridden by the global emergency stop.
-- A failed or missing email provider does not produce a false `Sent` state.
-- Bundle approval is tied to the exact persisted case snapshot. Later evidence, analysis, outreach, draft, or case changes invalidate that approval.
-- Bundle manifests include SHA-256 digests and omit credential-shaped fields and machine-local paths from structured exports.
-- GDPR exports omit password, reset-token, OAuth-token, API-key, secret, authorization, and cookie fields across every owner table. Optional privacy preferences persist per account and are included in export and erasure.
-- Evidence, case, and account erasure commit metadata removal together with a durable managed-storage deletion job. Provider failures remain queued for immediate and 15-minute retry, shared objects are retained while another record references them, and account erasure reports pending storage cleanup instead of claiming completion.
-- Audit retention uses a bounded 30-3650 day configuration, catches up after startup, and runs daily without deleting owner business data.
-
-See [Operator Runbook](docs/OPERATOR_RUNBOOK.md), [Security](docs/SECURITY.md), [Privacy](docs/PRIVACY.md), and [Threat Model](docs/THREAT_MODEL.md) before operating with real case data.
-
-## Verification
-
-The current production-readiness candidate was verified locally on 2026-08-14.
-GitHub Actions repeats the Node and browser checks on the supported Node 22 toolchain:
-
-- `npm run gate`: all blocking gates passed.
-- Server, Electron main-process, and shipped renderer TypeScript checks passed; no shipped runtime module disables type checking; ESLint passed.
-- Traceability reports 117 rows, 117 cited, 0 broken references, and no
-  implemented phase without a concrete repository artifact.
-- Runtime no-excuses scan reported 0 suspect findings; account safety reported 0 high-severity findings.
-- Vitest exercised 72 files in the blocking gate; all 415 tests passed.
-  Passing coverage includes controlled NOvA parsing/filter, unknown-metric
-  scoring, review-gated media/organization discovery, tenant isolation,
-  case-draft persistence, provider/model cache invalidation, concurrent
-  preference writes, legal-draft safety, gap-analysis safety, mutation
-  truthfulness, graceful shutdown, HAI boundaries, and target-database readiness.
-- Full Python discovery reported 222 passing tests, including 13 coordinated
-  Flask recovery tests. Warning-focused optimization and UCID tests also passed
-  with deprecations promoted to errors.
-- The Vite 8 renderer, Electron 43 main process, and standalone server builds completed successfully. Electron loaded the rebuilt SQLite binding at ABI 148.
-- The scanner integration test verified scoped-token isolation, owner checks, supported MIME enforcement, exact stored bytes, and SHA-256 readback.
-
-The packaged desktop ignores `.env` files in its launch directory and normally
-asks Windows for an available loopback port. Setting
-`OAUTH_REDIRECT_BASE_URL` to an explicit `localhost` or `127.0.0.1` port pins the
-desktop server to that registered OAuth callback port instead.
-- `npm audit` reports 0 known vulnerabilities after the current lockfile also
-  moved `nanoid` to 3.3.18 and transitive `js-yaml` to 4.3.1 in response to the
-  2026-08-08 advisory feed.
-- Production preflight and production-mode operator-readiness diagnostics reported no blockers.
-  The isolated backup/delete/restore/reopen drill and target-database integrity,
-  foreign-key, relationship-guard, invariant, reconciliation, duplicate, and
-  demo-marker checks passed.
-- Playwright smoke tests passed at desktop and 390x844 with clean consoles,
-  responsive Outreach controls and no horizontal overflow. Live bounded public
-  discovery produced pending organization candidates; approval immediately
-  created an 80/100 case match and shortlist status updated without a reload.
-  Case intake also preserved an immediately closed draft, restored it after a
-  full reload, created the case without a page refresh, and cleared the draft
-  only after success.
-  Existing command-center, Google-status, closable-dialog, and password-control
-  checks also remain covered.
-- The consolidated Evidence route was exercised at desktop and 390x844. It
-  exposed case-scoped CSV and ZIP exports, downloaded a real CSV, disabled the
-  unavailable PDF format, and kept batch scoring unavailable with a truthful
-  collection prompt when the selected case contained no evidence.
-- The Playwright/axe job passed all four browser flows: the blocking audit for
-  every supported route, persisted language selection, responsive Settings
-  migration controls, and source-linked document reconstruction. In-app browser
-  QA also passed signup, dashboard and case navigation, New Case dialog opening,
-  a 390x844 responsive check, and clean console checks.
-- The built production API passed liveness/readiness, rejected anonymous case
-  access, rejected an unauthenticated HAI request, emitted security headers, and
-  shut down cleanly. The configured ngrok gateway health endpoint was live at
-  verification time and the public HAI endpoint failed closed with HTTP 401.
-- Live Google consent/read/revocation and approved outbound delivery remain
-  explicit external acceptance gates; local success does not mark them complete.
-- Packaged Electron scanner QA passed signup, shared-session authorization, empty-state rendering, disabled unsafe scan state, Settings navigation, and clean renderer console checks.
-- A packaged launch from a directory containing hostile development `.env` values still reported production mode, database readiness, and a random `127.0.0.1` port.
-- An isolated Node 22 API-only container rejected anonymous owner bootstrap,
-  created exactly one token-authorized administrator, and rejected every later
-  signup against the same database.
-- Every protected-main commit must pass the Node, Python, renderer-accessibility,
-  and Windows packaging workflows. Use the latest successful
-  [GitHub Actions runs](https://github.com/Robert-Velhorst/000-LARO/actions)
-  for commit-specific evidence instead of relying on a hash from an older build.
-- The Windows workflow publishes `LARO-Desktop-Windows` with the portable
-  executable and its `.sha256` sidecar. It also verifies the production gate,
-  Electron native-module ABI, single-instance profile lock, restart persistence
-  of the desktop secret, and artifact checksum before upload.
-- Windows reports `NotSigned` for the current unsigned distribution, as intended.
-  The unsigned 1.3.0 installer was generated locally, hashed, and its unpacked
-  executable remained healthy during an isolated-profile launch smoke test.
-  A verified isolated-profile launch applies the packaged migrations, installs 240
-  database relationship guards, serves the renderer on an automatically selected
-  loopback port, and preserves the existing profile across restart.
-
-Run the same checks locally:
+Use DPAPI-backed, non-echoing prompts instead of `.env` for live Google/SMTP
+secrets:
 
 ```powershell
-npm run gate
-npm run test:a11y:browser
-npm run readiness
-npm run db:readiness
-python -m unittest -v test_authentication test_document_intelligence test_google_oauth test_lawyer_matching test_legal_ledger test_outreach_targets
+.\scripts\configure-live-providers.ps1 -Google -Smtp
+.\scripts\configure-live-providers.ps1 -Status
 ```
 
-For a broader Flask regression run:
+The command stores `provider-config.json` in the resolved LARO/Electron user-data
+location and reports the path. Secrets are encrypted for the current Windows
+user and decrypted only in memory. It migrates an older worktree-local config.
+
+For Gmail SMTP, use a 16-character app password, not the account password.
+
+Explicit live acceptance commands:
 
 ```powershell
-python -m unittest discover -v -p "test_*.py"
+npm run acceptance:outbound-live
+npm run acceptance:google-evidence-live
+npm run acceptance:google-drive-evidence-live
 ```
 
-The npm gate is fail-fast and blocks on server, Electron main-process, and
-renderer TypeScript checks, lint, traceability, safety scans, isolated Electron
-and Flask recovery drills, and Vitest.
+These use real external accounts and are consequential. Run them only with the
+intended owner account and recipient. Automated tests do not replace them.
 
-## Docker and Packaging
+## API-only and ngrok Deployment
 
-The Docker image compiles and runs the standalone Express/tRPC API server on Node 22. It does not contain the Electron UI or Flask Case Command Center.
+### Local Docker
 
 ```powershell
 docker compose up --build
 ```
 
-Use the plain Compose command only for a local provider-free server. After the
-ngrok launcher has verified a public deployment, it persists a non-secret
-runtime contract in `.env`; subsequent restarts must use
-`scripts/start-ngrok-api.ps1` so DPAPI-protected Google and SMTP credentials are
-loaded. A plain Compose restart then fails closed instead of silently disabling
-an accepted provider or changing the public callback path.
+The image runs Express/tRPC on Node 22. SQLite and local evidence persist in the
+named `laro-data` volume. Keep `LARO_COMPOSE_PROJECT_NAME` stable across checkout
+moves.
 
-SQLite and local evidence persist in the `laro-data` volume. Docker also writes
-daily recovery-ready backup sets to the host-mounted `.laro-backups` directory
-by default. This default is a same-device copy, not an off-device backup. Set
-`LARO_BACKUP_HOST_DIRECTORY` to a protected OneDrive or network location and
-set `LARO_BACKUP_DESTINATION_KIND` to `synced` or `network` only when that
-description is true. The packaged desktop creates same-device sets under its
-application-data `backups` directory.
-Validated sets expire after 30 days by default, in addition to the 14-set count
-limit. Account and case erasure removes live data immediately; older recovery
-copies age out under this bounded backup-retention policy.
+```text
+/api/live    process liveness
+/api/ready   database and service readiness
+/api/health  non-sensitive operational summary
+```
 
-Health endpoints are available at `/api/live`, `/api/ready`, and `/api/health`.
-The health summary reports non-sensitive request latency/error aggregates,
-worker run/failure state, and backup freshness. It warns when backups are local,
-stale, failed, or not configured without exposing paths, credentials, cases, or
-document identifiers. Liveness and readiness remain independent of backup
-destination health so a stale copy cannot cause a restart loop.
-Run `npm run readiness:runtime` inside the API container to verify the lean
-production runtime, database, evidence volume, version, and HAI authentication
-boundary without installing development dependencies.
-
-For the supported Windows API deployment through an existing ngrok gateway,
-keep the container on host loopback and route a dedicated path to LARO's private
-Agent Endpoint:
+### Existing ngrok Gateway
 
 ```powershell
 .\scripts\start-ngrok-api.ps1 `
@@ -361,185 +504,318 @@ Agent Endpoint:
   -GatewayUrl https://example.ngrok-free.dev `
   -PathPrefix /laro
 
-# Later starts reuse the validated tunnel and saved, ignored local settings.
 .\scripts\start-ngrok-api.ps1 -SkipBuild
-
-# Stops only the verified LARO tunnel process and API container.
 .\scripts\stop-ngrok-api.ps1
 ```
 
-This publishes the API below `https://example.ngrok-free.dev/laro`; it does not
-publish the Electron interface. Register
-`https://example.ngrok-free.dev/laro/api/oauth/gmail/callback` on the Google web
-OAuth client. See [Deployment](docs/DEPLOYMENT.md) for the exact traffic-policy,
-secret-handling, and verification requirements.
+This publishes the API below `/laro`, not the Electron UI. The launcher validates
+the route, loads protected providers, and persists non-secret deployment markers.
+A plain Compose restart fails closed after an accepted provider contract rather
+than silently losing providers or changing the callback.
 
-### HAI connected source
-
-LARO exposes a dedicated read-only HAI feed at
-`/api/integrations/hai/feed`. It is not a general API token: the credential is
-owner-bound, limited to `hai:read`, stored only as a SHA-256 digest, expires in
-at most 365 days, and can be revoked immediately from **Settings > HAI**. The
-raw credential is shown only once.
-
-The feed is incremental and bounded (50 records by default, 100 maximum). It
-contains case status, urgency, legal areas, case summary, and completed legal
-analysis summaries with selected structured findings. Client contact details,
-source-document bytes, source quotations, OAuth credentials, and outbound-mail
-credentials are excluded. HAI must use its dedicated `laro` connected-source
-adapter with `HAI_LARO_BASE_URL` and `HAI_LARO_CONNECTOR_TOKEN`; credentials are
-never placed in the source URL or HAI database.
-
-The live bridge was accepted on 2026-08-09: HAI reported the adapter
-operational, retained an audited incremental sync, and imported zero records
-because the deployed LARO owner database contained zero cases. Revoking a
-temporary credential immediately changed its health response from 200 to 401;
-the retained credential remains only in HAI's ignored protected environment.
-
-When the shared gateway cannot be changed yet, start a separate direct tunnel
-without altering the existing application or its traffic policy:
+Direct tunnel fallback:
 
 ```powershell
-.\scripts\start-ngrok-api.ps1 `
-  -ComposeProjectName laro `
-  -DirectPublicTunnel
+.\scripts\start-ngrok-api.ps1 -ComposeProjectName laro -DirectPublicTunnel
 ```
 
-The launcher obtains the assigned HTTPS origin, restarts the container with
-matching origin and OAuth settings, verifies the public health response, and
-persists direct mode for later `-SkipBuild` starts. An account-assigned direct
-URL can change after a tunnel restart; update the Google OAuth redirect URI to
-`https://<assigned-domain>/api/oauth/gmail/callback` before accepting Google
-connectivity. The assigned domain must also be available; accounts whose only
-dev domain already hosts another endpoint still require a gateway path rule or
-an additional assigned domain. Use the gateway mode above for a stable
-production URL.
+Assigned free domains can change. A stable gateway path is recommended.
 
-Keep `LARO_COMPOSE_PROJECT_NAME` stable across checkout-folder moves. The
-launcher passes it explicitly to Docker Compose so restarts reuse the intended
-`laro-data` volume instead of silently creating an empty volume under a new
-folder-derived project name.
+### HAI Read-only Source
 
-On Windows, configure live Google and SMTP secrets through DPAPI-protected,
-non-echoing prompts instead of placing them in `.env`:
+`/api/integrations/hai/feed` serves the dedicated HAI adapter. Its token is
+owner-bound, `hai:read` only, stored as a digest, shown once, revocable, and
+limited to 365 days. The bounded feed includes case status and selected analysis
+summary fields, but excludes contacts, source bytes/quotes, and provider secrets.
+
+## Security, Privacy, and Recovery
+
+### Security Boundaries
+
+- bcrypt passwords; signed HTTP-only sessions; revocation, origin/CSRF, role,
+  rate, and ownership controls.
+- Per-install desktop secrets; no packaged `.env`.
+- Server-owned encrypted provider credentials.
+- Owner-checked short-lived evidence links.
+- Bounded uploads, parsing, exports, searches, and provider calls.
+- Electron context isolation, sandbox, restricted navigation, denied browser
+  permissions, narrow IPC, and single-instance profile lock.
+- Demo mode and sample account seeding disabled in production.
+
+### Review Boundaries
+
+- Model observations stay unconfirmed until reviewed.
+- Gap scores measure completeness, not legal strength.
+- Generated requests/letters are drafts without invented authority.
+- Bundle approval binds to an exact case snapshot and becomes stale after change.
+- Outreach approval binds to the exact recipient and content shown.
+- Missing/failed providers never create a false `Sent` state.
+
+### Privacy and Erasure
+
+- Private data and source access are owner/case scoped.
+- Exports omit password, token, key, secret, authorization, and cookie fields.
+- Evidence, case, and account erasure coordinate metadata and storage cleanup.
+- Pending provider cleanup is reported and retried.
+- Audit retention is bounded and does not delete owner business records.
+- No third-party product analytics or payment/upgrade enforcement is present.
+
+### Backup and Restore
+
+Electron recovery sets bind database, `laro-secrets.json`, local evidence, and a
+manifest:
 
 ```powershell
-.\scripts\configure-live-providers.ps1 -Google -Smtp
-.\scripts\configure-live-providers.ps1 -Status
-.\scripts\start-ngrok-api.ps1 -SkipBuild
+npm run db:backup
+npm run db:validate -- <backup-path>
+npm run db:restore -- <backup-path>
+npm run recovery:drill
 ```
 
-The protected store is shared by the standalone desktop and ngrok launcher at
-`%APPDATA%\LARO Desktop\provider-config.json`. LARO decrypts it only in memory
-for the current Windows user. The configuration command migrates the earlier
-worktree-local `.laro-provider-config.json` automatically, so portable Windows
-builds do not depend on the repository directory. Desktop Google consent uses
-the stable loopback callback
-`http://127.0.0.1:8768/api/oauth/gmail/callback`; register that exact URI in the
-Google OAuth client alongside the ngrok callback.
+The default `.laro-backups` is a same-device copy, not off-device protection.
+Use a truthful synced/network destination and configure count/age limits.
 
-Database backup/restore and live-provider acceptance commands use compiled
-runtime entry points when `dist/server` exists and fall back to local `tsx`
-sources only in a development checkout. The same documented commands therefore
-work inside the pruned production Docker image as well as from source.
+## Developer Guide
 
-Windows desktop packaging uses:
+### Repository Map
+
+| Path | Responsibility |
+| --- | --- |
+| `src-main/` | Electron lifecycle, secure startup, native picker, scanner, provider config |
+| `src/renderer/` | React app, routes, case workspace, visualizations, review controls |
+| `server/` | API, authorization, data, providers, analysis, matching, workflow, health |
+| `shared/` | Shared constants and contracts |
+| `drizzle/` | Maintained SQLite migrations |
+| `assets/`, `public/` | Matching datasets and approved branding/static assets |
+| `tests/`, `test_*.py` | Maintained and legacy test suites |
+| `scripts/` | Setup, build, deployment, backup, readiness, acceptance, release |
+| `docs/` | Product, architecture, operations, security, privacy, and audits |
+| `app.py`, `legal_ledger.py`, `frontend/` | Legacy Flask migration source |
+
+### Common Commands
 
 ```powershell
+npm run doctor
+npm run typecheck
+npm run typecheck:renderer
+npm run lint
+npm test
+npm run test:a11y:browser
+npm run build
+npm run check:renderer-bundle
+npm run gate
+npm run readiness
+npm run readiness:production
+npm run db:readiness
+npm run preflight
+npm run audit:deps
+```
+
+Native SQLite mismatch recovery:
+
+```powershell
+npm run rebuild:node
+npm run rebuild:electron
+npm run verify:electron-native
+```
+
+### Development Invariants
+
+- Private data is scoped at the server, never trusted to the renderer.
+- Credentials never enter renderer state or API responses.
+- Evidence retains source identity, bytes, and hash provenance.
+- Model findings require valid source spans.
+- Unsupported or uncertain behavior is explicit.
+- Approval and delivery remain separate.
+- Live tests use owner-controlled targets and explicit gates.
+- Migrations are recoverable and use validated backups.
+- Updates are proposed through a pull request to `main`.
+
+A provider is complete only with server-owned credentials/revocation, least
+privilege, authorization, bounded calls, truthful errors, provenance/audits,
+deterministic tests, explicit live acceptance, and documentation.
+
+## Testing and Production Readiness
+
+`npm run gate` blocks on native rebuild, all TypeScript checks, ESLint, bundle
+budgets, dependency audits, release-record validity, traceability, safety scans,
+Electron and Flask recovery drills, and Vitest.
+
+At merged commit `e043667f` on 2026-08-15, the gate passed **87 test files and
+499 tests**, with 0 dependency vulnerabilities, 117/117 traceability rows cited,
+0 suspect runtime placeholders, and 0 high-severity account-safety findings.
+PR 101 also passed Node, Python, and renderer-accessibility jobs. This is a dated
+snapshot; use a fresh gate and the latest
+[GitHub Actions run](https://github.com/Robert-Velhorst/000-LARO/actions) for the
+current commit.
+
+```powershell
+python -m unittest discover -v -p "test_*.py"
+```
+
+### Evidence Levels
+
+| Evidence | What it proves |
+| --- | --- |
+| Unit/integration | Deterministic behavior under controlled fixtures |
+| Production build | Type and bundle correctness |
+| Packaged Electron | Native ABI, migrations, startup, secrets, profile lock, packaged UI |
+| Docker readiness | Production dependencies, volumes, health, auth boundaries |
+| Browser accessibility | Routes, responsive overflow, labels, errors, selected interactions |
+| Provider-live | Target account, scopes, import/delivery, provenance, revocation, audit |
+
+No narrow category proves a broader one. Credentials and mocked tests do not
+prove live Google import or delivery.
+
+```powershell
+npm run release:prepare
+npm run acceptance:providers
+npm run release:check
 npm run dist:win
 ```
 
-LARO's supported local workflows are unmetered. There is no checkout, paid tier,
-usage quota, or upgrade gate; persisted usage data is operational count telemetry
-only.
+Public trusted Windows distribution requires a separately accepted Store or
+Authenticode identity. Internal tagged releases may remain unsigned.
 
-The desktop interface supports a persisted Dutch/English preference. Change it
-before sign-in or from the account menu; the legal safety notice, navigation,
-authentication, and scanner workflow update immediately and keep the selection
-after restart.
+## Legacy Flask Migration
 
-The package includes only the two matcher datasets from `assets/`; the legacy
-development service, Python cache files, and local configuration are excluded.
-See [Backup and Restore](docs/BACKUP_RESTORE.md) for recovery-ready sets. The
-Electron commands bind SQLite state to its token-encryption key and managed
-evidence bytes. The Flask commands coordinate its legal ledger, auth sessions,
-encrypted OAuth vault, and uploaded evidence:
+The Flask command center remains because older LARO/Papertrail workspaces hold
+valuable source-linked ledger data. It is not the maintained product.
 
 ```powershell
-npm run flask:backup -- C:\Backups\laro-flask-20260720
-npm run flask:validate -- C:\Backups\laro-flask-20260720
-npm run flask:restore -- C:\Backups\laro-flask-20260720 --confirm-stopped
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+.\run_local.ps1
+```
+
+Open `http://127.0.0.1:8768/case_command_center.html`. Its convenience bootstrap
+is loopback-only and limited to `LARO_LOCAL_ACCOUNT_EMAIL`.
+
+Migration is one-way and owner-bound: stop both runtimes, validate backups, map
+one Flask owner to one existing desktop account, verify hashes/bytes, archive
+legacy sources without passwords/sessions/tokens/send state, verify Desktop,
+then keep Flask stopped. See
+[Flask to Desktop Migration](docs/FLASK_TO_DESKTOP_MIGRATION.md).
+
+```powershell
+npm run flask:backup -- <backup-path>
+npm run flask:validate -- <backup-path>
+npm run flask:restore -- <backup-path> --confirm-stopped
 npm run flask:recovery:drill
 ```
 
-Stop Flask and its workers before maintenance. External `SECRET_KEY` and
-`LARO_TOKEN_ENCRYPTION_KEY` values are compatibility-bound but never copied into
-the set; retain them in independent secret escrow. Both runtimes now have
-blocking destructive recovery drills. The owner-bound migration archives the
-Flask ledger into Electron without migrating Flask sessions or OAuth vault
-credentials; Electron is the production authority after migration.
-
-CI runs Node and Python gates for pushes and pull requests to `main`. The release
-workflows target Node 22. Current Windows builds are unsigned artifacts; no Store
-certification or paid signing provider is active. Tagged releases may also remain
-unsigned when `WINDOWS_SIGNING_PROVIDER` is unset or set to `unsigned`, but the
-external acceptance record must still be approved and Windows may show an
-unknown-publisher warning. Optional Store and direct-signing routes remain available.
-
-## Repository Map
-
-| Path | Purpose |
-| --- | --- |
-| `src-main/` | Electron lifecycle, native integrations, scanner, and secure local secret bootstrap |
-| `src/renderer/` | React desktop interface |
-| `server/` | Express/tRPC API, Drizzle data layer, providers, matching, workflow, safety, and operations |
-| `server/caseReconstruction.ts` | Deterministic document-route, explicit-link, and review-only inferred-link construction |
-| `shared/` | Shared contracts and constants |
-| `drizzle/` | Desktop/server SQLite migrations |
-| `frontend/` | Flask command-center, evidence, timeline, Papertrail, and outreach pages |
-| `app.py` | Flask routes and runtime orchestration |
-| `legal_ledger.py` | Persistent legal ledger and source-linked case graph |
-| `document_intelligence.py` | Deterministic extraction and review suggestions |
-| `local_semantic_analysis.py` | Optional loopback local-model analysis |
-| `lawyer_matching.py` | Flask legal-profile lawyer ranking |
-| `outreach_target_matching.py` | Media and organization target ranking |
-| `tests/` | TypeScript unit, integration, safety, accessibility, and smoke suites |
-| `test_*.py` | Flask and legal-ledger unit/integration suites |
-| `scripts/` | Setup, diagnostics, verification, traceability, safety, backup, and readiness tools |
-| `docs/` | Architecture, operations, security, privacy, provider, and audit documentation |
+External Flask keys stay in independent operator escrow.
 
 ## Known Limitations
 
-- Existing Flask workspaces require the documented offline, owner-bound migration. There is no live bidirectional synchronization, and Flask must remain stopped after migration.
-- Legacy prototype files remain in `frontend/` and `docs/` for traceability. Only the entry points documented above are supported runtime surfaces; historical snapshots must not be treated as current behavior.
-- Several provider integrations are optional or partial and remain unavailable until valid credentials and user OAuth consent are present. Trello OAuth is intentionally disabled until server-side token storage is implemented.
-- Outreach target discovery is a review aid, not a complete or continuously verified directory of every lawyer, journalist, program, lobby, or advocacy organization.
-- Dashed document-map links are review suggestions based on shared analyzed
-  parties, legal issues, terms, route, and chronology. They are not findings of
-  legal or factual causation; unanalysed documents remain visible and flagged.
-- Real external sending is intentionally disabled by default and should remain disabled until the target environment, provider, approval UI, emergency stop, and audit trail have been reviewed.
-- The current lockfile audits cleanly; run `npm run audit:deps` again for every release because registry advisories change over time.
-- Dashboard routes are loaded on demand. The production entry chunk is about 162 KB before gzip (49 KB gzip); the largest route chunk is about 166 KB before gzip (40 KB gzip).
-- The internal portable Windows artifact is not Authenticode-signed and must not be distributed as a trusted public installer. No Store or paid-certificate route is currently active; Windows may display an unknown-publisher warning for internal builds.
-- Historical phase and verification documents in `docs/` are dated snapshots. Prefer current code, tests, this README, and a fresh `npm run gate` when status statements differ.
+- LARO cannot establish legal truth or replace professional review.
+- Scanned PDF pages use an OCR fallback; poor scans, handwriting, or complex
+  layouts can still need manual review or higher-quality source material.
+- Public target discovery is bounded, not exhaustive.
+- Dashed map links are suggestions, not factual causation.
+- Optional AI quality varies, but citations remain mandatory.
+- Microsoft, Google Calendar/Contacts, and Trello OAuth are not operational
+  evidence connectors.
+- Sending is disabled by default.
+- Flask remains a separate recovery responsibility until migration.
+- Historical tables still use extra relationship guards pending native-FK work.
+- SQLite/local storage target one desktop/API owner process, not active-active
+  multi-node service.
+- Windows portable builds are unsigned and intended for internal use.
+- Formal WCAG conformance is not claimed, though automated accessibility,
+  keyboard, responsive, and console checks are blocking.
+- Historical docs are dated snapshots. Current code, README, fresh gate, and
+  commit-specific CI are authoritative.
 
-## Further Documentation
+## Troubleshooting
 
-- [Architecture](docs/ARCHITECTURE.md)
+### Google Consent Keeps Loading
+
+1. Confirm LARO is running and you are signed into the intended LARO account.
+2. Match the Google redirect URI exactly, including prefix and port.
+3. Ensure the callback reaches the same instance that created OAuth state.
+4. Check `/api/ready` and logs for callback, state, or session errors.
+5. Retry from LARO rather than a stale Google consent tab.
+
+Never place authorization codes, refresh tokens, or browser sessions in logs.
+
+### Native SQLite Mismatch
+
+Run the Node or Electron rebuild command above, then retry.
+
+### Sending Is Disabled
+
+Check ownership, Approved state, unchanged approval hash, feature flag, emergency
+stop, provider configuration, and dispatch state. `Dispatching` after a provider
+exception requires operator verification, not a blind retry.
+
+### ngrok Routes the Wrong Service
+
+Use the verified launcher, stable Compose identity, expected path, and exact
+public callback. The stop script verifies a process before stopping it.
+
+### Evidence Cannot Be Analyzed
+
+Check format/size, managed bytes and hash, and the OCR result for scanned pages.
+Poor image quality may require a better scan. Supported text should retain
+deterministic analysis after an optional provider failure.
+
+See [Troubleshooting](docs/TROUBLESHOOTING.md) and in-app Help.
+
+## Documentation Index
+
+### Product and Architecture
+
+- [Product Definition](docs/PRODUCT_DEFINITION.md)
 - [User Guide](docs/USER_GUIDE.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Frontend Architecture](docs/FRONTEND_ARCHITECTURE.md)
+- [Data Model](docs/DATA_MODEL.md)
+- [Domain Model](docs/DOMAIN_MODEL.md)
+- [State Machines](docs/STATE_MACHINES.md)
+
+### Operations
+
+- [Fresh Clone](docs/FRESH_CLONE.md)
+- [Deployment](docs/DEPLOYMENT.md)
 - [Operator Runbook](docs/OPERATOR_RUNBOOK.md)
-- [Provider Reality Review](docs/PROVIDERS.md)
+- [Operator Readiness](docs/OPERATOR_READINESS.md)
+- [Backup and Restore](docs/BACKUP_RESTORE.md)
+- [Release Process](docs/RELEASE_PROCESS.md)
+- [Feature Flags](docs/FEATURE_FLAGS.md)
+- [Providers](docs/PROVIDERS.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+
+### Security and Privacy
+
+- [Security](docs/SECURITY.md)
+- [Threat Model](docs/THREAT_MODEL.md)
+- [Privacy](docs/PRIVACY.md)
+- [Privacy Impact Assessment](docs/PRIVACY_IMPACT_ASSESSMENT.md)
+- [Compliance](docs/COMPLIANCE.md)
+- [Data Retention](docs/DATA_RETENTION.md)
+- [Supply Chain](docs/SUPPLY_CHAIN.md)
+
+### Engineering and Evidence
+
+- [Migrations](docs/MIGRATIONS.md)
+- [Accessibility](docs/ACCESSIBILITY.md)
+- [Performance](docs/PERFORMANCE.md)
+- [Technical Audit](docs/TECHNICAL_AUDIT.md)
+- [Technical Debt](docs/TECH_DEBT.md)
+- [Traceability](docs/TRACEABILITY.md)
+- [Final Verification Report](docs/FINAL_VERIFICATION_REPORT.md)
+- [Acceptance Tests](docs/ACCEPTANCE_TESTS.md)
+- [Manual Verification](docs/MANUAL_VERIFICATION.md)
+- [Definition of Done](docs/DEFINITION_OF_DONE.md)
+- [Changelog](CHANGELOG.md)
+
+### Migration and Port Audits
+
+- [Flask to Desktop Migration](docs/FLASK_TO_DESKTOP_MIGRATION.md)
+- [Paper-trail Timeline Generator Audit](docs/PAPER_TRAIL_TIMELINE_GENERATOR_AUDIT.md)
 - [Legacy Dashboard Port Audit](docs/LEGACY_DASHBOARD_PORT_AUDIT.md)
 - [Lawyer Automation Dashboards Port Audit](docs/LAWYER_AUTOMATION_DASHBOARDS_PORT_AUDIT.md)
-- [Flask To Desktop Migration](docs/FLASK_TO_DESKTOP_MIGRATION.md)
-- [Feature Flags](docs/FEATURE_FLAGS.md)
-- [Deployment](docs/DEPLOYMENT.md)
-- [Backup and Restore](docs/BACKUP_RESTORE.md)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Technical Debt](docs/TECH_DEBT.md)
-- [Current Technical Audit](docs/TECHNICAL_AUDIT.md)
-- [Internationalization](docs/I18N.md)
-- [Changelog](CHANGELOG.md)
 
 ## License
 
