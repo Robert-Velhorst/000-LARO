@@ -16,6 +16,8 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHash } from 'crypto';
 import path from 'path';
 import fs from 'fs';
+import { Readable, Transform } from 'stream';
+import { pipeline } from 'stream/promises';
 import { collectBoundedBytes } from './boundedBytes';
 
 const s3 = new S3Client({
@@ -138,6 +140,59 @@ export async function storageRead(key: string, options?: { maxBytes: number }): 
     }
   }
   return fs.readFileSync(full);
+}
+
+export async function storageOpenReadStream(
+  key: string,
+  options: { maxBytes: number; signal?: AbortSignal },
+): Promise<{ stream: Readable; declaredBytes: number | null; completion: Promise<void> }> {
+  if (options.signal?.aborted) throw new Error("Storage read was cancelled");
+  const safeKey = sanitizeStorageKey(key);
+  if (!safeKey) throw new Error('Storage key must contain at least one valid path segment');
+  let source: Readable;
+  let declaredBytes: number | null = null;
+  if (isS3Configured()) {
+    const response = await s3.send(
+      new GetObjectCommand({ Bucket: BUCKET, Key: safeKey }),
+      { abortSignal: options.signal },
+    );
+    if (!response.Body) throw new Error(`Storage object is empty: ${safeKey}`);
+    declaredBytes = typeof response.ContentLength === 'number' ? response.ContentLength : null;
+    if (declaredBytes !== null && declaredBytes > options.maxBytes) {
+      if (response.Body instanceof Readable) response.Body.destroy();
+      else if (typeof response.Body.transformToWebStream === 'function') {
+        void response.Body.transformToWebStream().cancel().catch(() => undefined);
+      }
+      throw new Error(`Storage object exceeds the ${options.maxBytes} byte read limit`);
+    }
+    source = response.Body instanceof Readable
+      ? response.Body
+      : Readable.from(response.Body as unknown as AsyncIterable<Uint8Array>);
+  } else {
+    const full = resolveLocalPath(safeKey);
+    if (!fs.existsSync(full)) throw new Error(`Local storage object not found: ${safeKey}`);
+    declaredBytes = fs.statSync(full).size;
+    if (declaredBytes > options.maxBytes) {
+      throw new Error(`Storage object exceeds the ${options.maxBytes} byte read limit`);
+    }
+    if (options.signal?.aborted) throw new Error("Storage read was cancelled");
+    source = fs.createReadStream(full);
+  }
+
+  let actualBytes = 0;
+  const limiter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      actualBytes += chunk.length;
+      callback(
+        actualBytes > options.maxBytes
+          ? new Error(`Storage object exceeds the ${options.maxBytes} byte read limit`)
+          : null,
+        chunk,
+      );
+    },
+  });
+  const completion = pipeline(source, limiter, { signal: options.signal });
+  return { stream: limiter, declaredBytes, completion };
 }
 
 export async function storageDelete(key: string): Promise<void> {

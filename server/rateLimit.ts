@@ -112,6 +112,12 @@ export const RATE_LIMITS = {
     windowMs: 60 * 60 * 1000, // 1 hour
     message: "AI analysis limit reached. Please wait before requesting more analyses.",
   },
+
+  evidenceExport: {
+    maxRequests: 10,
+    windowMs: 5 * 60 * 1000,
+    message: "Too many evidence export requests. Please use an existing link or wait briefly.",
+  },
   
   // General API calls
   general: {

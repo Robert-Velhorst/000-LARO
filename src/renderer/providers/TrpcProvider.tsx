@@ -4,7 +4,7 @@ import { httpBatchLink } from "@trpc/client";
 import superjson from "superjson";
 import { trpc } from "@/lib/trpc";
 
-function apiBase(): string {
+export function apiBase(): string {
   if (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) {
     return String(import.meta.env.VITE_API_URL).replace(/\/$/, "");
   }

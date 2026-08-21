@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { buildCase, buildUser } from "../factories";
+import { randomBytes } from "crypto";
+import { buildCase, buildEvidence, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 
 const suite = sqliteAvailable ? describe : describe.skip;
@@ -106,23 +107,145 @@ suite("evidence scoring and case export", () => {
     expect(csv).not.toContain("CASE_SCORE_OTHER");
 
     const zipDownload = await caller.evidenceExport.exportZIP({ caseId: "CASE_SCORE_OWNER" });
-    const zip = Buffer.from(zipDownload.base64, "base64");
+    expect(zipDownload.url).toMatch(/^\/api\/case-export\/[A-Za-z0-9_-]{43}\.zip$/);
+    const { createCaseZipStream } = await import("../../server/evidenceExport");
+    const streamed = await createCaseZipStream(owner.id, "CASE_SCORE_OWNER");
+    const chunks: Buffer[] = [];
+    for await (const chunk of streamed.stream) chunks.push(Buffer.from(chunk));
+    const result = await streamed.completion;
+    const zip = Buffer.concat(chunks);
     const zipDirectory = zip.toString("latin1");
     expect(zip.subarray(0, 2).toString("ascii")).toBe("PK");
     expect(zipDirectory).toContain("manifest.json");
     expect(zipDirectory).toContain("evidence.csv");
     expect(zipDirectory).toContain("analysis/");
     expect(zipDirectory).toContain("files/");
-    expect(zipDownload.bytes).toBe(zip.length);
+    expect(result.bytes).toBe(zip.length);
     const exportAudit = await caller.audit.list({
       entityType: "case",
       entityId: "CASE_SCORE_OWNER",
       action: "evidence.exported",
     });
-    expect(exportAudit).toHaveLength(2);
+    expect(exportAudit).toHaveLength(1);
 
     await expect(app.makeCaller(other).evidenceExport.exportZIP({
       caseId: "CASE_SCORE_OWNER",
     })).rejects.toThrow();
+  });
+
+  it("keeps ZIP output backpressure-bounded and rejects export queue overflow", async () => {
+    const { storagePut } = await import("../../server/storage");
+    const stored = await storagePut(
+      "evidence/CASE_SCORE_OWNER/large.bin",
+      randomBytes(4 * 1024 * 1024),
+    );
+    await app.db.insert(app.schema.evidence).values(buildEvidence({
+      id: "EVIDENCE_LARGE_EXPORT",
+      caseId: "CASE_SCORE_OWNER",
+      userId: owner.id,
+      title: "Large source",
+      type: "document",
+      fileName: "large.bin",
+      mimeType: "application/octet-stream",
+      source: "manual",
+      fileSize: String(4 * 1024 * 1024),
+      metadata: JSON.stringify({ storageKey: stored.key, contentHash: stored.sha256 }),
+    }));
+    const { createCaseZipStream } = await import("../../server/evidenceExport");
+    const drain = async (item: Awaited<ReturnType<typeof createCaseZipStream>>) => {
+      let bytes = 0;
+      for await (const chunk of item.stream) bytes += Buffer.byteLength(chunk);
+      const completed = await item.completion;
+      expect(completed.bytes).toBe(bytes);
+    };
+
+    const first = await createCaseZipStream(owner.id, "CASE_SCORE_OWNER");
+    let completed = false;
+    void first.completion.then(() => { completed = true; });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 50);
+    });
+    expect(completed).toBe(false);
+    expect(first.stream.readableLength).toBeLessThanOrEqual(128 * 1024);
+
+    const secondPromise = createCaseZipStream(owner.id, "CASE_SCORE_OWNER");
+    const thirdPromise = createCaseZipStream(owner.id, "CASE_SCORE_OWNER");
+    await expect(createCaseZipStream(owner.id, "CASE_SCORE_OWNER"))
+      .rejects.toThrow("Evidence export queue is full");
+    await drain(first);
+    await drain(await secondPromise);
+    await drain(await thirdPromise);
+  });
+
+  it("binds ZIP tickets to one user and one use", async () => {
+    const { consumeCaseZipDownloadTicket, issueCaseZipDownloadTicket } = await import("../../server/evidenceExport");
+    const attacked = issueCaseZipDownloadTicket(owner.id, "CASE_SCORE_OWNER");
+    expect(() => consumeCaseZipDownloadTicket(attacked, other.id)).toThrow("invalid or expired");
+    expect(() => consumeCaseZipDownloadTicket(attacked, owner.id)).toThrow("invalid or expired");
+
+    const valid = issueCaseZipDownloadTicket(owner.id, "CASE_SCORE_OWNER");
+    expect(consumeCaseZipDownloadTicket(valid, owner.id)).toBe("CASE_SCORE_OWNER");
+    expect(() => consumeCaseZipDownloadTicket(valid, owner.id)).toThrow("invalid or expired");
+  });
+
+  it("removes disconnected exports from the waiting queue", async () => {
+    const { createCaseZipStream } = await import("../../server/evidenceExport");
+    const active = await createCaseZipStream(owner.id, "CASE_SCORE_OWNER");
+    const controller = new AbortController();
+    const queued = createCaseZipStream(owner.id, "CASE_SCORE_OWNER", { signal: controller.signal });
+    controller.abort();
+
+    await expect(queued).rejects.toThrow("Evidence export was cancelled");
+    for await (const _chunk of active.stream) { /* drain */ }
+    await active.completion;
+  });
+
+  it("honors cancellation during immediate export admission", async () => {
+    const { createCaseZipStream } = await import("../../server/evidenceExport");
+    const controller = new AbortController();
+    const exportPromise = createCaseZipStream(owner.id, "CASE_SCORE_OWNER", {
+      signal: controller.signal,
+    });
+    controller.abort(new Error("Client disconnected during export admission"));
+
+    await expect(exportPromise).rejects.toThrow("Client disconnected during export admission");
+  });
+
+  it("rejects highly compressible generated entries by uncompressed size", async () => {
+    const evidenceId = "EVIDENCE_OVERSIZED_ANALYSIS";
+    const analysisId = "ANALYSIS_OVERSIZED_EXPORT";
+    await app.db.insert(app.schema.evidence).values(buildEvidence({
+      id: evidenceId,
+      caseId: "CASE_SCORE_OWNER",
+      userId: owner.id,
+      title: "Oversized analysis fixture",
+    }));
+    await app.db.insert(app.schema.documentAnalyses).values({
+      id: analysisId,
+      evidenceId,
+      caseId: "CASE_SCORE_OWNER",
+      userId: owner.id,
+      analysisVersion: "oversized-test",
+      contentHash: "a".repeat(64),
+      status: "complete",
+      extractionMethod: "plain_text",
+      providerStatus: "complete",
+      documentType: "legal document",
+      confidence: 100,
+      summary: "Oversized fixture",
+      result: "A".repeat(8 * 1024 * 1024 + 1),
+      analyzedChars: 1,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const { buildCaseCsv, createCaseZipStream } = await import("../../server/evidenceExport");
+    try {
+      await expect(buildCaseCsv(owner.id, "CASE_SCORE_OWNER")).resolves.toBeInstanceOf(Buffer);
+      await expect(createCaseZipStream(owner.id, "CASE_SCORE_OWNER"))
+        .rejects.toThrow("generated content exceeds the 64 MB processing limit");
+    } finally {
+      await app.db.delete(app.schema.documentAnalyses).where(eq(app.schema.documentAnalyses.id, analysisId));
+      await app.db.delete(app.schema.evidence).where(eq(app.schema.evidence.id, evidenceId));
+    }
   });
 });
