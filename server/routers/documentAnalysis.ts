@@ -12,6 +12,7 @@ import { documentAnalyses, evidence, timeline as persistedTimeline } from "../sc
 import { getWorkflowPreferences } from "../workflowPreferences";
 import { getLLMProviderDescriptors, invokeLLM, isLLMProviderConfigured, isLocalLLMProvider } from "../llm";
 import { createAuditLog } from "../audit";
+import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
 
 const timelineCategorySchema = z.enum(["employment", "termination", "communication", "legal", "financial", "other"]);
 
@@ -67,6 +68,7 @@ export const documentAnalysisRouter = router({
       force: z.boolean().default(false),
     }))
     .mutation(async ({ ctx, input }) => {
+      enforceRateLimit(ctx, "document-analysis", RATE_LIMITS.aiAnalysis);
       try {
         return await analyzeStoredEvidence({ userId: ctx.user.id, ...input });
       } catch (error) {

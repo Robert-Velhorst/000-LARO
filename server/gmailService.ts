@@ -11,6 +11,23 @@ import { evidenceSources, evidenceItems } from './schema';
 import { v4 as uuidv4 } from 'uuid';
 import { eq, and } from 'drizzle-orm';
 import { ENV } from './_core/env';
+import { collectBoundedBytes, withByteReadAdmission } from './boundedBytes';
+import { MAX_EVIDENCE_BASE64_CHARS, MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
+
+const MAX_GMAIL_ATTACHMENT_RESPONSE_BYTES = MAX_EVIDENCE_BASE64_CHARS + 128 * 1024;
+
+async function readBoundedGmailJson<T>(response: Response, label: string): Promise<T> {
+  const declaredBytes = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_GMAIL_ATTACHMENT_RESPONSE_BYTES) {
+    throw new Error(`${label} exceeds the 7 MB evidence limit`);
+  }
+  const responseBytes = await collectBoundedBytes(response.body, {
+    maxBytes: MAX_GMAIL_ATTACHMENT_RESPONSE_BYTES,
+    label: `${label} response`,
+    limitMessage: `${label} exceeds the 7 MB evidence limit`,
+  });
+  return JSON.parse(responseBytes.toString('utf8')) as T;
+}
 
 export interface GmailThread {
   id: string;
@@ -210,23 +227,25 @@ export async function searchGmailEmails(
  * Get full message details
  */
 export async function getGmailMessage(accessToken: string, messageId: string): Promise<GmailMessage> {
-  const response = await fetch(
-    `https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
+  return withByteReadAdmission(async () => {
+    const response = await fetch(
+      `https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }
+    );
+
+    const data = await readBoundedGmailJson<GmailMessage & { error?: { message?: string } }>(response, 'Gmail message');
+
+    if (data.error) {
+      console.error('[Gmail] Failed to get message:', data);
+      throw new Error(`Failed to get Gmail message: ${data.error.message}`);
     }
-  );
 
-  const data = await response.json();
-
-  if (data.error) {
-    console.error('[Gmail] Failed to get message:', data);
-    throw new Error(`Failed to get Gmail message: ${data.error.message}`);
-  }
-
-  return data;
+    return data;
+  });
 }
 
 /**
@@ -237,6 +256,14 @@ export async function getGmailAttachment(
   messageId: string,
   attachmentId: string
 ): Promise<GmailAttachment | null> {
+  return withByteReadAdmission(() => getGmailAttachmentAdmitted(accessToken, messageId, attachmentId));
+}
+
+async function getGmailAttachmentAdmitted(
+  accessToken: string,
+  messageId: string,
+  attachmentId: string,
+): Promise<GmailAttachment | null> {
   const response = await fetch(
     `https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachmentId}`,
     {
@@ -246,7 +273,7 @@ export async function getGmailAttachment(
     }
   );
 
-  const data = await response.json();
+  const data = await readBoundedGmailJson<GmailAttachment & { error?: { message?: string } }>(response, 'Gmail attachment');
 
   if (data.error) {
     console.error('[Gmail] Failed to get attachment:', data);
@@ -254,6 +281,26 @@ export async function getGmailAttachment(
   }
 
   return data;
+}
+
+export async function getGmailAttachmentBytes(
+  accessToken: string,
+  messageId: string,
+  attachmentId: string,
+): Promise<Buffer | null> {
+  return withByteReadAdmission(async () => {
+    const attachment = await getGmailAttachmentAdmitted(accessToken, messageId, attachmentId);
+    if (!attachment?.data) return null;
+    if (attachment.size > MAX_EVIDENCE_FILE_BYTES || attachment.data.length > MAX_EVIDENCE_BASE64_CHARS) {
+      throw new Error('Gmail attachment exceeds the 7 MB evidence limit');
+    }
+    const normalized = attachment.data.replace(/-/g, '+').replace(/_/g, '/');
+    const bytes = Buffer.from(normalized, 'base64');
+    if (bytes.length > MAX_EVIDENCE_FILE_BYTES) {
+      throw new Error('Gmail attachment exceeds the 7 MB evidence limit');
+    }
+    return bytes;
+  });
 }
 
 /**

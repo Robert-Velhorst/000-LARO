@@ -6,6 +6,8 @@ const googleMocks = vi.hoisted(() => ({
   credentials: [] as Array<Record<string, unknown>>,
   listRequests: [] as Array<Record<string, unknown>>,
   listResponses: [] as Array<Record<string, unknown>>,
+  getRequests: [] as Array<Record<string, unknown>>,
+  getResponses: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("googleapis", () => ({
@@ -24,6 +26,10 @@ vi.mock("googleapis", () => ({
           return Promise.resolve(
             googleMocks.listResponses.shift() ?? { data: { files: [{ id: "folder", name: "Folder" }] } },
           );
+        }),
+        get: vi.fn().mockImplementation((request: Record<string, unknown>) => {
+          googleMocks.getRequests.push(request);
+          return Promise.resolve(googleMocks.getResponses.shift() ?? { data: {} });
         }),
       },
     }),
@@ -111,6 +117,27 @@ suite("Google Drive account selection", () => {
     await expect(
       listGoogleDriveFolders(userId, undefined, "GOOGLE_DRIVE_OTHER_OWNER"),
     ).rejects.toThrow("Selected Google account is not connected");
+  });
+
+  it("rejects oversized Drive files from metadata before downloading media", async () => {
+    googleMocks.getRequests.length = 0;
+    googleMocks.getResponses.push({
+      data: {
+        name: "oversized.pdf",
+        mimeType: "application/pdf",
+        size: String(7 * 1024 * 1024 + 1),
+      },
+    });
+    const { downloadAndUploadGoogleDriveFile } = await import("../../server/googleDriveService");
+
+    await expect(downloadAndUploadGoogleDriveFile(
+      "OVERSIZED_FILE",
+      "CASE_DRIVE_ACCOUNT_SELECTION",
+      userId,
+      "GOOGLE_DRIVE_FIRST",
+    )).rejects.toThrow("Google Drive file exceeds the 7 MB evidence limit");
+    expect(googleMocks.getRequests).toHaveLength(1);
+    expect(googleMocks.getRequests[0]).not.toHaveProperty("alt", "media");
   });
 
   it("reads every Drive listing page before returning folder files", async () => {
