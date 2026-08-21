@@ -41,14 +41,14 @@ Descriptive words (mock/stub/placeholder/fake) needing human judgement. Triage o
 | `server/_core/env.ts` | 101 | `* in production and the secrets are still the shipped placeholders (or empty),` |
 | `server/_core/env.ts` | 133 | `* to the insecure placeholder. Returns a list of non-fatal warnings (e.g.` |
 
-## Markers in tests / scripts / renderer (292) — reported, not failing
+## Markers in tests / scripts / renderer (294) — reported, not failing
 
 These are informational and do not identify unsupported runtime behavior by themselves; test/script occurrences are usually the words "mock"/"fake" used descriptively.
 
 | File | Marker count |
 |---|---|
 | `tests/backend/trelloIngress.test.ts` | 51 |
-| `tests/backend/googleDriveAccountSelection.test.ts` | 33 |
+| `tests/backend/googleDriveAccountSelection.test.ts` | 35 |
 | `tests/backend/multiProviderLLM.test.ts` | 18 |
 | `scripts/no-excuses-scan.mjs` | 14 |
 | `tests/backend/novaDirectory.test.ts` | 14 |

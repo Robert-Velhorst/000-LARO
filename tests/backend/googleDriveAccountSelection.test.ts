@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { buildCase, buildUser } from "../factories";
+import { buildCase, buildEvidence, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 
 const googleMocks = vi.hoisted(() => ({
@@ -241,6 +241,37 @@ suite("Google Drive account selection", () => {
       fileIds: ["file-one"],
       fileNames: ["One.pdf", "Two.pdf"],
     })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("allows large folder resyncs when every discovered file was already imported", async () => {
+    const { PROVIDER_LIMITS } = await import("../../server/providerLimits");
+    const count = PROVIDER_LIMITS.googleDrive.maxImportFiles + 1;
+    const files = Array.from(
+      { length: count },
+      (_, index) => ({ id: `existing-drive-${index}`, name: `Existing ${index}.pdf`, mimeType: "application/pdf" }),
+    );
+    await app.db.insert(app.schema.evidence).values(files.map((file, index) => buildEvidence({
+      id: `EXISTING_DRIVE_EVIDENCE_${index}`,
+      caseId: "CASE_DRIVE_ACCOUNT_SELECTION",
+      userId,
+      source: "google_drive",
+      metadata: JSON.stringify({ driveFileId: file.id }),
+    })));
+    googleMocks.listRequests.length = 0;
+    googleMocks.listResponses.push({ data: { files } });
+    const caller = app.makeCaller({ id: userId, role: "user" });
+
+    await expect(caller.googleDrive.importFolder({
+      caseId: "CASE_DRIVE_ACCOUNT_SELECTION",
+      folderId: "incremental-folder",
+      folderName: "Incremental folder",
+      recursive: false,
+      accountId: "GOOGLE_DRIVE_SECOND",
+    })).resolves.toMatchObject({
+      success: true,
+      imported: 0,
+      skipped: count,
+    });
   });
 
   it("finds exact Drive names globally across every result page", async () => {

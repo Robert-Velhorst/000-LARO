@@ -433,13 +433,6 @@ export const googleDriveRouter = router({
             return input.keywords!.some(kw => fileName.includes(kw.toLowerCase()));
           });
         }
-        if (filesToImport.length > PROVIDER_LIMITS.googleDrive.maxImportFiles) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: `Drive folder imports are limited to ${PROVIDER_LIMITS.googleDrive.maxImportFiles} files at a time. Narrow the folder or add keywords.`,
-          });
-        }
-
         const imported: string[] = [];
         const skipped: string[] = [];
         const errors: string[] = [];
@@ -460,6 +453,13 @@ export const googleDriveRouter = router({
             return [];
           }
         }));
+        const newFiles = filesToImport.filter((file) => !file.id || !importedDriveIds.has(file.id));
+        if (newFiles.length > PROVIDER_LIMITS.googleDrive.maxImportFiles) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Drive folder imports are limited to ${PROVIDER_LIMITS.googleDrive.maxImportFiles} new files at a time. Narrow the folder or add keywords.`,
+          });
+        }
 
         for (const file of filesToImport) {
           try {
