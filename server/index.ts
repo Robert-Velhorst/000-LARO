@@ -53,6 +53,8 @@ import {
   normalizePublicPathPrefix,
   publicPathPrefixMiddleware,
 } from './publicPathPrefix';
+import { consumeCaseZipDownloadTicket, createCaseZipStream } from './evidenceExport';
+import { AUDIT_ACTIONS, createAuditLog } from './audit';
 
 // ─── Environment ──────────────────────────────────────────────────────────────
 
@@ -212,6 +214,52 @@ app.get('/api/evidence-content/:id', async (req, res) => {
     res.status(status).json({
       error: status === 500 ? 'Evidence source could not be read' : (error as Error).message,
     });
+  }
+});
+
+app.get('/api/case-export/:ticket.zip', async (req, res) => {
+  let source: Awaited<ReturnType<typeof createCaseZipStream>> | null = null;
+  const abortController = new AbortController();
+  const abort = () => abortController.abort();
+  req.once('aborted', abort);
+  res.once('close', () => {
+    if (!res.writableFinished) abort();
+  });
+  try {
+    const ctx = await createContext({ req, res });
+    if (!ctx.user || ctx.authScope !== 'session') {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const caseId = consumeCaseZipDownloadTicket(req.params.ticket, ctx.user.id);
+    source = await createCaseZipStream(ctx.user.id, caseId, { signal: abortController.signal });
+    const fileName = encodeURIComponent(sanitizeFilename(source.filename));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
+    const responseFinished = new Promise<void>((resolve, reject) => {
+      res.once('finish', resolve);
+      res.once('error', reject);
+    });
+    source.stream.pipe(res);
+    const result = await source.completion;
+    await responseFinished;
+    await createAuditLog({
+      userId: ctx.user.id,
+      action: AUDIT_ACTIONS.EVIDENCE_EXPORTED,
+      entityType: 'case',
+      entityId: caseId,
+      details: { format: 'zip', bytes: result.bytes, sourceFileCount: result.sourceFileCount },
+    });
+  } catch (error) {
+    source?.stream.destroy();
+    if (res.headersSent) {
+      res.destroy(error as Error);
+      return;
+    }
+    const message = error instanceof Error ? error.message : 'Evidence export failed';
+    const status = /invalid or expired/i.test(message) ? 403 : /not found/i.test(message) ? 404 : /queue is full/i.test(message) ? 429 : 500;
+    res.status(status).json({ error: status === 500 ? 'Evidence export failed' : message });
   }
 });
 

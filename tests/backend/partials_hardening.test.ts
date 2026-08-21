@@ -95,8 +95,14 @@ suite('015 / 023 / 027 — evidence provenance, zip export, reminders', () => {
 
   it('023 — cases.exportZip returns a real, non-empty zip package', async () => {
     const res = await app.makeCaller(U).cases.exportZip({ caseId: 'CASE_H' });
-    expect(res.format).toBe('laro-case-zip/v1');
-    const buf = Buffer.from(res.base64, 'base64');
+    expect(res.format).toBe('laro-case-zip/v2');
+    expect(res.url).toMatch(/^\/api\/case-export\/[A-Za-z0-9_-]{43}\.zip$/);
+    const { createCaseZipStream } = await import('../../server/evidenceExport');
+    const streamed = await createCaseZipStream(U.id, 'CASE_H');
+    const chunks: Buffer[] = [];
+    for await (const chunk of streamed.stream) chunks.push(Buffer.from(chunk));
+    await streamed.completion;
+    const buf = Buffer.concat(chunks);
     expect(buf.length).toBeGreaterThan(0);
     expect(buf.slice(0, 2).toString('latin1')).toBe('PK'); // ZIP magic bytes
   });

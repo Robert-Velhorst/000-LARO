@@ -2,7 +2,9 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { AUDIT_ACTIONS, createAuditLog } from "../audit";
-import { buildCaseCsv, buildCaseZip } from "../evidenceExport";
+import { buildCaseCsv, issueCaseZipDownloadTicket } from "../evidenceExport";
+import { assertCaseOwnership } from "../_core/authz";
+import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
 
 function encodedDownload(filename: string, mimeType: string, buffer: Buffer) {
   return {
@@ -37,15 +39,14 @@ export const evidenceExportRouter = router({
   exportZIP: protectedProcedure
     .input(z.object({ caseId: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
-      const buffer = await buildCaseZip(ctx.user.id, input.caseId);
-      await createAuditLog({
-        userId: ctx.user.id,
-        action: AUDIT_ACTIONS.EVIDENCE_EXPORTED,
-        entityType: "case",
-        entityId: input.caseId,
-        details: { format: "zip", bytes: buffer.length },
-      });
-      return encodedDownload(`case-${input.caseId}-evidence.zip`, "application/zip", buffer);
+      enforceRateLimit(ctx, "evidence-export", RATE_LIMITS.evidenceExport);
+      await assertCaseOwnership(input.caseId, ctx.user.id);
+      const ticket = issueCaseZipDownloadTicket(ctx.user.id, input.caseId);
+      return {
+        filename: `case-${input.caseId}-evidence.zip`,
+        mimeType: "application/zip",
+        url: `/api/case-export/${ticket}.zip`,
+      };
     }),
 
   exportPDF: protectedProcedure

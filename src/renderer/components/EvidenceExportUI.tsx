@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { trpc } from "@/lib/trpc";
+import { apiBase } from "@/providers/TrpcProvider";
 
 interface EvidenceExportUIProps {
   caseId: string;
@@ -32,7 +33,7 @@ function downloadBase64(payload: DownloadPayload): void {
 }
 
 export default function EvidenceExportUI({ caseId }: EvidenceExportUIProps) {
-  const [lastExport, setLastExport] = useState<{ format: string; bytes: number } | null>(null);
+  const [lastExport, setLastExport] = useState<{ format: string; bytes?: number } | null>(null);
   const { data: formats = [], isLoading } = trpc.evidenceExport.getFormats.useQuery();
 
   const csvExport = trpc.evidenceExport.exportCSV.useMutation({
@@ -45,9 +46,14 @@ export default function EvidenceExportUI({ caseId }: EvidenceExportUIProps) {
   });
   const zipExport = trpc.evidenceExport.exportZIP.useMutation({
     onSuccess: (payload) => {
-      downloadBase64(payload);
-      setLastExport({ format: "ZIP", bytes: payload.bytes });
-      toast.success("Evidence package downloaded");
+      const link = document.createElement("a");
+      link.href = `${apiBase()}${payload.url}`;
+      link.download = payload.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setLastExport({ format: "ZIP" });
+      toast.success("Evidence package download started");
     },
     onError: (error) => toast.error(error.message),
   });
@@ -111,7 +117,8 @@ export default function EvidenceExportUI({ caseId }: EvidenceExportUIProps) {
         {lastExport && (
           <div className="flex items-center gap-2 border-t border-border/60 pt-4 text-sm text-muted-foreground">
             <CheckCircle2 className="h-4 w-4 text-green-500" />
-            Last download: {lastExport.format}, {(lastExport.bytes / 1024).toFixed(1)} KB
+            Last download: {lastExport.format}
+            {typeof lastExport.bytes === "number" ? `, ${(lastExport.bytes / 1024).toFixed(1)} KB` : ""}
           </div>
         )}
       </CardContent>
