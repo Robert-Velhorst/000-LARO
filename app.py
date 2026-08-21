@@ -1756,6 +1756,7 @@ def lookup_ledger_case_identifier():
         return jsonify({'error': 'identifier query parameter is required'}), 400
     match = legal_ledger.lookup_case_identifier(
         value,
+        external_user_id=_ledger_actor(),
         identifier_type=request.args.get('type') or request.args.get('identifier_type'),
         source_party=request.args.get('source_party'),
     )

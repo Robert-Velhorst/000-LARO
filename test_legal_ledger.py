@@ -558,7 +558,11 @@ class TestLegalLedgerService(unittest.TestCase):
         self.assertEqual(duplicate["id"], added["id"])
         self.assertEqual(duplicate["source_uri"], "gmail://message/123")
 
-        match = self.ledger.lookup_case_identifier("RBGEL-24-123", identifier_type="court_reference")
+        match = self.ledger.lookup_case_identifier(
+            "RBGEL-24-123",
+            external_user_id="robert",
+            identifier_type="court_reference",
+        )
         self.assertEqual(match["case"]["case_id"], case["case_id"])
         self.assertEqual(match["identifier"]["source_party"], "Rechtbank Gelderland")
 
@@ -1214,6 +1218,37 @@ class TestLegalLedgerApi(unittest.TestCase):
     def setUp(self):
         token = self.app_module.auth_system._create_session("ledger@example.com", "user")
         self.headers = {"Authorization": f"Bearer {token}"}
+
+    def test_identifier_lookup_is_scoped_to_authenticated_owner(self):
+        victim_token = self.app_module.auth_system._create_session("identifier-owner@example.com", "user")
+        victim_headers = {"Authorization": f"Bearer {victim_token}"}
+        created = self.client.post("/api/cases", json={
+            "title": "Private identifier case",
+            "description": "Must not be discoverable by another account.",
+        }, headers=victim_headers)
+        self.assertEqual(created.status_code, 201)
+        case_id = created.get_json()["case_id"]
+        identifier_value = "PRIVATE-IDENTIFIER-2026-001"
+        identifier = self.client.post(f"/api/cases/{case_id}/identifiers", json={
+            "identifier_type": "court_reference",
+            "identifier_value": identifier_value,
+            "source_party": "Rechtbank",
+        }, headers=victim_headers)
+        self.assertEqual(identifier.status_code, 201)
+
+        denied = self.client.get(
+            f"/api/case-identifiers/lookup?identifier={identifier_value}",
+            headers=self.headers,
+        )
+        self.assertEqual(denied.status_code, 404)
+        self.assertEqual(denied.get_json(), {"error": "Case identifier not found"})
+
+        allowed = self.client.get(
+            f"/api/case-identifiers/lookup?identifier={identifier_value}",
+            headers=victim_headers,
+        )
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(allowed.get_json()["case"]["case_id"], case_id)
 
     def test_live_api_has_no_demo_state_stores(self):
         for attribute in (
