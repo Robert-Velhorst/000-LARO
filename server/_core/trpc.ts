@@ -41,9 +41,6 @@ export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
   if (!ctx.user) {
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Not authenticated' });
   }
-  if (ctx.authScope === 'evidence-scanner') {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'Scanner token is restricted to evidence upload' });
-  }
   return next({ ctx: { ...ctx, user: ctx.user } });
 });
 

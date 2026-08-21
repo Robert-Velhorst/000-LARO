@@ -19,10 +19,7 @@ export type UploadStatus = 'pending' | 'excluded' | 'uploading' | 'done' | 'comp
 
 export interface AgentConfig {
   apiUrl: string;
-  token: string | null;
-  deviceId: string | null;
   deviceName: string;
-  userId: string | null;
   caseId: string | null;
 }
 

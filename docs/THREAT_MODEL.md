@@ -21,7 +21,7 @@ Trust boundaries:
 
 | Category | Main threats | Current controls | Residual |
 | --- | --- | --- | --- |
-| Spoofing | forged sessions or scanner identity | per-install secrets, bcrypt, signed HTTP-only sessions, revocation, 15-minute scanner token | bearer theft remains possible on a compromised host |
+| Spoofing | forged sessions or scanner identity | per-install secrets, bcrypt, signed HTTP-only sessions, revocation, and a per-launch main-process scanner proof restricted to loopback | a fully compromised operating-system account remains trusted |
 | Tampering | path traversal, altered evidence, invalid transitions | confined storage, filename/key sanitation, SHA-256 provenance, Zod validation, state machines | hashes detect change but do not provide external timestamping |
 | Repudiation | disputed user/provider action | owner-scoped audit history, delivery idempotency, response records | local administrators can access the host database |
 | Information disclosure | IDOR, token leakage, untrusted navigation | ownership guards, AES-256-GCM OAuth token storage, CSP/security headers, strict origins, sandboxed windows, protocol-checked external links | endpoint security and disk encryption remain operator responsibilities |

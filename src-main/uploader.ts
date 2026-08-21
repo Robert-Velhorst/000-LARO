@@ -11,11 +11,13 @@ import type { AppRouter } from '../server/routers';
 import { FileItem } from '../shared/types';
 import { evidenceTypeForMime, MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 import { updateFileStatus, updateScanProgress, getPendingFiles, getScanCaseId } from './database';
+import { DESKTOP_SCANNER_HEADER } from '../shared/desktopScannerAuth';
 
 export interface UploaderOptions {
   scanId: string;
   apiUrl: string;
-  token: string;
+  sessionCookie: string;
+  scannerSecret: string;
   concurrency?: number; // Number of parallel uploads
   maxRetries?: number;
 }
@@ -23,7 +25,6 @@ export interface UploaderOptions {
 export class FileUploader extends EventEmitter {
   private scanId: string;
   private apiUrl: string;
-  private token: string;
   private concurrency: number;
   private maxRetries: number;
   
@@ -42,7 +43,6 @@ export class FileUploader extends EventEmitter {
     super();
     this.scanId = options.scanId;
     this.apiUrl = options.apiUrl;
-    this.token = options.token;
     this.concurrency = options.concurrency || 3;
     this.maxRetries = options.maxRetries || 3;
     this.client = createTRPCProxyClient<AppRouter>({
@@ -50,7 +50,10 @@ export class FileUploader extends EventEmitter {
       links: [
         httpBatchLink({
           url: `${this.apiUrl.replace(/\/$/, '')}/api/trpc`,
-          headers: { Authorization: `Bearer ${this.token}` },
+          headers: {
+            Cookie: options.sessionCookie,
+            [DESKTOP_SCANNER_HEADER]: options.scannerSecret,
+          },
         }),
       ],
     });

@@ -56,12 +56,14 @@ describe('Phase 008 — case-scoped routers enforce ownership', () => {
 });
 
 describe('Phase 007 — no well-known bearer accepted in production', () => {
-  it('removes local bypass tokens and restricts scanner credentials', () => {
+  it('removes local bypass and renderer-accessible bearer credentials', () => {
     const src = read('server/context.ts');
     const trpc = read('server/_core/trpc.ts');
     expect(src).not.toContain('LOCAL_AGENT_TOKEN');
     expect(src).not.toContain('local-default');
-    expect(src).toContain('evidence-scanner');
-    expect(trpc).toContain("ctx.authScope === 'evidence-scanner'");
+    expect(src).not.toContain('authHeader');
+    expect(src).not.toContain('Bearer ');
+    expect(src).toContain('isDesktopScannerRequest');
+    expect(trpc).not.toContain('evidence-scanner');
   });
 });

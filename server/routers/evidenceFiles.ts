@@ -93,7 +93,7 @@ export const evidenceFilesRouter = router({
       ),
     }))
     .mutation(async ({ ctx, input }) => {
-      const scannerCredential = ctx.authScope === "evidence-scanner";
+      const scannerCredential = ctx.authScope === "session" && ctx.desktopScanner;
       if (scannerCredential !== (input.source === "desktop_scanner")) {
         throw new TRPCError({
           code: "FORBIDDEN",
