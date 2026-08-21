@@ -1704,25 +1704,36 @@ class LegalLedger:
     def lookup_case_identifier(
         self,
         identifier_value: str,
+        *,
+        external_user_id: Any,
         identifier_type: Optional[str] = None,
         source_party: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         value = str(identifier_value or "").strip()
-        if not value:
+        owner = str(external_user_id or "").strip()
+        if not value or not owner:
             return None
         with self.session_scope() as session:
-            query = session.query(CaseIdentifier).filter_by(identifier_value=value)
+            query = (
+                session.query(CaseIdentifier, LegalCase)
+                .join(LegalCase, CaseIdentifier.case_id == LegalCase.id)
+                .join(LedgerUser, LegalCase.user_id == LedgerUser.id)
+                .filter(
+                    CaseIdentifier.identifier_value == value,
+                    LedgerUser.external_user_id == owner,
+                )
+            )
             if identifier_type:
-                query = query.filter_by(identifier_type=str(identifier_type).strip())
+                query = query.filter(CaseIdentifier.identifier_type == str(identifier_type).strip())
             if source_party:
-                query = query.filter_by(source_party=str(source_party).strip())
-            identifier = query.order_by(CaseIdentifier.updated_at.desc(), CaseIdentifier.id.desc()).first()
-            if not identifier:
+                query = query.filter(CaseIdentifier.source_party == str(source_party).strip())
+            match = query.order_by(CaseIdentifier.updated_at.desc(), CaseIdentifier.id.desc()).first()
+            if not match:
                 return None
-            case = session.get(LegalCase, identifier.case_id)
+            identifier, case = match
             return {
                 "identifier": self._serialize_identifier(identifier),
-                "case": self._case_detail(session, case) if case else None,
+                "case": self._case_detail(session, case),
             }
 
     def _create_document_record(self, session, case_id: int, data: Dict[str, Any]) -> CaseDocument:
