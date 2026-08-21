@@ -41,7 +41,7 @@ Descriptive words (mock/stub/placeholder/fake) needing human judgement. Triage o
 | `server/_core/env.ts` | 101 | `* in production and the secrets are still the shipped placeholders (or empty),` |
 | `server/_core/env.ts` | 133 | `* to the insecure placeholder. Returns a list of non-fatal warnings (e.g.` |
 
-## Markers in tests / scripts / renderer (249) — reported, not failing
+## Markers in tests / scripts / renderer (250) — reported, not failing
 
 These are informational and do not identify unsupported runtime behavior by themselves; test/script occurrences are usually the words "mock"/"fake" used descriptively.
 
@@ -57,9 +57,9 @@ These are informational and do not identify unsupported runtime behavior by them
 | `tests/backend/oauthTokenRetry.test.ts` | 8 |
 | `src/renderer/components/SmartSearchFilters.tsx` | 7 |
 | `tests/backend/kvkIntegration.test.ts` | 6 |
+| `tests/security/productionReadiness.test.ts` | 6 |
 | `src/renderer/components/AuthPage.tsx` | 5 |
 | `src/renderer/components/EvidenceFilters.tsx` | 5 |
-| `tests/security/productionReadiness.test.ts` | 5 |
 | `src/renderer/components/EvidenceSearch.tsx` | 4 |
 | `tests/backend/outreachDirectory.test.ts` | 4 |
 | `tests/backend/wettenOverheid.test.ts` | 4 |

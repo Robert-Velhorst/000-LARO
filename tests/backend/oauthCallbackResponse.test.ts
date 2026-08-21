@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import express from "express";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import oauth2CallbacksRouter from "../../server/oauth2Callbacks";
 
 describe("OAuth callback response", () => {
@@ -36,5 +36,27 @@ describe("OAuth callback response", () => {
     expect(body).toContain("window.close()");
     expect(body).not.toContain("code=");
     expect(body).not.toContain("state=");
+
+    const malformedEnvelope = Buffer.from("gcm1:x:x:x", "utf8").toString("base64url");
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const invalidStateResponse = await fetch(
+      `http://127.0.0.1:${address.port}/api/oauth/gmail/callback?code=provider-code&state=${malformedEnvelope}`,
+    );
+    const invalidStateBody = await invalidStateResponse.text();
+    expect(invalidStateResponse.status).toBe(400);
+    expect(invalidStateBody).toContain("Connection failed");
+    expect(invalidStateBody).not.toContain("provider-code");
+    expect(invalidStateBody).not.toContain(malformedEnvelope);
+
+    const tamperedEnvelope = Buffer.from(
+      `gcm1:${"0".repeat(24)}:${"0".repeat(32)}:${"00".repeat(16)}`,
+      "utf8",
+    ).toString("base64url");
+    const tamperedStateResponse = await fetch(
+      `http://127.0.0.1:${address.port}/api/oauth/gmail/callback?code=provider-code&state=${tamperedEnvelope}`,
+    );
+    expect(tamperedStateResponse.status).toBe(400);
+    expect(await tamperedStateResponse.text()).not.toContain(tamperedEnvelope);
+    expect(errorLog).not.toHaveBeenCalled();
   });
 });

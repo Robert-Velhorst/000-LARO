@@ -22,28 +22,32 @@ function secret(): string {
   return ENV.JWT_SECRET || ENV.COOKIE_SECRET || 'insecure-dev-secret-change-me-please';
 }
 
-function deriveKey(): Buffer {
-  // scrypt is a proper password-based KDF; deterministic given the same secret.
-  return crypto.scryptSync(secret(), KDF_SALT, 32);
-}
+// Derive once while the server module graph is loading. Repeating this
+// memory-hard operation inside public OAuth callback requests can block the
+// event loop and turn malformed callback traffic into resource exhaustion.
+const TOKEN_KEY = crypto.scryptSync(secret(), KDF_SALT, 32);
 
 /** Encrypt a UTF-8 string with AES-256-GCM. Returns `gcm1:iv:tag:ciphertext` (hex). */
 export function encryptSecret(plaintext: string): string {
   if (!plaintext) return '';
   const iv = crypto.randomBytes(IV_LEN);
-  const cipher = crypto.createCipheriv(GCM_ALGO, deriveKey(), iv);
+  const cipher = crypto.createCipheriv(GCM_ALGO, TOKEN_KEY, iv);
   const enc = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
   return [PREFIX, iv.toString('hex'), tag.toString('hex'), enc.toString('hex')].join(':');
 }
 
 /** Decrypt a value produced by encryptSecret, transparently handling legacy CBC. */
-export function decryptSecret(value: string): string {
+export interface DecryptSecretOptions {
+  logFailure?: boolean;
+}
+
+export function decryptSecret(value: string, options: DecryptSecretOptions = {}): string {
   if (!value) return '';
   try {
     if (value.startsWith(PREFIX + ':')) {
       const [, ivHex, tagHex, dataHex] = value.split(':');
-      const decipher = crypto.createDecipheriv(GCM_ALGO, deriveKey(), Buffer.from(ivHex, 'hex'));
+      const decipher = crypto.createDecipheriv(GCM_ALGO, TOKEN_KEY, Buffer.from(ivHex, 'hex'));
       decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
       return Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]).toString('utf8');
     }
@@ -57,7 +61,9 @@ export function decryptSecret(value: string): string {
       return Buffer.concat([decipher.update(Buffer.from(parts.join(':'), 'hex')), decipher.final()]).toString('utf8');
     }
   } catch (err) {
-    console.error('[crypto] decryptSecret failed:', err instanceof Error ? err.message : err);
+    if (options.logFailure !== false) {
+      console.error('[crypto] decryptSecret failed:', err instanceof Error ? err.message : err);
+    }
   }
   return '';
 }
