@@ -1,4 +1,5 @@
 import { ENV } from "./_core/env";
+import { requestLLMJson } from "./llmTransport";
 
 export type Role = "system" | "user" | "assistant" | "tool" | "function";
 
@@ -67,6 +68,7 @@ export type InvokeParams = {
   output_schema?: OutputSchema;
   responseFormat?: ResponseFormat;
   response_format?: ResponseFormat;
+  signal?: AbortSignal;
 };
 
 export const EXTERNAL_LLM_PROVIDERS = [
@@ -407,26 +409,26 @@ async function invokeAnthropic(config: ProviderConfig, params: InvokeParams): Pr
       input_schema: tool.function.parameters || { type: "object", properties: {} },
     }));
   }
-  const response = await fetch(config.url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": config.apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`LLM invoke failed (${config.label}): ${response.status} ${response.statusText} - ${errorText}`);
-  }
-  const result = await response.json() as {
+  const result = await requestLLMJson<{
     id: string;
     model: string;
     content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
     stop_reason?: string | null;
     usage?: { input_tokens?: number; output_tokens?: number };
-  };
+  }>({
+    url: config.url,
+    label: config.label,
+    signal: params.signal,
+    init: {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": config.apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(payload),
+    },
+  });
   const content = result.content || [];
   const responseText = content.filter((part) => part.type === "text").map((part) => part.text || "").join("\n");
   const toolCalls = content.filter((part) => part.type === "tool_use").map((part) => ({
@@ -499,20 +501,18 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
       : normalizedResponseFormat;
   }
 
-  const response = await fetch(config.url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(config.localOnly ? {} : { authorization: `Bearer ${config.apiKey}` }),
+  return requestLLMJson<InvokeResult>({
+    url: config.url,
+    label: config.label,
+    signal: params.signal,
+    init: {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(config.localOnly ? {} : { authorization: `Bearer ${config.apiKey}` }),
+      },
+      redirect: config.localOnly ? "error" : "follow",
+      body: JSON.stringify(payload),
     },
-    redirect: config.localOnly ? "error" : "follow",
-    body: JSON.stringify(payload),
   });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`LLM invoke failed (${config.label}): ${response.status} ${response.statusText} - ${errorText}`);
-  }
-
-  return (await response.json()) as InvokeResult;
 }
