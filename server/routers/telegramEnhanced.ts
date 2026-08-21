@@ -15,6 +15,7 @@
 
 import { protectedProcedure, router } from '../_core/trpc';
 import { z } from 'zod';
+import { TRPCError } from '@trpc/server';
 import {
   getTelegramFile,
   downloadTelegramFile,
@@ -22,12 +23,13 @@ import {
   setTelegramWebhook,
   removeTelegramWebhook,
   importTelegramExport,
-  parseTelegramExport,
   isValidTelegramToken,
 } from '../telegramService';
 import { getDb } from '../db';
 import { cases, evidenceItems, evidenceSources } from '../schema';
 import { eq, and, sql } from 'drizzle-orm';
+import { IMPORT_LIMITS, ImportValidationError, normalizeTelegramExport } from '../importLimits';
+import { enforcePersistentRateLimit, RATE_LIMITS } from '../rateLimit';
 
 /**
  * Telegram Enhanced Router
@@ -180,13 +182,14 @@ export const telegramEnhancedRouter = router({
   importExport: protectedProcedure
     .input(
       z.object({
-        caseId: z.string(),
-        fileName: z.string(),
-        exportJson: z.string(), // JSON string from Telegram Desktop export
+        caseId: z.string().min(1).max(128),
+        fileName: z.string().max(IMPORT_LIMITS.telegram.maxFilenameChars),
+        exportJson: z.string().max(IMPORT_LIMITS.telegram.maxBytes),
       })
     )
     .mutation(async ({ input, ctx }) => {
       try {
+        await enforcePersistentRateLimit(ctx, 'telegram-import', RATE_LIMITS.bulkImport);
         const db = await getDb();
         if (!db) {
           throw new Error('Database not available');
@@ -203,15 +206,22 @@ export const telegramEnhancedRouter = router({
           throw new Error('Case not found or you do not have access');
         }
 
-        // Parse export JSON
-        const exportData = parseTelegramExport(input.exportJson);
+        let normalized: ReturnType<typeof normalizeTelegramExport>;
+        try {
+          normalized = normalizeTelegramExport(input.exportJson, input.fileName);
+        } catch (error) {
+          if (error instanceof ImportValidationError) {
+            throw new TRPCError({ code: 'BAD_REQUEST', message: error.message });
+          }
+          throw error;
+        }
 
         // Import to evidence system
         const result = await importTelegramExport(
           ctx.user.id,
           input.caseId,
-          exportData,
-          input.fileName
+          normalized.chat,
+          normalized.filename
         );
 
         return result;
