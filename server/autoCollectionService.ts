@@ -21,7 +21,7 @@ import {
   getGoogleDriveFileMetadata,
 } from './googleDriveService';
 import { decryptToken, encryptToken, refreshGmailToken } from './emailOAuth';
-import { searchGmailEmails, getGmailMessage, getGmailAttachment } from './gmailService';
+import { searchGmailEmails, getGmailMessage, getGmailAttachmentBytes } from './gmailService';
 import { storagePut } from './storage';
 import { createEvidenceFile } from './evidence';
 import { analyzeStoredEvidence } from './documentAnalysisService';
@@ -31,7 +31,10 @@ import { getStoredGmailEvidenceState, resolveGmailAccountIds } from './gmailColl
 import { emitRealtimeDataChange } from './realtime';
 import { linkInboundOutreachReply } from './inboundOutreach';
 import * as fs from 'fs/promises';
+import { createReadStream } from 'fs';
 import * as path from 'path';
+import { collectBoundedBytes, withByteReadAdmission } from './boundedBytes';
+import { MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 
 /**
  * Evidence Auto-Collection Service
@@ -905,7 +908,7 @@ async function pullFromGmail(
       }
 
       // Download attachments.
-      const attachments: { partId: string; filename: string; mimeType: string; attachmentId: string }[] = [];
+      const attachments: { partId: string; filename: string; mimeType: string; attachmentId: string; size?: number }[] = [];
       const collectAttachments = (payload: any) => {
         if (!payload) return;
         if (payload.filename && payload.body?.attachmentId) {
@@ -914,6 +917,7 @@ async function pullFromGmail(
             filename: payload.filename,
             mimeType: payload.mimeType || 'application/octet-stream',
             attachmentId: payload.body.attachmentId,
+            size: payload.body.size,
           });
         }
         if (payload.parts) payload.parts.forEach(collectAttachments);
@@ -932,11 +936,11 @@ async function pullFromGmail(
         let attachmentWords = 0;
         try {
           if (storedState.attachmentIds.has(att.attachmentId)) continue;
-          const a = await getGmailAttachment(cred.accessToken, msg.id, att.attachmentId);
-          if (!a?.data) continue;
-          // Gmail uses URL-safe base64.
-          const normalized = a.data.replace(/-/g, '+').replace(/_/g, '/');
-          const buf = Buffer.from(normalized, 'base64');
+          if (typeof att.size === 'number' && att.size > MAX_EVIDENCE_FILE_BYTES) {
+            throw new Error('Gmail attachment exceeds the 7 MB evidence limit');
+          }
+          const buf = await getGmailAttachmentBytes(cred.accessToken, msg.id, att.attachmentId);
+          if (!buf) continue;
           const safeName = path.basename(att.filename.replace(/\\/g, '/')) || 'attachment';
           const storageKey = `evidence/${caseId}/gmail/${uuidv4()}-${safeName}`;
           const storedAttachment = await storagePut(storageKey, buf, att.mimeType);
@@ -1256,7 +1260,14 @@ async function pullFromLocalFolders(
         const stat = await fs.stat(file.absPath);
         if (dateStart && stat.mtime < dateStart) continue;
         if (dateEnd && stat.mtime > dateEnd) continue;
-        const buf = await fs.readFile(file.absPath);
+        if (stat.size > MAX_EVIDENCE_FILE_BYTES) {
+          throw new Error('Local evidence file exceeds the 7 MB evidence limit');
+        }
+        const buf = await withByteReadAdmission(() => collectBoundedBytes(createReadStream(file.absPath), {
+          maxBytes: MAX_EVIDENCE_FILE_BYTES,
+          label: 'Local evidence file',
+          limitMessage: 'Local evidence file exceeds the 7 MB evidence limit',
+        }));
         const ext = path.extname(file.name).toLowerCase();
         const mimeType = guessMimeFromExt(ext);
         const storageKey = `evidence/${caseId}/local/${uuidv4()}-${file.name}`;

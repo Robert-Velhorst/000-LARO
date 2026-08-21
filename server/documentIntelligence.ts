@@ -1,6 +1,8 @@
 import { createHash } from "crypto";
 import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
+import { getDocument, type PDFDocumentLoadingTask, type PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { Open } from "unzipper";
 import {
   getSupportedDocumentAnalysisMimeTypes,
   isSupportedDocumentAnalysisMimeType,
@@ -13,6 +15,22 @@ export const DOCUMENT_ANALYSIS_VERSION = "3.0.0";
 const MAX_ANALYSIS_CHARS = 8 * 1024 * 1024;
 const MAX_PROVIDER_CHUNK_CHARS = 60_000;
 const MAX_CITATIONS = 10_000;
+const MAX_PDF_PAGES = 200;
+const MAX_PDF_OCR_PAGES = 25;
+const PDF_RENDER_WIDTH = 1_800;
+const MAX_PDF_PAGE_PIXELS = 12_000_000;
+const MAX_PDF_TOTAL_RENDER_PIXELS = 120_000_000;
+const MAX_PDF_RENDERED_BYTES = 64 * 1024 * 1024;
+const PDF_RENDER_CHUNK_PAGES = 5;
+const DOCUMENT_EXTRACTION_TIMEOUT_MS = 5 * 60 * 1000;
+const MAX_ACTIVE_DOCUMENT_EXTRACTIONS = 2;
+const MAX_QUEUED_DOCUMENT_EXTRACTIONS = 8;
+const MAX_DOCX_ARCHIVE_ENTRIES = 1_000;
+const MAX_DOCX_ENTRY_BYTES = MAX_ANALYSIS_CHARS;
+const MAX_DOCX_EXPANDED_BYTES = 32 * 1024 * 1024;
+
+let activeDocumentExtractions = 0;
+const documentExtractionWaiters: Array<() => void> = [];
 
 export type Citation = {
   id: string;
@@ -81,7 +99,7 @@ export type DocumentAnalysisResult = {
   contradictions: ContradictionFinding[];
 };
 
-type ExtractionResult = {
+export type ExtractionResult = {
   text: string;
   method: DocumentAnalysisResult["extractionMethod"];
   confidence: number | null;
@@ -135,7 +153,39 @@ function stripHtml(html: string): string {
   );
 }
 
+async function acquireDocumentExtractionSlot(): Promise<void> {
+  if (activeDocumentExtractions < MAX_ACTIVE_DOCUMENT_EXTRACTIONS) {
+    activeDocumentExtractions += 1;
+    return;
+  }
+  if (documentExtractionWaiters.length >= MAX_QUEUED_DOCUMENT_EXTRACTIONS) {
+    throw new Error("Document analysis queue is full; retry after current jobs finish");
+  }
+  await new Promise<void>((resolve) => {
+    documentExtractionWaiters.push(resolve);
+  });
+}
+
+function releaseDocumentExtractionSlot(): void {
+  const next = documentExtractionWaiters.shift();
+  if (next) next();
+  else activeDocumentExtractions -= 1;
+}
+
 export async function extractDocumentText(bytes: Buffer, mimeType: string): Promise<ExtractionResult> {
+  return withDocumentAnalysisResourceSlot(() => extractDocumentTextInAcquiredSlot(bytes, mimeType));
+}
+
+export async function withDocumentAnalysisResourceSlot<T>(operation: () => Promise<T>): Promise<T> {
+  await acquireDocumentExtractionSlot();
+  try {
+    return await operation();
+  } finally {
+    releaseDocumentExtractionSlot();
+  }
+}
+
+export async function extractDocumentTextInAcquiredSlot(bytes: Buffer, mimeType: string): Promise<ExtractionResult> {
   const normalizedMime = mimeType.toLowerCase().split(";")[0].trim();
   if (["text/plain", "text/csv"].includes(normalizedMime)) {
     return { text: normalizeText(bytes.toString("utf8")), method: "plain_text", confidence: null };
@@ -148,32 +198,122 @@ export async function extractDocumentText(bytes: Buffer, mimeType: string): Prom
   }
   if (normalizedMime === "application/pdf") {
     const parser = new PDFParse({ data: new Uint8Array(bytes) });
+    const deadlineAt = Date.now() + DOCUMENT_EXTRACTION_TIMEOUT_MS;
     try {
-      const result = await parser.getText();
-      const pages = result.pages.map((page) => normalizeText(page.text));
+      const document = await loadPdfWithinDeadline(bytes, deadlineAt);
+      (parser as unknown as { doc: PDFDocumentProxy }).doc = document;
+      const info = await beforeExtractionDeadline(() => parser.getInfo(), deadlineAt);
+      if (!Number.isInteger(info.total) || info.total < 1) {
+        throw new Error("PDF does not contain a valid page count");
+      }
+      if (info.total > MAX_PDF_PAGES) {
+        throw new Error(`PDF exceeds the ${MAX_PDF_PAGES} page analysis limit`);
+      }
+
+      const pages: string[] = [];
+      let extractedChars = 0;
+      for (let pageNumber = 1; pageNumber <= info.total; pageNumber += 1) {
+        const pageResult = await beforeExtractionDeadline(
+          () => parser.getText({ partial: [pageNumber] }),
+          deadlineAt,
+        );
+        const text = normalizeText(pageResult.pages[0]?.text ?? pageResult.text);
+        extractedChars += text.length;
+        if (extractedChars > MAX_ANALYSIS_CHARS) {
+          throw new Error("PDF text exceeds the 8 MB analysis limit");
+        }
+        pages.push(text);
+      }
+
       const missingPages = pages
         .map((text, index) => ({ text, pageNumber: index + 1 }))
         .filter((page) => page.text.replace(/[^\p{L}\p{N}]/gu, "").length < 20);
       if (!missingPages.length) {
-        return { text: normalizeText(result.text), method: "pdf_text", confidence: null };
+        const text = normalizeText(pages.join("\n\n"));
+        if (text.length > MAX_ANALYSIS_CHARS) {
+          throw new Error("PDF text exceeds the 8 MB analysis limit");
+        }
+        return { text, method: "pdf_text", confidence: null };
+      }
+      if (missingPages.length > MAX_PDF_OCR_PAGES) {
+        throw new Error(`PDF requires OCR for more than ${MAX_PDF_OCR_PAGES} pages`);
       }
 
-      const rendered = await parser.getScreenshot({
-        partial: missingPages.map((page) => page.pageNumber),
-        desiredWidth: 1800,
-        imageDataUrl: false,
-        imageBuffer: true,
-      });
-      const recognized = await extractImageBatchText(rendered.pages.map((page) => Buffer.from(page.data)));
-      const ocrByPage = new Map(rendered.pages.map((page, index) => [page.pageNumber, recognized[index]]));
+      const missingPageNumbers = missingPages.map((page) => page.pageNumber);
+      const hasAllPageDimensions = missingPageNumbers.every((pageNumber) =>
+        info.pages.some((page) => page.pageNumber === pageNumber)
+      );
+      const detailedInfo = hasAllPageDimensions
+        ? info
+        : await beforeExtractionDeadline(
+          () => parser.getInfo({ partial: missingPageNumbers, parsePageInfo: true }),
+          deadlineAt,
+        );
+      const pageInfo = new Map(detailedInfo.pages.map((page) => [page.pageNumber, page]));
+      let totalRenderPixels = 0;
+      for (const pageNumber of missingPageNumbers) {
+        const dimensions = pageInfo.get(pageNumber);
+        if (!dimensions || !Number.isFinite(dimensions.width) || !Number.isFinite(dimensions.height) ||
+            dimensions.width <= 0 || dimensions.height <= 0) {
+          throw new Error(`PDF page ${pageNumber} has invalid dimensions`);
+        }
+        const renderedHeight = Math.ceil(dimensions.height * (PDF_RENDER_WIDTH / dimensions.width));
+        const pixels = PDF_RENDER_WIDTH * renderedHeight;
+        if (!Number.isSafeInteger(pixels) || pixels > MAX_PDF_PAGE_PIXELS) {
+          throw new Error(`PDF page ${pageNumber} exceeds the raster pixel limit`);
+        }
+        totalRenderPixels += pixels;
+        if (totalRenderPixels > MAX_PDF_TOTAL_RENDER_PIXELS) {
+          throw new Error("PDF exceeds the aggregate raster pixel limit");
+        }
+      }
+
+      type BatchOcrResult = Awaited<ReturnType<typeof extractImageBatchText>>[number];
+      const ocrByPage = new Map<number, BatchOcrResult>();
+      let totalRenderedBytes = 0;
+      for (const pageChunk of chunks(missingPageNumbers, PDF_RENDER_CHUNK_PAGES)) {
+        const rendered = await beforeExtractionDeadline(() => parser.getScreenshot({
+          partial: pageChunk,
+          desiredWidth: PDF_RENDER_WIDTH,
+          imageDataUrl: false,
+          imageBuffer: true,
+        }), deadlineAt);
+        const renderedPageNumbers = new Set(rendered.pages.map((page) => page.pageNumber));
+        if (rendered.pages.length !== pageChunk.length || renderedPageNumbers.size !== pageChunk.length ||
+            pageChunk.some((pageNumber) => !renderedPageNumbers.has(pageNumber))) {
+          throw new Error("PDF renderer did not return every requested page");
+        }
+        for (const page of rendered.pages) {
+          const actualPixels = page.width * page.height;
+          if (!Number.isFinite(page.width) || !Number.isFinite(page.height) ||
+              page.width < 1 || page.height < 1 || !Number.isSafeInteger(actualPixels) ||
+              actualPixels > MAX_PDF_PAGE_PIXELS) {
+            throw new Error(`PDF page ${page.pageNumber} exceeds the raster pixel limit`);
+          }
+        }
+        const images = rendered.pages.map((page) => Buffer.from(page.data));
+        totalRenderedBytes += images.reduce((sum, image) => sum + image.length, 0);
+        if (totalRenderedBytes > MAX_PDF_RENDERED_BYTES) {
+          throw new Error("PDF rendered output exceeds the 64 MB analysis limit");
+        }
+        const recognized = await beforeExtractionDeadline(() => extractImageBatchText(images), deadlineAt);
+        if (recognized.length !== rendered.pages.length) {
+          throw new Error("OCR did not return a result for every rendered PDF page");
+        }
+        rendered.pages.forEach((page, index) => ocrByPage.set(page.pageNumber, recognized[index]));
+      }
       const merged = pages.map((text, index) => {
         const pageNumber = index + 1;
         const ocr = ocrByPage.get(pageNumber);
         return `[PDF page ${pageNumber}]\n${text || normalizeText(ocr?.text || "")}`;
       });
-      const confidences = recognized.map((item) => item.confidence);
+      const confidences = [...ocrByPage.values()].map((item) => item.confidence);
+      const extractedText = normalizeText(merged.join("\n\n"));
+      if (extractedText.length > MAX_ANALYSIS_CHARS) {
+        throw new Error("PDF extracted text exceeds the 8 MB analysis limit");
+      }
       return {
-        text: normalizeText(merged.join("\n\n")),
+        text: extractedText,
         method: "pdf_ocr",
         confidence: confidences.length ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length : null,
       };
@@ -182,8 +322,14 @@ export async function extractDocumentText(bytes: Buffer, mimeType: string): Prom
     }
   }
   if (normalizedMime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
-    const result = await mammoth.extractRawText({ buffer: bytes });
-    return { text: normalizeText(result.value), method: "docx_text", confidence: null };
+    const deadlineAt = Date.now() + DOCUMENT_EXTRACTION_TIMEOUT_MS;
+    await validateDocxArchive(bytes, deadlineAt);
+    const result = await beforeExtractionDeadline(() => mammoth.extractRawText({ buffer: bytes }), deadlineAt);
+    const text = normalizeText(result.value);
+    if (text.length > MAX_ANALYSIS_CHARS) {
+      throw new Error("DOCX extracted text exceeds the 8 MB analysis limit");
+    }
+    return { text, method: "docx_text", confidence: null };
   }
   if (isSupportedImageOcrMimeType(normalizedMime)) {
     const result = await extractImageText(bytes);
@@ -404,6 +550,75 @@ function deterministicAnalysis(extraction: ExtractionResult): DocumentAnalysisRe
   };
 }
 
+async function loadPdfWithinDeadline(bytes: Buffer, deadlineAt: number): Promise<PDFDocumentProxy> {
+  const loadingTask: PDFDocumentLoadingTask = getDocument({
+    data: new Uint8Array(bytes),
+    maxImageSize: MAX_PDF_PAGE_PIXELS,
+    canvasMaxAreaInBytes: MAX_PDF_RENDERED_BYTES,
+    stopAtErrors: true,
+    isEvalSupported: false,
+  });
+  try {
+    return await beforeExtractionDeadline(() => loadingTask.promise, deadlineAt);
+  } catch (error) {
+    try {
+      await loadingTask.destroy();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "PDF initialization failed and its renderer could not be stopped safely",
+      );
+    }
+    throw error;
+  }
+}
+
+async function validateDocxArchive(bytes: Buffer, deadlineAt: number): Promise<void> {
+  const directory = await beforeExtractionDeadline(() => Open.buffer(bytes), deadlineAt);
+  if (directory.files.length > MAX_DOCX_ARCHIVE_ENTRIES) {
+    throw new Error(`DOCX archive exceeds the ${MAX_DOCX_ARCHIVE_ENTRIES} entry processing limit`);
+  }
+
+  let declaredTotal = 0;
+  for (const file of directory.files) {
+    if (file.type !== "File") continue;
+    if (!Number.isSafeInteger(file.uncompressedSize) || file.uncompressedSize < 0) {
+      throw new Error("DOCX archive contains an invalid expanded size");
+    }
+    if (file.uncompressedSize > MAX_DOCX_ENTRY_BYTES) {
+      throw new Error("DOCX expanded content exceeds the 8 MB per-entry analysis limit");
+    }
+    declaredTotal += file.uncompressedSize;
+    if (!Number.isSafeInteger(declaredTotal) || declaredTotal > MAX_DOCX_EXPANDED_BYTES) {
+      throw new Error("DOCX expanded content exceeds the 32 MB processing limit");
+    }
+  }
+
+  let actualTotal = 0;
+  for (const file of directory.files) {
+    if (file.type !== "File") continue;
+    const stream = file.stream();
+    let entryBytes = 0;
+    try {
+      await beforeExtractionDeadline(async () => {
+        for await (const chunk of stream) {
+          const chunkBytes = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk));
+          entryBytes += chunkBytes;
+          actualTotal += chunkBytes;
+          if (entryBytes > MAX_DOCX_ENTRY_BYTES) {
+            throw new Error("DOCX expanded content exceeds the 8 MB per-entry analysis limit");
+          }
+          if (actualTotal > MAX_DOCX_EXPANDED_BYTES) {
+            throw new Error("DOCX expanded content exceeds the 32 MB processing limit");
+          }
+        }
+      }, deadlineAt);
+    } finally {
+      stream.destroy();
+    }
+  }
+}
+
 type AiFinding = { text: string; citations: string[]; evidenceQuotes: string[] };
 type AiContradiction = {
   statementA: string;
@@ -497,6 +712,33 @@ function validateAiResult(value: unknown, citationMap: Map<string, Citation>): v
     typeof item.explanation === "string" && Array.isArray(item.citations) && Array.isArray(item.evidenceQuotes) &&
     findingHasLiteralSourceSupport({ text: `${item.statementA} ${item.statementB}`, citations: item.citations, evidenceQuotes: item.evidenceQuotes }, citationMap)
   );
+}
+
+async function beforeExtractionDeadline<T>(operation: () => Promise<T>, deadlineAt: number): Promise<T> {
+  const remainingMs = deadlineAt - Date.now();
+  if (remainingMs <= 0) throw new Error("Document extraction exceeded the 5 minute processing limit");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Document extraction exceeded the 5 minute processing limit")),
+          remainingMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function chunks<T>(values: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    result.push(values.slice(index, index + size));
+  }
+  return result;
 }
 
 function providerChunks(citations: Citation[]): Citation[][] {
@@ -688,6 +930,15 @@ export async function analyzeDocumentBytes(options: {
   provider?: LLMProvider;
 }): Promise<DocumentAnalysisResult> {
   const extraction = await extractDocumentText(options.bytes, options.mimeType);
+  return analyzeDocumentExtraction({ ...options, extraction });
+}
+
+export async function analyzeDocumentExtraction(options: {
+  extraction: ExtractionResult;
+  deepAnalysis: boolean;
+  provider?: LLMProvider;
+}): Promise<DocumentAnalysisResult> {
+  const extraction = options.extraction;
   if (extraction.text.length < 20) {
     throw new Error(
       extraction.method === "ocr_text"

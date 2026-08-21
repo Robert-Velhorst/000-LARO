@@ -5,6 +5,8 @@ import { eq, and } from 'drizzle-orm';
 import { storagePut } from './storage';
 import { v4 as uuidv4 } from 'uuid';
 import { decryptToken, encryptToken, refreshGmailToken } from './emailOAuth';
+import { MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
+import { collectBoundedBytes, withByteReadAdmission } from './boundedBytes';
 
 /**
  * Google Drive Service
@@ -88,7 +90,11 @@ export async function getGoogleDriveFileMetadata(folderId: string, userId: strin
 /**
  * Download a file from Google Drive and upload it to local/S3 storage
  */
-export async function downloadAndUploadGoogleDriveFile(fileId: string, caseId: string, userId?: string, accountId?: string) {
+export function downloadAndUploadGoogleDriveFile(fileId: string, caseId: string, userId?: string, accountId?: string) {
+  return withByteReadAdmission(() => downloadAndUploadGoogleDriveFileAdmitted(fileId, caseId, userId, accountId));
+}
+
+async function downloadAndUploadGoogleDriveFileAdmitted(fileId: string, caseId: string, userId?: string, accountId?: string) {
   const db = await getDb();
   if (!db) throw new Error('Database not available');
 
@@ -114,6 +120,10 @@ export async function downloadAndUploadGoogleDriveFile(fileId: string, caseId: s
   let mimeType = sourceMimeType;
   const fileSize = fileMetadata.data.size;
   const modifiedTime = fileMetadata.data.modifiedTime;
+  const declaredSize = Number(fileSize);
+  if (Number.isFinite(declaredSize) && declaredSize > MAX_EVIDENCE_FILE_BYTES) {
+    throw new Error('Google Drive file exceeds the 7 MB evidence limit');
+  }
 
   // Google-native documents have no media body. Export them to PDF so the
   // same source-grounded text extraction pipeline can analyze them.
@@ -121,18 +131,22 @@ export async function downloadAndUploadGoogleDriveFile(fileId: string, caseId: s
   const response = googleNative
     ? await drive.files.export(
         { fileId, mimeType: 'application/pdf' },
-        { responseType: 'arraybuffer' }
+        { responseType: 'stream' }
       )
     : await drive.files.get(
         { fileId, alt: 'media' },
-        { responseType: 'arraybuffer' }
+        { responseType: 'stream' }
       );
   if (googleNative) {
     mimeType = 'application/pdf';
     if (!fileName.toLowerCase().endsWith('.pdf')) fileName += '.pdf';
   }
 
-  const buffer = Buffer.from(response.data as ArrayBuffer);
+  const buffer = await collectBoundedBytes(response.data, {
+    maxBytes: MAX_EVIDENCE_FILE_BYTES,
+    label: 'Google Drive file',
+    limitMessage: 'Google Drive file exceeds the 7 MB evidence limit',
+  });
 
   // 3. Upload to our storage
   const storagePath = `evidence/${caseId}/gdrive/${uuidv4()}-${fileName}`;

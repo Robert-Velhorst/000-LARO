@@ -2,12 +2,19 @@ import { randomUUID } from "crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { assertCaseOwnership } from "./_core/authz";
 import { getDb } from "./db";
-import { analyzeDocumentBytes, DOCUMENT_ANALYSIS_VERSION, type DocumentAnalysisResult } from "./documentIntelligence";
+import {
+  analyzeDocumentExtraction,
+  DOCUMENT_ANALYSIS_VERSION,
+  extractDocumentTextInAcquiredSlot,
+  type DocumentAnalysisResult,
+  withDocumentAnalysisResourceSlot,
+} from "./documentIntelligence";
 import { getEvidenceFile } from "./evidence";
 import { documentAnalyses } from "./schema";
 import { storageRead } from "./storage";
 import { getWorkflowPreferences } from "./workflowPreferences";
 import { getLLMProviderDescriptors, isLLMProviderConfigured, isLocalLLMProvider } from "./llm";
+import { MAX_EVIDENCE_FILE_BYTES } from "../shared/evidenceFiles";
 
 const PROVIDER_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
 
@@ -89,10 +96,12 @@ export async function analyzeStoredEvidence(options: {
     return { id: cached.id, cached: true, result: cachedResult };
   }
 
-  const bytes = await storageRead(storageKey);
-  const result = await analyzeDocumentBytes({
-    bytes,
-    mimeType: item.mimeType || "application/octet-stream",
+  const extraction = await withDocumentAnalysisResourceSlot(async () => {
+    const bytes = await storageRead(storageKey, { maxBytes: MAX_EVIDENCE_FILE_BYTES });
+    return extractDocumentTextInAcquiredSlot(bytes, item.mimeType || "application/octet-stream");
+  });
+  const result = await analyzeDocumentExtraction({
+    extraction,
     deepAnalysis,
     provider,
   });

@@ -16,6 +16,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHash } from 'crypto';
 import path from 'path';
 import fs from 'fs';
+import { collectBoundedBytes } from './boundedBytes';
 
 const s3 = new S3Client({
   region: process.env.AWS_S3_REGION || 'eu-west-1',
@@ -115,16 +116,27 @@ export async function storageGet(key: string): Promise<string> {
   return `file://${full}`;
 }
 
-export async function storageRead(key: string): Promise<Buffer> {
+export async function storageRead(key: string, options?: { maxBytes: number }): Promise<Buffer> {
   const safeKey = sanitizeStorageKey(key);
   if (!safeKey) throw new Error('Storage key must contain at least one valid path segment');
+  const label = 'Storage object';
   if (isS3Configured()) {
     const response = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: safeKey }));
     if (!response.Body) throw new Error(`Storage object is empty: ${safeKey}`);
+    if (options && typeof response.ContentLength === 'number' && response.ContentLength > options.maxBytes) {
+      throw new Error(`${label} exceeds the ${options.maxBytes} byte read limit`);
+    }
+    if (options) return collectBoundedBytes(response.Body, { maxBytes: options.maxBytes, label });
     return Buffer.from(await response.Body.transformToByteArray());
   }
   const full = resolveLocalPath(safeKey);
   if (!fs.existsSync(full)) throw new Error(`Local storage object not found: ${safeKey}`);
+  if (options) {
+    const size = fs.statSync(full).size;
+    if (size > options.maxBytes) {
+      throw new Error(`${label} exceeds the ${options.maxBytes} byte read limit`);
+    }
+  }
   return fs.readFileSync(full);
 }
 
