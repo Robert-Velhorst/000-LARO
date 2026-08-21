@@ -60,10 +60,9 @@ export const telegramEnhancedRouter = router({
           botId: botInfo.id,
         };
       } catch (error) {
-        console.error('[Telegram Router] Error validating token:', error);
         return {
           valid: false,
-          error: error instanceof Error ? error.message : 'Invalid token',
+          error: error instanceof Error ? error.message : 'Telegram token validation failed',
         };
       }
     }),
@@ -128,7 +127,6 @@ export const telegramEnhancedRouter = router({
           itemCount,
         };
       } catch (error) {
-        console.error('[Telegram Router] Error getting status:', error);
         throw error;
       }
     }),
@@ -148,7 +146,6 @@ export const telegramEnhancedRouter = router({
         const result = await setTelegramWebhook(input.token, input.webhookUrl);
         return result;
       } catch (error) {
-        console.error('[Telegram Router] Error setting webhook:', error);
         throw error;
       }
     }),
@@ -167,7 +164,6 @@ export const telegramEnhancedRouter = router({
         const result = await removeTelegramWebhook(input.token);
         return result;
       } catch (error) {
-        console.error('[Telegram Router] Error removing webhook:', error);
         throw error;
       }
     }),
@@ -220,7 +216,6 @@ export const telegramEnhancedRouter = router({
 
         return result;
       } catch (error) {
-        console.error('[Telegram Router] Error importing export:', error);
         throw error;
       }
     }),
@@ -250,7 +245,6 @@ export const telegramEnhancedRouter = router({
           mimeType: 'application/octet-stream',
         };
       } catch (error) {
-        console.error('[Telegram Router] Error downloading file:', error);
         throw error;
       }
     }),
