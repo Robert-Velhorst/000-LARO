@@ -7,6 +7,7 @@ import { getDb } from "./db";
 import { cases, documentAnalyses, evidence } from "./schema";
 import { sanitizeFilename, storageOpenReadStream } from "./storage";
 import { MAX_EVIDENCE_FILE_BYTES } from "../shared/evidenceFiles";
+import { encodeCsvRows } from "../shared/csv";
 
 const MAX_EXPORT_EVIDENCE_ITEMS = 1_000;
 const MAX_EXPORT_SOURCE_BYTES = 512 * 1024 * 1024;
@@ -93,11 +94,6 @@ function parseMetadata(value: string | null): Record<string, unknown> {
   } catch {
     return {};
   }
-}
-
-function csvCell(value: unknown): string {
-  const rendered = value == null ? "" : String(value);
-  return /[",\r\n]/.test(rendered) ? `"${rendered.replace(/"/g, '""')}"` : rendered;
 }
 
 function throwIfExportAborted(signal?: AbortSignal): void {
@@ -190,9 +186,9 @@ function renderCaseCsv(items: Array<typeof evidence.$inferSelect>): Buffer {
       metadata.relevanceScore,
       item.createdAt?.toISOString(),
       metadata.contentHash,
-    ].map(csvCell).join(",");
+    ];
   });
-  return Buffer.from(`\uFEFF${[headers.join(","), ...rows].join("\r\n")}\r\n`, "utf8");
+  return Buffer.from(`\uFEFF${encodeCsvRows([headers, ...rows])}\r\n`, "utf8");
 }
 
 export async function buildCaseCsv(userId: string, caseId: string): Promise<Buffer> {

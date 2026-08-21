@@ -19,6 +19,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 import { format } from "date-fns";
+import { encodeCsvRows } from "../../../shared/csv";
 
 interface EvidenceTimelineProps {
   caseId?: string;
@@ -115,9 +116,7 @@ export default function EvidenceTimeline({ caseId }: EvidenceTimelineProps) {
       new Date(item.createdAt).toISOString(),
       item.fileSize ?? "",
     ]);
-    const csv = [csvHeader, ...csvRows]
-      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
+    const csv = encodeCsvRows([csvHeader, ...csvRows], "\n");
 
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);

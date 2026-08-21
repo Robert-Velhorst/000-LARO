@@ -1,3 +1,5 @@
+import { encodeCsvRows } from "../../../shared/csv";
+
 function downloadText(filename: string, content: string, mime: string) {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -8,25 +10,10 @@ function downloadText(filename: string, content: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
-function cellValue(v: unknown): string {
-  if (v == null) return "";
-  if (typeof v === "object") return JSON.stringify(v);
-  return String(v);
-}
-
-function escapeCsvCell(s: string): string {
-  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
-
 function rowsToCsv(rows: Record<string, unknown>[]): string {
   if (rows.length === 0) return "";
   const keys = Array.from(new Set(rows.flatMap((r) => Object.keys(r))));
-  const header = keys.map(escapeCsvCell).join(",");
-  const lines = rows.map((row) =>
-    keys.map((k) => escapeCsvCell(cellValue(row[k]))).join(",")
-  );
-  return [header, ...lines].join("\n");
+  return encodeCsvRows([keys, ...rows.map((row) => keys.map((key) => row[key]))], "\n");
 }
 
 export function exportLawyersToCSV(lawyers: Record<string, unknown>[]) {
