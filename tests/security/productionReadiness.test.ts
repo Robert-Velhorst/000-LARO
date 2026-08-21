@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { spawnSync } from 'child_process';
+import crypto from 'crypto';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -206,6 +207,36 @@ describe('production readiness regressions', () => {
     const state = authUrl.searchParams.get('state');
     expect(state).toBeTruthy();
     expect(consumeOAuthState(state!, 'gmail').userId).toBe('USER_TEST');
+    expect(() => consumeOAuthState(`${state!}!`, 'gmail')).toThrow('Invalid or expired OAuth state');
+  });
+
+  it('derives the token-encryption key once instead of on every crypto operation', async () => {
+    vi.resetModules();
+    const scryptSpy = vi.spyOn(crypto, 'scryptSync');
+    const { decryptSecret, encryptSecret } = await import('../../server/crypto');
+    const derivationsAtStartup = scryptSpy.mock.calls.length;
+
+    const first = encryptSecret('first-token');
+    const second = encryptSecret('second-token');
+    expect(decryptSecret(first)).toBe('first-token');
+    expect(decryptSecret(second)).toBe('second-token');
+    expect(derivationsAtStartup).toBe(1);
+    expect(scryptSpy).toHaveBeenCalledTimes(derivationsAtStartup);
+  });
+
+  it('decrypts ciphertext written before token-key caching was introduced', async () => {
+    process.env.JWT_SECRET = 'compatibility-fixture-secret-32-characters';
+    process.env.COOKIE_SECRET = 'compatibility-cookie-secret-32-characters';
+    vi.resetModules();
+    const { decryptSecret } = await import('../../server/crypto');
+    const existingCiphertext = [
+      'gcm1',
+      '00112233445566778899aabb',
+      'a991d215bd764f3801c6ebac5d2f4091',
+      '6365554e2fceb002fbe37f4846416e440d5ea9',
+    ].join(':');
+
+    expect(decryptSecret(existingCiphertext)).toBe('fixture-oauth-token');
   });
 
   it('requests evidence-read OAuth permissions without delegated mail sending or label writes', async () => {

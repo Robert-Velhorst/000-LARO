@@ -1,5 +1,5 @@
 import { ENV } from './_core/env';
-import { encryptSecret, decryptSecret } from './crypto';
+import { encryptSecret, decryptSecret, type DecryptSecretOptions } from './crypto';
 
 /**
  * Token Encryption & OAuth Refresh Utilities.
@@ -16,8 +16,8 @@ export function encryptToken(text: string): string {
 }
 
 /** Decrypt a stored OAuth token (handles both the current and legacy schemes). */
-export function decryptToken(text: string): string {
-  return decryptSecret(text);
+export function decryptToken(text: string, options?: DecryptSecretOptions): string {
+  return decryptSecret(text, options);
 }
 
 /**

@@ -31,6 +31,13 @@ export interface EmailAccountInfo {
 
 type OAuthProvider = "gmail" | "outlook";
 
+export class OAuthStateError extends Error {
+  constructor() {
+    super("Invalid or expired OAuth state");
+    this.name = "OAuthStateError";
+  }
+}
+
 
 interface OAuthStatePayload {
   userId: string;
@@ -41,6 +48,10 @@ interface OAuthStatePayload {
 }
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const OAUTH_STATE_MAX_LENGTH = 2_048;
+const OAUTH_STATE_PATTERN = /^[A-Za-z0-9_-]+$/;
+const OAUTH_GCM_ENVELOPE_PATTERN = /^gcm1:[0-9a-f]{24}:[0-9a-f]{32}:(?:[0-9a-f]{2})+$/;
+const OAUTH_LEGACY_CBC_ENVELOPE_PATTERN = /^[0-9a-f]{32}:(?:[0-9a-f]{32})+$/;
 const TOKEN_EXCHANGE_DNS_RETRY_DELAYS_MS = [250, 750, 1_500] as const;
 const OAUTH_PROVIDER_TIMEOUT_MS = 20_000;
 
@@ -198,12 +209,27 @@ export function consumeOAuthState(
   state: string,
   provider: OAuthProvider
 ): { userId: string; codeVerifier: string } {
+  if (
+    !state ||
+    state.length > OAUTH_STATE_MAX_LENGTH ||
+    !OAUTH_STATE_PATTERN.test(state)
+  ) {
+    throw new OAuthStateError();
+  }
+
   let payload: OAuthStatePayload;
   try {
-    const decrypted = decryptToken(fromBase64Url(state).toString("utf8"));
+    const encryptedState = fromBase64Url(state).toString("utf8");
+    if (
+      !OAUTH_GCM_ENVELOPE_PATTERN.test(encryptedState) &&
+      !OAUTH_LEGACY_CBC_ENVELOPE_PATTERN.test(encryptedState)
+    ) {
+      throw new OAuthStateError();
+    }
+    const decrypted = decryptToken(encryptedState, { logFailure: false });
     payload = JSON.parse(decrypted) as OAuthStatePayload;
   } catch {
-    throw new Error("Invalid or expired OAuth state");
+    throw new OAuthStateError();
   }
 
   if (
@@ -212,15 +238,15 @@ export function consumeOAuthState(
     typeof payload.codeVerifier !== "string" ||
     typeof payload.createdAt !== "number"
   ) {
-    throw new Error("Invalid or expired OAuth state");
+    throw new OAuthStateError();
   }
 
   if (Date.now() - payload.createdAt > OAUTH_STATE_TTL_MS) {
-    throw new Error("Invalid or expired OAuth state");
+    throw new OAuthStateError();
   }
 
   if (payload.provider !== provider) {
-    throw new Error("OAuth provider mismatch");
+    throw new OAuthStateError();
   }
 
   return { userId: payload.userId, codeVerifier: payload.codeVerifier };

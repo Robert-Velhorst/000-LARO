@@ -5,6 +5,7 @@ import {
   exchangeCodeForTokens,
   getAccountInfo,
   isRetryableOAuthNetworkError,
+  OAuthStateError,
   saveEmailAccount,
 } from './oauth2';
 
@@ -111,15 +112,20 @@ function callbackHandler(provider: OAuthProvider) {
         message: `${accountInfo.email} is connected to LARO.`,
       });
     } catch (error) {
-      console.error(`[OAuth2] ${provider} callback failed:`, error);
+      const invalidState = error instanceof OAuthStateError;
+      if (!invalidState) {
+        console.error(`[OAuth2] ${provider} callback failed:`, error);
+      }
       const retryable = !tokenExchangeCompleted && isRetryableOAuthNetworkError(error);
       sendCallbackPage(res, {
         success: false,
         title: 'Connection failed',
-        message: retryable
+        message: invalidState
+          ? 'The authorization request is invalid or has expired. Return to LARO and start the connection again.'
+          : retryable
           ? 'The provider could not be reached temporarily. Retry this connection without starting over.'
           : 'The connection could not be completed. Return to LARO and try again.',
-        status: retryable ? 503 : 500,
+        status: invalidState ? 400 : retryable ? 503 : 500,
         retry: retryable,
       });
     }
