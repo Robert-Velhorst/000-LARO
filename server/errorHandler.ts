@@ -147,6 +147,7 @@ export function sanitizeErrorForLogging(error: unknown): string {
     message = message.replace(/token[=:]\s*\S+/gi, "token=***");
     message = message.replace(/api[_-]?key[=:]\s*\S+/gi, "api_key=***");
     message = message.replace(/secret[=:]\s*\S+/gi, "secret=***");
+    message = message.replace(/\/bot[^/\s]+(?=\/)/gi, "/bot***");
     
     return message;
   }

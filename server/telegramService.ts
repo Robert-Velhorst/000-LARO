@@ -95,6 +95,29 @@ export interface TelegramExportedChat {
 
 const TELEGRAM_API_BASE = 'https://api.telegram.org';
 
+function telegramFailureMetadata(error: unknown): { status: number | null; providerCode: number | null } {
+  if (!axios.isAxiosError(error)) return { status: null, providerCode: null };
+  const status = Number.isInteger(error.response?.status) ? error.response!.status : null;
+  const data = error.response?.data;
+  const rawCode = data && typeof data === 'object' && 'error_code' in data
+    ? (data as { error_code?: unknown }).error_code
+    : null;
+  const providerCode = typeof rawCode === 'number' && Number.isInteger(rawCode) ? rawCode : null;
+  return { status, providerCode };
+}
+
+function logTelegramFailure(operation: string, error: unknown): void {
+  console.error('[Telegram] Operation failed', {
+    operation,
+    ...telegramFailureMetadata(error),
+  });
+}
+
+function failTelegramRequest(operation: string, message: string, error: unknown): never {
+  logTelegramFailure(operation, error);
+  throw new Error(message);
+}
+
 /**
  * Get Telegram file info
  */
@@ -114,8 +137,7 @@ export async function getTelegramFile(
 
     return response.data.result;
   } catch (error) {
-    console.error('[Telegram] Error getting file:', error);
-    throw error;
+    failTelegramRequest('getFile', 'Telegram file information request failed', error);
   }
 }
 
@@ -134,8 +156,7 @@ export async function downloadTelegramFile(
 
     return Buffer.from(response.data);
   } catch (error) {
-    console.error('[Telegram] Error downloading file:', error);
-    throw error;
+    failTelegramRequest('downloadFile', 'Telegram file download request failed', error);
   }
 }
 
@@ -153,8 +174,7 @@ export async function getTelegramBotInfo(botToken: string) {
 
     return response.data.result;
   } catch (error) {
-    console.error('[Telegram] Error getting bot info:', error);
-    throw error;
+    failTelegramRequest('getBotInfo', 'Telegram bot information request failed', error);
   }
 }
 
@@ -178,8 +198,7 @@ export async function setTelegramWebhook(
 
     return { success: true };
   } catch (error) {
-    console.error('[Telegram] Error setting webhook:', error);
-    throw error;
+    failTelegramRequest('setWebhook', 'Telegram webhook setup request failed', error);
   }
 }
 
@@ -199,8 +218,7 @@ export async function removeTelegramWebhook(
 
     return { success: true };
   } catch (error) {
-    console.error('[Telegram] Error removing webhook:', error);
-    throw error;
+    failTelegramRequest('removeWebhook', 'Telegram webhook removal request failed', error);
   }
 }
 
@@ -282,8 +300,7 @@ export async function importTelegramExport(
       filesFound,
     };
   } catch (error) {
-    console.error('[Telegram] Error importing export:', error);
-    throw error;
+    failTelegramRequest('importExport', 'Telegram export import failed', error);
   }
 }
 
@@ -301,8 +318,8 @@ export function parseTelegramExport(jsonContent: string): TelegramExportedChat {
 
     return data as TelegramExportedChat;
   } catch (error) {
-    console.error('[Telegram] Error parsing export:', error);
-    throw error;
+    logTelegramFailure('parseExport', error);
+    throw new Error('Invalid Telegram export format');
   }
 }
 
@@ -329,10 +346,9 @@ export async function getTelegramStatus(
       botUsername: botInfo.username,
     };
   } catch (error) {
-    console.error('[Telegram] Error getting status:', error);
     return {
       connected: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Telegram connection could not be verified',
     };
   }
 }
