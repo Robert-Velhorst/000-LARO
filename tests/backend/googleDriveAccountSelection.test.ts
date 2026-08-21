@@ -163,6 +163,86 @@ suite("Google Drive account selection", () => {
     expect(googleMocks.listRequests[1]).toMatchObject({ pageToken: "drive-page-two" });
   });
 
+  it("rejects Drive folder listings that exceed the global file budget", async () => {
+    const { PROVIDER_LIMITS } = await import("../../server/providerLimits");
+    googleMocks.listRequests.length = 0;
+    googleMocks.listResponses.push({
+      data: {
+        files: Array.from(
+          { length: PROVIDER_LIMITS.googleDrive.maxListedFiles + 1 },
+          (_, index) => ({ id: `file-${index}`, name: `File ${index}.pdf`, mimeType: "application/pdf" }),
+        ),
+      },
+    });
+    const { getAllFilesInFolder } = await import("../../server/googleDriveService");
+
+    await expect(getAllFilesInFolder(userId, "root", false, "GOOGLE_DRIVE_SECOND"))
+      .rejects.toThrow("file limit");
+    expect(googleMocks.listRequests).toHaveLength(1);
+  });
+
+  it("rejects Drive traversal after the global page budget", async () => {
+    const { PROVIDER_LIMITS } = await import("../../server/providerLimits");
+    googleMocks.listRequests.length = 0;
+    googleMocks.listResponses.push(...Array.from(
+      { length: PROVIDER_LIMITS.googleDrive.maxListPages },
+      (_, index) => ({ data: { files: [], nextPageToken: `page-${index + 1}` } }),
+    ));
+    const { getAllFilesInFolder } = await import("../../server/googleDriveService");
+
+    await expect(getAllFilesInFolder(userId, "root", false, "GOOGLE_DRIVE_SECOND"))
+      .rejects.toThrow("page limit");
+    expect(googleMocks.listRequests).toHaveLength(PROVIDER_LIMITS.googleDrive.maxListPages);
+  });
+
+  it("visits recursive Drive folders once when provider links form a cycle", async () => {
+    googleMocks.listRequests.length = 0;
+    googleMocks.listResponses.push(
+      {
+        data: {
+          files: [{ id: "child-folder", name: "Child", mimeType: "application/vnd.google-apps.folder" }],
+        },
+      },
+      {
+        data: {
+          files: [
+            { id: "root", name: "Root", mimeType: "application/vnd.google-apps.folder" },
+            { id: "cycle-file", name: "Evidence.pdf", mimeType: "application/pdf" },
+          ],
+        },
+      },
+    );
+    const { getAllFilesInFolder } = await import("../../server/googleDriveService");
+
+    const files = await getAllFilesInFolder(userId, "root", true, "GOOGLE_DRIVE_SECOND");
+
+    expect(files.map((file) => file.id)).toEqual(["cycle-file"]);
+    expect(googleMocks.listRequests).toHaveLength(2);
+  });
+
+  it("escapes folder IDs before placing them in Drive query literals", async () => {
+    googleMocks.listRequests.length = 0;
+    googleMocks.listResponses.push({ data: { files: [] } });
+    const { getAllFilesInFolder } = await import("../../server/googleDriveService");
+
+    await getAllFilesInFolder(userId, "folder' or trashed = true or 'x", false, "GOOGLE_DRIVE_SECOND");
+
+    expect(googleMocks.listRequests[0].q).toBe(
+      "'folder\\' or trashed = true or \\'x' in parents and trashed = false",
+    );
+  });
+
+  it("rejects mismatched Drive import arrays before contacting the provider", async () => {
+    const caller = app.makeCaller({ id: userId, role: "user" });
+
+    await expect(caller.googleDrive.importFiles({
+      caseId: "CASE_DRIVE_ACCOUNT_SELECTION",
+      accountId: "GOOGLE_DRIVE_SECOND",
+      fileIds: ["file-one"],
+      fileNames: ["One.pdf", "Two.pdf"],
+    })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
   it("finds exact Drive names globally across every result page", async () => {
     googleMocks.listRequests.length = 0;
     googleMocks.listResponses.push(

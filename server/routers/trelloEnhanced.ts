@@ -8,10 +8,11 @@
  */
 
 import { z } from 'zod';
+import { TRPCError } from '@trpc/server';
 import { router, protectedProcedure } from '../_core/trpc';
 import { getDb } from '../db';
 import { evidenceSources } from '../schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { assertCaseOwnership } from '../_core/authz';
 import {
   getTrelloAuthorizationUrl,
@@ -21,6 +22,24 @@ import {
   testTrelloConnection,
   syncTrelloForCase,
 } from '../trelloService';
+import { PROVIDER_LIMITS, ProviderBatchLimitError } from '../providerLimits';
+import { enforcePersistentRateLimit, RATE_LIMITS } from '../rateLimit';
+
+const trelloId = z.string().trim().min(1).max(256);
+const trelloToken = z.string().trim().min(1).max(2_048);
+const caseId = z.string().trim().min(1).max(128);
+
+function trelloRouterError(error: unknown, operation: string): TRPCError {
+  if (error instanceof TRPCError) return error;
+  if (error instanceof ProviderBatchLimitError) {
+    return new TRPCError({ code: 'BAD_REQUEST', message: error.message });
+  }
+  console.error('[Trello] Operation failed', {
+    operation,
+    errorName: error instanceof Error ? error.name : 'UnknownError',
+  });
+  return new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: `Failed to ${operation}` });
+}
 
 /**
  * Trello Router
@@ -39,7 +58,7 @@ export const trelloEnhancedRouter = router({
   getOAuthUrl: protectedProcedure
     .input(
       z.object({
-        caseId: z.string(),
+        caseId,
       })
     )
     .mutation(async () => {
@@ -50,7 +69,7 @@ export const trelloEnhancedRouter = router({
    * Get Trello connection status for a case
    */
   getStatus: protectedProcedure
-    .input(z.object({ caseId: z.string().optional() }).optional())
+    .input(z.object({ caseId: caseId.optional() }).optional())
     .query(async ({ input, ctx }) => {
       try {
         const db = await getDb();
@@ -65,7 +84,7 @@ export const trelloEnhancedRouter = router({
 
         const conditions = [
           eq(evidenceSources.userId, ctx.user.id),
-          eq(evidenceSources.sourceType, 'Trello'),
+          inArray(evidenceSources.sourceType, ['trello', 'Trello', 'Board']),
         ];
 
         if (input?.caseId) {
@@ -119,8 +138,8 @@ export const trelloEnhancedRouter = router({
   listBoards: protectedProcedure
     .input(
       z.object({
-        caseId: z.string(),
-        token: z.string(),
+        caseId,
+        token: trelloToken,
       })
     )
     .query(async ({ input, ctx }) => {
@@ -134,8 +153,7 @@ export const trelloEnhancedRouter = router({
           count: boards.length,
         };
       } catch (error) {
-        console.error('[Trello] Error listing boards:', error);
-        throw new Error(`Failed to list Trello boards: ${error}`);
+        throw trelloRouterError(error, 'list Trello boards');
       }
     }),
 
@@ -145,9 +163,9 @@ export const trelloEnhancedRouter = router({
   listLists: protectedProcedure
     .input(
       z.object({
-        caseId: z.string(),
-        boardId: z.string(),
-        token: z.string(),
+        caseId,
+        boardId: trelloId,
+        token: trelloToken,
       })
     )
     .query(async ({ input, ctx }) => {
@@ -161,8 +179,7 @@ export const trelloEnhancedRouter = router({
           count: lists.length,
         };
       } catch (error) {
-        console.error('[Trello] Error listing lists:', error);
-        throw new Error(`Failed to list Trello lists: ${error}`);
+        throw trelloRouterError(error, 'list Trello lists');
       }
     }),
 
@@ -172,10 +189,10 @@ export const trelloEnhancedRouter = router({
   listCards: protectedProcedure
     .input(
       z.object({
-        caseId: z.string(),
-        boardId: z.string(),
-        listId: z.string(),
-        token: z.string(),
+        caseId,
+        boardId: trelloId,
+        listId: trelloId,
+        token: trelloToken,
       })
     )
     .query(async ({ input, ctx }) => {
@@ -189,8 +206,7 @@ export const trelloEnhancedRouter = router({
           count: cards.length,
         };
       } catch (error) {
-        console.error('[Trello] Error listing cards:', error);
-        throw new Error(`Failed to list Trello cards: ${error}`);
+        throw trelloRouterError(error, 'list Trello cards');
       }
     }),
 
@@ -200,14 +216,19 @@ export const trelloEnhancedRouter = router({
   syncBoards: protectedProcedure
     .input(
       z.object({
-        caseId: z.string(),
-        token: z.string(),
-        boardIds: z.array(z.string()).optional(),
+        caseId,
+        token: trelloToken,
+        boardIds: z.array(trelloId).max(PROVIDER_LIMITS.trello.maxSyncBoards).optional(),
+      }).superRefine((value, ctx) => {
+        if (value.boardIds && new Set(value.boardIds).size !== value.boardIds.length) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Duplicate Trello board IDs are not allowed.' });
+        }
       })
     )
     .mutation(async ({ input, ctx }) => {
       try {
         await assertCaseOwnership(input.caseId, ctx.user.id);
+        await enforcePersistentRateLimit(ctx, 'trello-sync', RATE_LIMITS.bulkImport);
         const db = await getDb();
         if (!db) {
           throw new Error('Database not available');
@@ -226,8 +247,7 @@ export const trelloEnhancedRouter = router({
           progress,
         };
       } catch (error) {
-        console.error('[Trello] Error syncing boards:', error);
-        throw new Error(`Failed to sync Trello boards: ${error}`);
+        throw trelloRouterError(error, 'sync Trello boards');
       }
     }),
 
@@ -237,7 +257,7 @@ export const trelloEnhancedRouter = router({
   testConnection: protectedProcedure
     .input(
       z.object({
-        token: z.string(),
+        token: trelloToken,
       })
     )
     .query(async ({ input, ctx }) => {
@@ -253,8 +273,7 @@ export const trelloEnhancedRouter = router({
           member: result.member,
         };
       } catch (error) {
-        console.error('[Trello] Error testing connection:', error);
-        throw new Error(`Failed to test Trello connection: ${error}`);
+        throw trelloRouterError(error, 'test Trello connection');
       }
     }),
 
@@ -264,7 +283,7 @@ export const trelloEnhancedRouter = router({
   disconnect: protectedProcedure
     .input(
       z.object({
-        caseId: z.string(),
+        caseId,
       })
     )
     .mutation(async ({ input, ctx }) => {
@@ -281,7 +300,8 @@ export const trelloEnhancedRouter = router({
           .where(
             and(
               eq(evidenceSources.caseId, input.caseId),
-              eq(evidenceSources.sourceType, 'Trello')
+              eq(evidenceSources.userId, ctx.user.id),
+              inArray(evidenceSources.sourceType, ['trello', 'Trello', 'Board'])
             )
           );
 
@@ -289,8 +309,7 @@ export const trelloEnhancedRouter = router({
           success: true,
         };
       } catch (error) {
-        console.error('[Trello] Error disconnecting:', error);
-        throw new Error(`Failed to disconnect Trello: ${error}`);
+        throw trelloRouterError(error, 'disconnect Trello');
       }
     }),
 });

@@ -18,6 +18,11 @@ import { analyzeStoredEvidence } from "../documentAnalysisService";
 import { supportsDocumentAnalysisMime } from "../documentIntelligence";
 import { revokeStoredGoogleTokens } from "../emailOAuth";
 import { AUDIT_ACTIONS, createAuditLog } from "../audit";
+import { PROVIDER_LIMITS } from "../providerLimits";
+import { enforcePersistentRateLimit, RATE_LIMITS } from "../rateLimit";
+
+const driveId = z.string().trim().min(1).max(256);
+const driveName = z.string().trim().min(1).max(500);
 
 async function ingestDriveEvidence(options: {
   userId: string;
@@ -290,6 +295,7 @@ export const googleDriveRouter = router({
         const folders = await listGoogleDriveFolders(ctx.user.id, input.parentId, input.accountId);
         return { folders };
       } catch (error) {
+        if (error instanceof TRPCError) throw error;
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: error instanceof Error ? error.message : "Failed to list folders",
@@ -303,9 +309,9 @@ export const googleDriveRouter = router({
   getFilesInFolder: protectedProcedure
     .input(
       z.object({
-        folderId: z.string(),
+        folderId: driveId,
         recursive: z.boolean().default(false),
-        accountId: z.string().optional(),
+        accountId: driveId.optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -326,9 +332,9 @@ export const googleDriveRouter = router({
   searchFiles: protectedProcedure
     .input(
       z.object({
-        query: z.string(),
-        folderId: z.string().optional(),
-        accountId: z.string().optional(),
+        query: z.string().trim().min(1).max(200),
+        folderId: driveId.optional(),
+        accountId: driveId.optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -349,14 +355,19 @@ export const googleDriveRouter = router({
   importFiles: protectedProcedure
     .input(
       z.object({
-        caseId: z.string(),
-        accountId: z.string().optional(),
-        fileIds: z.array(z.string()),
-        fileNames: z.array(z.string()),
+        caseId: z.string().min(1).max(128),
+        accountId: driveId.optional(),
+        fileIds: z.array(driveId).min(1).max(PROVIDER_LIMITS.googleDrive.maxImportFiles),
+        fileNames: z.array(driveName).min(1).max(PROVIDER_LIMITS.googleDrive.maxImportFiles),
+      }).superRefine((value, ctx) => {
+        if (value.fileIds.length !== value.fileNames.length) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Every Drive file ID needs one filename." });
+        }
       })
     )
     .mutation(async ({ ctx, input }) => {
       await assertCaseOwnership(input.caseId, ctx.user.id);
+      await enforcePersistentRateLimit(ctx, "google-drive-import", RATE_LIMITS.bulkImport);
 
       const imported: string[] = [];
       const errors: string[] = [];
@@ -395,16 +406,17 @@ export const googleDriveRouter = router({
   importFolder: protectedProcedure
     .input(
       z.object({
-        caseId: z.string(),
-        folderId: z.string(),
-        folderName: z.string(),
+        caseId: z.string().min(1).max(128),
+        folderId: driveId,
+        folderName: driveName,
         recursive: z.boolean().default(false),
-        keywords: z.array(z.string()).optional(),
-        accountId: z.string().optional(),
+        keywords: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
+        accountId: driveId.optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       await assertCaseOwnership(input.caseId, ctx.user.id);
+      await enforcePersistentRateLimit(ctx, "google-drive-folder-import", RATE_LIMITS.bulkImport);
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
 
@@ -421,30 +433,37 @@ export const googleDriveRouter = router({
             return input.keywords!.some(kw => fileName.includes(kw.toLowerCase()));
           });
         }
+        if (filesToImport.length > PROVIDER_LIMITS.googleDrive.maxImportFiles) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Drive folder imports are limited to ${PROVIDER_LIMITS.googleDrive.maxImportFiles} files at a time. Narrow the folder or add keywords.`,
+          });
+        }
 
         const imported: string[] = [];
         const skipped: string[] = [];
         const errors: string[] = [];
 
+        const existing = await db
+          .select({ metadata: evidence.metadata })
+          .from(evidence)
+          .where(and(
+            eq(evidence.caseId, input.caseId),
+            eq(evidence.userId, ctx.user.id),
+            eq(evidence.source, "google_drive"),
+          ));
+        const importedDriveIds = new Set(existing.flatMap((row) => {
+          try {
+            const metadata = row.metadata ? JSON.parse(row.metadata) as { driveFileId?: unknown } : {};
+            return typeof metadata.driveFileId === "string" ? [metadata.driveFileId] : [];
+          } catch {
+            return [];
+          }
+        }));
+
         for (const file of filesToImport) {
           try {
-            // Check if already imported
-            const existing = await db
-              .select()
-              .from(evidence)
-              .where(
-                and(
-                  eq(evidence.caseId, input.caseId),
-                  eq(evidence.source, "google_drive")
-                )
-              );
-
-            const alreadyImported = existing.some(e => {
-              const metadata = e.metadata ? JSON.parse(e.metadata) : {};
-              return metadata.driveFileId === file.id;
-            });
-
-            if (alreadyImported) {
+            if (file.id && importedDriveIds.has(file.id)) {
               skipped.push(file.name || "Unknown");
               continue;
             }
@@ -464,6 +483,7 @@ export const googleDriveRouter = router({
             });
 
             imported.push(file.name || "Unknown");
+            if (file.id) importedDriveIds.add(file.id);
             if (result.analysisError) errors.push(`${file.name} analysis: ${result.analysisError}`);
           } catch (error) {
             errors.push(`${file.name}: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -479,6 +499,7 @@ export const googleDriveRouter = router({
           importedFiles: imported,
         };
       } catch (error) {
+        if (error instanceof TRPCError) throw error;
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: error instanceof Error ? error.message : "Failed to import folder",

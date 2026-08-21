@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { decryptToken, encryptToken, refreshGmailToken } from './emailOAuth';
 import { MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 import { collectBoundedBytes, withByteReadAdmission } from './boundedBytes';
+import { PROVIDER_LIMITS, ProviderBatchBudget } from './providerLimits';
 
 /**
  * Google Drive Service
@@ -80,8 +81,9 @@ export async function getGoogleDriveFileMetadata(folderId: string, userId: strin
   const drive = await getDriveClient(userId, accountId);
   
   const response = await drive.files.list({
-    q: `'${folderId}' in parents and trashed = false`,
+    q: `'${escapeDriveQueryLiteral(folderId)}' in parents and trashed = false`,
     fields: 'files(id, name, mimeType, size, webViewLink, modifiedTime)',
+    pageSize: 100,
   });
 
   return response.data.files || [];
@@ -174,7 +176,7 @@ export async function listGoogleDriveFolders(userId: string, parentId?: string, 
   let query = "mimeType='application/vnd.google-apps.folder' and trashed=false";
   
   if (parentId) {
-    query += ` and '${parentId}' in parents`;
+    query += ` and '${escapeDriveQueryLiteral(parentId)}' in parents`;
   } else {
     query += " and 'root' in parents";
   }
@@ -183,6 +185,7 @@ export async function listGoogleDriveFolders(userId: string, parentId?: string, 
     q: query,
     fields: 'files(id, name, modifiedTime, parents)',
     orderBy: 'name',
+    pageSize: 100,
   });
 
   return response.data.files || [];
@@ -198,33 +201,45 @@ export async function getAllFilesInFolder(
   accountId?: string,
 ): Promise<Array<{ id: string; name: string; mimeType?: string | null; size?: string | null; webViewLink?: string | null }>> {
   const drive = await getDriveClient(userId, accountId);
-  
   const allFiles: Array<{ id: string; name: string; mimeType?: string | null; size?: string | null; webViewLink?: string | null; modifiedTime?: string | null }> = [];
+  const budget = new ProviderBatchBudget({
+    pages: PROVIDER_LIMITS.googleDrive.maxListPages,
+    folders: PROVIDER_LIMITS.googleDrive.maxFoldersScanned,
+    files: PROVIDER_LIMITS.googleDrive.maxListedFiles,
+  });
+  const pendingFolders = [folderId];
+  const discoveredFolders = new Set([folderId]);
+  budget.consume('folders', 1, 'Google Drive folder limit exceeded');
 
-  async function scanFolder(currentFolderId: string) {
+  while (pendingFolders.length > 0) {
+    const currentFolderId = pendingFolders.shift()!;
     let pageToken: string | undefined;
     do {
+      budget.consume('pages', 1, 'Google Drive page limit exceeded');
       const response = await drive.files.list({
-        q: `'${currentFolderId}' in parents and trashed = false`,
+        q: `'${escapeDriveQueryLiteral(currentFolderId)}' in parents and trashed = false`,
         fields: 'nextPageToken, files(id, name, mimeType, size, webViewLink, modifiedTime)',
         pageToken,
+        pageSize: 100,
       });
 
       const items = response.data.files || [];
       for (const item of items) {
         if (item.mimeType === 'application/vnd.google-apps.folder') {
-          if (recursive) {
-            await scanFolder(item.id!);
+          if (recursive && item.id && !discoveredFolders.has(item.id)) {
+            budget.consume('folders', 1, 'Google Drive folder limit exceeded');
+            discoveredFolders.add(item.id);
+            pendingFolders.push(item.id);
           }
         } else {
+          budget.consume('files', 1, 'Google Drive file limit exceeded');
           allFiles.push(item as any);
         }
       }
       pageToken = response.data.nextPageToken || undefined;
     } while (pageToken);
   }
-  
-  await scanFolder(folderId);
+
   return allFiles;
 }
 
@@ -242,14 +257,22 @@ export async function findGoogleDriveFilesByExactName(
   if (!name) return [];
   const drive = await getDriveClient(userId, accountId);
   const files: Array<{ id: string; name: string; mimeType?: string | null; size?: string | null; webViewLink?: string | null; modifiedTime?: string | null }> = [];
+  const budget = new ProviderBatchBudget({
+    pages: PROVIDER_LIMITS.googleDrive.maxListPages,
+    files: PROVIDER_LIMITS.googleDrive.maxExactNameMatches,
+  });
   let pageToken: string | undefined;
   do {
+    budget.consume('pages', 1, 'Google Drive exact-name page limit exceeded');
     const response = await drive.files.list({
       q: `name = '${escapeDriveQueryLiteral(name)}' and trashed = false and mimeType != 'application/vnd.google-apps.folder'`,
       fields: 'nextPageToken, files(id, name, mimeType, size, webViewLink, modifiedTime)',
       pageToken,
+      pageSize: 100,
     });
-    files.push(...((response.data.files || []) as typeof files));
+    const pageFiles = (response.data.files || []) as typeof files;
+    budget.consume('files', pageFiles.length, 'Google Drive exact-name match limit exceeded');
+    files.push(...pageFiles);
     pageToken = response.data.nextPageToken || undefined;
   } while (pageToken);
   return files.filter((file) => file.name?.trim().toLowerCase() === name.toLowerCase());
@@ -266,16 +289,17 @@ export async function searchGoogleDriveFiles(
 ) {
   const drive = await getDriveClient(userId, accountId);
   
-  let searchQuery = `name contains '${query}' and trashed = false and mimeType != 'application/vnd.google-apps.folder'`;
+  let searchQuery = `name contains '${escapeDriveQueryLiteral(query)}' and trashed = false and mimeType != 'application/vnd.google-apps.folder'`;
   
   if (inFolder) {
-    searchQuery += ` and '${inFolder}' in parents`;
+    searchQuery += ` and '${escapeDriveQueryLiteral(inFolder)}' in parents`;
   }
 
   const response = await drive.files.list({
     q: searchQuery,
     fields: 'files(id, name, mimeType, size, webViewLink, modifiedTime)',
     orderBy: 'modifiedTime desc',
+    pageSize: 100,
   });
 
   return response.data.files || [];
