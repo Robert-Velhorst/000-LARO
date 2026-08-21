@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { buildCase, buildUser } from "../factories";
+import { buildCase, buildEvidence, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 
 const googleMocks = vi.hoisted(() => ({
@@ -161,6 +161,117 @@ suite("Google Drive account selection", () => {
     expect(files.map((file) => file.id)).toEqual(["file-page-one", "file-page-two"]);
     expect(googleMocks.listRequests).toHaveLength(2);
     expect(googleMocks.listRequests[1]).toMatchObject({ pageToken: "drive-page-two" });
+  });
+
+  it("rejects Drive folder listings that exceed the global file budget", async () => {
+    const { PROVIDER_LIMITS } = await import("../../server/providerLimits");
+    googleMocks.listRequests.length = 0;
+    googleMocks.listResponses.push({
+      data: {
+        files: Array.from(
+          { length: PROVIDER_LIMITS.googleDrive.maxListedFiles + 1 },
+          (_, index) => ({ id: `file-${index}`, name: `File ${index}.pdf`, mimeType: "application/pdf" }),
+        ),
+      },
+    });
+    const { getAllFilesInFolder } = await import("../../server/googleDriveService");
+
+    await expect(getAllFilesInFolder(userId, "root", false, "GOOGLE_DRIVE_SECOND"))
+      .rejects.toThrow("file limit");
+    expect(googleMocks.listRequests).toHaveLength(1);
+  });
+
+  it("rejects Drive traversal after the global page budget", async () => {
+    const { PROVIDER_LIMITS } = await import("../../server/providerLimits");
+    googleMocks.listRequests.length = 0;
+    googleMocks.listResponses.push(...Array.from(
+      { length: PROVIDER_LIMITS.googleDrive.maxListPages },
+      (_, index) => ({ data: { files: [], nextPageToken: `page-${index + 1}` } }),
+    ));
+    const { getAllFilesInFolder } = await import("../../server/googleDriveService");
+
+    await expect(getAllFilesInFolder(userId, "root", false, "GOOGLE_DRIVE_SECOND"))
+      .rejects.toThrow("page limit");
+    expect(googleMocks.listRequests).toHaveLength(PROVIDER_LIMITS.googleDrive.maxListPages);
+  });
+
+  it("visits recursive Drive folders once when provider links form a cycle", async () => {
+    googleMocks.listRequests.length = 0;
+    googleMocks.listResponses.push(
+      {
+        data: {
+          files: [{ id: "child-folder", name: "Child", mimeType: "application/vnd.google-apps.folder" }],
+        },
+      },
+      {
+        data: {
+          files: [
+            { id: "root", name: "Root", mimeType: "application/vnd.google-apps.folder" },
+            { id: "cycle-file", name: "Evidence.pdf", mimeType: "application/pdf" },
+          ],
+        },
+      },
+    );
+    const { getAllFilesInFolder } = await import("../../server/googleDriveService");
+
+    const files = await getAllFilesInFolder(userId, "root", true, "GOOGLE_DRIVE_SECOND");
+
+    expect(files.map((file) => file.id)).toEqual(["cycle-file"]);
+    expect(googleMocks.listRequests).toHaveLength(2);
+  });
+
+  it("escapes folder IDs before placing them in Drive query literals", async () => {
+    googleMocks.listRequests.length = 0;
+    googleMocks.listResponses.push({ data: { files: [] } });
+    const { getAllFilesInFolder } = await import("../../server/googleDriveService");
+
+    await getAllFilesInFolder(userId, "folder' or trashed = true or 'x", false, "GOOGLE_DRIVE_SECOND");
+
+    expect(googleMocks.listRequests[0].q).toBe(
+      "'folder\\' or trashed = true or \\'x' in parents and trashed = false",
+    );
+  });
+
+  it("rejects mismatched Drive import arrays before contacting the provider", async () => {
+    const caller = app.makeCaller({ id: userId, role: "user" });
+
+    await expect(caller.googleDrive.importFiles({
+      caseId: "CASE_DRIVE_ACCOUNT_SELECTION",
+      accountId: "GOOGLE_DRIVE_SECOND",
+      fileIds: ["file-one"],
+      fileNames: ["One.pdf", "Two.pdf"],
+    })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("allows large folder resyncs when every discovered file was already imported", async () => {
+    const { PROVIDER_LIMITS } = await import("../../server/providerLimits");
+    const count = PROVIDER_LIMITS.googleDrive.maxImportFiles + 1;
+    const files = Array.from(
+      { length: count },
+      (_, index) => ({ id: `existing-drive-${index}`, name: `Existing ${index}.pdf`, mimeType: "application/pdf" }),
+    );
+    await app.db.insert(app.schema.evidence).values(files.map((file, index) => buildEvidence({
+      id: `EXISTING_DRIVE_EVIDENCE_${index}`,
+      caseId: "CASE_DRIVE_ACCOUNT_SELECTION",
+      userId,
+      source: "google_drive",
+      metadata: JSON.stringify({ driveFileId: file.id }),
+    })));
+    googleMocks.listRequests.length = 0;
+    googleMocks.listResponses.push({ data: { files } });
+    const caller = app.makeCaller({ id: userId, role: "user" });
+
+    await expect(caller.googleDrive.importFolder({
+      caseId: "CASE_DRIVE_ACCOUNT_SELECTION",
+      folderId: "incremental-folder",
+      folderName: "Incremental folder",
+      recursive: false,
+      accountId: "GOOGLE_DRIVE_SECOND",
+    })).resolves.toMatchObject({
+      success: true,
+      imported: 0,
+      skipped: count,
+    });
   });
 
   it("finds exact Drive names globally across every result page", async () => {

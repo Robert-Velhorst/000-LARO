@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { downloadTrelloAttachment } from "../../server/trelloService";
+import { downloadTrelloAttachment, getTrelloBoards, testTrelloConnection } from "../../server/trelloService";
+import { PROVIDER_LIMITS } from "../../server/providerLimits";
 
 const { lookupMock, storagePutMock } = vi.hoisted(() => ({
   lookupMock: vi.fn().mockResolvedValue([{ address: "93.184.216.34", family: 4 }]),
@@ -20,6 +21,42 @@ afterEach(() => {
 });
 
 describe("Trello attachment ingress", () => {
+  it("rejects oversized Trello API metadata before parsing JSON", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("[]", {
+      status: 200,
+      headers: { "content-length": String(PROVIDER_LIMITS.trello.maxJsonBytes + 1) },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getTrelloBoards("secret-token")).rejects.toThrow("Trello board request failed");
+  });
+
+  it("rejects Trello board cardinality beyond the API budget", async () => {
+    const boards = Array.from(
+      { length: PROVIDER_LIMITS.trello.maxBoards + 1 },
+      (_, index) => ({ id: `board-${index}`, name: `Board ${index}`, url: `https://trello.com/b/${index}` }),
+    );
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(boards), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getTrelloBoards("secret-token")).rejects.toThrow("board limit");
+  });
+
+  it("bounds connection-test metadata and never logs the Trello token", async () => {
+    const errorMock = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", {
+      status: 200,
+      headers: { "content-length": String(PROVIDER_LIMITS.trello.maxMemberJsonBytes + 1) },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(testTrelloConnection("connection-secret-token")).resolves.toEqual({
+      ok: false,
+      error: "Trello connection test failed",
+    });
+    expect(JSON.stringify(errorMock.mock.calls)).not.toContain("connection-secret-token");
+  });
+
   it("rejects an untrusted attachment origin before making a request", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 404 }));
     vi.stubGlobal("fetch", fetchMock);

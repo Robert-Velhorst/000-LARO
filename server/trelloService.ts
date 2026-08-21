@@ -8,8 +8,15 @@ import { storagePut } from './storage';
 import { getDb } from './db';
 import { evidenceSources, evidenceItems } from './schema';
 import { v4 as uuidv4 } from 'uuid';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { fetchTrustedRemote } from './trustedRemoteFetch';
+import {
+  assertProviderArrayLimit,
+  PROVIDER_LIMITS,
+  ProviderBatchBudget,
+  ProviderBatchLimitError,
+} from './providerLimits';
+import { MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 
 export interface TrelloBoard {
   id: string;
@@ -58,6 +65,99 @@ export interface SyncProgress {
   errors: string[];
 }
 
+export type TrelloRequestBudget = {
+  beforeRequest: () => void;
+  afterResponse: (bytes: number) => void;
+};
+
+export interface TrelloMember {
+  id: string;
+  fullName: string;
+  email?: string;
+}
+
+async function fetchTrelloArray<T>(options: {
+  operation: string;
+  path: string;
+  token: string;
+  fields: Record<string, string>;
+  limit: number;
+  limitLabel: string;
+  budget?: TrelloRequestBudget;
+}): Promise<T[]> {
+  const config = getTrelloOAuthConfig();
+  const url = new URL(`https://api.trello.com/1/${options.path}`);
+  url.search = new URLSearchParams({
+    key: config.apiKey,
+    token: options.token,
+    ...options.fields,
+  }).toString();
+  options.budget?.beforeRequest();
+  try {
+    const response = await fetchTrustedRemote(url.toString(), {
+      allowedHosts: ['api.trello.com'],
+      maxBytes: PROVIDER_LIMITS.trello.maxJsonBytes,
+      maxRedirects: 0,
+      timeoutMs: 20_000,
+      init: { headers: { Accept: 'application/json' } },
+    });
+    if (!response.ok) throw new Error('provider status');
+    const body = await response.text();
+    options.budget?.afterResponse(Buffer.byteLength(body, 'utf8'));
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      throw new Error('provider JSON');
+    }
+    assertProviderArrayLimit<T>(parsed, options.limit, options.limitLabel);
+    return parsed;
+  } catch (error) {
+    console.error('[Trello] Provider request failed', { operation: options.operation });
+    if (error instanceof ProviderBatchLimitError) throw error;
+    throw new Error(`Trello ${options.operation} request failed`);
+  }
+}
+
+async function fetchTrelloObject<T>(options: {
+  operation: string;
+  path: string;
+  token: string;
+  fields: Record<string, string>;
+  maxBytes?: number;
+  budget?: TrelloRequestBudget;
+}): Promise<T> {
+  const config = getTrelloOAuthConfig();
+  const url = new URL(`https://api.trello.com/1/${options.path}`);
+  url.search = new URLSearchParams({
+    key: config.apiKey,
+    token: options.token,
+    ...options.fields,
+  }).toString();
+  options.budget?.beforeRequest();
+  try {
+    const response = await fetchTrustedRemote(url.toString(), {
+      allowedHosts: ['api.trello.com'],
+      maxBytes: options.maxBytes ?? PROVIDER_LIMITS.trello.maxJsonBytes,
+      maxRedirects: 0,
+      timeoutMs: 20_000,
+      init: { headers: { Accept: 'application/json' } },
+    });
+    if (!response.ok) throw new Error('provider status');
+    const body = await response.text();
+    options.budget?.afterResponse(Buffer.byteLength(body, 'utf8'));
+    const parsed: unknown = JSON.parse(body);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('provider object');
+    }
+    return parsed as T;
+  } catch (error) {
+    console.error('[Trello] Provider request failed', { operation: options.operation });
+    if (error instanceof ProviderBatchLimitError) throw error;
+    throw new Error(`Trello ${options.operation} request failed`);
+  }
+}
+
 /**
  * Get Trello OAuth configuration
  */
@@ -97,137 +197,76 @@ export function getTrelloAuthorizationUrl(userId: string, caseId: string): strin
 /**
  * Get Trello boards for a user
  */
-export async function getTrelloBoards(token: string): Promise<TrelloBoard[]> {
-  const config = getTrelloOAuthConfig();
-
-  try {
-    const response = await fetch(
-      `https://api.trello.com/1/members/me/boards?key=${config.apiKey}&token=${token}&fields=id,name,url,desc`,
-      {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      }
-    );
-
-    if (!response.ok) {
-      const error = await response.text();
-      console.error('[Trello] Failed to fetch boards:', error);
-      throw new Error(`Failed to fetch Trello boards: ${error}`);
-    }
-
-    const boards = await response.json();
-    return boards;
-  } catch (error) {
-    console.error('[Trello] Error fetching boards:', error);
-    throw error;
-  }
+export async function getTrelloBoards(token: string, budget?: TrelloRequestBudget): Promise<TrelloBoard[]> {
+  return fetchTrelloArray<TrelloBoard>({
+    operation: 'board',
+    path: 'members/me/boards',
+    token,
+    fields: { fields: 'id,name,url,desc' },
+    limit: PROVIDER_LIMITS.trello.maxBoards,
+    limitLabel: 'Trello board',
+    budget,
+  });
 }
 
 /**
  * Get lists for a Trello board
  */
-export async function getTrelloLists(boardId: string, token: string): Promise<TrelloList[]> {
-  const config = getTrelloOAuthConfig();
-
-  try {
-    const response = await fetch(
-      `https://api.trello.com/1/boards/${boardId}/lists?key=${config.apiKey}&token=${token}&fields=id,name`,
-      {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      }
-    );
-
-    if (!response.ok) {
-      const error = await response.text();
-      console.error('[Trello] Failed to fetch lists:', error);
-      throw new Error(`Failed to fetch Trello lists: ${error}`);
-    }
-
-    const lists = await response.json();
-    return lists.map((list: any) => ({
+export async function getTrelloLists(boardId: string, token: string, budget?: TrelloRequestBudget): Promise<TrelloList[]> {
+  const lists = await fetchTrelloArray<Omit<TrelloList, 'boardId'>>({
+    operation: 'list',
+    path: `boards/${encodeURIComponent(boardId)}/lists`,
+    token,
+    fields: { fields: 'id,name' },
+    limit: PROVIDER_LIMITS.trello.maxListsPerBoard,
+    limitLabel: 'Trello list',
+    budget,
+  });
+  return lists.map((list) => ({
       ...list,
       boardId,
-    }));
-  } catch (error) {
-    console.error('[Trello] Error fetching lists:', error);
-    throw error;
-  }
+  }));
 }
 
 /**
  * Get cards for a Trello list
  */
-export async function getTrelloCards(listId: string, boardId: string, token: string): Promise<TrelloCard[]> {
-  const config = getTrelloOAuthConfig();
-
-  try {
-    const response = await fetch(
-      `https://api.trello.com/1/lists/${listId}/cards?key=${config.apiKey}&token=${token}&fields=id,name,desc,url,dateLastActivity&attachments=open`,
-      {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      }
-    );
-
-    if (!response.ok) {
-      const error = await response.text();
-      console.error('[Trello] Failed to fetch cards:', error);
-      throw new Error(`Failed to fetch Trello cards: ${error}`);
-    }
-
-    const cards = await response.json();
-    return cards.map((card: any) => ({
+export async function getTrelloCards(listId: string, boardId: string, token: string, budget?: TrelloRequestBudget): Promise<TrelloCard[]> {
+  const cards = await fetchTrelloArray<Omit<TrelloCard, 'listId' | 'boardId'>>({
+    operation: 'card',
+    path: `lists/${encodeURIComponent(listId)}/cards`,
+    token,
+    fields: { fields: 'id,name,desc,url,dateLastActivity', attachments: 'open' },
+    limit: PROVIDER_LIMITS.trello.maxCardsPerList,
+    limitLabel: 'Trello card',
+    budget,
+  });
+  return cards.map((card) => ({
       ...card,
       listId,
       boardId,
-    }));
-  } catch (error) {
-    console.error('[Trello] Error fetching cards:', error);
-    throw error;
-  }
+  }));
 }
 
 /**
  * Get comments for a Trello card
  */
-export async function getTrelloComments(cardId: string, token: string): Promise<TrelloComment[]> {
-  const config = getTrelloOAuthConfig();
-
-  try {
-    const response = await fetch(
-      `https://api.trello.com/1/cards/${cardId}/actions?key=${config.apiKey}&token=${token}&filter=commentCard&fields=id,data,type,date,memberCreator`,
-      {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      }
-    );
-
-    if (!response.ok) {
-      const error = await response.text();
-      console.error('[Trello] Failed to fetch comments:', error);
-      throw new Error(`Failed to fetch Trello comments: ${error}`);
-    }
-
-    const actions = await response.json();
-    return actions.map((action: any) => ({
+export async function getTrelloComments(cardId: string, token: string, budget?: TrelloRequestBudget): Promise<TrelloComment[]> {
+  const actions = await fetchTrelloArray<any>({
+    operation: 'comment',
+    path: `cards/${encodeURIComponent(cardId)}/actions`,
+    token,
+    fields: { filter: 'commentCard', fields: 'id,data,type,date,memberCreator' },
+    limit: PROVIDER_LIMITS.trello.maxCommentsPerCard,
+    limitLabel: 'Trello comment',
+    budget,
+  });
+  return actions.map((action) => ({
       id: action.id,
       text: action.data?.text || '',
       memberCreator: action.memberCreator,
       date: action.date,
-    }));
-  } catch (error) {
-    console.error('[Trello] Error fetching comments:', error);
-    throw error;
-  }
+  }));
 }
 
 /**
@@ -268,7 +307,9 @@ export async function downloadTrelloAttachment(
 
     return { key, url };
   } catch (error) {
-    console.error('[Trello] Error downloading attachment:', error);
+    console.error('[Trello] Attachment download failed', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
     return null;
   }
 }
@@ -276,29 +317,18 @@ export async function downloadTrelloAttachment(
 /**
  * Test Trello connection
  */
-export async function testTrelloConnection(token: string): Promise<{ ok: boolean; member?: any; error?: string }> {
-  const config = getTrelloOAuthConfig();
-
+export async function testTrelloConnection(token: string): Promise<{ ok: boolean; member?: TrelloMember; error?: string }> {
   try {
-    const response = await fetch(
-      `https://api.trello.com/1/members/me?key=${config.apiKey}&token=${token}&fields=id,fullName,email`,
-      {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-      }
-    );
-
-    if (!response.ok) {
-      const error = await response.text();
-      return { ok: false, error };
-    }
-
-    const member = await response.json();
+    const member = await fetchTrelloObject<TrelloMember>({
+      operation: 'connection test',
+      path: 'members/me',
+      token,
+      fields: { fields: 'id,fullName,email' },
+      maxBytes: PROVIDER_LIMITS.trello.maxMemberJsonBytes,
+    });
     return { ok: true, member };
-  } catch (error) {
-    return { ok: false, error: String(error) };
+  } catch {
+    return { ok: false, error: 'Trello connection test failed' };
   }
 }
 
@@ -324,15 +354,68 @@ export async function syncTrelloForCase(
     totalAttachments: 0,
     errors: [],
   };
+  const existingSource = await db
+    .select({ id: evidenceSources.id })
+    .from(evidenceSources)
+    .where(and(
+      eq(evidenceSources.caseId, caseId),
+      eq(evidenceSources.userId, userId),
+      inArray(evidenceSources.sourceType, ['trello', 'Trello', 'Board']),
+    ))
+    .limit(1);
+  const sourceId = existingSource[0]?.id || uuidv4();
+  if (existingSource.length > 0) {
+    await db.update(evidenceSources).set({
+      provider: 'trello',
+      sourceType: 'trello',
+      sourceIdentifier: 'trello',
+      connectionStatus: 'syncing',
+      status: 'syncing',
+      errorMessage: null,
+    }).where(and(
+      eq(evidenceSources.id, sourceId),
+      eq(evidenceSources.userId, userId),
+    ));
+  } else {
+    await db.insert(evidenceSources).values({
+      id: sourceId,
+      caseId,
+      userId,
+      provider: 'trello',
+      sourceType: 'trello',
+      sourceIdentifier: 'trello',
+      connectionStatus: 'syncing',
+      status: 'syncing',
+    });
+  }
+  const batchBudget = new ProviderBatchBudget({
+    boards: PROVIDER_LIMITS.trello.maxSyncBoards,
+    lists: PROVIDER_LIMITS.trello.maxSyncLists,
+    cards: PROVIDER_LIMITS.trello.maxSyncCards,
+    comments: PROVIDER_LIMITS.trello.maxSyncComments,
+    attachments: PROVIDER_LIMITS.trello.maxSyncAttachments,
+    requests: PROVIDER_LIMITS.trello.maxSyncRequests,
+    bytes: PROVIDER_LIMITS.trello.maxSyncJsonBytes,
+  });
+  const requestBudget: TrelloRequestBudget = {
+    beforeRequest: () => {
+      batchBudget.consume('requests', 1, 'Trello sync request limit exceeded');
+    },
+    afterResponse: (bytes) => {
+      batchBudget.consume('bytes', bytes, 'Trello sync response-byte limit exceeded');
+    },
+  };
 
   try {
     // Get all boards
-    let boards = await getTrelloBoards(token);
+    let boards = await getTrelloBoards(token, requestBudget);
 
     // Filter by boardIds if provided
     if (boardIds && boardIds.length > 0) {
-      boards = boards.filter(b => boardIds.includes(b.id));
+      const selectedIds = new Set(boardIds);
+      boards = boards.filter(b => selectedIds.has(b.id));
     }
+    batchBudget.consume('boards', boards.length, 'Trello sync board limit exceeded');
 
     progress.totalBoards = boards.length;
 
@@ -340,19 +423,27 @@ export async function syncTrelloForCase(
     for (const board of boards) {
       try {
         // Get lists for this board
-        const lists = await getTrelloLists(board.id, token);
+        const lists = await getTrelloLists(board.id, token, requestBudget);
+        batchBudget.consume('lists', lists.length, 'Trello sync list limit exceeded');
 
         // Process each list
         for (const list of lists) {
           // Get cards for this list
-          const cards = await getTrelloCards(list.id, board.id, token);
+          const cards = await getTrelloCards(list.id, board.id, token, requestBudget);
+          batchBudget.consume('cards', cards.length, 'Trello sync card limit exceeded');
           progress.totalCards += cards.length;
 
           // Process each card
           for (const card of cards) {
             try {
+              const attachmentCount = card.attachments?.length || 0;
+              if (attachmentCount > PROVIDER_LIMITS.trello.maxAttachmentsPerCard) {
+                throw new ProviderBatchLimitError('Trello card attachment limit exceeded');
+              }
+              batchBudget.consume('attachments', attachmentCount, 'Trello sync attachment limit exceeded');
               // Get comments for this card
-              const comments = await getTrelloComments(card.id, token);
+              const comments = await getTrelloComments(card.id, token, requestBudget);
+              batchBudget.consume('comments', comments.length, 'Trello sync comment limit exceeded');
               progress.totalComments += comments.length;
 
               // Create evidence item for the card
@@ -376,7 +467,9 @@ ${comments.map(c => `- ${c.memberCreator?.fullName || 'Unknown'} (${c.date}): ${
                 caseId,
                 userId,
                 title: card.name,
-                source: "Trello",
+                source: 'trello',
+                sourceId,
+                sourceType: 'card',
                 metadata: JSON.stringify({
                   boardId: board.id,
                   boardName: board.name,
@@ -395,7 +488,10 @@ ${comments.map(c => `- ${c.memberCreator?.fullName || 'Unknown'} (${c.date}): ${
               if (card.attachments && card.attachments.length > 0) {
                 for (const attachment of card.attachments) {
                   try {
-                    const result = await downloadTrelloAttachment(attachment.url, attachment.name, { token });
+                    const result = await downloadTrelloAttachment(attachment.url, attachment.name, {
+                      token,
+                      maxBytes: MAX_EVIDENCE_FILE_BYTES,
+                    });
                     if (result) {
                       progress.totalAttachments++;
 
@@ -405,7 +501,9 @@ ${comments.map(c => `- ${c.memberCreator?.fullName || 'Unknown'} (${c.date}): ${
                         caseId,
                         userId,
                         title: `Attachment: ${attachment.name}`,
-                        source: "Trello",
+                        source: 'trello',
+                        sourceId,
+                        sourceType: 'attachment',
                         metadata: JSON.stringify({
                           attachmentId: attachment.id,
                           fileName: attachment.name,
@@ -419,30 +517,35 @@ ${comments.map(c => `- ${c.memberCreator?.fullName || 'Unknown'} (${c.date}): ${
                       progress.errors.push(`Failed to download attachment ${attachment.name}`);
                     }
                   } catch (error) {
-                    progress.errors.push(`Failed to download attachment ${attachment.name}: ${error}`);
+                    if (error instanceof ProviderBatchLimitError) throw error;
+                    progress.errors.push(`Failed to download attachment ${attachment.name}`);
                   }
                 }
               }
             } catch (error) {
-              progress.errors.push(`Failed to process card ${card.name}: ${error}`);
+              if (error instanceof ProviderBatchLimitError) throw error;
+              progress.errors.push(`Failed to process card ${card.name}`);
             }
           }
         }
 
         progress.processedBoards++;
       } catch (error) {
-        progress.errors.push(`Failed to process board ${board.name}: ${error}`);
+        if (error instanceof ProviderBatchLimitError) throw error;
+        progress.errors.push(`Failed to process board ${board.name}`);
       }
     }
 
     // Update evidence source
-    await db.insert(evidenceSources).values({
-      id: uuidv4(),
-      caseId,
-      userId,
-      provider: 'Trello',
-      sourceType: 'Board',
-      status: 'connected',
+    const sourceValues = {
+      provider: 'trello',
+      sourceType: 'trello',
+      sourceIdentifier: 'trello',
+      connectionStatus: 'synced',
+      status: 'synced',
+      itemsCollected: progress.totalCards + progress.totalAttachments,
+      itemCount: progress.totalCards + progress.totalAttachments,
+      lastSyncedAt: new Date(),
       metadata: JSON.stringify({
         syncedAt: new Date().toISOString(),
         boardCount: progress.processedBoards,
@@ -450,12 +553,30 @@ ${comments.map(c => `- ${c.memberCreator?.fullName || 'Unknown'} (${c.date}): ${
         commentCount: progress.totalComments,
         attachmentCount: progress.totalAttachments,
       }),
-    });
+    };
+    await db.update(evidenceSources).set(sourceValues).where(and(
+      eq(evidenceSources.id, sourceId),
+      eq(evidenceSources.userId, userId),
+    ));
 
     return progress;
   } catch (error) {
-    console.error('[Trello] Sync error:', error);
-    progress.errors.push(String(error));
+    console.error('[Trello] Sync failed', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
+    try {
+      await db.update(evidenceSources).set({
+        connectionStatus: 'error',
+        status: 'error',
+        errorMessage: error instanceof ProviderBatchLimitError ? error.message : 'Trello sync failed',
+      }).where(and(
+        eq(evidenceSources.id, sourceId),
+        eq(evidenceSources.userId, userId),
+      ));
+    } catch {
+      console.error('[Trello] Failed to persist sync failure status');
+    }
+    progress.errors.push(error instanceof ProviderBatchLimitError ? error.message : 'Trello sync failed');
     throw error;
   }
 }
