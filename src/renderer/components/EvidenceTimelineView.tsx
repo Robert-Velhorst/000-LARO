@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Calendar, FileText, Mail, Upload, Image, Video, Music, File, Search, Filter, Download } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import { encodeCsvRows } from "../../../shared/csv";
 
 /**
  * Evidence Timeline View Component
@@ -93,7 +94,6 @@ export default function EvidenceTimelineView({ caseId }: EvidenceTimelineViewPro
       return;
     }
     const header = ["Date", "Type", "Source", "Title", "Description", "Tags"];
-    const escape = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const rows = evidence.map((item: any) =>
       [
         item.createdAt ? new Date(item.createdAt).toISOString() : "",
@@ -103,10 +103,8 @@ export default function EvidenceTimelineView({ caseId }: EvidenceTimelineViewPro
         String(item.description ?? "").replace(/\s+/g, " "),
         safeParseTags(item.tags).join("; "),
       ]
-        .map(escape)
-        .join(",")
     );
-    const csv = [header.map(escape).join(","), ...rows].join("\n");
+    const csv = encodeCsvRows([header, ...rows], "\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

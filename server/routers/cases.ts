@@ -16,6 +16,7 @@ import { createCaseId } from "../ids";
 import { collectManagedStorageKeys } from "../managedStorage";
 import { enqueueStorageDeletions, processQueuedStorageDeletions } from "../storageDeletionQueue";
 import { emitRealtimeDataChange } from "../realtime";
+import { encodeCsvRows } from "../../shared/csv";
 
 export const casesRouter = router({
   // Phase 022 — search, filters, sorting, pagination. All server-side and
@@ -194,16 +195,9 @@ export const casesRouter = router({
       .where(eq(casesTable.userId, ctx.user.id))
       .orderBy(desc(casesTable.createdAt));
 
-    const esc = (v: unknown) => {
-      const s = v == null ? "" : String(v);
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
     const header = ["id", "clientName", "caseType", "urgency", "status", "legalAreas"];
-    const lines = [header.join(",")];
-    for (const c of rows) {
-      lines.push([c.id, c.clientName, c.caseType, c.urgency, c.status, c.legalAreas].map(esc).join(","));
-    }
-    return { csv: lines.join("\n"), count: rows.length };
+    const values = rows.map((c) => [c.id, c.clientName, c.caseType, c.urgency, c.status, c.legalAreas]);
+    return { csv: encodeCsvRows([header, ...values], "\n"), count: rows.length };
   }),
 
   // Phase 021 — case intake autosave. The in-progress form is persisted

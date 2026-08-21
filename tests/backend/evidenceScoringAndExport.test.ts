@@ -99,12 +99,26 @@ suite("evidence scoring and case export", () => {
 
   it("exports only the selected owner's case and includes available source files", async () => {
     const caller = app.makeCaller(owner);
+    await app.db.insert(app.schema.evidence).values(buildEvidence({
+      id: "EVIDENCE_FORMULA_EXPORT",
+      caseId: "CASE_SCORE_OWNER",
+      userId: owner.id,
+      title: '=HYPERLINK("https://attacker.invalid","Open")',
+    }));
+    await app.db.insert(app.schema.cases).values(buildCase({
+      id: "CASE_FORMULA_EXPORT",
+      userId: owner.id,
+      clientName: "=2+2",
+    }));
     const csvDownload = await caller.evidenceExport.exportCSV({ caseId: "CASE_SCORE_OWNER" });
     const csv = Buffer.from(csvDownload.base64, "base64").toString("utf8");
     expect(csvDownload.filename).toBe("case-CASE_SCORE_OWNER-evidence.csv");
     expect(csv).toContain('"Besluit gemeente, ""uitkering"""');
+    expect(csv).toContain('"\'=HYPERLINK');
     expect(csv).toContain("contentHash");
     expect(csv).not.toContain("CASE_SCORE_OTHER");
+    const caseCsv = await caller.cases.exportCsv();
+    expect(caseCsv.csv).toContain("CASE_FORMULA_EXPORT,'=2+2");
 
     const zipDownload = await caller.evidenceExport.exportZIP({ caseId: "CASE_SCORE_OWNER" });
     expect(zipDownload.url).toMatch(/^\/api\/case-export\/[A-Za-z0-9_-]{43}\.zip$/);
