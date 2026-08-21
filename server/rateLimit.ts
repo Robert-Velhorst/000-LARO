@@ -1,4 +1,8 @@
 import { TRPCError } from "@trpc/server";
+import { createHash } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { getDb } from "./db";
+import { systemConfig } from "./schema";
 
 /**
  * Simple in-memory rate limiter
@@ -118,6 +122,12 @@ export const RATE_LIMITS = {
     windowMs: 5 * 60 * 1000,
     message: "Too many evidence export requests. Please use an existing link or wait briefly.",
   },
+
+  bulkImport: {
+    maxRequests: 5,
+    windowMs: 15 * 60 * 1000,
+    message: "Too many import requests. Please wait before importing another file.",
+  },
   
   // General API calls
   general: {
@@ -146,6 +156,56 @@ export function enforceRateLimit(
 ): void {
   const identifier = `${scope}:${getRateLimitIdentifier(ctx as any)}`;
   checkRateLimit(identifier, config);
+}
+
+/** Persist expensive-operation limits so a service restart cannot reset them. */
+export async function enforcePersistentRateLimit(
+  ctx: { user?: { id: string } | null; req: any },
+  scope: string,
+  config: RateLimitConfig,
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+  const identifier = getRateLimitIdentifier(ctx as any);
+  const digest = createHash("sha256").update(`${scope}:${identifier}`).digest("hex");
+  const configKey = `rate-limit:${scope}:${digest}`;
+  const now = Date.now();
+
+  db.transaction((tx) => {
+    const row = tx.select({ value: systemConfig.configValue })
+      .from(systemConfig)
+      .where(eq(systemConfig.configKey, configKey))
+      .get();
+    let current: RateLimitEntry | null = null;
+    try {
+      const parsed = row?.value ? JSON.parse(row.value) as Partial<RateLimitEntry> : null;
+      if (parsed && Number.isSafeInteger(parsed.count) && Number.isSafeInteger(parsed.resetAt)) {
+        current = { count: Number(parsed.count), resetAt: Number(parsed.resetAt) };
+      }
+    } catch {
+      current = null;
+    }
+
+    const next = !current || current.resetAt <= now
+      ? { count: 1, resetAt: now + config.windowMs }
+      : { count: current.count + 1, resetAt: current.resetAt };
+    if (next.count > config.maxRequests) {
+      const resetIn = Math.max(1, Math.ceil((next.resetAt - now) / 1000));
+      throw new TRPCError({
+        code: "TOO_MANY_REQUESTS",
+        message: config.message || `Rate limit exceeded. Try again in ${resetIn} seconds.`,
+      });
+    }
+
+    tx.insert(systemConfig).values({
+      configKey,
+      configValue: JSON.stringify(next),
+      updatedAt: new Date(now),
+    }).onConflictDoUpdate({
+      target: systemConfig.configKey,
+      set: { configValue: JSON.stringify(next), updatedAt: new Date(now) },
+    }).run();
+  });
 }
 
 /**

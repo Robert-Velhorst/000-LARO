@@ -15,8 +15,15 @@
 
 import axios from 'axios';
 import { getDb } from './db';
-import { evidenceSources, evidenceItems } from './schema';
+import { cases, evidenceSources, evidenceItems } from './schema';
 import { v4 as uuidv4 } from 'uuid';
+import { and, eq } from 'drizzle-orm';
+import {
+  normalizeTelegramExport,
+  type TelegramExportedChat,
+} from './importLimits';
+
+export type { TelegramExportedChat } from './importLimits';
 
 export interface TelegramMessage {
   message_id: number;
@@ -68,29 +75,6 @@ export interface TelegramFile {
   file_unique_id: string;
   file_size: number;
   file_path: string;
-}
-
-export interface TelegramExportedChat {
-  name: string;
-  type: string;
-  id: number;
-  messages: Array<{
-    id: number;
-    type: string;
-    date: string;
-    date_unixtime: string;
-    from?: string;
-    from_id?: string;
-    text?: string;
-    text_entities?: Array<{
-      type: string;
-      offset: number;
-      length: number;
-    }>;
-    file?: string;
-    mime_type?: string;
-    media_type?: string;
-  }>;
 }
 
 const TELEGRAM_API_BASE = 'https://api.telegram.org';
@@ -243,64 +227,88 @@ export async function importTelegramExport(
       throw new Error('Database not available');
     }
 
-    // Create evidence source for this Telegram export
+    // Revalidate callers outside the router before opening a transaction.
+    const normalized = normalizeTelegramExport(JSON.stringify(exportData), fileName);
+    const chat = normalized.chat;
     const sourceId = uuidv4();
-    await db.insert(evidenceSources).values({
-      id: sourceId,
-      caseId,
-      userId,
-      provider: 'Telegram',
-      sourceType: 'Export',
-      externalId: `${exportData.name} (${exportData.id})`,
-      status: 'imported',
-      lastSyncedAt: new Date(),
-      createdAt: new Date(),
-    });
-
     let filesFound = 0;
+    const now = new Date();
 
-    // Import messages
-    for (const message of exportData.messages) {
-      const itemId = uuidv4();
+    db.transaction((tx) => {
+      const ownedCase = tx.select({ id: cases.id })
+        .from(cases)
+        .where(and(eq(cases.id, caseId), eq(cases.userId, userId)))
+        .get();
+      if (!ownedCase) throw new Error('Case not found or access denied');
 
-      // Extract message content
-      let content = '';
-      if (message.text) {
-        content = message.text;
-      } else if (message.media_type) {
-        content = `[${message.media_type.toUpperCase()}] ${message.file || 'Media file'}`;
-        filesFound++;
-      }
-
-      // Create evidence item
-      await db.insert(evidenceItems).values({
-        id: itemId,
+      tx.insert(evidenceSources).values({
+        id: sourceId,
         caseId,
         userId,
-        title: `Telegram message from ${message.from || 'Unknown'}`,
-        source: 'Telegram',
-        metadata: JSON.stringify({
+        provider: 'telegram',
+        sourceType: 'telegram',
+        externalId: `${chat.name} (${chat.id})`,
+        sourceIdentifier: normalized.filename,
+        connectionStatus: 'imported',
+        status: 'imported',
+        itemsCollected: chat.messages.length,
+        itemCount: chat.messages.length,
+        lastSyncedAt: now,
+        createdAt: now,
+      }).run();
+
+      for (const message of chat.messages) {
+        const hasFile = Boolean(message.file || message.media_type);
+        if (hasFile) filesFound++;
+        const mediaLabel = message.media_type
+          ? `[${message.media_type.toUpperCase()}] ${message.file || 'Media file'}`
+          : message.file
+            ? `[FILE] ${message.file}`
+            : '';
+        const content = message.text || mediaLabel;
+        const timestamp = new Date(Number(message.date_unixtime) * 1000);
+
+        tx.insert(evidenceItems).values({
+          id: uuidv4(),
+          caseId,
+          userId,
           sourceId,
-          messageId: message.id,
-          date: message.date_unixtime,
-          from: message.from,
-          mediaType: message.media_type,
+          source: 'telegram',
+          sourceType: 'telegram',
           fileName: message.file,
-          mimeType: message.mime_type,
+          title: `Telegram message from ${message.from || 'Unknown'}`,
+          type: message.media_type || 'message',
           content,
-          relevanceScore: 0.5,
-        }),
-        createdAt: new Date(parseInt(message.date_unixtime) * 1000),
-      });
-    }
+          relevanceScore: 50,
+          timestamp,
+          metadata: JSON.stringify({
+            sourceId,
+            messageId: message.id,
+            date: message.date_unixtime,
+            from: message.from,
+            fromId: message.from_id,
+            mediaType: message.media_type,
+            fileName: message.file,
+            mimeType: message.mime_type,
+            relevanceScore: 50,
+          }),
+          createdAt: timestamp,
+          updatedAt: now,
+        }).run();
+      }
+    });
 
     return {
       success: true,
-      messagesImported: exportData.messages.length,
+      messagesImported: chat.messages.length,
       filesFound,
     };
   } catch (error) {
-    failTelegramRequest('importExport', 'Telegram export import failed', error);
+    failTelegramRequest(
+      'importExport',
+      'The Telegram import could not be completed; no messages were added.',
+      error,
+    );
   }
 }
 
@@ -308,19 +316,7 @@ export async function importTelegramExport(
  * Parse Telegram Desktop export JSON
  */
 export function parseTelegramExport(jsonContent: string): TelegramExportedChat {
-  try {
-    const data = JSON.parse(jsonContent);
-
-    // Validate structure
-    if (!data.name || !data.messages || !Array.isArray(data.messages)) {
-      throw new Error('Invalid Telegram export format');
-    }
-
-    return data as TelegramExportedChat;
-  } catch (error) {
-    logTelegramFailure('parseExport', error);
-    throw new Error('Invalid Telegram export format');
-  }
+  return normalizeTelegramExport(jsonContent, 'telegram-export.json').chat;
 }
 
 /**

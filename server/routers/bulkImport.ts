@@ -1,26 +1,12 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "../_core/trpc";
 import { getDb } from "../db";
 import { bulkImportJobs, cases } from "../schema";
 import { and, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import Papa from "papaparse";
-
-type CsvRow = {
-  caseTitle?: string;
-  description?: string;
-  category?: string;
-  urgency?: string;
-  evidenceUrls?: string;
-  tags?: string;
-};
-
-function mapUrgency(u: string | undefined): "Low" | "Medium" | "High" {
-  const x = (u ?? "Medium").trim();
-  if (/^high$/i.test(x)) return "High";
-  if (/^low$/i.test(x)) return "Low";
-  return "Medium";
-}
+import { IMPORT_LIMITS, ImportValidationError, normalizeCaseCsvImport } from "../importLimits";
+import { enforcePersistentRateLimit, RATE_LIMITS } from "../rateLimit";
 
 function jobRowToListItem(job: typeof bulkImportJobs.$inferSelect) {
   return {
@@ -84,138 +70,100 @@ export const bulkImportRouter = router({
   uploadCSV: protectedProcedure
     .input(
       z.object({
-        csvContent: z.string(),
-        filename: z.string(),
+        csvContent: z.string().max(IMPORT_LIMITS.csv.maxBytes),
+        filename: z.string().max(IMPORT_LIMITS.csv.maxFilenameChars),
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await enforcePersistentRateLimit(ctx, "bulk-case-import", RATE_LIMITS.bulkImport);
       const db = await getDb();
       if (!db) {
-        return {
-          success: false as const,
-          errors: ["Database not available"],
-          totalRows: 0,
-          jobId: undefined as undefined,
-        };
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
       }
 
-      const parsed = Papa.parse<CsvRow>(input.csvContent, {
-        header: true,
-        skipEmptyLines: true,
-        transformHeader: (h) => h.trim(),
-      });
-
-      if (parsed.errors.length > 0) {
-        return {
-          success: false as const,
-          errors: parsed.errors.map((e) => e.message || "Parse error"),
-          totalRows: 0,
-          jobId: undefined,
-        };
-      }
-
-      const dataRows = parsed.data.filter(
-        (r) => r && ((r.caseTitle ?? "").trim() !== "" || (r.description ?? "").trim() !== "")
-      );
-
-      if (dataRows.length === 0) {
-        return {
-          success: false as const,
-          errors: [
-            'No data rows found. Expected CSV headers such as: caseTitle, description, category, urgency (see "Download Template" on the import screen).',
-          ],
-          totalRows: 0,
-          jobId: undefined,
-        };
+      let normalized: ReturnType<typeof normalizeCaseCsvImport>;
+      try {
+        normalized = normalizeCaseCsvImport(input.csvContent, input.filename);
+      } catch (error) {
+        if (error instanceof ImportValidationError) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
+        }
+        throw error;
       }
 
       const jobId = nanoid();
-
-      await db.insert(bulkImportJobs).values({
-        id: jobId,
-        userId: ctx.user.id,
-        filename: input.filename,
-        status: "processing",
-        totalRows: String(dataRows.length),
-        processedRows: "0",
-        failedRows: "0",
-        createdAt: new Date(),
-      });
-
-      let created = 0;
-      let failed = 0;
-      const errMsgs: string[] = [];
-
-      for (let i = 0; i < dataRows.length; i++) {
-        const row = dataRows[i];
-        try {
-          const clientName =
-            (row.caseTitle ?? "").trim() || `Imported case ${i + 1}`;
-          const caseSummary = (row.description ?? "").trim() || "Imported via bulk CSV";
-          const caseType = (row.category ?? "General").trim() || "General";
-          const urgency = mapUrgency(row.urgency);
-          const slug = clientName
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-|-$/g, "")
-            .slice(0, 32);
-          const clientEmail = `${slug || "case"}-${i}-${jobId.slice(0, 8)}@bulk-import.invalid`;
-
-          const caseId = `CASE${nanoid(12)}`;
-
-          await db.insert(cases).values({
-            id: caseId,
+      try {
+        db.transaction((tx) => {
+          const now = new Date();
+          tx.insert(bulkImportJobs).values({
+            id: jobId,
             userId: ctx.user.id,
-            clientName,
-            clientEmail,
-            clientPhone: "",
-            clientAddress: "",
-            caseType,
-            caseSummary,
-            urgency,
-            status: "Matching",
-            metadata: row.tags
-              ? JSON.stringify({ tags: row.tags, evidenceUrls: row.evidenceUrls ?? "" })
-              : row.evidenceUrls
-                ? JSON.stringify({ evidenceUrls: row.evidenceUrls })
-                : null,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          } as any);
+            filename: normalized.filename,
+            status: "completed",
+            totalRows: String(normalized.rows.length),
+            processedRows: String(normalized.rows.length),
+            failedRows: "0",
+            completedAt: now,
+            metadata: JSON.stringify({
+              aggregation: {
+                duplicatesRemoved: 0,
+                originalCount: normalized.rows.length,
+                consolidatedCount: normalized.rows.length,
+              },
+            }),
+            createdAt: now,
+          }).run();
 
-          created++;
-        } catch (e: unknown) {
-          failed++;
-          const msg = e instanceof Error ? e.message : String(e);
-          errMsgs.push(`Row ${i + 1}: ${msg}`);
-        }
+          normalized.rows.forEach((row, index) => {
+            const clientName =
+              row.caseTitle || `Imported case ${index + 1}`;
+            const caseSummary = row.description || "Imported via bulk CSV";
+            const caseType = row.category || "General";
+            const slug = clientName
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-|-$/g, "")
+              .slice(0, 32);
+            const clientEmail = `${slug || "case"}-${index}-${jobId.slice(0, 8)}@bulk-import.invalid`;
+
+            const caseId = `CASE${nanoid(12)}`;
+
+            tx.insert(cases).values({
+              id: caseId,
+              userId: ctx.user.id,
+              clientName,
+              clientEmail,
+              clientPhone: "",
+              clientAddress: "",
+              caseType,
+              caseSummary,
+              urgency: row.urgency,
+              status: "Matching",
+              metadata: row.tags
+                ? JSON.stringify({ tags: row.tags, evidenceUrls: row.evidenceUrls })
+                : row.evidenceUrls
+                  ? JSON.stringify({ evidenceUrls: row.evidenceUrls })
+                  : null,
+              createdAt: now,
+              updatedAt: now,
+            } as any).run();
+          });
+        });
+      } catch (error) {
+        console.error("[BulkImport] Atomic case import failed", {
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "The import could not be completed; no cases were added.",
+        });
       }
-
-      const finalStatus = created === 0 ? "failed" : "completed";
-
-      await db
-        .update(bulkImportJobs)
-        .set({
-          status: finalStatus,
-          processedRows: String(dataRows.length),
-          failedRows: String(failed),
-          errors: errMsgs.length ? JSON.stringify(errMsgs.slice(0, 100)) : null,
-          completedAt: new Date(),
-          metadata: JSON.stringify({
-            aggregation: {
-              duplicatesRemoved: 0,
-              originalCount: dataRows.length,
-              consolidatedCount: created,
-            },
-          }),
-        })
-        .where(eq(bulkImportJobs.id, jobId));
 
       return {
         success: true as const,
         jobId,
-        totalRows: dataRows.length,
-        errors: errMsgs.length ? errMsgs.slice(0, 10) : undefined,
+        totalRows: normalized.rows.length,
+        errors: [] as string[],
       };
     }),
 });
