@@ -7,6 +7,7 @@ describe('hosted PostgreSQL migrations', () => {
     expect(migrations).toHaveLength(1);
 
     const sql = migrations[0].sql;
+    expect(migrations[0].checksum).toMatch(/^[a-f0-9]{64}$/);
     for (const table of [
       'users',
       'cases',
@@ -40,7 +41,25 @@ describe('hosted PostgreSQL migrations', () => {
     expect(queries.some((query) => query.sql.includes('CREATE TABLE IF NOT EXISTS "users"'))).toBe(true);
     expect(queries.at(-1)).toMatchObject({
       sql: expect.stringContaining('INSERT INTO laro_schema_migrations'),
-      values: ['0001_laro_baseline.sql'],
+      values: ['0001_laro_baseline.sql', expect.stringMatching(/^[a-f0-9]{64}$/)],
     });
+  });
+
+  it('refuses a changed migration that shares an already-recorded filename', async () => {
+    const queries: string[] = [];
+    const database = {
+      transaction: async <T>(work: (client: { query(sql: string): Promise<{ rows: Array<{ name: string; checksum: string }> }>; }) => Promise<T>) =>
+        await work({
+          query: async (sql) => {
+            queries.push(sql);
+            return sql.startsWith('SELECT')
+              ? { rows: [{ name: '0001_laro_baseline.sql', checksum: '0'.repeat(64) }] }
+              : { rows: [] };
+          },
+        }),
+    };
+
+    await expect(applyHostedMigrations(database)).rejects.toThrow('Hosted migration checksum mismatch');
+    expect(queries.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS "users"'))).toBe(false);
   });
 });
