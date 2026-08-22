@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createHostedDatabase } from '../../server/persistence/hostedDatabase';
+import { createHostedCaseRepository } from '../../server/persistence/hostedCaseRepository';
 import { applyHostedMigrations } from '../../server/persistence/hostedMigrations';
 
 const connectionString = process.env.LARO_HOSTED_TEST_DATABASE_URL;
@@ -50,5 +51,15 @@ suite('hosted PostgreSQL connection', () => {
       'storage_deletion_queue',
       'users',
     ]);
+
+    const repository = createHostedCaseRepository({
+      query: (sql, values) => database!.transaction((client) => client.query(sql, values)),
+    });
+    await repository.createCase({
+      id: 'CASE-hosted-test', userId: 'owner-a', clientName: 'Hosted client', caseType: 'Housing',
+      caseSummary: 'Owner-scoped PostgreSQL integration test', urgency: 'High', legalAreas: '["Housing"]',
+    });
+    await expect(repository.findOwnedCase('owner-a', 'CASE-hosted-test')).resolves.toMatchObject({ id: 'CASE-hosted-test' });
+    await expect(repository.findOwnedCase('owner-b', 'CASE-hosted-test')).resolves.toBeNull();
   });
 });
