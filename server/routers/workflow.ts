@@ -88,8 +88,8 @@ export const workflowRouter = router({
    *
    * Phases 008/017/018/019:
    *  - protected + case-ownership (008),
-   *  - idempotent: if the case is already in Outreach we do NOT re-write or
-   *    re-audit, and report `alreadyInitiated` (017),
+   *  - idempotent: existing drafts are not duplicated, and an already-Outreach
+   *    case reports `alreadyInitiated` while still filling any missing drafts (017),
    *  - rate-limited per user (018),
    *  - audited (019).
    *
