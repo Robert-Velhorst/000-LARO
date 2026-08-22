@@ -218,7 +218,8 @@ suite('Real outreach send (011/026/017)', () => {
         (await import('drizzle-orm')).eq(app.schema.auditLogs.action, 'outreach.status_changed'),
       )
     );
-    expect(auditRows).toHaveLength(2);
+    expect(auditRows).toHaveLength(3);
+    expect(auditRows.filter((entry: any) => entry.details?.includes('"to":"Dispatching"'))).toHaveLength(1);
     expect(auditRows.filter((entry: any) => entry.details?.includes('"to":"Sent"'))).toHaveLength(1);
 
     await setFlag('outreach.send.enabled', false);
@@ -381,6 +382,16 @@ suite('Real outreach send (011/026/017)', () => {
       (await import('drizzle-orm')).eq(app.schema.systemConfig.configKey, `sent:${oid}`)
     );
     expect(guards).toHaveLength(0);
+    const auditRows = await app.db.select().from(app.schema.auditLogs).where(
+      (await import('drizzle-orm')).and(
+        (await import('drizzle-orm')).eq(app.schema.auditLogs.entityId, oid),
+        (await import('drizzle-orm')).eq(app.schema.auditLogs.action, 'outreach.status_changed'),
+      )
+    );
+    expect(auditRows.filter((entry: any) => entry.details?.includes('"to":"Dispatching"'))).toHaveLength(1);
+    expect(auditRows.filter((entry: any) =>
+      entry.details?.includes('"from":"Dispatching"') && entry.details?.includes('"to":"Approved"')
+    )).toHaveLength(1);
     await setFlag('outreach.send.enabled', false);
   });
 });

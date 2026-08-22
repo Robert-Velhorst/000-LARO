@@ -3,7 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { auditLogs, InsertAuditLog } from "./schema";
 import { getDb } from "./db";
 
-export async function createAuditLog(log: {
+export interface AuditLogInput {
   userId?: string;
   action: string;
   entityType?: string;
@@ -11,7 +11,24 @@ export async function createAuditLog(log: {
   details?: Record<string, any>;
   ipAddress?: string;
   userAgent?: string;
-}): Promise<void> {
+}
+
+export function writeAuditLogOrThrow(db: any, log: AuditLogInput): string {
+  const auditLog: InsertAuditLog = {
+    id: nanoid(),
+    userId: log.userId,
+    action: log.action,
+    entityType: log.entityType,
+    entityId: log.entityId,
+    details: log.details ? JSON.stringify(log.details) : null,
+    ipAddress: log.ipAddress,
+    userAgent: log.userAgent,
+  };
+  db.insert(auditLogs).values(auditLog).run();
+  return auditLog.id;
+}
+
+export async function createAuditLog(log: AuditLogInput): Promise<void> {
   const db = await getDb();
   if (!db) {
     console.warn("[Audit] Cannot create audit log: database not available");
@@ -19,18 +36,7 @@ export async function createAuditLog(log: {
   }
 
   try {
-    const auditLog: InsertAuditLog = {
-      id: nanoid(),
-      userId: log.userId,
-      action: log.action,
-      entityType: log.entityType,
-      entityId: log.entityId,
-      details: log.details ? JSON.stringify(log.details) : null,
-      ipAddress: log.ipAddress,
-      userAgent: log.userAgent,
-    };
-
-    await db.insert(auditLogs).values(auditLog);
+    writeAuditLogOrThrow(db, log);
   } catch (error) {
     console.error("[Audit] Failed to create audit log:", error);
   }

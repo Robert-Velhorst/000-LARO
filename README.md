@@ -554,6 +554,10 @@ summary fields, but excludes contacts, source bytes/quotes, and provider secrets
 - Case and outreach status changes use owner-bound compare-and-set writes; a
   stale request fails instead of overwriting a newer decision. Recording an
   interested response updates the outreach and case together or rolls both back.
+- Required audit evidence is committed in the same database transaction as the
+  case lifecycle, outreach initiation, draft approval/rejection, dispatch
+  claims, response classification, and Gmail reply linking. A failed audit
+  write rolls back the legal state change; batch approvals are all-or-nothing.
 - Missing/failed providers never create a false `Sent` state.
 
 ### Privacy and Erasure
@@ -651,7 +655,7 @@ deterministic tests, explicit live acceptance, and documentation.
 budgets, dependency audits, release-record validity, traceability, safety scans,
 Electron and Flask recovery drills, and Vitest.
 
-On 2026-08-22, the fresh gate passed **98 test files and 590 tests**, with 0
+On 2026-08-22, the fresh gate passed **98 test files and 600 tests**, with 0
 dependency vulnerabilities, 117/117 traceability rows cited, 0 suspect runtime
 placeholders, and 0 high-severity account-safety findings. This is a dated local
 verification snapshot; use the latest

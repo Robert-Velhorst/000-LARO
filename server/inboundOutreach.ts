@@ -1,5 +1,5 @@
-import { and, eq, inArray } from "drizzle-orm";
-import { AUDIT_ACTIONS, createAuditLog } from "./audit";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
 import { getDb } from "./db";
 import { createNotification } from "./notifications";
 import { cases, lawyers, outreachStatus } from "./schema";
@@ -103,33 +103,42 @@ export async function linkInboundOutreachReply(options: {
   const responseTimeHours = firstContact
     ? Math.max(0, (options.message.receivedAt.getTime() - firstContact.getTime()) / 3_600_000).toFixed(2)
     : null;
-  await db.update(outreachStatus).set({
-    responseReceived: "Yes",
-    response: outreach.response || options.message.body.trim().slice(0, 5_000) || null,
-    responseTimeHours,
-    lastContact: options.message.receivedAt,
-    metadata: JSON.stringify({
-      ...metadata,
-      inboundGmailMessageIds: [...inboundMessageIds, options.message.gmailMessageId],
-      inboundGmailThreadId: options.message.gmailThreadId ?? metadata.inboundGmailThreadId ?? null,
-      latestInboundMessageId: options.message.messageId ?? null,
-      latestInboundAt: options.message.receivedAt.toISOString(),
-      responseNeedsClassification: !["Interested", "Declined"].includes(String(outreach.status)),
-    }),
-    updatedAt: new Date(),
-  }).where(eq(outreachStatus.id, outreach.id));
-
-  await createAuditLog({
-    userId: options.userId,
-    action: AUDIT_ACTIONS.EMAIL_RESPONSE_RECEIVED,
-    entityType: "outreach",
-    entityId: outreach.id,
-    details: {
-      caseId: options.caseId,
-      gmailMessageId: options.message.gmailMessageId,
-      gmailThreadId: options.message.gmailThreadId ?? null,
-      classification: ["Interested", "Declined"].includes(String(outreach.status)) ? outreach.status : "needs_review",
-    },
+  db.transaction((tx: any) => {
+    const mutation = tx.update(outreachStatus).set({
+      responseReceived: "Yes",
+      response: outreach.response || options.message.body.trim().slice(0, 5_000) || null,
+      responseTimeHours,
+      lastContact: options.message.receivedAt,
+      metadata: JSON.stringify({
+        ...metadata,
+        inboundGmailMessageIds: [...inboundMessageIds, options.message.gmailMessageId],
+        inboundGmailThreadId: options.message.gmailThreadId ?? metadata.inboundGmailThreadId ?? null,
+        latestInboundMessageId: options.message.messageId ?? null,
+        latestInboundAt: options.message.receivedAt.toISOString(),
+        responseNeedsClassification: !["Interested", "Declined"].includes(String(outreach.status)),
+      }),
+      updatedAt: new Date(),
+    }).where(and(
+      eq(outreachStatus.id, outreach.id),
+      outreach.metadata == null
+        ? isNull(outreachStatus.metadata)
+        : eq(outreachStatus.metadata, outreach.metadata),
+    )).run();
+    if (Number(mutation.changes || 0) !== 1) {
+      throw new Error("The outreach reply target changed before it could be linked");
+    }
+    writeAuditLogOrThrow(tx, {
+      userId: options.userId,
+      action: AUDIT_ACTIONS.EMAIL_RESPONSE_RECEIVED,
+      entityType: "outreach",
+      entityId: outreach.id,
+      details: {
+        caseId: options.caseId,
+        gmailMessageId: options.message.gmailMessageId,
+        gmailThreadId: options.message.gmailThreadId ?? null,
+        classification: ["Interested", "Declined"].includes(String(outreach.status)) ? outreach.status : "needs_review",
+      },
+    });
   });
   await createNotification({
     userId: options.userId,

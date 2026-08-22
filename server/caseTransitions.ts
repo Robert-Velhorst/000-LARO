@@ -4,6 +4,7 @@ import { assertCaseOwnership } from "./_core/authz";
 import { getDb } from "./db";
 import { cases } from "./schema";
 import { assertCaseTransition } from "./stateMachines";
+import { writeAuditLogOrThrow, type AuditLogInput } from "./audit";
 
 type CaseStatus = string | null;
 
@@ -18,6 +19,7 @@ interface CompareAndSetCaseStatusOptions {
     legalAreas?: string | null;
   };
   updatedAt?: Date;
+  audit?: AuditLogInput;
 }
 
 interface TransitionOwnedCaseStatusOptions {
@@ -26,6 +28,7 @@ interface TransitionOwnedCaseStatusOptions {
   nextStatus: string;
   changes?: CompareAndSetCaseStatusOptions["changes"];
   updatedAt?: Date;
+  audit?: AuditLogInput;
 }
 
 function transitionConflict(): TRPCError {
@@ -60,6 +63,9 @@ export function compareAndSetCaseStatusInTransaction(
   if (Number(result?.changes ?? 0) !== 1) {
     throw transitionConflict();
   }
+  if (options.audit) {
+    writeAuditLogOrThrow(db, options.audit);
+  }
   return { previousStatus: options.expectedStatus, status: options.nextStatus };
 }
 
@@ -67,7 +73,7 @@ export async function compareAndSetCaseStatus(
   db: any,
   options: CompareAndSetCaseStatusOptions,
 ): Promise<{ previousStatus: CaseStatus; status: string }> {
-  return compareAndSetCaseStatusInTransaction(db, options);
+  return db.transaction((tx: any) => compareAndSetCaseStatusInTransaction(tx, options));
 }
 
 export async function transitionOwnedCaseStatus(
@@ -93,5 +99,6 @@ export async function transitionOwnedCaseStatus(
     nextStatus: options.nextStatus,
     changes: options.changes,
     updatedAt: options.updatedAt,
+    audit: options.audit,
   });
 }

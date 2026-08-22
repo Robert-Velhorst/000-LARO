@@ -30,7 +30,7 @@ import { TRPCError } from "@trpc/server";
 import { getFlag } from "./featureFlags";
 import { assertNotEmergencyStopped } from "./systemState";
 import { assertOutreachTransition } from "./stateMachines";
-import { createAuditLog, AUDIT_ACTIONS } from "./audit";
+import { createAuditLog, AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
 import { assertCaseOwnership } from "./_core/authz";
 import { createNotification } from "./notifications";
 import { readApprovedOutreachMessage, readOutreachMetadata } from "./outreachApproval";
@@ -81,7 +81,7 @@ function readDispatchGuard(db: any, guardKey: string): string | null {
 
 class DispatchClaimConflict extends Error {}
 
-function claimDispatch(db: any, guardKey: string, dispatchId: string, outreachId: string): boolean {
+function claimDispatch(db: any, guardKey: string, dispatchId: string, outreachId: string, userId: string): boolean {
   try {
     db.transaction((tx: any) => {
       const now = new Date();
@@ -96,6 +96,13 @@ function claimDispatch(db: any, guardKey: string, dispatchId: string, outreachId
         .where(and(eq(outreachStatus.id, outreachId), eq(outreachStatus.status, "Approved")))
         .run();
       if (Number(status.changes || 0) !== 1) throw new DispatchClaimConflict();
+      writeAuditLogOrThrow(tx, {
+        userId,
+        action: AUDIT_ACTIONS.OUTREACH_STATUS_CHANGED,
+        entityType: "outreach",
+        entityId: outreachId,
+        details: { from: "Approved", to: "Dispatching", dispatchId },
+      });
     });
     return true;
   } catch (error) {
@@ -104,18 +111,32 @@ function claimDispatch(db: any, guardKey: string, dispatchId: string, outreachId
   }
 }
 
-function releaseUndeliveredClaim(db: any, guardKey: string, dispatchState: string, outreachId: string): void {
+function releaseUndeliveredClaim(
+  db: any,
+  guardKey: string,
+  dispatchState: string,
+  outreachId: string,
+  userId: string,
+): void {
   db.transaction((tx: any) => {
+    const now = new Date();
     const guard = tx.delete(systemConfig)
       .where(and(eq(systemConfig.configKey, guardKey), eq(systemConfig.configValue, dispatchState)))
       .run();
     const status = tx.update(outreachStatus)
-      .set({ status: "Approved", updatedAt: new Date() })
+      .set({ status: "Approved", updatedAt: now })
       .where(and(eq(outreachStatus.id, outreachId), eq(outreachStatus.status, "Dispatching")))
       .run();
     if (Number(guard.changes || 0) !== 1 || Number(status.changes || 0) !== 1) {
       throw new Error("Outreach dispatch claim changed before it could be released");
     }
+    writeAuditLogOrThrow(tx, {
+      userId,
+      action: AUDIT_ACTIONS.OUTREACH_STATUS_CHANGED,
+      entityType: "outreach",
+      entityId: outreachId,
+      details: { from: "Dispatching", to: "Approved", delivered: false },
+    });
   });
 }
 
@@ -347,7 +368,7 @@ export async function sendApprovedOutreach(
   // Transmit. If no provider is configured, delivered=false → fail honestly.
   const dispatchId = nanoid();
   const dispatchState = `dispatching:${dispatchId}`;
-  if (!claimDispatch(db, guardKey, dispatchId, outreachId)) {
+  if (!claimDispatch(db, guardKey, dispatchId, outreachId, userId)) {
     const { TRPCError } = await import("@trpc/server");
     throw new TRPCError({
       code: "CONFLICT",
@@ -363,7 +384,7 @@ export async function sendApprovedOutreach(
     throw error;
   }
   if (!result.delivered) {
-    releaseUndeliveredClaim(db, guardKey, dispatchState, outreachId);
+    releaseUndeliveredClaim(db, guardKey, dispatchState, outreachId, userId);
     const { TRPCError } = await import("@trpc/server");
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No email provider is configured; nothing was sent. Configure SendGrid/SMTP." });
   }
@@ -494,14 +515,13 @@ export async function recordOutreachResponse(
         updatedAt: respondedAt,
       });
     }
-  });
-
-  await createAuditLog({
-    userId,
-    action: AUDIT_ACTIONS.EMAIL_RESPONSE_RECEIVED,
-    entityType: "outreach",
-    entityId: outreachId,
-    details: { caseId: row.caseId, lawyerId: row.lawyerId, from: row.status, to: response, notes: notes?.trim() || null },
+    writeAuditLogOrThrow(tx, {
+      userId,
+      action: AUDIT_ACTIONS.EMAIL_RESPONSE_RECEIVED,
+      entityType: "outreach",
+      entityId: outreachId,
+      details: { caseId: row.caseId, lawyerId: row.lawyerId, from: row.status, to: response, notes: notes?.trim() || null },
+    });
   });
   await createNotification({
     userId,
