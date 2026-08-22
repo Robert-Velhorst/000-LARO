@@ -36,6 +36,7 @@
     "db:backup": "node scripts/run-built-operation.mjs backup",
     "db:restore": "node scripts/run-built-operation.mjs backup --restore",
     "db:validate": "node scripts/run-built-operation.mjs backup --validate",
+    "db:hosted:migrate": "npm run rebuild:node && tsx scripts/migrate-hosted.ts",
     "db:readiness": "node scripts/run-built-operation.mjs data-readiness",
     "recovery:drill": "tsx scripts/recovery-drill.ts",
     "flask:backup": "python scripts/flask_recovery.py backup",
