@@ -60,4 +60,14 @@ describe("KOOP Basiswettenbestand integration", () => {
     expect(() => parseBwbSruResponse("<diagnostics><diagnostic><message>Bad query</message></diagnostic></diagnostics>", 10))
       .toThrow("Bad query");
   });
+
+  it("rejects oversized official responses before XML parsing", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(XML, {
+      status: 200,
+      headers: { "content-length": String(5 * 1024 * 1024 + 1) },
+    })));
+
+    await expect(searchOfficialLegislation({ query: "bestuursrecht" }))
+      .rejects.toThrow("5 MB response limit");
+  });
 });

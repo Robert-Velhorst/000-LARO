@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 import type { AnyNode } from "domhandler";
+import { readBoundedResponseText, withBoundedHttpResponse } from "./boundedHttpResponse";
 
 const BWB_SRU_URL = "https://zoekservice.overheid.nl/sru/Search";
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
@@ -84,13 +85,20 @@ export async function searchOfficialLegislation(options: {
   url.searchParams.set("maximumRecords", String(Math.min(100, limit * 4)));
   url.searchParams.set("query", `(overheidbwb.titel any ${cqlPhrase(query)}) AND overheidbwb.geldigheidsdatum=${asOfDate}`);
 
-  const response = await fetch(url, {
-    headers: { accept: "application/xml", "user-agent": "LARO/1.3 official-legislation-client" },
-    redirect: "error",
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new Error(`KOOP legislation search returned HTTP ${response.status}`);
-  const xml = await response.text();
+  const xml = await withBoundedHttpResponse(
+    () => fetch(url, {
+      headers: { accept: "application/xml", "user-agent": "LARO/1.3 official-legislation-client" },
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    }),
+    async (response) => {
+      if (!response.ok) throw new Error(`KOOP legislation search returned HTTP ${response.status}`);
+      return readBoundedResponseText(response, {
+        maxBytes: MAX_RESPONSE_BYTES,
+        label: "KOOP legislation response",
+      });
+    },
+  );
   return {
     success: true,
     query,

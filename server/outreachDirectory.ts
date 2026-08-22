@@ -1,6 +1,7 @@
 import { load } from "cheerio";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
+import { readBoundedResponseText, withBoundedHttpResponse } from "./boundedHttpResponse";
 import { getDb } from "./db";
 import {
   caseOutreachTargetMatches,
@@ -15,6 +16,7 @@ export type OutreachTargetMatchStatus = "suggested" | "shortlisted" | "contacted
 export const PUBLIC_DISCOVERY_PROVIDER = "DuckDuckGo public web search";
 const PUBLIC_DISCOVERY_URL = "https://html.duckduckgo.com/html/";
 const DISCOVERY_TIMEOUT_MS = 12_000;
+const DISCOVERY_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_DISCOVERY_QUERIES = 6;
 const MAX_DISCOVERY_RESULTS = 60;
 
@@ -197,18 +199,26 @@ async function fetchPublicSearch(query: string): Promise<string> {
     const url = new URL(PUBLIC_DISCOVERY_URL);
     url.searchParams.set("q", query);
     url.searchParams.set("kl", "nl-nl");
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        Accept: "text/html,application/xhtml+xml",
-        "User-Agent": "LARO/1.3 local outreach discovery",
+    const { html, status } = await withBoundedHttpResponse(
+      () => fetch(url, {
+        signal: controller.signal,
+        headers: {
+          Accept: "text/html,application/xhtml+xml",
+          "User-Agent": "LARO/1.3 local outreach discovery",
+        },
+      }),
+      async (response) => {
+        if (!response.ok) throw new Error(`Public search returned HTTP ${response.status}`);
+        const html = await readBoundedResponseText(response, {
+          maxBytes: DISCOVERY_MAX_RESPONSE_BYTES,
+          label: "Public outreach discovery response",
+        });
+        return { html, status: response.status };
       },
-    });
-    if (!response.ok) throw new Error(`Public search returned HTTP ${response.status}`);
-    const html = await response.text();
+    );
     const lower = html.toLocaleLowerCase("en-US");
     if (
-      response.status === 202 ||
+      status === 202 ||
       lower.includes('id="challenge-form"') ||
       lower.includes("confirm this search was made by a human")
     ) {

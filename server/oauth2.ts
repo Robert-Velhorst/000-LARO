@@ -7,6 +7,7 @@ import crypto from "crypto";
 import { encryptToken, decryptToken } from "./emailOAuth";
 import { ENV } from "./_core/env";
 import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
+import { readBoundedResponseJson, withBoundedHttpResponse } from "./boundedHttpResponse";
 
 export interface OAuth2Config {
   clientId: string;
@@ -54,6 +55,7 @@ const OAUTH_GCM_ENVELOPE_PATTERN = /^gcm1:[0-9a-f]{24}:[0-9a-f]{32}:(?:[0-9a-f]{
 const OAUTH_LEGACY_CBC_ENVELOPE_PATTERN = /^[0-9a-f]{32}:(?:[0-9a-f]{32})+$/;
 const TOKEN_EXCHANGE_DNS_RETRY_DELAYS_MS = [250, 750, 1_500] as const;
 const OAUTH_PROVIDER_TIMEOUT_MS = 20_000;
+const OAUTH_PROVIDER_MAX_RESPONSE_BYTES = 256 * 1024;
 
 export function isRetryableOAuthNetworkError(error: unknown): boolean {
   let current: unknown = error;
@@ -80,6 +82,33 @@ async function fetchTokenEndpoint(url: string, init: RequestInit): Promise<Respo
       });
     }
   }
+}
+
+function fetchOAuthJson<T>(
+  request: () => Promise<Response>,
+  label: string,
+): Promise<{ response: Response; data: T }> {
+  return withBoundedHttpResponse(request, async (response) => ({
+    response,
+    data: await readBoundedResponseJson<T>(response, {
+      maxBytes: OAUTH_PROVIDER_MAX_RESPONSE_BYTES,
+      label,
+    }),
+  }));
+}
+
+function fetchOAuthAccountJson<T>(
+  request: () => Promise<Response>,
+  label: string,
+  errorLabel: string,
+): Promise<T> {
+  return withBoundedHttpResponse(request, async (response) => {
+    if (!response.ok) throw new Error(`${errorLabel} (${response.status})`);
+    return readBoundedResponseJson<T>(response, {
+      maxBytes: OAUTH_PROVIDER_MAX_RESPONSE_BYTES,
+      label,
+    });
+  });
 }
 
 function getOAuthRedirectBaseUrl(): string {
@@ -282,12 +311,14 @@ export async function exchangeCodeForTokens(
     if (config.clientSecret) {
       body.set("client_secret", config.clientSecret);
     }
-    const res = await fetchTokenEndpoint("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    });
-    const data = (await res.json()) as Record<string, string>;
+    const { response: res, data } = await fetchOAuthJson<Record<string, string>>(
+      () => fetchTokenEndpoint("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      }),
+      "Google OAuth response",
+    );
     if (!res.ok) {
       throw new Error(data.error_description || data.error || "Gmail token exchange failed");
     }
@@ -311,12 +342,14 @@ export async function exchangeCodeForTokens(
   } else if (config.clientSecret) {
     body.set("client_secret", config.clientSecret);
   }
-  const res = await fetchTokenEndpoint("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  const data = (await res.json()) as Record<string, string>;
+  const { response: res, data } = await fetchOAuthJson<Record<string, string>>(
+    () => fetchTokenEndpoint("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    }),
+    "Microsoft OAuth response",
+  );
   if (!res.ok) {
     throw new Error(data.error_description || data.error || "Outlook token exchange failed");
   }
@@ -334,24 +367,28 @@ export async function getAccountInfo(
   accessToken: string
 ): Promise<EmailAccountInfo> {
   if (provider === "gmail") {
-    const r = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      signal: AbortSignal.timeout(OAUTH_PROVIDER_TIMEOUT_MS),
-    });
-    if (!r.ok) throw new Error(`Google account lookup failed (${r.status})`);
-    const d = (await r.json()) as { email?: string; name?: string; picture?: string };
+    const d = await fetchOAuthAccountJson<{
+      email?: string;
+      name?: string;
+      picture?: string;
+    }>(() => fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(OAUTH_PROVIDER_TIMEOUT_MS),
+      }), "Google account response", "Google account lookup failed");
     return {
       email: d.email || "",
       displayName: d.name,
       profilePicture: d.picture,
     };
   }
-  const r = await fetch("https://graph.microsoft.com/v1.0/me", {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    signal: AbortSignal.timeout(OAUTH_PROVIDER_TIMEOUT_MS),
-  });
-  if (!r.ok) throw new Error(`Microsoft account lookup failed (${r.status})`);
-  const d = (await r.json()) as { mail?: string; userPrincipalName?: string; displayName?: string };
+  const d = await fetchOAuthAccountJson<{
+    mail?: string;
+    userPrincipalName?: string;
+    displayName?: string;
+  }>(() => fetch("https://graph.microsoft.com/v1.0/me", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(OAUTH_PROVIDER_TIMEOUT_MS),
+    }), "Microsoft account response", "Microsoft account lookup failed");
   return {
     email: d.mail || d.userPrincipalName || "",
     displayName: d.displayName,
@@ -439,12 +476,14 @@ export async function refreshAccessToken(
     if (config.clientSecret) {
       body.set("client_secret", config.clientSecret);
     }
-    const res = await fetchTokenEndpoint("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    });
-    const data = (await res.json()) as Record<string, string>;
+    const { response: res, data } = await fetchOAuthJson<Record<string, string>>(
+      () => fetchTokenEndpoint("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      }),
+      "Google OAuth response",
+    );
     if (!res.ok) {
       throw new Error(data.error_description || data.error || "Gmail refresh failed");
     }
@@ -464,12 +503,14 @@ export async function refreshAccessToken(
     grant_type: "refresh_token",
     scope: config.scopes.join(" "),
   });
-  const res = await fetchTokenEndpoint("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  const data = (await res.json()) as Record<string, string>;
+  const { response: res, data } = await fetchOAuthJson<Record<string, string>>(
+    () => fetchTokenEndpoint("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    }),
+    "Microsoft OAuth response",
+  );
   if (!res.ok) {
     throw new Error(data.error_description || data.error || "Outlook refresh failed");
   }

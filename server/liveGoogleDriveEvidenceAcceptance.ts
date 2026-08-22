@@ -23,6 +23,8 @@ import {
 } from "./schema";
 import { hashBuffer, storageDelete, storageRead } from "./storage";
 import { assertNotEmergencyStopped } from "./systemState";
+import { readBoundedResponseBytes, withBoundedHttpResponse } from "./boundedHttpResponse";
+import { MAX_EVIDENCE_FILE_BYTES } from "../shared/evidenceFiles";
 
 interface GoogleDriveEvidenceAcceptanceOptions {
   userId: string;
@@ -46,11 +48,16 @@ interface GoogleDriveEvidenceAcceptanceDependencies {
 const DEFAULT_DEPENDENCIES: GoogleDriveEvidenceAcceptanceDependencies = {
   pullEvidence: pullEvidenceByKeywords,
   getDownloadUrl: getEvidenceDownloadUrl,
-  fetchSource: async (url) => {
-    const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-    if (!response.ok) throw new Error(`Signed evidence URL returned HTTP ${response.status}`);
-    return Buffer.from(await response.arrayBuffer());
-  },
+  fetchSource: (url) => withBoundedHttpResponse(
+    () => fetch(url, { signal: AbortSignal.timeout(30_000) }),
+    async (response) => {
+      if (!response.ok) throw new Error(`Signed evidence URL returned HTTP ${response.status}`);
+      return readBoundedResponseBytes(response, {
+        maxBytes: MAX_EVIDENCE_FILE_BYTES,
+        label: "Signed evidence response",
+      });
+    },
+  ),
   analyzeEvidence: analyzeStoredEvidence,
   recordSourceOpened: recordEvidenceSourceOpened,
   recordReceipt: recordGoogleDriveEvidenceAcceptanceReceipt,

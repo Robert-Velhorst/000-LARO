@@ -34,6 +34,7 @@ import * as fs from 'fs/promises';
 import { createReadStream } from 'fs';
 import * as path from 'path';
 import { collectBoundedBytes, withByteReadAdmission } from './boundedBytes';
+import { readBoundedResponseJson } from './boundedHttpResponse';
 import { MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 
 /**
@@ -784,14 +785,22 @@ async function pullFromGmail(
   // Re-list with the real keyword query (searchGmailEmails only handles structured filters).
   try {
     const params = new URLSearchParams({ maxResults: '30', q: query });
-    const res = await fetch(
-      `https://www.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`,
-      {
-        headers: { Authorization: `Bearer ${cred.accessToken}` },
-        signal: AbortSignal.timeout(30_000),
-      },
-    );
-    const data = (await res.json()) as { messages?: { id: string; threadId: string }[]; error?: { message: string } };
+    const data = await withByteReadAdmission(async () => {
+      const res = await fetch(
+        `https://www.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`,
+        {
+          headers: { Authorization: `Bearer ${cred.accessToken}` },
+          signal: AbortSignal.timeout(30_000),
+        },
+      );
+      return readBoundedResponseJson<{
+        messages?: { id: string; threadId: string }[];
+        error?: { message: string };
+      }>(res, {
+        maxBytes: 1024 * 1024,
+        label: 'Gmail search response',
+      });
+    });
     if (data.error) throw new Error(data.error.message);
     threads = (data.messages || []).map((m) => ({ id: m.id }));
   } catch (err) {

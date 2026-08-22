@@ -20,6 +20,7 @@
  */
 
 import { load } from "cheerio";
+import { readBoundedResponseText, withBoundedHttpResponse } from "./boundedHttpResponse";
 
 interface ECLIMetadata {
   ecli: string; // European Case Law Identifier (e.g., ECLI:NL:RBAMS:2024:1234)
@@ -125,6 +126,26 @@ export class RechtspraakIntegrationService {
   private readonly RATE_LIMIT_MS = 100; // 10 requests per second = 100ms between requests
   private lastRequestTime = 0;
 
+  private fetchFeed(searchUrl: string): Promise<string> {
+    return withBoundedHttpResponse(
+      () => fetch(searchUrl, {
+        headers: {
+          Accept: "application/rss+xml, application/xml;q=0.9",
+        },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      }),
+      async (response) => {
+        if (!response.ok) {
+          throw new Error(`Rechtspraak API error: ${response.status} ${response.statusText}`);
+        }
+        return readBoundedResponseText(response, {
+          maxBytes: MAX_FEED_BYTES,
+          label: "Rechtspraak response",
+        });
+      },
+    );
+  }
+
   /**
    * Search for court decisions by company name
    */
@@ -134,18 +155,7 @@ export class RechtspraakIntegrationService {
 
       const searchUrl = this.buildSearchUrl(companyName);
 
-      const response = await fetch(searchUrl, {
-        headers: {
-          Accept: "application/rss+xml, application/xml;q=0.9",
-        },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Rechtspraak API error: ${response.status} ${response.statusText}`);
-      }
-
-      const xmlText = await response.text();
+      const xmlText = await this.fetchFeed(searchUrl);
       const decisions = parseRechtspraakRss(xmlText, limit);
 
       return {
@@ -179,18 +189,7 @@ export class RechtspraakIntegrationService {
 
       const searchUrl = this.buildSearchUrl(legalIssue);
 
-      const response = await fetch(searchUrl, {
-        headers: {
-          Accept: "application/rss+xml, application/xml;q=0.9",
-        },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Rechtspraak API error: ${response.status} ${response.statusText}`);
-      }
-
-      const xmlText = await response.text();
+      const xmlText = await this.fetchFeed(searchUrl);
       const decisions = parseRechtspraakRss(xmlText, limit);
 
       // Calculate relevance scores

@@ -43,4 +43,22 @@ describe("provider byte-read limits", () => {
     release();
     await expect(Promise.all(accepted)).resolves.toHaveLength(20);
   });
+
+  it("allows four concurrent Gmail reads without nested-admission deadlock", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async (_url: string) => new Response(JSON.stringify({
+      id: "message",
+      threadId: "thread",
+      snippet: "bounded",
+      internalDate: "0",
+    }))));
+    const { getGmailMessage } = await import("../../server/gmailService");
+
+    const reads = Array.from({ length: 4 }, (_, index) => getGmailMessage("token", String(index)));
+    await expect(Promise.race([
+      Promise.all(reads),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("Gmail reads deadlocked")), 1_000);
+      }),
+    ])).resolves.toHaveLength(4);
+  });
 });

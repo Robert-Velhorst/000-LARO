@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { exchangeCodeForTokens, isRetryableOAuthNetworkError, refreshAccessToken } from '../../server/oauth2';
+import { exchangeCodeForTokens, getAccountInfo, isRetryableOAuthNetworkError, refreshAccessToken } from '../../server/oauth2';
 import { refreshGmailToken, refreshOutlookToken } from '../../server/emailOAuth';
 
 function networkError(code: string): TypeError {
@@ -73,5 +73,29 @@ describe('OAuth token exchange network resilience', () => {
     for (const [, request] of fetchMock.mock.calls) {
       expect(request).toMatchObject({ signal: expect.any(AbortSignal) });
     }
+  });
+
+  it('rejects oversized OAuth provider responses before parsing tokens', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', {
+      status: 200,
+      headers: { 'content-length': String(256 * 1024 + 1) },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(exchangeCodeForTokens('gmail', 'authorization-code', 'pkce-verifier'))
+      .rejects.toThrow('Google OAuth response exceeds the 256 KB response limit');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['gmail' as const, 'Google account lookup failed (502)'],
+    ['outlook' as const, 'Microsoft account lookup failed (502)'],
+  ])('preserves %s account HTTP errors when the provider body is not JSON', async (provider, expected) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>upstream error</html>', {
+      status: 502,
+      headers: { 'content-type': 'text/html' },
+    })));
+
+    await expect(getAccountInfo(provider, 'access-token')).rejects.toThrow(expected);
   });
 });

@@ -10,7 +10,8 @@ import { getDb } from './db';
 import { evidenceSources, evidenceItems } from './schema';
 import { v4 as uuidv4 } from 'uuid';
 import { eq, and } from 'drizzle-orm';
-import { collectBoundedBytes, withByteReadAdmission } from './boundedBytes';
+import { withByteReadAdmission } from './boundedBytes';
+import { readBoundedResponseJson } from './boundedHttpResponse';
 import { MAX_EVIDENCE_BASE64_CHARS, MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 
 const MAX_GMAIL_ATTACHMENT_RESPONSE_BYTES = MAX_EVIDENCE_BASE64_CHARS + 128 * 1024;
@@ -24,16 +25,11 @@ function fetchGmail(url: string, init: RequestInit = {}): Promise<Response> {
 }
 
 async function readBoundedGmailJson<T>(response: Response, label: string): Promise<T> {
-  const declaredBytes = Number(response.headers.get('content-length'));
-  if (Number.isFinite(declaredBytes) && declaredBytes > MAX_GMAIL_ATTACHMENT_RESPONSE_BYTES) {
-    throw new Error(`${label} exceeds the 7 MB evidence limit`);
-  }
-  const responseBytes = await collectBoundedBytes(response.body, {
+  return readBoundedResponseJson<T>(response, {
     maxBytes: MAX_GMAIL_ATTACHMENT_RESPONSE_BYTES,
     label: `${label} response`,
     limitMessage: `${label} exceeds the 7 MB evidence limit`,
   });
-  return JSON.parse(responseBytes.toString('utf8')) as T;
 }
 
 export interface GmailThread {
@@ -126,20 +122,25 @@ export async function listGmailThreads(
   });
   if (query) params.append('q', query);
 
-  const response = await fetchGmail(`https://www.googleapis.com/gmail/v1/users/me/threads?${params.toString()}`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+  return withByteReadAdmission(async () => {
+    const response = await fetchGmail(`https://www.googleapis.com/gmail/v1/users/me/threads?${params.toString()}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    const data = await readBoundedGmailJson<{
+      threads?: GmailThread[];
+      error?: { message: string };
+    }>(response, 'Gmail thread list');
+
+    if (data.error) {
+      console.error('[Gmail] Failed to list threads:', data);
+      throw new Error(`Failed to list Gmail threads: ${data.error.message}`);
+    }
+
+    return data.threads || [];
   });
-
-  const data = await response.json();
-
-  if (data.error) {
-    console.error('[Gmail] Failed to list threads:', data);
-    throw new Error(`Failed to list Gmail threads: ${data.error.message}`);
-  }
-
-  return data.threads || [];
 }
 
 /**
@@ -454,19 +455,24 @@ export async function syncGmailForCase(
  */
 export async function testGmailConnection(accessToken: string): Promise<{ ok: boolean; email?: string; error?: string }> {
   try {
-    const response = await fetchGmail('https://www.googleapis.com/gmail/v1/users/me/profile', {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
+    return await withByteReadAdmission(async () => {
+      const response = await fetchGmail('https://www.googleapis.com/gmail/v1/users/me/profile', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      const data = await readBoundedGmailJson<{
+        emailAddress?: string;
+        error?: { message: string };
+      }>(response, 'Gmail profile');
+
+      if (data.error) {
+        return { ok: false, error: data.error.message };
+      }
+
+      return { ok: true, email: data.emailAddress };
     });
-
-    const data = await response.json();
-
-    if (data.error) {
-      return { ok: false, error: data.error.message };
-    }
-
-    return { ok: true, email: data.emailAddress };
   } catch (e) {
     return { ok: false, error: String(e) };
   }

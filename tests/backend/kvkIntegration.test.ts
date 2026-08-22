@@ -48,4 +48,22 @@ describe('KvK open-dataset integration', () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('rejects oversized KVK responses before parsing', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', {
+      status: 200,
+      headers: { 'content-length': String(1024 * 1024 + 1) },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await kvkIntegrationService.lookupByKvKNumber('59581883');
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining('1 MB response limit'),
+    });
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      signal: expect.any(AbortSignal),
+    }));
+  });
 });

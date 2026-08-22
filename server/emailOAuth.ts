@@ -1,7 +1,9 @@
 import { ENV } from './_core/env';
 import { encryptSecret, decryptSecret, type DecryptSecretOptions } from './crypto';
+import { readBoundedResponseJson, withBoundedHttpResponse } from './boundedHttpResponse';
 
 const OAUTH_PROVIDER_TIMEOUT_MS = 15_000;
+const OAUTH_PROVIDER_MAX_RESPONSE_BYTES = 256 * 1024;
 
 /**
  * Token Encryption & OAuth Refresh Utilities.
@@ -82,21 +84,28 @@ export async function refreshGmailToken(refreshToken: string) {
     body.set('client_secret', clientSecret);
   }
 
-  const response = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-    signal: AbortSignal.timeout(OAUTH_PROVIDER_TIMEOUT_MS),
-  });
-
-  const data = await response.json();
+  const { response, data } = await withBoundedHttpResponse(
+    () => fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: AbortSignal.timeout(OAUTH_PROVIDER_TIMEOUT_MS),
+    }),
+    async (response) => ({
+      response,
+      data: await readBoundedResponseJson<Record<string, string | number>>(response, {
+        maxBytes: OAUTH_PROVIDER_MAX_RESPONSE_BYTES,
+        label: 'Google OAuth response',
+      }),
+    }),
+  );
   if (!response.ok) {
     throw new Error(`Gmail token refresh failed: ${data.error_description || data.error}`);
   }
 
   return {
-    accessToken: data.access_token,
-    expiryDate:  Date.now() + (data.expires_in * 1000),
+    accessToken: String(data.access_token || ''),
+    expiryDate: Date.now() + (Number(data.expires_in) * 1000),
   };
 }
 
@@ -110,26 +119,33 @@ export async function refreshOutlookToken(refreshToken: string) {
     throw new Error("Missing Microsoft OAuth client configuration");
   }
 
-  const response = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id:     clientId,
-      client_secret: clientSecret,
-      refresh_token: refreshToken,
-      grant_type:    'refresh_token',
-      scope:         'https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read offline_access',
+  const { response, data } = await withBoundedHttpResponse(
+    () => fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+        scope: 'https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read offline_access',
+      }),
+      signal: AbortSignal.timeout(OAUTH_PROVIDER_TIMEOUT_MS),
     }),
-    signal: AbortSignal.timeout(OAUTH_PROVIDER_TIMEOUT_MS),
-  });
-
-  const data = await response.json();
+    async (response) => ({
+      response,
+      data: await readBoundedResponseJson<Record<string, string | number>>(response, {
+        maxBytes: OAUTH_PROVIDER_MAX_RESPONSE_BYTES,
+        label: 'Microsoft OAuth response',
+      }),
+    }),
+  );
   if (!response.ok) {
     throw new Error(`Outlook token refresh failed: ${data.error_description || data.error}`);
   }
 
   return {
-    accessToken: data.access_token,
-    expiryDate:  Date.now() + (data.expires_in * 1000),
+    accessToken: String(data.access_token || ''),
+    expiryDate: Date.now() + (Number(data.expires_in) * 1000),
   };
 }
