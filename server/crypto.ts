@@ -19,6 +19,10 @@ const KDF_SALT = 'laro-token-kdf-v1';
 const PREFIX = 'gcm1'; // scheme version marker
 
 function secret(): string {
+  // Public hosting keeps provider-token encryption independent from the secret
+  // used to sign browser sessions. Local installations preserve their existing
+  // JWT/cookie-derived compatibility behavior.
+  if (ENV.isHosted) return ENV.LARO_HOSTED_ENCRYPTION_KEY;
   return ENV.JWT_SECRET || ENV.COOKIE_SECRET || 'insecure-dev-secret-change-me-please';
 }
 
