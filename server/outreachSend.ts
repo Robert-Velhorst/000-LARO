@@ -111,18 +111,32 @@ function claimDispatch(db: any, guardKey: string, dispatchId: string, outreachId
   }
 }
 
-function releaseUndeliveredClaim(db: any, guardKey: string, dispatchState: string, outreachId: string): void {
+function releaseUndeliveredClaim(
+  db: any,
+  guardKey: string,
+  dispatchState: string,
+  outreachId: string,
+  userId: string,
+): void {
   db.transaction((tx: any) => {
+    const now = new Date();
     const guard = tx.delete(systemConfig)
       .where(and(eq(systemConfig.configKey, guardKey), eq(systemConfig.configValue, dispatchState)))
       .run();
     const status = tx.update(outreachStatus)
-      .set({ status: "Approved", updatedAt: new Date() })
+      .set({ status: "Approved", updatedAt: now })
       .where(and(eq(outreachStatus.id, outreachId), eq(outreachStatus.status, "Dispatching")))
       .run();
     if (Number(guard.changes || 0) !== 1 || Number(status.changes || 0) !== 1) {
       throw new Error("Outreach dispatch claim changed before it could be released");
     }
+    writeAuditLogOrThrow(tx, {
+      userId,
+      action: AUDIT_ACTIONS.OUTREACH_STATUS_CHANGED,
+      entityType: "outreach",
+      entityId: outreachId,
+      details: { from: "Dispatching", to: "Approved", delivered: false },
+    });
   });
 }
 
@@ -370,7 +384,7 @@ export async function sendApprovedOutreach(
     throw error;
   }
   if (!result.delivered) {
-    releaseUndeliveredClaim(db, guardKey, dispatchState, outreachId);
+    releaseUndeliveredClaim(db, guardKey, dispatchState, outreachId, userId);
     const { TRPCError } = await import("@trpc/server");
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No email provider is configured; nothing was sent. Configure SendGrid/SMTP." });
   }
