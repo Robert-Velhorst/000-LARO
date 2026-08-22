@@ -100,7 +100,7 @@ git commit -m "feat: define hosted runtime contract"
 - Modify: `server/db.ts`
 - Modify: `drizzle.config.ts`
 - Create: `drizzle-hosted/`
-- Test: `tests/integration/hostedDatabase.test.ts`
+- Test: `tests/backend/hostedDatabase.test.ts`
 
 **Interfaces:**
 - Produces `getApplicationDatabase(): ApplicationDatabase`.
@@ -122,7 +122,7 @@ for (const mode of ['local', 'hosted'] as const) {
 
 - [ ] **Step 2: Run the parity test against local and containerized hosted dependencies**
 
-Run: `npm.cmd test -- tests/integration/hostedDatabase.test.ts`
+Run: `npm.cmd test -- tests/backend/hostedDatabase.test.ts`
 Expected: FAIL until the hosted adapter and migrations exist.
 
 - [ ] **Step 3: Add the adapter boundary and hosted Drizzle schema/migrations**
@@ -141,7 +141,7 @@ Expected: PASS, including a transaction rollback and simultaneous ownership test
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add server/persistence server/db.ts server/schema.hosted.ts drizzle-hosted drizzle.config.ts docker-compose.hosted.yml tests/integration/hostedDatabase.test.ts
+git add server/persistence server/db.ts server/schema.hosted.ts drizzle-hosted drizzle.config.ts docker-compose.hosted.yml tests/backend/hostedDatabase.test.ts
 git commit -m "feat: add hosted PostgreSQL persistence"
 ```
 
