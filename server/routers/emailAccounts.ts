@@ -5,11 +5,11 @@ import { getDb } from "../db";
 import { emailAccounts, emailSyncJobs } from "../schema";
 import { eq, and } from "drizzle-orm";
 import {
-  getAuthorizationUrl,
+  getAuthorizationUrlAsync,
   exchangeCodeForTokens,
   getAccountInfo,
   refreshAccessToken,
-  consumeOAuthState,
+  consumeOAuthStateAsync,
   saveEmailAccount,
 } from "../oauth2";
 import { encryptToken, decryptToken, revokeStoredGoogleTokens } from "../emailOAuth";
@@ -19,7 +19,7 @@ export const emailAccountsRouter = router({
   getAuthUrl: protectedProcedure
     .input(z.object({ provider: z.literal("gmail") }))
     .mutation(async ({ input, ctx }) => ({
-      authUrl: getAuthorizationUrl(input.provider, ctx.user.id),
+      authUrl: await getAuthorizationUrlAsync(input.provider, ctx.user.id),
     })),
 
   connectAccount: protectedProcedure
@@ -34,7 +34,7 @@ export const emailAccountsRouter = router({
       const db = await getDb();
       if (!db) throw new Error("Database not available");
 
-      const state = consumeOAuthState(input.state, input.provider);
+      const state = await consumeOAuthStateAsync(input.state, input.provider);
       if (state.userId !== ctx.user.id) throw new Error("OAuth state does not match the current user");
       const tokens = await exchangeCodeForTokens(input.provider, input.code, state.codeVerifier);
       const accountInfo = await getAccountInfo(input.provider, tokens.accessToken);

@@ -1,8 +1,9 @@
 import { createClient } from 'redis';
 import { ENV } from './_core/env';
 import type { RedisScriptClient } from './rateLimitStore';
+import type { RedisOAuthStateClient } from './oauthStateStore';
 
-type HostedRedisClient = RedisScriptClient & {
+type HostedRedisClient = RedisScriptClient & RedisOAuthStateClient & {
   isOpen: boolean;
   connect(): Promise<unknown>;
   quit(): Promise<unknown>;
@@ -31,6 +32,11 @@ export async function getHostedRedisScriptClient(): Promise<RedisScriptClient> {
     });
   }
   return await connecting;
+}
+
+/** Returns the same hosted Redis connection with OAuth-state operations. */
+export async function getHostedRedisOAuthStateClient(): Promise<RedisOAuthStateClient> {
+  return await getHostedRedisScriptClient() as RedisOAuthStateClient;
 }
 
 export async function closeHostedRedis(): Promise<void> {
