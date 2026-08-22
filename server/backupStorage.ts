@@ -28,7 +28,29 @@ export interface ExternalS3StorageManifest {
   managedKeysSha256: string;
 }
 
-export type BackupStorageManifest = BundledLocalStorageManifest | ExternalS3StorageManifest;
+export interface BundledS3StorageManifest {
+  mode: "bundled-s3";
+  bucket: string;
+  region: string;
+  directory: string;
+  fileCount: number;
+  totalBytes: number;
+  objects: Array<{
+    key: string;
+    file: string;
+    bytes: number;
+    sha256: string;
+  }>;
+}
+
+export type BackupStorageManifest =
+  | BundledLocalStorageManifest
+  | BundledS3StorageManifest
+  | ExternalS3StorageManifest;
+
+export const MAX_BACKUP_STORAGE_OBJECT_BYTES = 64 * 1024 * 1024;
+const MAX_BACKUP_STORAGE_FILES = 100_000;
+const MAX_BACKUP_STORAGE_TOTAL_BYTES = 100 * 1024 * 1024 * 1024;
 
 function isHexDigest(value: unknown): value is string {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
@@ -44,6 +66,33 @@ export function isBackupStorageManifest(value: unknown): value is BackupStorageM
       Number.isSafeInteger(candidate.managedKeyCount) && Number(candidate.managedKeyCount) >= 0 &&
       isHexDigest(candidate.managedKeysSha256)
     );
+  }
+  if (candidate.mode === "bundled-s3") {
+    if (
+      typeof candidate.bucket !== "string" || !candidate.bucket ||
+      typeof candidate.region !== "string" || !candidate.region ||
+      typeof candidate.directory !== "string" || !candidate.directory ||
+      !Number.isSafeInteger(candidate.fileCount) || Number(candidate.fileCount) < 0 ||
+      !Number.isSafeInteger(candidate.totalBytes) || Number(candidate.totalBytes) < 0 ||
+      !Array.isArray(candidate.objects) || candidate.objects.length !== candidate.fileCount
+    ) return false;
+    const keys = new Set<string>();
+    const files = new Set<string>();
+    for (const value of candidate.objects) {
+      if (!value || typeof value !== "object") return false;
+      const entry = value as Record<string, unknown>;
+      if (
+        typeof entry.key !== "string" || !entry.key ||
+        sanitizeStorageKey(entry.key) !== entry.key ||
+        typeof entry.file !== "string" || !isSafeRelativePath(entry.file) ||
+        !Number.isSafeInteger(entry.bytes) || Number(entry.bytes) < 0 ||
+        !isHexDigest(entry.sha256) ||
+        keys.has(entry.key) || files.has(entry.file)
+      ) return false;
+      keys.add(entry.key);
+      files.add(entry.file);
+    }
+    return true;
   }
   if (candidate.mode !== "bundled-local") return false;
   if (
@@ -206,6 +255,58 @@ export function createExternalS3Manifest(
   };
 }
 
+export async function createS3StorageSnapshot(
+  databasePath: string,
+  temporarySnapshotPath: string,
+  publishedDirectoryName: string,
+  bucket: string,
+  region: string,
+  readObject: (key: string, options: { maxBytes: number }) => Promise<Buffer>,
+): Promise<BundledS3StorageManifest> {
+  const keys = managedStorageKeys(databasePath);
+  if (keys.length > MAX_BACKUP_STORAGE_FILES) {
+    throw new Error(`S3 evidence inventory exceeds the ${MAX_BACKUP_STORAGE_FILES}-object backup limit.`);
+  }
+  const snapshotRoot = path.resolve(temporarySnapshotPath);
+  fs.mkdirSync(snapshotRoot, { recursive: false });
+  let totalBytes = 0;
+  const objects: BundledS3StorageManifest["objects"] = [];
+  for (const key of keys) {
+    const body = await readObject(key, { maxBytes: MAX_BACKUP_STORAGE_OBJECT_BYTES });
+    if (!Buffer.isBuffer(body)) throw new Error(`S3 evidence reader returned invalid bytes for: ${key}`);
+    totalBytes += body.length;
+    if (totalBytes > MAX_BACKUP_STORAGE_TOTAL_BYTES) {
+      throw new Error("S3 evidence snapshot exceeds the 100 GB backup-set limit.");
+    }
+    const file = `objects/${crypto.createHash("sha256").update(key).digest("hex")}`;
+    const destination = resolveInside(snapshotRoot, file);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.writeFileSync(destination, body, { flag: "wx", mode: 0o600 });
+    objects.push({
+      key,
+      file,
+      bytes: body.length,
+      sha256: crypto.createHash("sha256").update(body).digest("hex"),
+    });
+  }
+  const files = listStorageFiles(snapshotRoot);
+  const expectedFiles = objects
+    .map((entry) => ({ path: entry.file, bytes: entry.bytes, sha256: entry.sha256 }))
+    .sort((left, right) => compareText(left.path, right.path));
+  if (!sameFiles(files, expectedFiles)) {
+    throw new Error("S3 evidence snapshot does not match the backup database key inventory.");
+  }
+  return {
+    mode: "bundled-s3",
+    bucket,
+    region,
+    directory: publishedDirectoryName,
+    fileCount: objects.length,
+    totalBytes,
+    objects,
+  };
+}
+
 export function validateBackupStorage(
   databasePath: string,
   storagePath: string,
@@ -227,6 +328,28 @@ export function validateBackupStorage(
       return { valid: true };
     }
 
+    if (manifest.mode === "bundled-s3") {
+      if (manifest.directory !== expectedPublishedDirectoryName) {
+        return { valid: false, reason: "Bundled S3 evidence directory does not match its manifest." };
+      }
+      const objectKeys = manifest.objects.map((entry) => entry.key).sort(compareText);
+      if (JSON.stringify(objectKeys) !== JSON.stringify(keys)) {
+        return { valid: false, reason: "Bundled S3 key inventory does not match the backup database." };
+      }
+      const files = listStorageFiles(storagePath);
+      const expectedFiles = manifest.objects
+        .map((entry) => ({ path: entry.file, bytes: entry.bytes, sha256: entry.sha256 }))
+        .sort((left, right) => compareText(left.path, right.path));
+      if (
+        manifest.fileCount !== files.length ||
+        manifest.totalBytes !== files.reduce((total, entry) => total + entry.bytes, 0) ||
+        !sameFiles(expectedFiles, files)
+      ) {
+        return { valid: false, reason: "Bundled S3 evidence inventory does not match its manifest." };
+      }
+      return { valid: true };
+    }
+
     if (manifest.directory !== expectedPublishedDirectoryName) {
       return { valid: false, reason: "Local evidence directory does not match its manifest." };
     }
@@ -236,7 +359,10 @@ export function validateBackupStorage(
       manifest.totalBytes !== files.reduce((total, entry) => total + entry.bytes, 0) ||
       !sameFiles(manifest.files, files)
     ) {
-      return { valid: false, reason: "Local evidence inventory does not match its manifest." };
+      return {
+        valid: false,
+        reason: "Local evidence inventory does not match its manifest.",
+      };
     }
     const available = new Set(files.map((entry) => entry.path));
     const missing = keys.filter((key) => !available.has(key));
@@ -250,6 +376,10 @@ export function validateBackupStorage(
   } catch (error) {
     return { valid: false, reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+export function readStorageSnapshotFile(snapshotPath: string, relativePath: string): Buffer {
+  return fs.readFileSync(resolveInside(snapshotPath, relativePath));
 }
 
 function removePath(filePath: string): void {

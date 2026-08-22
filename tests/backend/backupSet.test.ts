@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   backupSetManifestPath,
@@ -23,6 +24,10 @@ function desktopSecrets(jwt = '1', cookie = '2') {
     jwtSecret: jwt.repeat(64),
     cookieSecret: cookie.repeat(64),
   };
+}
+
+function bundledS3File(key: string): string {
+  return path.join('objects', createHash('sha256').update(key).digest('hex'));
 }
 
 suite('recovery-ready backup sets', () => {
@@ -72,7 +77,7 @@ suite('recovery-ready backup sets', () => {
     expect(result.storagePath).toBe(backupSetStoragePath(destination));
     expect(validation.valid).toBe(true);
     expect(validation.storageCoverage).toBe('complete-local');
-    expect(validation.manifest?.version).toBe(2);
+    expect(validation.manifest?.version).toBe(3);
     expect(validation.manifest?.encryption.mode).toBe('bundled-desktop-secret');
     expect(validation.manifest?.storage).toMatchObject({
       mode: 'bundled-local',
@@ -156,10 +161,10 @@ suite('recovery-ready backup sets', () => {
       valid: false,
       reason: expect.stringContaining('incompatible'),
     });
-    expect(() => restoreBackupSet(destination, {
+    await expect(restoreBackupSet(destination, {
       externalJwtSecret: correctSecret,
       desktopSecretsPath: secretsPath,
-    })).toThrow('desktop profile with incompatible keys');
+    })).rejects.toThrow('desktop profile with incompatible keys');
   });
 
   it('rejects an active environment key that would override bundled desktop secrets', async () => {
@@ -167,35 +172,77 @@ suite('recovery-ready backup sets', () => {
     await createBackupSet(destination, { desktopSecretsPath: secretsPath });
     const secretsBefore = fs.readFileSync(secretsPath, 'utf8');
 
-    expect(() => restoreBackupSet(destination, {
+    await expect(restoreBackupSet(destination, {
       desktopSecretsPath: secretsPath,
       externalJwtSecret: 'active-environment-secret-that-does-not-match',
-    })).toThrow('active JWT_SECRET overrides its bundled key');
+    })).rejects.toThrow('active JWT_SECRET overrides its bundled key');
     expect(fs.readFileSync(secretsPath, 'utf8')).toBe(secretsBefore);
   });
 
-  it('records S3 key inventory and rejects a different restore target', async () => {
+  it('bundles and restores S3 evidence bytes and rejects a different restore target', async () => {
     const destination = path.join(app.tmpDir, 'external-s3.sqlite');
     const previousBucket = process.env.AWS_S3_BUCKET;
     const previousRegion = process.env.AWS_S3_REGION;
     const jwtSecret = desktopSecrets().jwtSecret;
+    const objects = new Map([[managedKey, Buffer.from(originalEvidence)]]);
     try {
       process.env.AWS_S3_BUCKET = 'laro-evidence-backup-a';
       process.env.AWS_S3_REGION = 'eu-west-1';
-      await createBackupSet(destination, { externalJwtSecret: jwtSecret });
+      await createBackupSet(destination, {
+        externalJwtSecret: jwtSecret,
+        externalStorageRead: async (key) => {
+          const value = objects.get(key);
+          if (!value) throw new Error(`missing ${key}`);
+          return Buffer.from(value);
+        },
+      });
       const validation = validateBackupSet(destination, { externalJwtSecret: jwtSecret });
       expect(validation.valid).toBe(true);
-      expect(validation.storageCoverage).toBe('external-s3');
+      expect(validation.storageCoverage).toBe('complete-s3');
       expect(validation.manifest?.storage).toMatchObject({
-        mode: 'external-s3',
+        mode: 'bundled-s3',
         bucket: 'laro-evidence-backup-a',
-        managedKeyCount: 1,
+        fileCount: 1,
       });
+      const bundledObject = path.join(backupSetStoragePath(destination), bundledS3File(managedKey));
+      expect(fs.readFileSync(bundledObject, 'utf8')).toBe(originalEvidence);
+      fs.appendFileSync(bundledObject, 'tamper');
+      expect(validateBackupSet(destination, { externalJwtSecret: jwtSecret })).toMatchObject({
+        valid: false,
+        reason: expect.stringContaining('Bundled S3 evidence inventory'),
+      });
+      fs.writeFileSync(bundledObject, originalEvidence);
+      expect(validateBackupSet(destination, { externalJwtSecret: jwtSecret }).valid).toBe(true);
+
       process.env.AWS_S3_BUCKET = 'laro-evidence-backup-b';
-      expect(() => restoreBackupSet(destination, {
+      await expect(restoreBackupSet(destination, {
         externalJwtSecret: jwtSecret,
         desktopSecretsPath: secretsPath,
-      })).toThrow('active S3 bucket or region differs');
+      })).rejects.toThrow('active S3 bucket or region differs');
+
+      process.env.AWS_S3_BUCKET = 'laro-evidence-backup-a';
+      objects.set(managedKey, Buffer.from('changed remote evidence'));
+      const restored = await restoreBackupSet(destination, {
+        externalJwtSecret: jwtSecret,
+        desktopSecretsPath: secretsPath,
+        externalStorageRead: async (key) => {
+          const value = objects.get(key);
+          if (!value) throw new Error(`missing ${key}`);
+          return Buffer.from(value);
+        },
+        externalStoragePut: async (key, body) => {
+          objects.set(key, Buffer.from(body));
+          return { sha256: (await import('../../server/storage')).hashBuffer(body) };
+        },
+        externalStorageDelete: async (key) => { objects.delete(key); },
+      });
+      app.db = await (await import('../../server/db')).getDb();
+      expect(objects.get(managedKey)?.toString('utf8')).toBe(originalEvidence);
+      expect(restored.backupOfPreviousStorage).toBeTruthy();
+      expect(fs.readFileSync(
+        path.join(restored.backupOfPreviousStorage!, bundledS3File(managedKey)),
+        'utf8',
+      )).toBe('changed remote evidence');
     } finally {
       if (previousBucket === undefined) delete process.env.AWS_S3_BUCKET;
       else process.env.AWS_S3_BUCKET = previousBucket;
@@ -217,8 +264,166 @@ suite('recovery-ready backup sets', () => {
       valid: true,
       storageCoverage: 'legacy-missing',
     });
-    expect(() => restoreBackupSet(destination, { desktopSecretsPath: secretsPath }))
-      .toThrow('local evidence coverage is not proven');
+    await expect(restoreBackupSet(destination, { desktopSecretsPath: secretsPath }))
+      .rejects.toThrow('evidence coverage is not proven');
+  });
+
+  it('does not publish an S3 backup set when referenced bytes are unavailable', async () => {
+    const destination = path.join(app.tmpDir, 'missing-s3-evidence.sqlite');
+    const previousBucket = process.env.AWS_S3_BUCKET;
+    try {
+      process.env.AWS_S3_BUCKET = 'laro-evidence-backup-a';
+      await expect(createBackupSet(destination, {
+        externalJwtSecret: desktopSecrets().jwtSecret,
+        externalStorageRead: async (key) => { throw new Error(`missing remote object ${key}`); },
+      })).rejects.toThrow('missing remote object');
+      expect(fs.existsSync(destination)).toBe(false);
+      expect(fs.existsSync(backupSetManifestPath(destination))).toBe(false);
+      expect(fs.existsSync(backupSetStoragePath(destination))).toBe(false);
+    } finally {
+      if (previousBucket === undefined) delete process.env.AWS_S3_BUCKET;
+      else process.env.AWS_S3_BUCKET = previousBucket;
+    }
+  });
+
+  it('stores Windows-hostile S3 keys under portable content-addressed filenames', async () => {
+    const destination = path.join(app.tmpDir, 'portable-s3-key.sqlite');
+    const hostileKey = 'evidence/backup-set/2026-08-22T12:00?.txt';
+    const previousBucket = process.env.AWS_S3_BUCKET;
+    try {
+      (app.db as any).$client.prepare(`
+        INSERT INTO evidence_files (id, userId, fileName, fileType, fileSize, storageKey)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        'BACKUP_SET_HOSTILE_KEY',
+        'BACKUP_SET_MARKER',
+        'hostile-key.txt',
+        'text/plain',
+        '14',
+        hostileKey,
+      );
+      process.env.AWS_S3_BUCKET = 'laro-evidence-backup-a';
+      const objects = new Map([
+        [managedKey, Buffer.from(originalEvidence)],
+        [hostileKey, Buffer.from('portable bytes')],
+      ]);
+      await createBackupSet(destination, {
+        externalJwtSecret: desktopSecrets().jwtSecret,
+        externalStorageRead: async (key) => Buffer.from(objects.get(key)!),
+      });
+      const validation = validateBackupSet(destination, {
+        externalJwtSecret: desktopSecrets().jwtSecret,
+      });
+      expect(validation.valid).toBe(true);
+      const storage = validation.manifest?.storage;
+      expect(storage?.mode).toBe('bundled-s3');
+      if (storage?.mode !== 'bundled-s3') throw new Error('Expected bundled S3 storage');
+      const hostileObject = storage.objects.find((entry) => entry.key === hostileKey);
+      expect(hostileObject?.file).toMatch(/^objects\/[a-f0-9]{64}$/);
+      expect(fs.readFileSync(
+        path.join(backupSetStoragePath(destination), ...hostileObject!.file.split('/')),
+        'utf8',
+      )).toBe('portable bytes');
+    } finally {
+      (app.db as any).$client.prepare('DELETE FROM evidence_files WHERE id = ?')
+        .run('BACKUP_SET_HOSTILE_KEY');
+      if (previousBucket === undefined) delete process.env.AWS_S3_BUCKET;
+      else process.env.AWS_S3_BUCKET = previousBucket;
+    }
+  });
+
+  it('labels version-2 S3 inventories as incomplete and blocks restore by default', async () => {
+    const destination = path.join(app.tmpDir, 'version-two-s3.sqlite');
+    await createBackupSet(destination, { desktopSecretsPath: secretsPath });
+    const manifestPath = backupSetManifestPath(destination);
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    manifest.version = 2;
+    manifest.storage = {
+      mode: 'external-s3',
+      bucket: 'legacy-inventory-only',
+      region: 'eu-west-1',
+      managedKeyCount: 1,
+      managedKeysSha256: createHash('sha256').update(JSON.stringify([managedKey])).digest('hex'),
+    };
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    fs.rmSync(backupSetStoragePath(destination), { recursive: true, force: true });
+
+    expect(validateBackupSet(destination)).toMatchObject({
+      valid: true,
+      storageCoverage: 'legacy-external-s3',
+    });
+    await expect(restoreBackupSet(destination, { desktopSecretsPath: secretsPath }))
+      .rejects.toThrow('evidence coverage is not proven');
+  });
+
+  it('rolls back a newly introduced S3 object when restore verification fails', async () => {
+    const destination = path.join(app.tmpDir, 's3-rollback.sqlite');
+    const previousBucket = process.env.AWS_S3_BUCKET;
+    const previousRegion = process.env.AWS_S3_REGION;
+    const jwtSecret = desktopSecrets().jwtSecret;
+    const objects = new Map([[managedKey, Buffer.from(originalEvidence)]]);
+    try {
+      process.env.AWS_S3_BUCKET = 'laro-evidence-backup-a';
+      process.env.AWS_S3_REGION = 'eu-west-1';
+      const read = async (key: string) => {
+        const value = objects.get(key);
+        if (!value) throw new Error(`missing ${key}`);
+        return Buffer.from(value);
+      };
+      await createBackupSet(destination, {
+        externalJwtSecret: jwtSecret,
+        externalStorageRead: read,
+      });
+
+      (app.db as any).$client.prepare('DELETE FROM evidence_files WHERE id = ?')
+        .run('BACKUP_SET_EVIDENCE');
+      objects.delete(managedKey);
+      for (const failure of ['hash-mismatch', 'acknowledgement-loss', 'remote-corruption'] as const) {
+        let writes = 0;
+        await expect(restoreBackupSet(destination, {
+          externalJwtSecret: jwtSecret,
+          desktopSecretsPath: secretsPath,
+          externalStorageRead: read,
+          externalStoragePut: async (key, body) => {
+            writes += 1;
+            objects.set(key, Buffer.from(body));
+            if (failure === 'acknowledgement-loss') {
+              throw new Error('simulated acknowledgement loss after remote write');
+            }
+            if (failure === 'remote-corruption') {
+              objects.set(key, Buffer.from('corrupted after upload'));
+              return { sha256: (await import('../../server/storage')).hashBuffer(body) };
+            }
+            return { sha256: '0'.repeat(64) };
+          },
+          externalStorageDelete: async (key) => { objects.delete(key); },
+        })).rejects.toThrow(
+          failure === 'hash-mismatch'
+            ? 'hash does not match'
+            : failure === 'acknowledgement-loss' ? 'acknowledgement loss' : 'read-back hash',
+        );
+        expect(writes).toBe(1);
+        expect(objects.has(managedKey)).toBe(false);
+      }
+    } finally {
+      if (previousBucket === undefined) delete process.env.AWS_S3_BUCKET;
+      else process.env.AWS_S3_BUCKET = previousBucket;
+      if (previousRegion === undefined) delete process.env.AWS_S3_REGION;
+      else process.env.AWS_S3_REGION = previousRegion;
+      app.db = await (await import('../../server/db')).getDb();
+      (app.db as any).$client.prepare(`
+        INSERT OR IGNORE INTO evidence_files
+          (id, userId, fileName, fileType, fileSize, storageKey)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        'BACKUP_SET_EVIDENCE',
+        'BACKUP_SET_MARKER',
+        'source.txt',
+        'text/plain',
+        String(Buffer.byteLength(originalEvidence)),
+        managedKey,
+      );
+    }
   });
 
   it('rechecks the staged database against its manifest before replacing live data', async () => {
@@ -269,7 +474,7 @@ suite('recovery-ready backup sets', () => {
     fs.writeFileSync(secretsPath, JSON.stringify(desktopSecrets('3', '4'), null, 2), { mode: 0o600 });
     fs.writeFileSync(path.join(storagePath, ...managedKey.split('/')), 'changed evidence');
 
-    const result = restoreBackupSet(destination, { desktopSecretsPath: secretsPath });
+    const result = await restoreBackupSet(destination, { desktopSecretsPath: secretsPath });
     const reopened = await (await import('../../server/db')).getDb();
     const marker = (reopened as any).$client
       .prepare('SELECT id FROM users WHERE id = ?')

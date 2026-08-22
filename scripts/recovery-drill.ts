@@ -57,7 +57,7 @@ async function main() {
   }, null, 2), { mode: 0o600 });
   writeFileSync(evidencePath, 'changed evidence bytes', 'utf8');
 
-  const restored = backup.restoreBackupSet(backupPath, { desktopSecretsPath: secretsPath });
+  const restored = await backup.restoreBackupSet(backupPath, { desktopSecretsPath: secretsPath });
   const reopened = await getDb();
   const row = (reopened as any).$client.prepare('SELECT id FROM users WHERE id = ?').get(marker);
   if (!row) throw new Error('Round-trip restore did not recover the marker row');

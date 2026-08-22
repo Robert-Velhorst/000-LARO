@@ -634,9 +634,12 @@ describe('production readiness regressions', () => {
     expect(backupSet).toContain('Staged desktop secrets do not match');
     expect(backupCore).toContain('staged database does not match the backup-set manifest');
     expect(backupStorage).toContain('bundled-local');
-    expect(backupStorage).toContain('external-s3');
+    expect(backupStorage).toContain('bundled-s3');
+    expect(backupStorage).toContain('createS3StorageSnapshot');
     expect(backupStorage).toContain('assertLocalStorageUnchanged');
     expect(backupStorage).toContain('managed local evidence object(s)');
+    expect(backupSet).toContain('s3Install.rollback()');
+    expect(backupSet).toContain('legacy-external-s3');
     expect(backupCli).toContain('Refusing a database-only restore');
     expect(backupCli).toContain('parsed.allowLegacy');
     expect(backupCli).toContain('parsed.allowMissingStorage');
