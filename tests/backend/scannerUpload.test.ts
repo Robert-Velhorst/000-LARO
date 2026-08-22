@@ -2,10 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "fs";
 import { createHash } from "crypto";
 import { join } from "path";
-import jwt from "jsonwebtoken";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 import { buildCase, buildUser } from "../factories";
-import { ENV } from "../../server/_core/env";
 
 const suite = sqliteAvailable ? describe : describe.skip;
 
@@ -23,21 +21,15 @@ suite("desktop evidence scanner upload contract", () => {
 
   afterAll(() => app?.cleanup());
 
-  it("issues a short-lived scanner token for the signed-in user", async () => {
-    const result = await app.makeCaller(user).auth.getScannerToken();
-    const payload = jwt.verify(result.token, ENV.JWT_SECRET) as jwt.JwtPayload;
-    expect(payload.userId).toBe(user.id);
-    expect(payload.scope).toBe("evidence-scanner");
-    expect(result.expiresInSeconds).toBe(15 * 60);
-    expect((payload.exp ?? 0) - (payload.iat ?? 0)).toBe(15 * 60);
+  it("does not expose reusable API or scanner tokens to authenticated clients", () => {
+    const auth = app.makeCaller(user).auth;
+    expect("getScannerToken" in auth).toBe(false);
+    expect("getApiToken" in auth).toBe(false);
   });
 
   it("persists scanner bytes with provenance under the owned case", async () => {
     const bytes = Buffer.from("scanner evidence body", "utf8");
-    const scanner = app.makeCaller(user, "evidence-scanner");
-    await expect(scanner.cases.list({ page: 1, limit: 10 })).rejects.toThrow(
-      "restricted to evidence upload"
-    );
+    const scanner = app.makeCaller(user, "session", true);
     const result = await scanner.evidenceFiles.upload({
       caseId: caseRow.id,
       title: "statement.txt",

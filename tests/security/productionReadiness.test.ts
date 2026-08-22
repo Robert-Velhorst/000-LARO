@@ -812,9 +812,9 @@ describe('production readiness regressions', () => {
     const routers = readFileSync(join(ROOT, 'server/routers/index.ts'), 'utf8');
 
     expect(existsSync(join(ROOT, 'src/renderer/pages/AuthPage.tsx'))).toBe(false);
-    expect(app).toContain('getScannerToken');
-    expect(app).toContain('if (!session.data || scannerToken.isError || !scannerToken.data?.token)');
-    expect(app).toContain('setConfig({ token: null, userId: null, deviceId: null, caseId: null })');
+    expect(app).not.toContain('getScannerToken');
+    expect(app).not.toContain('scannerToken');
+    expect(app).not.toContain('token:');
     expect(home).toContain('t("scanner.folderSafety")');
     expect(translations).toContain('"scanner.folderSafety"');
     expect(home).toContain('folders: scanFolders');
@@ -823,13 +823,20 @@ describe('production readiness regressions', () => {
     expect(scan).toContain('t("scanner.uploadSelected")');
     expect(translations).toContain('"scanner.uploadSelected"');
     expect(main).toContain('approvedScanFolders');
+    expect(main).toContain('getDesktopScannerAuth');
+    expect(main).not.toContain('agentConfig.token');
     expect(main).toContain("autoUpload: false");
     expect(main).toContain("process.env.HOST = '127.0.0.1'");
     expect(main).not.toContain("ipcMain.handle('agent:token'");
     expect(uploader).toContain('evidenceFiles.upload.mutate');
+    expect(uploader).toContain('createDesktopScannerHeaders(options.resolveAuth)');
+    expect(uploader).toContain("updateFileStatus(file.id, 'pending'");
+    expect(uploader).not.toContain('Authorization:');
     expect(uploader).not.toContain('s3.example.com');
     expect(uploader).not.toMatch(/simulat(?:e|ed|ing) S3 upload/i);
     expect(routers).not.toContain('localFileUpload: router');
+    expect(routers).not.toContain('getScannerToken');
+    expect(routers).not.toContain('getApiToken');
     expect(existsSync(join(ROOT, 'src/renderer/components/LocalFileUpload.tsx'))).toBe(false);
   });
 

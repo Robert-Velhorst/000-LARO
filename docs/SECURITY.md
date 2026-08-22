@@ -1,6 +1,6 @@
 # Security
 
-Date: 2026-07-20
+Date: 2026-08-22
 
 ## Implemented controls
 
@@ -8,7 +8,11 @@ Date: 2026-07-20
   and `COOKIE_SECRET` values before opening SQLite or importing the server. It
   refuses to replace corrupt existing keys or continue with temporary keys.
   Standalone production startup refuses insecure placeholder secrets.
-- Session cookies are HTTP-only, CSRF origins and credentialed CORS are restricted, and session revocation is checked. Scanner JWTs expire after 15 minutes and are authorized only for evidence upload.
+- Session cookies are HTTP-only, CSRF origins and credentialed CORS are
+  restricted, and session revocation is checked. Desktop scanner uploads use
+  the current browser session plus a per-launch, loopback-only proof that stays
+  in Electron main; the session is re-resolved for every upload batch so logout
+  stops subsequent uploads.
 - Case-scoped operations use authenticated ownership checks. Lawyer creation is admin-only; lawyer reads, local messages, transactional email tests, and agent controls require authentication.
 - OAuth authorization URLs are created by protected tRPC procedures. OAuth flows use encrypted, time-limited state plus PKCE; the callback no longer accepts a caller-supplied user ID. The enabled Google evidence connector requests read-only Gmail/Drive scopes and account email only; delegated mail sending and label writes are excluded.
 - OAuth tokens use authenticated AES-256-GCM storage. Callback pages escape provider data and use a nonce-bound script under a route-specific CSP.

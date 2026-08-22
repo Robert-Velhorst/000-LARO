@@ -535,6 +535,8 @@ summary fields, but excludes contacts, source bytes/quotes, and provider secrets
 - bcrypt passwords; signed HTTP-only sessions; revocation, origin/CSRF, role,
   rate, and ownership controls.
 - Per-install desktop secrets; no packaged `.env`.
+- Scanner uploads keep session and scanner authority in the Electron main
+  process; reusable API credentials are not exposed to renderer JavaScript.
 - Server-owned encrypted provider credentials.
 - Owner-checked short-lived evidence links.
 - Bounded uploads, parsing, exports, searches, and provider calls.

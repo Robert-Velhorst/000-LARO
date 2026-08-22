@@ -389,20 +389,6 @@ export const appRouter = router({
         return { success: true } as const;
       }),
 
-    getApiToken: protectedProcedure.query(({ ctx }) => {
-      const token = jwt.sign({ userId: ctx.user.id }, ENV.JWT_SECRET, {
-        expiresIn: SESSION_EXPIRES_IN,
-      });
-      return { token };
-    }),
-    getScannerToken: protectedProcedure.query(({ ctx }) => {
-      const token = jwt.sign(
-        { userId: ctx.user.id, scope: "evidence-scanner" },
-        ENV.JWT_SECRET,
-        { expiresIn: "15m" }
-      );
-      return { token, expiresInSeconds: 15 * 60 };
-    }),
   }),
 
   // Clarifications procedures

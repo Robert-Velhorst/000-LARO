@@ -4,6 +4,7 @@ import os from 'os';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { nanoid } from 'nanoid';
+import { randomBytes } from 'crypto';
 import log from 'electron-log';
 import { IPC_CHANNELS, Platform, ScanConfig, AgentConfig } from '../shared/types';
 import {
@@ -20,6 +21,7 @@ import { acquireSingleInstanceLock } from './singleInstance';
 import { installDenyByDefaultPermissions } from './sessionPermissions';
 import { ensureDesktopSecrets } from './desktopSecrets';
 import { loadProtectedProviderConfig } from './providerConfig';
+import { getDesktopScannerAuth } from './scannerAuth';
 // NOTE: server/index.ts reads `.env` (dotenv) at import time, so it is imported
 // lazily in startApp() AFTER we pin NODE_ENV from app.isPackaged. This guarantees
 // a packaged build runs the server in production mode even if the bundled .env
@@ -46,15 +48,13 @@ process.on('unhandledRejection', (reason) => {
 let scanPanel: BrowserWindow | null = null;
 let currentScanner: FileScanner | null = null;
 let currentUploader: FileUploader | null = null;
+let uploadStarting = false;
 const approvedScanFolders = new Set<string>();
 
 let agentConfig: AgentConfig = {
   caseId: null,
   apiUrl: laroUrl,
-  token: null,
-  deviceId: null,
   deviceName: os.hostname(),
-  userId: null,
 };
 
 function getPlatform(): Platform {
@@ -214,7 +214,7 @@ function createScanPanel(): void {
     currentUploader?.stop();
     scanPanel = null;
     approvedScanFolders.clear();
-    agentConfig = { ...agentConfig, token: null, deviceId: null, userId: null, caseId: null };
+    agentConfig = { ...agentConfig, caseId: null };
   });
 }
 
@@ -329,6 +329,7 @@ if (ownsDesktopProfile) app.whenReady().then(async () => {
 
   process.env.LARO_APP_VERSION = app.getVersion();
   process.env.HOST = '127.0.0.1';
+  process.env.LARO_DESKTOP_SCANNER_SECRET = randomBytes(32).toString('base64url');
 
   try {
     const { startServer, stopServer } = await import('../server/index');
@@ -389,10 +390,8 @@ function setupIPC(): void {
   });
   ipcMain.handle(IPC_CHANNELS.CONFIG_SET, (event, c: Partial<AgentConfig>) => {
     assertTrustedIpc(event);
+    if (!c || typeof c !== 'object' || Array.isArray(c)) throw new Error('Invalid scanner configuration');
     const next: Partial<AgentConfig> = {};
-    if (c.token === null || (typeof c.token === 'string' && c.token.length <= 4096)) next.token = c.token;
-    if (c.userId === null || (typeof c.userId === 'string' && c.userId.length <= 200)) next.userId = c.userId;
-    if (c.deviceId === null || (typeof c.deviceId === 'string' && c.deviceId.length <= 200)) next.deviceId = c.deviceId;
     if (c.caseId === null || (typeof c.caseId === 'string' && c.caseId.length <= 200)) next.caseId = c.caseId;
     agentConfig = { ...agentConfig, ...next };
     return { ...agentConfig };
@@ -504,48 +503,63 @@ function setupIPC(): void {
     const selected = setScanFileSelection(String(id).slice(0, 200), safeIds);
     return { selected };
   });
-  ipcMain.handle(IPC_CHANNELS.UPLOAD_START, (event, id: string) => { assertTrustedIpc(event); return startUpload(id); });
+  ipcMain.handle(IPC_CHANNELS.UPLOAD_START, (event, id: string) => {
+    assertTrustedIpc(event);
+    const rendererUrl = event.senderFrame?.url || event.sender.getURL();
+    return startUpload(id, rendererUrl);
+  });
   ipcMain.handle(IPC_CHANNELS.UPLOAD_PAUSE, (event) => { assertTrustedIpc(event); currentUploader?.pause(); return { success: true }; });
   ipcMain.handle(IPC_CHANNELS.UPLOAD_RESUME, (event) => { assertTrustedIpc(event); currentUploader?.resume(); return { success: true }; });
 }
 
-async function startUpload(scanId: string): Promise<{ success: boolean }> {
-  if (currentUploader) throw new Error('Upload in progress');
-  if (!agentConfig.token || !agentConfig.userId) throw new Error('Sign in to LARO before uploading evidence');
+async function startUpload(scanId: string, cookieUrl: string): Promise<{ success: boolean }> {
+  if (currentUploader || uploadStarting) throw new Error('Upload in progress');
   if (!isTrustedAppUrl(agentConfig.apiUrl)) throw new Error('Scanner API URL is not trusted');
-  const safeScanId = String(scanId).slice(0, 200);
-  currentUploader = new FileUploader({
-    scanId: safeScanId,
-    apiUrl: agentConfig.apiUrl,
-    token: agentConfig.token,
-    concurrency: 3,
-    maxRetries: 3,
-  });
-  currentUploader.on('progress', (p) => scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, { scanId: safeScanId, ...p }));
-  currentUploader.on('completed', (r) => {
-    scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, { scanId: safeScanId, done: true, ...r });
-    mainWindow?.webContents.send(IPC_CHANNELS.EVIDENCE_UPDATED, { scanId: safeScanId });
-    currentUploader = null;
-  });
-  currentUploader.on('file-failed', (failure) => {
-    scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, {
-      scanId: safeScanId,
-      fileId: failure.fileId,
-      failed: true,
-      errorMessage: failure.error,
+  uploadStarting = true;
+  try {
+    const browserSession = (mainWindow ?? scanPanel)?.webContents.session ?? session.defaultSession;
+    const resolveAuth = () => getDesktopScannerAuth({
+      cookieUrl,
+      scannerSecret: process.env.LARO_DESKTOP_SCANNER_SECRET || '',
+      cookieStore: browserSession.cookies,
     });
-  });
-  currentUploader.on('cancelled', () => { currentUploader = null; });
-  currentUploader.on('error', (error: Error) => {
-    scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, {
+    await resolveAuth();
+    const safeScanId = String(scanId).slice(0, 200);
+    currentUploader = new FileUploader({
       scanId: safeScanId,
-      done: true,
-      failed: true,
-      failedFiles: 1,
-      errorMessage: error.message,
+      apiUrl: agentConfig.apiUrl,
+      resolveAuth,
+      concurrency: 3,
+      maxRetries: 3,
     });
-    currentUploader = null;
-  });
-  currentUploader.start().catch(console.error);
-  return { success: true };
+    currentUploader.on('progress', (p) => scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, { scanId: safeScanId, ...p }));
+    currentUploader.on('completed', (r) => {
+      scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, { scanId: safeScanId, done: true, ...r });
+      mainWindow?.webContents.send(IPC_CHANNELS.EVIDENCE_UPDATED, { scanId: safeScanId });
+      currentUploader = null;
+    });
+    currentUploader.on('file-failed', (failure) => {
+      scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, {
+        scanId: safeScanId,
+        fileId: failure.fileId,
+        failed: true,
+        errorMessage: failure.error,
+      });
+    });
+    currentUploader.on('cancelled', () => { currentUploader = null; });
+    currentUploader.on('error', (error: Error) => {
+      scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, {
+        scanId: safeScanId,
+        done: true,
+        failed: true,
+        failedFiles: 1,
+        errorMessage: error.message,
+      });
+      currentUploader = null;
+    });
+    currentUploader.start().catch(console.error);
+    return { success: true };
+  } finally {
+    uploadStarting = false;
+  }
 }

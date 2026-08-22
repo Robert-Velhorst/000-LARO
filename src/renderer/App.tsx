@@ -19,12 +19,6 @@ export default function App() {
     refetchOnWindowFocus: true,
     retry: false,
   });
-  const scannerToken = trpc.auth.getScannerToken.useQuery(undefined, {
-    enabled: Boolean(session.data),
-    refetchInterval: 10 * 60_000,
-    retry: false,
-  });
-
   useEffect(() => {
     void electronAPI.getConfig().then(setConfig).catch((error: unknown) => {
       console.error("Failed to load scanner configuration:", error);
@@ -32,35 +26,23 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!session.data || !scannerToken.data?.token) return;
+    if (!session.isFetched || session.data || !config?.caseId) return;
     void electronAPI
-      .setConfig({
-        token: scannerToken.data.token,
-        userId: session.data.id,
-        deviceId: "local-evidence-scanner",
-      })
+      .setConfig({ caseId: null })
       .then(setConfig)
-      .catch((error: unknown) => console.error("Failed to authorize evidence scanner:", error));
-  }, [session.data, scannerToken.data?.token]);
-
-  useEffect(() => {
-    if (!session.isFetched || session.data || !config?.token) return;
-    void electronAPI
-      .setConfig({ token: null, userId: null, deviceId: null, caseId: null })
-      .then(setConfig)
-      .catch((error: unknown) => console.error("Failed to clear scanner authorization:", error));
-  }, [session.isFetched, session.data, config?.token]);
+      .catch((error: unknown) => console.error("Failed to clear scanner case selection:", error));
+  }, [session.isFetched, session.data, config?.caseId]);
 
   const saveSettings = async (updates: Partial<AgentConfig>) => {
     const updated = await electronAPI.setConfig({ caseId: updates.caseId ?? null });
     setConfig(updated);
   };
 
-  if (session.isLoading || (session.data && scannerToken.isLoading) || !config) {
+  if (session.isLoading || !config) {
     return <ScannerStatus title={t("scanner.preparing")} detail={t("scanner.verifySession")} />;
   }
 
-  if (!session.data || scannerToken.isError || !scannerToken.data?.token) {
+  if (!session.data) {
     return (
       <ScannerStatus
         title={t("scanner.signInRequired")}
@@ -69,10 +51,6 @@ export default function App() {
         onAction={() => void session.refetch()}
       />
     );
-  }
-
-  if (!config.token || config.userId !== session.data.id) {
-    return <ScannerStatus title={t("scanner.preparing")} detail={t("scanner.createSession")} />;
   }
 
   switch (currentPage) {

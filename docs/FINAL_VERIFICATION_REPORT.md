@@ -210,8 +210,9 @@ development renderer path from the launching shell.
   room; the client retains polling as a recovery path.
 - Desktop scanning requires explicit native folder consent and per-file review;
   selected bytes are persisted through the canonical evidence upload route with
-  content-hash provenance. Scanner bearer tokens cannot access other protected
-  procedures.
+  content-hash provenance. The renderer receives no API or scanner bearer token;
+  the Electron main process authenticates selected-file uploads with the existing
+  HTTP-only session plus a per-launch proof accepted only from loopback.
 - Supported Gmail, Drive, local-folder, and direct uploads persist retrievable
   bytes and trigger versioned local analysis. Google-native documents are
   exported to PDF instead of being passed through an invalid media download.

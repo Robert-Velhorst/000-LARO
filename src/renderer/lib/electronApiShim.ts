@@ -4,7 +4,7 @@ export const isElectron = (): boolean =>
 export function getElectronAPI() {
   if (isElectron()) return (window as any).electronAPI;
   return {
-    getConfig:          () => Promise.resolve({ apiUrl: 'http://localhost:3000', token: null, deviceId: null, deviceName: 'browser', userId: null, caseId: null }),
+    getConfig:          () => Promise.resolve({ apiUrl: 'http://localhost:3000', deviceName: 'browser', caseId: null }),
     setConfig:          (c: any) => Promise.resolve(c),
     getSystemInfo:      () => Promise.resolve({ platform: 'browser', hostname: 'browser', username: 'browser', homeDir: '/', version: '0.0.0' }),
     getAppVersion:      () => Promise.resolve('0.0.0'),
