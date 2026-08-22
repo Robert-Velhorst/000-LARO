@@ -54,8 +54,12 @@ export default function CaseDetailsDialog({
   );
 
   const initiateOutreachMutation = trpc.workflow.initiateOutreach.useMutation({
-    onSuccess: () => {
-      toast.success("Outreach initiated successfully!");
+    onSuccess: (result) => {
+      if (!result.success) {
+        toast.error(result.reason || "No matching lawyer is available for an outreach draft.");
+      } else {
+        toast.success(result.created ? `${result.created} outreach draft(s) prepared for review` : "Outreach is up to date");
+      }
       refetch();
     },
     onError: (error) => {

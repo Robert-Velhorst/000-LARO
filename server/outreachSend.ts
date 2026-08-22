@@ -24,8 +24,9 @@ import {
   lawyers as lawyersTable,
   systemConfig,
 } from "./schema";
-import { and, eq, inArray, like } from "drizzle-orm";
+import { and, eq, inArray, isNull, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
+import { TRPCError } from "@trpc/server";
 import { getFlag } from "./featureFlags";
 import { assertNotEmergencyStopped } from "./systemState";
 import { assertOutreachTransition } from "./stateMachines";
@@ -33,6 +34,7 @@ import { createAuditLog, AUDIT_ACTIONS } from "./audit";
 import { assertCaseOwnership } from "./_core/authz";
 import { createNotification } from "./notifications";
 import { readApprovedOutreachMessage, readOutreachMetadata } from "./outreachApproval";
+import { compareAndSetCaseStatusInTransaction } from "./caseTransitions";
 
 export interface SendResult {
   outreachId: string;
@@ -441,7 +443,6 @@ export async function recordOutreachResponse(
 
   const row = (await db.select().from(outreachStatus).where(eq(outreachStatus.id, outreachId)).limit(1))[0];
   if (!row?.caseId) {
-    const { TRPCError } = await import("@trpc/server");
     throw new TRPCError({ code: "NOT_FOUND", message: "Outreach record not found." });
   }
 
@@ -454,18 +455,46 @@ export async function recordOutreachResponse(
     ? Math.max(0, (respondedAt.getTime() - sentAt.getTime()) / 3_600_000).toFixed(2)
     : null;
 
-  await db.update(outreachStatus).set({
-    status: response,
-    response: notes?.trim() || null,
-    responseReceived: response === "NoResponse" ? "No" : "Yes",
-    responseTimeHours,
-    lastContact: respondedAt,
-    updatedAt: respondedAt,
-  }).where(eq(outreachStatus.id, outreachId));
-
-  if (response === "Interested") {
-    await db.update(casesTable).set({ status: "Matched", updatedAt: respondedAt }).where(eq(casesTable.id, row.caseId));
+  const [caseSnapshot] = response === "Interested"
+    ? await db.select({ ownerId: casesTable.userId, status: casesTable.status })
+      .from(casesTable)
+      .where(eq(casesTable.id, row.caseId))
+      .limit(1)
+    : [null];
+  if (response === "Interested" && !caseSnapshot) {
+    throw new TRPCError({ code: "CONFLICT", message: "The case changed before the response could be recorded." });
   }
+
+  db.transaction((tx: any) => {
+    const outreachMutation = tx.update(outreachStatus).set({
+      status: response,
+      response: notes?.trim() || null,
+      responseReceived: response === "NoResponse" ? "No" : "Yes",
+      responseTimeHours,
+      lastContact: respondedAt,
+      updatedAt: respondedAt,
+    }).where(and(
+      eq(outreachStatus.id, outreachId),
+      eq(outreachStatus.caseId, row.caseId!),
+      row.status == null ? isNull(outreachStatus.status) : eq(outreachStatus.status, row.status),
+    )).run();
+    if (Number(outreachMutation.changes || 0) !== 1) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "The outreach response changed before this action completed.",
+      });
+    }
+
+    if (response === "Interested" && caseSnapshot) {
+      compareAndSetCaseStatusInTransaction(tx, {
+        caseId: row.caseId!,
+        ownerId: caseSnapshot.ownerId,
+        expectedStatus: caseSnapshot.status,
+        nextStatus: "Matched",
+        updatedAt: respondedAt,
+      });
+    }
+  });
 
   await createAuditLog({
     userId,

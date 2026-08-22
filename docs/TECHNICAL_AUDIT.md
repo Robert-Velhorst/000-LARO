@@ -1,8 +1,8 @@
 # Current Technical Audit
 
-Date: 2026-08-09
-Branch: `agent/giant-goal-completion`
-Starting commit: `b5ae60787000f82b6a9e90a78c2c202674dc7dd1`
+Date: 2026-08-22
+Branch: `main` (updates proposed through pull requests)
+Baseline commit: `48ccc59cd9ea3d594bb4b0ecad0da3a5b41ae179`
 Specification: `000-LARO__Giant_Codex_Goal_Prompt.pdf`, 124 pages, phases 000-115
 
 ## Scope and method
@@ -14,8 +14,8 @@ This is the current audit required by the specification appendix. The earlier
 The current pass inspected all phase titles and deliverables, the release-candidate tree,
 runtime entry points, router composition, database migrations, provider gates,
 renderer routes, tests, CI workflows, release documentation, and generated
-traceability. The candidate contains 693 files: 413 TypeScript/TSX files, 61
-Python files, 119 test files, and eight SQLite migrations.
+traceability. The candidate contains 719 tracked files: 433 TypeScript/TSX
+files, 122 tracked test files, and 17 tracked migration artifacts.
 
 ## Current architecture
 
@@ -61,10 +61,13 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
   bundles, exports, release artifacts, or version control.
 - External contact is not autonomous: preparation, approval, and sending are
   separate state transitions; delivery is disabled by default and fail-closed.
+- Case and outreach transitions claim their exact prior state. Response and case
+  outcome changes are transactional, so stale or invalid requests roll back.
 - Evidence analysis distinguishes source observations from inference and keeps
   document/source identifiers available to the user.
 - Backup sets bind the database, encryption-key compatibility, and managed
-  evidence inventory. Electron and Flask recovery have destructive drills.
+  evidence bytes. Version-3 S3 sets preserve original keys and content types,
+  verify restored objects, and roll back remote state after failed recovery.
 - `/api/live`, `/api/ready`, and `/api/health` distinguish process, dependency,
   and application health. Production readiness additionally checks data
   integrity, provider state, and release acceptance.
@@ -82,6 +85,10 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
 | Generic HAI JSON feeds cannot authenticate safely | High | Added a dedicated LARO adapter and owner-scoped hashed credential instead of embedding a secret in a URL |
 | Frontend session checks could show the sign-in screen during a transient API outage | Medium | Added bounded retries for transient failures and a reconnecting state that does not discard the signed-in UI |
 | Browser account setup advanced before the signup request completed | Test defect | Route audit now waits for the authenticated account control; all 15 routes pass at desktop and mobile sizes |
+| Renderer-accessible scanner credentials expanded renderer authority | High | Scanner launch proof and session cookies remain in Electron main; renderer uploads request a fresh main-owned session for each batch |
+| S3 recovery sets recorded inventory without preserving evidence bytes | Medium | Version-3 sets bundle bounded, hashed object bytes and content types; restore verifies remote writes and rolls back on failure |
+| Case and response transitions used stale check-then-update writes | High | Owner-bound compare-and-set transitions reject stale state; response plus case outcome updates commit or roll back together; no-match outreach leaves the case unchanged |
+| An unreachable duplicate outreach engine retained unsafe state writers | Medium | Removed the unreferenced `server/workflow.ts`; the registered tRPC workflow is the only runtime outreach authority |
 
 ## Verdict
 

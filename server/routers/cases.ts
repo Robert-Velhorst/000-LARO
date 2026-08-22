@@ -11,7 +11,7 @@ import { sanitizeLegalAreas } from "../legalAreasValidator";
 import { classifyLegalAreas } from "../classification";
 import { createNotification } from "../notifications";
 import { caseIntakeSchema } from "../../shared/validation";
-import { assertCaseTransition } from "../stateMachines";
+import { transitionOwnedCaseStatus } from "../caseTransitions";
 import { createCaseId } from "../ids";
 import { collectManagedStorageKeys } from "../managedStorage";
 import { enqueueStorageDeletions, processQueuedStorageDeletions } from "../storageDeletionQueue";
@@ -285,25 +285,28 @@ export const casesRouter = router({
       if (!db) throw new Error("Database not available");
       await assertCaseOwnership(input.id, ctx.user.id);
 
-      // Phase 059: validate the status transition against the case state machine.
-      if (input.status) {
-        const cur = (await db.select({ status: casesTable.status }).from(casesTable).where(eq(casesTable.id, input.id)).limit(1))[0];
-        assertCaseTransition(cur?.status ?? null, input.status);
-      }
-
       const updateData: any = { updatedAt: new Date() };
-      if (input.status) updateData.status = input.status;
       if (input.caseSummary) updateData.caseSummary = input.caseSummary;
       if (input.urgency) updateData.urgency = input.urgency;
       if (input.legalAreas) {
         updateData.legalAreas = sanitizeLegalAreas(input.legalAreas);
       }
 
-      const updateResult = await db.update(casesTable)
-        .set(updateData)
-        .where(eq(casesTable.id, input.id));
-      if (!Number((updateResult as any)?.changes ?? 0)) {
-        throw new TRPCError({ code: "CONFLICT", message: "Case changed before the update could be saved" });
+      if (input.status) {
+        await transitionOwnedCaseStatus({
+          caseId: input.id,
+          actorUserId: ctx.user.id,
+          nextStatus: input.status,
+          changes: updateData,
+          updatedAt: updateData.updatedAt,
+        });
+      } else {
+        const updateResult = await db.update(casesTable)
+          .set(updateData)
+          .where(eq(casesTable.id, input.id));
+        if (!Number((updateResult as any)?.changes ?? 0)) {
+          throw new TRPCError({ code: "CONFLICT", message: "Case changed before the update could be saved" });
+        }
       }
 
       await createAuditLog({ // Phase 019
