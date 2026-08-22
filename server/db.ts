@@ -9,6 +9,7 @@ import { getTableConfig } from "drizzle-orm/sqlite-core";
 import { ENV } from './_core/env';
 import { createCaseId } from './ids';
 import { ensureRelationshipIntegrityTriggers } from './relationshipIntegrity';
+import { assertDatabaseRuntimeIsSupported } from './persistence/hostedPersistenceGuard';
 
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 
@@ -443,6 +444,10 @@ function findMigrationsFolder(): string {
 export async function getDb() {
   if (!_db) {
     try {
+      assertDatabaseRuntimeIsSupported({
+        runtimeMode: ENV.LARO_RUNTIME_MODE,
+        databaseUrl: ENV.DATABASE_URL,
+      });
       const dbPath = getDbPath();
       const sqlite = new Database(dbPath);
       _sqlite = sqlite;
