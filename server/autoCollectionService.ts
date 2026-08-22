@@ -786,7 +786,10 @@ async function pullFromGmail(
     const params = new URLSearchParams({ maxResults: '30', q: query });
     const res = await fetch(
       `https://www.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`,
-      { headers: { Authorization: `Bearer ${cred.accessToken}` } },
+      {
+        headers: { Authorization: `Bearer ${cred.accessToken}` },
+        signal: AbortSignal.timeout(30_000),
+      },
     );
     const data = (await res.json()) as { messages?: { id: string; threadId: string }[]; error?: { message: string } };
     if (data.error) throw new Error(data.error.message);

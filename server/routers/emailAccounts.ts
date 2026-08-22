@@ -13,7 +13,7 @@ import {
   saveEmailAccount,
 } from "../oauth2";
 import { encryptToken, decryptToken, revokeStoredGoogleTokens } from "../emailOAuth";
-import { AUDIT_ACTIONS, createAuditLog } from "../audit";
+import { AUDIT_ACTIONS, createAuditLog, writeAuditLogOrThrow } from "../audit";
 
 export const emailAccountsRouter = router({
   getAuthUrl: protectedProcedure
@@ -122,21 +122,29 @@ export const emailAccountsRouter = router({
           });
         }
       }
-      await db.delete(emailAccounts).where(eq(emailAccounts.id, acc.id));
       const revocationConfirmed = revocationOutcome === "revoked" || revocationOutcome === "already_invalid";
-      await createAuditLog({
-        userId: ctx.user.id,
-        action: revocationConfirmed
-          ? AUDIT_ACTIONS.PROVIDER_DISCONNECT_REVOKED
-          : AUDIT_ACTIONS.PROVIDER_DISCONNECTED,
-        entityType: "provider_connection",
-        entityId: acc.id,
-        details: {
-          provider: acc.provider === "gmail" ? "google" : acc.provider,
-          route: "emailAccounts.revoke",
-          revocationOutcome,
-          localCredentialsRemoved: true,
-        },
+      db.transaction((tx: any) => {
+        const deletion = tx.delete(emailAccounts).where(and(
+          eq(emailAccounts.id, acc.id),
+          eq(emailAccounts.userId, ctx.user.id),
+        )).run();
+        if (Number(deletion.changes || 0) !== 1) {
+          throw new TRPCError({ code: "CONFLICT", message: "The provider connection changed before it could be removed." });
+        }
+        writeAuditLogOrThrow(tx, {
+          userId: ctx.user.id,
+          action: revocationConfirmed
+            ? AUDIT_ACTIONS.PROVIDER_DISCONNECT_REVOKED
+            : AUDIT_ACTIONS.PROVIDER_DISCONNECTED,
+          entityType: "provider_connection",
+          entityId: acc.id,
+          details: {
+            provider: acc.provider === "gmail" ? "google" : acc.provider,
+            route: "emailAccounts.revoke",
+            revocationOutcome,
+            localCredentialsRemoved: true,
+          },
+        });
       });
       return { success: true as const };
     }),

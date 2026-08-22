@@ -10,11 +10,18 @@ import { getDb } from './db';
 import { evidenceSources, evidenceItems } from './schema';
 import { v4 as uuidv4 } from 'uuid';
 import { eq, and } from 'drizzle-orm';
-import { ENV } from './_core/env';
 import { collectBoundedBytes, withByteReadAdmission } from './boundedBytes';
 import { MAX_EVIDENCE_BASE64_CHARS, MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 
 const MAX_GMAIL_ATTACHMENT_RESPONSE_BYTES = MAX_EVIDENCE_BASE64_CHARS + 128 * 1024;
+const GMAIL_REQUEST_TIMEOUT_MS = 30_000;
+
+function fetchGmail(url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    signal: init.signal ?? AbortSignal.timeout(GMAIL_REQUEST_TIMEOUT_MS),
+  });
+}
 
 async function readBoundedGmailJson<T>(response: Response, label: string): Promise<T> {
   const declaredBytes = Number(response.headers.get('content-length'));
@@ -79,81 +86,6 @@ interface EmailFilterOptions {
 }
 
 /**
- * Get Gmail OAuth configuration
- * Uses the same OAuth credentials as email accounts
- */
-export function getGmailOAuthConfig() {
-  return {
-    clientId: ENV.GOOGLE_CLIENT_ID || process.env.GOOGLE_OAUTH_CLIENT_ID || '',
-    clientSecret: ENV.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_OAUTH_CLIENT_SECRET || '',
-    redirectUri: `${process.env.OAUTH_REDIRECT_BASE_URL || 'http://localhost:3000'}/api/oauth/gmail/callback`,
-    scopes: [
-      'https://www.googleapis.com/auth/gmail.readonly',
-    ],
-  };
-}
-
-/**
- * Generate Gmail OAuth authorization URL
- */
-export function getGmailAuthorizationUrl(userId: string, caseId: string): string {
-  const config = getGmailOAuthConfig();
-
-  // Store userId and caseId in state parameter for callback
-  const state = Buffer.from(JSON.stringify({ userId, caseId })).toString('base64');
-
-  const params = new URLSearchParams({
-    client_id: config.clientId,
-    redirect_uri: config.redirectUri,
-    response_type: 'code',
-    scope: config.scopes.join(' '),
-    state,
-    access_type: 'offline',
-    prompt: 'consent',
-  });
-
-  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-}
-
-/**
- * Exchange authorization code for tokens
- */
-export async function exchangeGmailCodeForTokens(code: string): Promise<{
-  accessToken: string;
-  refreshToken?: string;
-  expiresIn: number;
-}> {
-  const config = getGmailOAuthConfig();
-
-  const response = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({
-      code,
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      redirect_uri: config.redirectUri,
-      grant_type: 'authorization_code',
-    }),
-  });
-
-  const data = await response.json();
-
-  if (!data.access_token) {
-    console.error('[Gmail] Token exchange failed:', data);
-    throw new Error(`Gmail token exchange failed: ${data.error_description || data.error}`);
-  }
-
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    expiresIn: data.expires_in || 3600,
-  };
-}
-
-/**
  * Build Gmail query string from filter options
  * Gmail uses a special query syntax for filtering
  */
@@ -194,7 +126,7 @@ export async function listGmailThreads(
   });
   if (query) params.append('q', query);
 
-  const response = await fetch(`https://www.googleapis.com/gmail/v1/users/me/threads?${params.toString()}`, {
+  const response = await fetchGmail(`https://www.googleapis.com/gmail/v1/users/me/threads?${params.toString()}`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },
@@ -228,7 +160,7 @@ export async function searchGmailEmails(
  */
 export async function getGmailMessage(accessToken: string, messageId: string): Promise<GmailMessage> {
   return withByteReadAdmission(async () => {
-    const response = await fetch(
+    const response = await fetchGmail(
       `https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
       {
         headers: {
@@ -264,7 +196,7 @@ async function getGmailAttachmentAdmitted(
   messageId: string,
   attachmentId: string,
 ): Promise<GmailAttachment | null> {
-  const response = await fetch(
+  const response = await fetchGmail(
     `https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachmentId}`,
     {
       headers: {
@@ -398,7 +330,7 @@ export async function syncGmailForCase(
     for (const thread of threads) {
       try {
         // Get all messages in thread
-        const threadResponse = await fetch(
+        const threadResponse = await fetchGmail(
           `https://www.googleapis.com/gmail/v1/users/me/threads/${thread.id}?format=full`,
           {
             headers: {
@@ -522,7 +454,7 @@ export async function syncGmailForCase(
  */
 export async function testGmailConnection(accessToken: string): Promise<{ ok: boolean; email?: string; error?: string }> {
   try {
-    const response = await fetch('https://www.googleapis.com/gmail/v1/users/me/profile', {
+    const response = await fetchGmail('https://www.googleapis.com/gmail/v1/users/me/profile', {
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },

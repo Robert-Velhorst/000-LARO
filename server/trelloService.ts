@@ -1,6 +1,6 @@
 /**
  * Trello Service
- * Integrates with Trello API for OAuth and board/card data access
+ * Integrates with the Trello API for board/card data access
  * Supports board listing, card extraction, and comment collection
  */
 
@@ -85,7 +85,7 @@ async function fetchTrelloArray<T>(options: {
   limitLabel: string;
   budget?: TrelloRequestBudget;
 }): Promise<T[]> {
-  const config = getTrelloOAuthConfig();
+  const config = getTrelloApiConfig();
   const url = new URL(`https://api.trello.com/1/${options.path}`);
   url.search = new URLSearchParams({
     key: config.apiKey,
@@ -127,7 +127,7 @@ async function fetchTrelloObject<T>(options: {
   maxBytes?: number;
   budget?: TrelloRequestBudget;
 }): Promise<T> {
-  const config = getTrelloOAuthConfig();
+  const config = getTrelloApiConfig();
   const url = new URL(`https://api.trello.com/1/${options.path}`);
   url.search = new URLSearchParams({
     key: config.apiKey,
@@ -159,39 +159,12 @@ async function fetchTrelloObject<T>(options: {
 }
 
 /**
- * Get Trello OAuth configuration
+ * Get the public API key used by Trello read requests.
  */
-export function getTrelloOAuthConfig() {
+function getTrelloApiConfig() {
   return {
     apiKey: process.env.TRELLO_API_KEY || '',
-    apiSecret: process.env.TRELLO_API_SECRET || '',
-    redirectUri: `${process.env.OAUTH_REDIRECT_BASE_URL || 'http://localhost:3000'}/api/oauth/trello/callback`,
-    scopes: ['read', 'write', 'account'],
   };
-}
-
-/**
- * Generate Trello OAuth authorization URL
- */
-export function getTrelloAuthorizationUrl(userId: string, caseId: string): string {
-  const config = getTrelloOAuthConfig();
-
-  // Store userId and caseId in state parameter for callback
-  const state = Buffer.from(JSON.stringify({ userId, caseId })).toString('base64');
-
-  // Trello OAuth URL
-  const params = new URLSearchParams({
-    key: config.apiKey,
-    token: '', // Will be obtained after user approves
-    response_type: 'token',
-    redirect_uri: config.redirectUri,
-    scope: config.scopes.join(','),
-    expiration: 'never',
-    name: 'LARO - Legal Automation Dashboard',
-    state,
-  });
-
-  return `https://trello.com/app-authorization?${params.toString()}`;
 }
 
 /**
@@ -278,7 +251,7 @@ export async function downloadTrelloAttachment(
   options: { maxBytes?: number; timeoutMs?: number; token?: string } = {},
 ): Promise<{ key: string; url: string } | null> {
   try {
-    const config = getTrelloOAuthConfig();
+    const config = getTrelloApiConfig();
     const initialHost = new URL(attachmentUrl).hostname.toLowerCase();
     const authorization = options.token && config.apiKey && ['trello.com', 'api.trello.com'].includes(initialHost)
       ? `OAuth oauth_consumer_key="${config.apiKey}", oauth_token="${options.token}"`

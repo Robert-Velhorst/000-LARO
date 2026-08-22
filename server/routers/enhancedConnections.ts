@@ -7,7 +7,7 @@ import { ENV } from '../_core/env';
 import { beginOAuthFlow } from '../oauth2';
 import { revokeStoredGoogleTokens } from '../emailOAuth';
 import { TRPCError } from '@trpc/server';
-import { AUDIT_ACTIONS, createAuditLog } from '../audit';
+import { AUDIT_ACTIONS, createAuditLog, writeAuditLogOrThrow } from '../audit';
 
 /**
  * Phase 012 — external provider reality review.
@@ -154,36 +154,38 @@ const createEnhancedConnectionRouter = (providerName: string) => {
                   });
                 }
               }
-              await db.delete(emailAccounts).where(
-                and(eq(emailAccounts.userId, ctx.user.id), eq(emailAccounts.provider, oauthProvider))
-              );
               const sharedSources = oauthProvider === 'gmail'
                 ? ['Gmail', 'GoogleDrive']
                 : ['Outlook', 'OneDrive'];
-              await db.delete(evidenceSources).where(
-                and(
-                  eq(evidenceSources.userId, ctx.user.id),
-                  inArray(evidenceSources.sourceType, sharedSources),
-                )
-              );
               const revocationConfirmed = revocationOutcomes.some(
                 (outcome) => outcome === 'revoked' || outcome === 'already_invalid'
               );
-              await createAuditLog({
-                userId: ctx.user.id,
-                action: revocationConfirmed
-                  ? AUDIT_ACTIONS.PROVIDER_DISCONNECT_REVOKED
-                  : AUDIT_ACTIONS.PROVIDER_DISCONNECTED,
-                entityType: 'provider_connection',
-                entityId: oauthProvider === 'gmail' ? 'google' : oauthProvider,
-                details: {
-                  provider: oauthProvider === 'gmail' ? 'google' : oauthProvider,
-                  route: `${providerName}.disconnect`,
-                  accountCount: accounts.length,
-                  revocationOutcomes: oauthProvider === 'gmail' ? revocationOutcomes : ['not_applicable'],
-                  localCredentialsRemoved: true,
-                  localSourcesRemoved: true,
-                },
+              db.transaction((tx: any) => {
+                tx.delete(emailAccounts).where(
+                  and(eq(emailAccounts.userId, ctx.user.id), eq(emailAccounts.provider, oauthProvider))
+                ).run();
+                tx.delete(evidenceSources).where(
+                  and(
+                    eq(evidenceSources.userId, ctx.user.id),
+                    inArray(evidenceSources.sourceType, sharedSources),
+                  )
+                ).run();
+                writeAuditLogOrThrow(tx, {
+                  userId: ctx.user.id,
+                  action: revocationConfirmed
+                    ? AUDIT_ACTIONS.PROVIDER_DISCONNECT_REVOKED
+                    : AUDIT_ACTIONS.PROVIDER_DISCONNECTED,
+                  entityType: 'provider_connection',
+                  entityId: oauthProvider === 'gmail' ? 'google' : oauthProvider,
+                  details: {
+                    provider: oauthProvider === 'gmail' ? 'google' : oauthProvider,
+                    route: `${providerName}.disconnect`,
+                    accountCount: accounts.length,
+                    revocationOutcomes: oauthProvider === 'gmail' ? revocationOutcomes : ['not_applicable'],
+                    localCredentialsRemoved: true,
+                    localSourcesRemoved: true,
+                  },
+                });
               });
               return { success: true };
             }

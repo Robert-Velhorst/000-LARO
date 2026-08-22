@@ -1,7 +1,7 @@
 /**
  * Trello Router
  * Provides tRPC procedures for Trello integration
- * - OAuth URL generation
+ * - Explicit OAuth-unavailable status
  * - Board listing
  * - Sync procedures
  * - Connection management
@@ -15,7 +15,6 @@ import { evidenceSources } from '../schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { assertCaseOwnership } from '../_core/authz';
 import {
-  getTrelloAuthorizationUrl,
   getTrelloBoards,
   getTrelloLists,
   getTrelloCards,
@@ -24,6 +23,7 @@ import {
 } from '../trelloService';
 import { PROVIDER_LIMITS, ProviderBatchLimitError } from '../providerLimits';
 import { enforcePersistentRateLimit, RATE_LIMITS } from '../rateLimit';
+import { withByteReadAdmission } from '../boundedBytes';
 
 const trelloId = z.string().trim().min(1).max(256);
 const trelloToken = z.string().trim().min(1).max(2_048);
@@ -43,10 +43,10 @@ function trelloRouterError(error: unknown, operation: string): TRPCError {
 
 /**
  * Trello Router
- * Handles Trello OAuth and evidence collection
+ * Handles token-scoped Trello evidence collection
  * 
  * Features:
- * - OAuth authorization
+ * - Explicit OAuth-unavailable response
  * - Board/List/Card listing
  * - Card and comment sync
  * - Attachment extraction
@@ -142,10 +142,11 @@ export const trelloEnhancedRouter = router({
         token: trelloToken,
       })
     )
-    .query(async ({ input, ctx }) => {
+    .mutation(async ({ input, ctx }) => {
       try {
         await assertCaseOwnership(input.caseId, ctx.user.id);
-        const boards = await getTrelloBoards(input.token);
+        await enforcePersistentRateLimit(ctx, 'trello-provider', RATE_LIMITS.providerOperation);
+        const boards = await withByteReadAdmission(() => getTrelloBoards(input.token));
         
         return {
           success: true,
@@ -168,10 +169,11 @@ export const trelloEnhancedRouter = router({
         token: trelloToken,
       })
     )
-    .query(async ({ input, ctx }) => {
+    .mutation(async ({ input, ctx }) => {
       try {
         await assertCaseOwnership(input.caseId, ctx.user.id);
-        const lists = await getTrelloLists(input.boardId, input.token);
+        await enforcePersistentRateLimit(ctx, 'trello-provider', RATE_LIMITS.providerOperation);
+        const lists = await withByteReadAdmission(() => getTrelloLists(input.boardId, input.token));
         
         return {
           success: true,
@@ -195,10 +197,11 @@ export const trelloEnhancedRouter = router({
         token: trelloToken,
       })
     )
-    .query(async ({ input, ctx }) => {
+    .mutation(async ({ input, ctx }) => {
       try {
         await assertCaseOwnership(input.caseId, ctx.user.id);
-        const cards = await getTrelloCards(input.listId, input.boardId, input.token);
+        await enforcePersistentRateLimit(ctx, 'trello-provider', RATE_LIMITS.providerOperation);
+        const cards = await withByteReadAdmission(() => getTrelloCards(input.listId, input.boardId, input.token));
         
         return {
           success: true,
@@ -235,12 +238,12 @@ export const trelloEnhancedRouter = router({
         }
 
         // Verify case ownership
-        const progress = await syncTrelloForCase(
+        const progress = await withByteReadAdmission(() => syncTrelloForCase(
           ctx.user.id,
           input.caseId,
           input.token,
           input.boardIds
-        );
+        ));
 
         return {
           success: true,
@@ -260,9 +263,10 @@ export const trelloEnhancedRouter = router({
         token: trelloToken,
       })
     )
-    .query(async ({ input, ctx }) => {
+    .mutation(async ({ input, ctx }) => {
       try {
-        const result = await testTrelloConnection(input.token);
+        await enforcePersistentRateLimit(ctx, 'trello-provider', RATE_LIMITS.providerOperation);
+        const result = await withByteReadAdmission(() => testTrelloConnection(input.token));
         
         if (!result.ok) {
           throw new Error(result.error || 'Connection test failed');

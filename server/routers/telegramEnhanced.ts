@@ -30,6 +30,9 @@ import { cases, evidenceItems, evidenceSources } from '../schema';
 import { eq, and, sql } from 'drizzle-orm';
 import { IMPORT_LIMITS, ImportValidationError, normalizeTelegramExport } from '../importLimits';
 import { enforcePersistentRateLimit, RATE_LIMITS } from '../rateLimit';
+import { withByteReadAdmission } from '../boundedBytes';
+
+const telegramToken = z.string().trim().min(1).max(256);
 
 /**
  * Telegram Enhanced Router
@@ -41,19 +44,20 @@ export const telegramEnhancedRouter = router({
   validateToken: protectedProcedure
     .input(
       z.object({
-        token: z.string(),
+        token: telegramToken,
       })
     )
-    .query(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      if (!isValidTelegramToken(input.token)) {
+        return {
+          valid: false,
+          error: 'Invalid token format. Expected: 123456789:ABCdefGHIjklmnoPQRstuvWXYZ',
+        };
+      }
+      await enforcePersistentRateLimit(ctx, 'telegram-provider', RATE_LIMITS.providerOperation);
       try {
-        if (!isValidTelegramToken(input.token)) {
-          return {
-            valid: false,
-            error: 'Invalid token format. Expected: 123456789:ABCdefGHIjklmnoPQRstuvWXYZ',
-          };
-        }
 
-        const botInfo = await getTelegramBotInfo(input.token);
+        const botInfo = await withByteReadAdmission(() => getTelegramBotInfo(input.token));
 
         return {
           valid: true,
@@ -139,13 +143,14 @@ export const telegramEnhancedRouter = router({
   setWebhook: protectedProcedure
     .input(
       z.object({
-        token: z.string(),
-        webhookUrl: z.string().url(),
+        token: telegramToken,
+        webhookUrl: z.string().trim().url().max(2_048),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       try {
-        const result = await setTelegramWebhook(input.token, input.webhookUrl);
+        await enforcePersistentRateLimit(ctx, 'telegram-provider', RATE_LIMITS.providerOperation);
+        const result = await withByteReadAdmission(() => setTelegramWebhook(input.token, input.webhookUrl));
         return result;
       } catch (error) {
         throw error;
@@ -158,12 +163,13 @@ export const telegramEnhancedRouter = router({
   removeWebhook: protectedProcedure
     .input(
       z.object({
-        token: z.string(),
+        token: telegramToken,
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       try {
-        const result = await removeTelegramWebhook(input.token);
+        await enforcePersistentRateLimit(ctx, 'telegram-provider', RATE_LIMITS.providerOperation);
+        const result = await withByteReadAdmission(() => removeTelegramWebhook(input.token));
         return result;
       } catch (error) {
         throw error;
@@ -236,17 +242,18 @@ export const telegramEnhancedRouter = router({
   downloadFile: protectedProcedure
     .input(
       z.object({
-        token: z.string(),
-        fileId: z.string(),
+        token: telegramToken,
+        fileId: z.string().trim().min(1).max(512),
       })
     )
-    .query(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       try {
-        // Get file info first
-        const fileInfo = await getTelegramFile(input.token, input.fileId);
-
-        // Download file
-        const buffer = await downloadTelegramFile(input.token, fileInfo.file_path);
+        await enforcePersistentRateLimit(ctx, 'telegram-provider', RATE_LIMITS.providerOperation);
+        const { fileInfo, buffer } = await withByteReadAdmission(async () => {
+          const fileInfo = await getTelegramFile(input.token, input.fileId);
+          const buffer = await downloadTelegramFile(input.token, fileInfo.file_path);
+          return { fileInfo, buffer };
+        });
 
         return {
           success: true,
@@ -342,11 +349,11 @@ export const telegramEnhancedRouter = router({
         {
           title: 'Rate Limits',
           description: '30 messages/second to different chats, 1 message/second to same chat',
-          workaround: 'Implement request queuing and rate limiting',
+          workaround: 'LARO queues concurrent reads and limits provider requests per user',
         },
         {
           title: 'File Size Limit',
-          description: 'Maximum 20 MB per file for downloads',
+          description: 'Maximum 7 MB per file for downloads into LARO evidence',
           workaround: 'Split large files before sending to Telegram',
         },
       ],

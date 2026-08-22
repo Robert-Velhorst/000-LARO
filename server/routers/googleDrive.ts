@@ -17,7 +17,7 @@ import { createEvidenceFile } from "../evidence";
 import { analyzeStoredEvidence } from "../documentAnalysisService";
 import { supportsDocumentAnalysisMime } from "../documentIntelligence";
 import { revokeStoredGoogleTokens } from "../emailOAuth";
-import { AUDIT_ACTIONS, createAuditLog } from "../audit";
+import { AUDIT_ACTIONS, createAuditLog, writeAuditLogOrThrow } from "../audit";
 import { PROVIDER_LIMITS } from "../providerLimits";
 import { enforcePersistentRateLimit, RATE_LIMITS } from "../rateLimit";
 
@@ -176,26 +176,28 @@ export const googleDriveRouter = router({
         });
       }
 
-      await db
-        .delete(emailAccounts)
-        .where(and(eq(emailAccounts.userId, ctx.user.id), eq(emailAccounts.provider, "gmail")));
       const revocationConfirmed = revocationOutcomes.some(
         (outcome) => outcome === "revoked" || outcome === "already_invalid"
       );
-      await createAuditLog({
-        userId: ctx.user.id,
-        action: revocationConfirmed
-          ? AUDIT_ACTIONS.PROVIDER_DISCONNECT_REVOKED
-          : AUDIT_ACTIONS.PROVIDER_DISCONNECTED,
-        entityType: "provider_connection",
-        entityId: "google",
-        details: {
-          provider: "google",
-          route: "googleDrive.disconnect",
-          accountCount: accounts.length,
-          revocationOutcomes,
-          localCredentialsRemoved: true,
-        },
+      db.transaction((tx: any) => {
+        tx.delete(emailAccounts)
+          .where(and(eq(emailAccounts.userId, ctx.user.id), eq(emailAccounts.provider, "gmail")))
+          .run();
+        writeAuditLogOrThrow(tx, {
+          userId: ctx.user.id,
+          action: revocationConfirmed
+            ? AUDIT_ACTIONS.PROVIDER_DISCONNECT_REVOKED
+            : AUDIT_ACTIONS.PROVIDER_DISCONNECTED,
+          entityType: "provider_connection",
+          entityId: "google",
+          details: {
+            provider: "google",
+            route: "googleDrive.disconnect",
+            accountCount: accounts.length,
+            revocationOutcomes,
+            localCredentialsRemoved: true,
+          },
+        });
       });
       return { success: true };
     }),

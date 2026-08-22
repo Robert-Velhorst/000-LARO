@@ -140,7 +140,10 @@ async function countGmailInboxMessages(
   });
   const listResponse = await fetch(
     `https://www.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } },
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(30_000),
+    },
   );
   const listData = await listResponse.json() as {
     error?: { message?: string };
@@ -154,7 +157,10 @@ async function countGmailInboxMessages(
   for (const message of listData.messages || []) {
     const detailResponse = await fetch(
       `https://www.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(message.id)}?format=metadata&metadataHeaders=Subject&metadataHeaders=To`,
-      { headers: { Authorization: `Bearer ${accessToken}` } },
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(30_000),
+      },
     );
     const detail = await detailResponse.json() as {
       error?: { message?: string };
