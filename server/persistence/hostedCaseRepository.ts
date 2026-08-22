@@ -130,6 +130,28 @@ export function createHostedUserRepository(client: HostedQueryClient) {
   };
 }
 
+/** Preserves the existing owner-keyed team membership model in PostgreSQL. */
+export function createHostedTeamRepository(client: HostedQueryClient) {
+  return {
+    async hasCaseAccess(ownerId: string, userId: string): Promise<boolean> {
+      if (ownerId === userId) return true;
+      const result = await client.query<{ configValue: string | null }>(`
+        SELECT "configValue" FROM "system_config"
+        WHERE "configKey" = $1
+        LIMIT 1
+      `, [`team:${ownerId}:members`]);
+      const raw = result.rows[0]?.configValue;
+      if (!raw) return false;
+      try {
+        const members = JSON.parse(raw);
+        return Array.isArray(members) && members.includes(userId);
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
 /** Owner- and case-scoped evidence reads for the hosted runtime. */
 export function createHostedEvidenceRepository(client: HostedQueryClient) {
   return {

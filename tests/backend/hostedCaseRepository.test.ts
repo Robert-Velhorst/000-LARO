@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { createHostedCaseRepository, createHostedDocumentAnalysisRepository, createHostedEvidenceRepository, createHostedUserRepository } from '../../server/persistence/hostedCaseRepository';
+import { createHostedCaseRepository, createHostedDocumentAnalysisRepository, createHostedEvidenceRepository, createHostedTeamRepository, createHostedUserRepository } from '../../server/persistence/hostedCaseRepository';
 
 describe('hosted case repository', () => {
+  it('checks team membership using only the owner-scoped configuration key', async () => {
+    const queries: Array<{ sql: string; values?: unknown[] }> = [];
+    const repository = createHostedTeamRepository({
+      query: async (sql, values) => {
+        queries.push({ sql, values });
+        return { rows: [{ configValue: '["member-a"]' }] };
+      },
+    });
+
+    await expect(repository.hasCaseAccess('owner-a', 'member-a')).resolves.toBe(true);
+    await expect(repository.hasCaseAccess('owner-a', 'stranger')).resolves.toBe(false);
+    expect(queries[0]).toMatchObject({ values: ['team:owner-a:members'] });
+  });
+
   it('finds an account by email through a parameterized exact match', async () => {
     const queries: Array<{ sql: string; values?: unknown[] }> = [];
     const repository = createHostedUserRepository({
