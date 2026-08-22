@@ -551,6 +551,9 @@ summary fields, but excludes contacts, source bytes/quotes, and provider secrets
 - Generated requests/letters are drafts without invented authority.
 - Bundle approval binds to an exact case snapshot and becomes stale after change.
 - Outreach approval binds to the exact recipient and content shown.
+- Case and outreach status changes use owner-bound compare-and-set writes; a
+  stale request fails instead of overwriting a newer decision. Recording an
+  interested response updates the outreach and case together or rolls both back.
 - Missing/failed providers never create a false `Sent` state.
 
 ### Privacy and Erasure
@@ -564,8 +567,11 @@ summary fields, but excludes contacts, source bytes/quotes, and provider secrets
 
 ### Backup and Restore
 
-Electron recovery sets bind database, `laro-secrets.json`, local evidence, and a
-manifest:
+Electron recovery sets bind the database, `laro-secrets.json`, and managed
+evidence bytes to a hashed manifest. Local evidence is copied into the set. S3
+version-3 sets also bundle every referenced object under a portable filename,
+retain its original key and content type, and verify the restored remote bytes
+before accepting recovery:
 
 ```powershell
 npm run db:backup
@@ -576,6 +582,8 @@ npm run recovery:drill
 
 The default `.laro-backups` is a same-device copy, not off-device protection.
 Use a truthful synced/network destination and configure count/age limits.
+Legacy S3 inventory-only sets remain inspectable but are blocked from normal
+restore because they do not contain the evidence bytes.
 
 ## Developer Guide
 
@@ -643,11 +651,10 @@ deterministic tests, explicit live acceptance, and documentation.
 budgets, dependency audits, release-record validity, traceability, safety scans,
 Electron and Flask recovery drills, and Vitest.
 
-At merged commit `e043667f` on 2026-08-15, the gate passed **87 test files and
-499 tests**, with 0 dependency vulnerabilities, 117/117 traceability rows cited,
-0 suspect runtime placeholders, and 0 high-severity account-safety findings.
-PR 101 also passed Node, Python, and renderer-accessibility jobs. This is a dated
-snapshot; use a fresh gate and the latest
+On 2026-08-22, the fresh gate passed **98 test files and 590 tests**, with 0
+dependency vulnerabilities, 117/117 traceability rows cited, 0 suspect runtime
+placeholders, and 0 high-severity account-safety findings. This is a dated local
+verification snapshot; use the latest
 [GitHub Actions run](https://github.com/Robert-Velhorst/000-LARO/actions) for the
 current commit.
 

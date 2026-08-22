@@ -28,7 +28,6 @@ import {
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { assertCaseOwnership } from "../_core/authz";
 import { nanoid } from "nanoid";
-import { assertCaseTransition } from "../stateMachines";
 
 const count = sql<number>`count(*)`;
 async function n(q: Promise<Array<{ c: number }>>): Promise<number> {
@@ -281,17 +280,12 @@ export const bulkFileOperationsRouter = router({
 /* ─── caseManagement (real: cases, deadlines, communications, audit) ─────── */
 export const caseManagementRouter = router({
   updateStatus: protectedProcedure.input(z.object({ caseId: z.string(), status: z.string() })).mutation(async ({ input, ctx }) => {
-    await assertCaseOwnership(input.caseId, ctx.user.id);
-    const db = await getDb();
-    if (!db) throw new Error("Database not available");
-    const [current] = await db.select({ status: casesTable.status }).from(casesTable).where(eq(casesTable.id, input.caseId)).limit(1);
-    assertCaseTransition(current?.status ?? null, input.status);
-    const result = await db.update(casesTable)
-      .set({ status: input.status, updatedAt: new Date() } as any)
-      .where(eq(casesTable.id, input.caseId));
-    if (!Number((result as any)?.changes ?? 0)) {
-      throw new TRPCError({ code: "CONFLICT", message: "Case changed before the status could be saved" });
-    }
+    const { transitionOwnedCaseStatus } = await import("../caseTransitions");
+    await transitionOwnedCaseStatus({
+      caseId: input.caseId,
+      actorUserId: ctx.user.id,
+      nextStatus: input.status,
+    });
     return { ok: true as const, status: input.status };
   }),
   getStatusHistory: protectedProcedure.input(z.object({ caseId: z.string() })).query(async ({ input, ctx }) => {

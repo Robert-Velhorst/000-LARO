@@ -14,13 +14,14 @@ import { eq, and, inArray, isNull } from "drizzle-orm";
 import { findCaseLawyersWithOfficialDirectory } from "../matching";
 import { getWorkflowPreferences } from "../workflowPreferences";
 import { approveOutreachMessage, buildOutreachMessage, readApprovedOutreachMessage, readOutreachMetadata } from "../outreachApproval";
+import { compareAndSetCaseStatusInTransaction } from "../caseTransitions";
 
 // Phase 026 — outreach review/approval states.
 const OUTREACH_PENDING = "PendingApproval";
 const OUTREACH_APPROVED = "Approved";
 const OUTREACH_REJECTED = "Rejected";
 
-async function prepareOutreachDraftRows(caseId: string, maxResults: number, userId: string) {
+async function discoverOutreachDraftRows(caseId: string, maxResults: number, userId: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -31,31 +32,53 @@ async function prepareOutreachDraftRows(caseId: string, maxResults: number, user
     matches = result.lawyers;
     directoryStatus = result.directory.status;
   } catch (error) {
-    return { created: 0, candidates: 0, reason: error instanceof Error ? error.message : "No matches" };
+    return {
+      matches: [],
+      directoryStatus,
+      approvalMode: (await getWorkflowPreferences(userId)).messageApprovalMode,
+      reason: error instanceof Error ? error.message : "No matches",
+    };
   }
 
-  let created = 0;
   const preferences = await getWorkflowPreferences(userId);
-  // External messages always require a human approval snapshot. The historical
-  // "automatic" preference may automate draft preparation, never approval.
-  const initialStatus = OUTREACH_PENDING;
+  return {
+    matches,
+    directoryStatus,
+    approvalMode: preferences.messageApprovalMode,
+    reason: matches.length === 0 ? "No matching lawyers are available for an outreach draft." : undefined,
+  };
+}
+
+function insertOutreachDraftRows(db: any, caseId: string, matches: Array<{ id: string; name: string }>): number {
+  let created = 0;
   for (const match of matches) {
-    const result = await db.insert(outreachStatus).values({
+    const result = db.insert(outreachStatus).values({
       id: nanoid(),
       caseId,
       lawyerId: match.id,
-      status: initialStatus,
+      status: OUTREACH_PENDING,
       createdAt: new Date(),
       updatedAt: new Date(),
-    } as any).onConflictDoNothing();
-    if ((result as any)?.changes ?? 1) created += 1;
+    } as any).onConflictDoNothing().run();
+    if (Number(result?.changes ?? 0) === 1) created += 1;
   }
+  return created;
+}
+
+async function prepareOutreachDraftRows(caseId: string, maxResults: number, userId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const plan = await discoverOutreachDraftRows(caseId, maxResults, userId);
+  const created = plan.matches.length > 0
+    ? db.transaction((tx: any) => insertOutreachDraftRows(tx, caseId, plan.matches))
+    : 0;
   return {
     created,
-    candidates: matches.length,
-    directoryStatus,
-    approvalMode: preferences.messageApprovalMode,
+    candidates: plan.matches.length,
+    directoryStatus: plan.directoryStatus,
+    approvalMode: plan.approvalMode,
     automaticallyApproved: 0,
+    reason: plan.reason,
   };
 }
 
@@ -85,30 +108,65 @@ export const workflowRouter = router({
       const db = await getDb();
       if (!db) throw new Error("Database not available");
 
-      const existing = await db
-        .select({ status: casesTable.status })
+      const plan = await discoverOutreachDraftRows(input.caseId, input.maxResults, ctx.user.id);
+      const [snapshot] = await db
+        .select({ ownerId: casesTable.userId, status: casesTable.status })
         .from(casesTable)
         .where(eq(casesTable.id, input.caseId))
         .limit(1);
+      if (!snapshot) throw new Error("Case not found");
+      const alreadyInitiated = snapshot.status === "Outreach";
 
-      const alreadyInitiated = existing[0]?.status === "Outreach";
-      if (!alreadyInitiated) {
-        await db.update(casesTable)
-          .set({ status: "Outreach", updatedAt: new Date() })
-          .where(eq(casesTable.id, input.caseId));
+      if (plan.matches.length === 0) {
+        await createAuditLog({
+          userId: ctx.user.id,
+          action: AUDIT_ACTIONS.OUTREACH_INITIATED,
+          entityType: "case",
+          entityId: input.caseId,
+          details: { from: snapshot.status, to: snapshot.status, draftsPrepared: 0, statusChanged: false, reason: plan.reason },
+        });
+        return {
+          success: false,
+          alreadyInitiated,
+          statusChanged: false,
+          created: 0,
+          candidates: 0,
+          directoryStatus: plan.directoryStatus,
+          approvalMode: plan.approvalMode,
+          automaticallyApproved: 0,
+          reason: plan.reason,
+        } as const;
       }
 
-      const drafts = await prepareOutreachDraftRows(input.caseId, input.maxResults, ctx.user.id);
+      let created = 0;
+      db.transaction((tx: any) => {
+        compareAndSetCaseStatusInTransaction(tx, {
+          caseId: input.caseId,
+          ownerId: snapshot.ownerId,
+          expectedStatus: snapshot.status,
+          nextStatus: "Outreach",
+        });
+        created = insertOutreachDraftRows(tx, input.caseId, plan.matches);
+      });
 
       await createAuditLog({
         userId: ctx.user.id,
         action: AUDIT_ACTIONS.OUTREACH_INITIATED,
         entityType: "case",
         entityId: input.caseId,
-        details: { from: existing[0]?.status ?? null, to: "Outreach", draftsPrepared: drafts.candidates, approvalMode: drafts.approvalMode },
+        details: { from: snapshot.status, to: "Outreach", draftsPrepared: plan.matches.length, approvalMode: plan.approvalMode },
       });
 
-      return { success: true, alreadyInitiated, ...drafts } as const;
+      return {
+        success: true,
+        alreadyInitiated,
+        statusChanged: !alreadyInitiated,
+        created,
+        candidates: plan.matches.length,
+        directoryStatus: plan.directoryStatus,
+        approvalMode: plan.approvalMode,
+        automaticallyApproved: 0,
+      } as const;
     }),
 
   /**
