@@ -3,6 +3,7 @@ import {
   RateLimitStoreUnavailableError,
   createRedisRateLimitStore,
 } from '../../server/rateLimitStore';
+import { enforceSharedRateLimit } from '../../server/rateLimit';
 
 describe('Redis rate-limit store', () => {
   it('uses one atomic script result to allow the first request and report its reset time', async () => {
@@ -29,5 +30,13 @@ describe('Redis rate-limit store', () => {
 
     await expect(store.consume({ key: 'laro:ratelimit:hash', maxRequests: 2, windowMs: 60_000 }))
       .rejects.toThrow(RateLimitStoreUnavailableError);
+  });
+
+  it('turns a shared-limit denial into the existing tRPC error contract', async () => {
+    await expect(enforceSharedRateLimit({
+      store: { consume: async () => ({ allowed: false, count: 4, resetAfterMs: 12_000 }) },
+      key: 'laro:ratelimit:hash',
+      config: { maxRequests: 3, windowMs: 60_000, message: 'Too many imports.' },
+    })).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS', message: 'Too many imports.' });
   });
 });
