@@ -1,5 +1,6 @@
 import { MAX_BOOTSTRAP_TOKEN_LENGTH } from "../signupPolicy";
 import { resolveOutboundEmailConfiguration } from "../emailConfig";
+import { assertRuntimeModeConfig, RuntimeModeConfigError, resolveRuntimeMode } from './runtimeMode';
 
 /**
  * Environment configuration
@@ -32,6 +33,7 @@ export const ENV = {
   HOST:             process.env.HOST || '127.0.0.1',
   API_BODY_LIMIT:   process.env.API_BODY_LIMIT || '10mb',
   SERVER_ONLY:      process.env.SERVER_ONLY === 'true',
+  LARO_RUNTIME_MODE: resolveRuntimeMode(process.env),
   STANDALONE_SIGNUP_TOKEN: process.env.STANDALONE_SIGNUP_TOKEN || '',
   NODE_ENV:         process.env.NODE_ENV || 'production',
 
@@ -74,6 +76,8 @@ export const ENV = {
   AWS_S3_ACCESS_KEY:      process.env.AWS_S3_ACCESS_KEY || '',
   AWS_S3_SECRET_KEY:      process.env.AWS_S3_SECRET_KEY || '',
   AWS_S3_REGION:          process.env.AWS_S3_REGION || 'eu-west-1',
+  REDIS_URL:              process.env.REDIS_URL || '',
+  LARO_HOSTED_ENCRYPTION_KEY: process.env.LARO_HOSTED_ENCRYPTION_KEY || '',
 
   // Frontend
   FRONTEND_URL: process.env.VITE_FRONTEND_URL || 'http://localhost:3000',
@@ -89,6 +93,7 @@ export const ENV = {
   get isDev()   { return this.NODE_ENV === 'development'; },
   get isProd()  { return this.NODE_ENV === 'production'; },
   get isDemo()  { return this.DEMO_MODE && !this.isProd; },
+  get isHosted() { return this.LARO_RUNTIME_MODE === 'hosted'; },
 };
 
 /**
@@ -140,6 +145,13 @@ export function assertSecurityConfig(): string[] {
 
   if (ENV.isProd) {
     const failures: string[] = [];
+    if (ENV.isHosted) {
+      try {
+        assertRuntimeModeConfig(process.env);
+      } catch (error) {
+        failures.push(error instanceof RuntimeModeConfigError ? error.message : 'Hosted runtime configuration is invalid');
+      }
+    }
     const requiredProviders = requiredLiveProviders();
     if (jwtInsecure) failures.push('JWT_SECRET is missing or set to the insecure default');
     if (cookieInsecure) failures.push('COOKIE_SECRET is missing or set to the insecure default');
