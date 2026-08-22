@@ -2,7 +2,7 @@
 
 Date: 2026-08-22
 Branch: `main` (updates proposed through pull requests)
-Baseline commit: `48ccc59cd9ea3d594bb4b0ecad0da3a5b41ae179`
+Baseline commit: `ea37e9440dbb9e4b9c1feac6026495f5366d34c9`
 Specification: `000-LARO__Giant_Codex_Goal_Prompt.pdf`, 124 pages, phases 000-115
 
 ## Scope and method
@@ -63,6 +63,9 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
   separate state transitions; delivery is disabled by default and fail-closed.
 - Case and outreach transitions claim their exact prior state. Response and case
   outcome changes are transactional, so stale or invalid requests roll back.
+- Required audit evidence is written in the same transaction as consequential
+  case and outreach changes. Audit failure rolls back the state change, and
+  multi-draft approval either commits every draft and audit row or commits none.
 - Evidence analysis distinguishes source observations from inference and keeps
   document/source identifiers available to the user.
 - Backup sets bind the database, encryption-key compatibility, and managed
@@ -89,6 +92,7 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
 | S3 recovery sets recorded inventory without preserving evidence bytes | Medium | Version-3 sets bundle bounded, hashed object bytes and content types; restore verifies remote writes and rolls back on failure |
 | Case and response transitions used stale check-then-update writes | High | Owner-bound compare-and-set transitions reject stale state; response plus case outcome updates commit or roll back together; no-match outreach leaves the case unchanged |
 | An unreachable duplicate outreach engine retained unsafe state writers | Medium | Removed the unreferenced `server/workflow.ts`; the registered tRPC workflow is the only runtime outreach authority |
+| Consequential legal-state writes could survive a failed audit insert | High | Case creation, classification, editing, transition, and deletion plus outreach initiation, single and batch draft decisions, dispatch claims, responses, and Gmail reply linking now commit with required audit rows or roll back together; injected SQLite failures verify each boundary |
 
 ## Verdict
 

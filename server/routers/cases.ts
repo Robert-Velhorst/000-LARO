@@ -4,7 +4,7 @@ import { router, protectedProcedure } from "../_core/trpc";
 import { getDb } from "../db";
 import { assertCaseOwnership } from "../_core/authz";
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
-import { createAuditLog, AUDIT_ACTIONS } from "../audit";
+import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "../audit";
 import { cases as casesTable, outreachStatus, lawyers, evidence, systemConfig } from '../schema';
 import { eq, desc, asc, and, sql } from "drizzle-orm";
 import { sanitizeLegalAreas } from "../legalAreasValidator";
@@ -111,28 +111,29 @@ export const casesRouter = router({
       // instead of the case being unclassified.
       const classification = classifyLegalAreas(input.caseSummary, input.caseType);
 
-      await db.insert(casesTable).values({
-        id: caseId,
-        userId,
-        clientName: input.clientName,
-        clientEmail: input.clientEmail,
-        clientPhone: input.clientPhone,
-        clientAddress: input.clientAddress,
-        caseType: input.caseType,
-        caseSummary: input.caseSummary,
-        urgency: input.urgency,
-        status: "Matching",
-        legalAreas: sanitizeLegalAreas(classification.areas),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      } as any);
-
-      await createAuditLog({ // Phase 019
-        userId,
-        action: AUDIT_ACTIONS.CASE_CREATED,
-        entityType: "case",
-        entityId: caseId,
-        details: { caseType: input.caseType, urgency: input.urgency, legalAreas: classification.areas },
+      db.transaction((tx: any) => {
+        tx.insert(casesTable).values({
+          id: caseId,
+          userId,
+          clientName: input.clientName,
+          clientEmail: input.clientEmail,
+          clientPhone: input.clientPhone,
+          clientAddress: input.clientAddress,
+          caseType: input.caseType,
+          caseSummary: input.caseSummary,
+          urgency: input.urgency,
+          status: "Matching",
+          legalAreas: sanitizeLegalAreas(classification.areas),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        } as any).run();
+        writeAuditLogOrThrow(tx, {
+          userId,
+          action: AUDIT_ACTIONS.CASE_CREATED,
+          entityType: "case",
+          entityId: caseId,
+          details: { caseType: input.caseType, urgency: input.urgency, legalAreas: classification.areas },
+        });
       });
 
       await createNotification({ // Phase 027
@@ -251,20 +252,22 @@ export const casesRouter = router({
       if (!c) throw new Error("Case not found");
 
       const classification = classifyLegalAreas(c.caseSummary || "", c.caseType || undefined);
-      const updateResult = await db
-        .update(casesTable)
-        .set({ legalAreas: sanitizeLegalAreas(classification.areas), updatedAt: new Date() })
-        .where(eq(casesTable.id, input.caseId));
-      if (!Number((updateResult as any)?.changes ?? 0)) {
-        throw new TRPCError({ code: "CONFLICT", message: "Case changed before classification could be saved" });
-      }
-
-      await createAuditLog({
-        userId: ctx.user.id,
-        action: AUDIT_ACTIONS.CASE_UPDATED,
-        entityType: "case",
-        entityId: input.caseId,
-        details: { classified: classification.areas, confidence: classification.confidence },
+      db.transaction((tx: any) => {
+        const updateResult = tx
+          .update(casesTable)
+          .set({ legalAreas: sanitizeLegalAreas(classification.areas), updatedAt: new Date() })
+          .where(eq(casesTable.id, input.caseId))
+          .run();
+        if (!Number(updateResult?.changes ?? 0)) {
+          throw new TRPCError({ code: "CONFLICT", message: "Case changed before classification could be saved" });
+        }
+        writeAuditLogOrThrow(tx, {
+          userId: ctx.user.id,
+          action: AUDIT_ACTIONS.CASE_UPDATED,
+          entityType: "case",
+          entityId: input.caseId,
+          details: { classified: classification.areas, confidence: classification.confidence },
+        });
       });
       emitRealtimeDataChange(ctx.user.id, { scope: "case", caseId: input.caseId });
 
@@ -299,23 +302,32 @@ export const casesRouter = router({
           nextStatus: input.status,
           changes: updateData,
           updatedAt: updateData.updatedAt,
+          audit: {
+            userId: ctx.user.id,
+            action: AUDIT_ACTIONS.CASE_STATUS_CHANGED,
+            entityType: "case",
+            entityId: input.id,
+            details: { to: input.status, fields: Object.keys(updateData) },
+          },
         });
       } else {
-        const updateResult = await db.update(casesTable)
-          .set(updateData)
-          .where(eq(casesTable.id, input.id));
-        if (!Number((updateResult as any)?.changes ?? 0)) {
-          throw new TRPCError({ code: "CONFLICT", message: "Case changed before the update could be saved" });
-        }
+        db.transaction((tx: any) => {
+          const updateResult = tx.update(casesTable)
+            .set(updateData)
+            .where(eq(casesTable.id, input.id))
+            .run();
+          if (!Number(updateResult?.changes ?? 0)) {
+            throw new TRPCError({ code: "CONFLICT", message: "Case changed before the update could be saved" });
+          }
+          writeAuditLogOrThrow(tx, {
+            userId: ctx.user.id,
+            action: AUDIT_ACTIONS.CASE_UPDATED,
+            entityType: "case",
+            entityId: input.id,
+            details: { fields: Object.keys(updateData) },
+          });
+        });
       }
-
-      await createAuditLog({ // Phase 019
-        userId: ctx.user.id,
-        action: input.status ? AUDIT_ACTIONS.CASE_STATUS_CHANGED : AUDIT_ACTIONS.CASE_UPDATED,
-        entityType: "case",
-        entityId: input.id,
-        details: { status: input.status, fields: Object.keys(updateData) },
-      });
       emitRealtimeDataChange(ctx.user.id, { scope: "case", caseId: input.id });
 
       return { success: true };
@@ -379,19 +391,18 @@ export const casesRouter = router({
         sqliteDb
           .prepare(`DELETE FROM cases WHERE id = ? AND userId = ?`)
           .run(caseId, userId);
+        writeAuditLogOrThrow(db, {
+          userId,
+          action: AUDIT_ACTIONS.CASE_DELETED,
+          entityType: "case",
+          entityId: caseId,
+          details: { cascadedTables: tablesWithCaseId },
+        });
       });
 
       tx(input.id, ctx.user.id);
 
       const cleanup = await processQueuedStorageDeletions({ storageKeys });
-
-      await createAuditLog({ // Phase 019
-        userId: ctx.user.id,
-        action: AUDIT_ACTIONS.CASE_DELETED,
-        entityType: "case",
-        entityId: input.id,
-        details: { cascadedTables: tablesWithCaseId },
-      });
 
       return {
         success: cleanup.requestedPending === 0,

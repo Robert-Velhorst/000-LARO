@@ -27,6 +27,7 @@ import {
 } from "../schema";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { assertCaseOwnership } from "../_core/authz";
+import { AUDIT_ACTIONS } from "../audit";
 import { nanoid } from "nanoid";
 
 const count = sql<number>`count(*)`;
@@ -285,6 +286,13 @@ export const caseManagementRouter = router({
       caseId: input.caseId,
       actorUserId: ctx.user.id,
       nextStatus: input.status,
+      audit: {
+        userId: ctx.user.id,
+        action: AUDIT_ACTIONS.CASE_STATUS_CHANGED,
+        entityType: "case",
+        entityId: input.caseId,
+        details: { to: input.status, source: "caseManagement.updateStatus" },
+      },
     });
     return { ok: true as const, status: input.status };
   }),

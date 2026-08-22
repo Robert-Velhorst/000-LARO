@@ -1,10 +1,11 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { nanoid } from "nanoid";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { assertCaseOwnership } from "../_core/authz";
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
-import { createAuditLog, AUDIT_ACTIONS } from "../audit";
+import { createAuditLog, AUDIT_ACTIONS, writeAuditLogOrThrow } from "../audit";
 import { createNotification } from "../notifications";
 import { getFlag } from "../featureFlags";
 import { assertNotEmergencyStopped } from "../systemState";
@@ -145,16 +146,15 @@ export const workflowRouter = router({
           ownerId: snapshot.ownerId,
           expectedStatus: snapshot.status,
           nextStatus: "Outreach",
+          audit: {
+            userId: ctx.user.id,
+            action: AUDIT_ACTIONS.OUTREACH_INITIATED,
+            entityType: "case",
+            entityId: input.caseId,
+            details: { from: snapshot.status, to: "Outreach", draftsPrepared: plan.matches.length, approvalMode: plan.approvalMode },
+          },
         });
         created = insertOutreachDraftRows(tx, input.caseId, plan.matches);
-      });
-
-      await createAuditLog({
-        userId: ctx.user.id,
-        action: AUDIT_ACTIONS.OUTREACH_INITIATED,
-        entityType: "case",
-        entityId: input.caseId,
-        details: { from: snapshot.status, to: "Outreach", draftsPrepared: plan.matches.length, approvalMode: plan.approvalMode },
       });
 
       return {
@@ -254,21 +254,15 @@ export const workflowRouter = router({
       await assertNotEmergencyStopped();
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      const ids = input.approvals.map((item) => item.outreachId);
-      const rows = await db.select({ id: outreachStatus.id, caseId: outreachStatus.caseId, status: outreachStatus.status })
-        .from(outreachStatus)
-        .where(inArray(outreachStatus.id, ids));
-      if (rows.length !== ids.length) throw new Error("One or more outreach drafts were not found");
-      for (const row of rows) {
-        if (!row.caseId) throw new Error("Outreach draft is not linked to a case");
-        await assertCaseOwnership(row.caseId, ctx.user.id);
-        assertOutreachTransition(row.status ?? null, OUTREACH_APPROVED);
-      }
-      const results = [];
+      const prepared: PreparedDraftStatus[] = [];
       for (const approval of input.approvals) {
-        results.push(await setDraftStatus(ctx.user.id, approval.outreachId, OUTREACH_APPROVED, approval.approvalHash));
+        prepared.push(await prepareDraftStatus(ctx.user.id, approval.outreachId, OUTREACH_APPROVED, approval.approvalHash));
       }
-      return { success: true as const, approved: results.length, sent: false as const };
+      db.transaction((tx: any) => {
+        for (const draft of prepared) applyDraftStatusInTransaction(tx, ctx.user.id, draft);
+      });
+      for (const draft of prepared) await notifyDraftStatus(ctx.user.id, draft.newStatus);
+      return { success: true as const, approved: prepared.length, sent: false as const };
     }),
 
   /** Phase 026 — reject a draft. */
@@ -367,7 +361,20 @@ export const workflowRouter = router({
     }),
 });
 
-async function setDraftStatus(userId: string, outreachId: string, newStatus: string, expectedApprovalHash?: string) {
+interface PreparedDraftStatus {
+  outreachId: string;
+  previousStatus: string | null;
+  newStatus: string;
+  metadata: string | null;
+  updatedAt: Date;
+}
+
+async function prepareDraftStatus(
+  userId: string,
+  outreachId: string,
+  newStatus: string,
+  expectedApprovalHash?: string,
+): Promise<PreparedDraftStatus> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -376,10 +383,7 @@ async function setDraftStatus(userId: string, outreachId: string, newStatus: str
   )[0];
   if (!row || !row.caseId) throw new Error("Outreach draft not found");
 
-  // Ownership: the draft's case must belong to the user.
   await assertCaseOwnership(row.caseId, userId);
-
-  // Phase 059: enforce the outreach state machine (PendingApproval -> Approved/Rejected).
   assertOutreachTransition(row.status ?? null, newStatus);
   const updatedAt = new Date();
   let metadata = row.metadata;
@@ -394,7 +398,6 @@ async function setDraftStatus(userId: string, outreachId: string, newStatus: str
       lawyerEmail: lawyer?.email,
     });
     if (!expectedApprovalHash || expectedApprovalHash !== message.approvalHash) {
-      const { TRPCError } = await import("@trpc/server");
       throw new TRPCError({
         code: "CONFLICT",
         message: "The outreach message changed after review. Review the current recipient and message before approving.",
@@ -411,34 +414,58 @@ async function setDraftStatus(userId: string, outreachId: string, newStatus: str
       }),
     });
   }
-  const result = await db
+
+  return {
+    outreachId,
+    previousStatus: row.status ?? null,
+    newStatus,
+    metadata,
+    updatedAt,
+  };
+}
+
+function applyDraftStatusInTransaction(tx: any, userId: string, draft: PreparedDraftStatus) {
+  const result = tx
     .update(outreachStatus)
-    .set({ status: newStatus, metadata, updatedAt })
+    .set({ status: draft.newStatus, metadata: draft.metadata, updatedAt: draft.updatedAt })
     .where(and(
-      eq(outreachStatus.id, outreachId),
-      row.status == null ? isNull(outreachStatus.status) : eq(outreachStatus.status, row.status),
-    ));
+      eq(outreachStatus.id, draft.outreachId),
+      draft.previousStatus == null
+        ? isNull(outreachStatus.status)
+        : eq(outreachStatus.status, draft.previousStatus),
+    ))
+    .run();
   if (Number(result.changes || 0) !== 1) {
-    const { TRPCError } = await import("@trpc/server");
     throw new TRPCError({ code: "CONFLICT", message: "The outreach draft changed before this action completed. Refresh and try again." });
   }
-
-  await createAuditLog({
+  writeAuditLogOrThrow(tx, {
     userId,
     action: AUDIT_ACTIONS.OUTREACH_STATUS_CHANGED,
     entityType: "outreach",
-    entityId: outreachId,
-    details: { from: row.status, to: newStatus },
+    entityId: draft.outreachId,
+    details: { from: draft.previousStatus, to: draft.newStatus },
   });
+}
 
-  await createNotification({ // Phase 027
+async function notifyDraftStatus(userId: string, newStatus: string) {
+  await createNotification({
     userId,
-    title: newStatus === "Approved" ? "Outreach draft approved" : "Outreach draft rejected",
+    title: newStatus === OUTREACH_APPROVED ? "Outreach draft approved" : "Outreach draft rejected",
     body:
-      newStatus === "Approved"
+      newStatus === OUTREACH_APPROVED
         ? "The draft is marked ready to send. No message has been sent yet."
         : "The draft was rejected and will not be sent.",
   });
+}
+
+async function setDraftStatus(userId: string, outreachId: string, newStatus: string, expectedApprovalHash?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const prepared = await prepareDraftStatus(userId, outreachId, newStatus, expectedApprovalHash);
+  db.transaction((tx: any) => {
+    applyDraftStatusInTransaction(tx, userId, prepared);
+  });
+  await notifyDraftStatus(userId, newStatus);
 
   // Approving marks the draft ready-to-send; actual transmission is a later
   // phase and additionally gated by the `outreach.send.enabled` feature flag
