@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createHostedDatabase } from '../../server/persistence/hostedDatabase';
-import { createHostedCaseRepository, createHostedEvidenceRepository } from '../../server/persistence/hostedCaseRepository';
+import { createHostedCaseRepository, createHostedEvidenceRepository, createHostedUserRepository } from '../../server/persistence/hostedCaseRepository';
 import { applyHostedMigrations } from '../../server/persistence/hostedMigrations';
 
 const connectionString = process.env.LARO_HOSTED_TEST_DATABASE_URL;
@@ -51,6 +51,17 @@ suite('hosted PostgreSQL connection', () => {
       'storage_deletion_queue',
       'users',
     ]);
+
+    await database.transaction(async (client) => {
+      await client.query(`
+        INSERT INTO "users" ("id", "email", "role", "createdAt", "lastSignedIn")
+        VALUES ('owner-a', 'Owner@Example.test', 'user', 1, 1)
+      `);
+    });
+    const userRepository = createHostedUserRepository({
+      query: (sql, values) => database!.transaction((client) => client.query(sql, values)),
+    });
+    await expect(userRepository.findByEmail('owner@example.test')).resolves.toMatchObject({ id: 'owner-a' });
 
     const repository = createHostedCaseRepository({
       query: (sql, values) => database!.transaction((client) => client.query(sql, values)),
