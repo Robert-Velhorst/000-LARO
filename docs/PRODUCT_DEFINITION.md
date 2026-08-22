@@ -42,7 +42,7 @@ provide definitive legal advice.
 | Case intake and ownership | Implemented with owner-scoped draft restore/autosave, persisted creation, and immediate query refresh |
 | Gmail and Google Drive intake | Implemented when OAuth credentials and user consent are present |
 | Local evidence upload | Implemented with bounded file types/sizes, local or S3 persistence, SHA-256 provenance, and rollback on record failure |
-| Desktop folder scanner | Implemented with shared-session authentication, explicit folder consent, review and per-file selection, short-lived upload credentials, and real owner-scoped storage |
+| Desktop folder scanner | Implemented with current-session authentication, an Electron-main-only per-launch proof, explicit folder consent, review and per-file selection, logout-aware upload cancellation, and real owner-scoped storage |
 | Document intelligence | Desktop TXT/CSV/HTML/EML/PDF/DOCX extraction plus Dutch/English image OCR, versioned persisted findings, automatic import analysis, and citation-validated optional deep analysis are implemented; legacy Flask analysis remains reviewable before owner-bound migration; scanned PDFs require image conversion before OCR |
 | Evidence timeline | Implemented with story, horizontal, and vertical views plus direct source access |
 | Lawyer matching | Implemented against persisted lawyer records and case-derived legal fields |

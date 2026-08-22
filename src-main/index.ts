@@ -503,28 +503,32 @@ function setupIPC(): void {
     const selected = setScanFileSelection(String(id).slice(0, 200), safeIds);
     return { selected };
   });
-  ipcMain.handle(IPC_CHANNELS.UPLOAD_START, (event, id: string) => { assertTrustedIpc(event); return startUpload(id); });
+  ipcMain.handle(IPC_CHANNELS.UPLOAD_START, (event, id: string) => {
+    assertTrustedIpc(event);
+    const rendererUrl = event.senderFrame?.url || event.sender.getURL();
+    return startUpload(id, rendererUrl);
+  });
   ipcMain.handle(IPC_CHANNELS.UPLOAD_PAUSE, (event) => { assertTrustedIpc(event); currentUploader?.pause(); return { success: true }; });
   ipcMain.handle(IPC_CHANNELS.UPLOAD_RESUME, (event) => { assertTrustedIpc(event); currentUploader?.resume(); return { success: true }; });
 }
 
-async function startUpload(scanId: string): Promise<{ success: boolean }> {
+async function startUpload(scanId: string, cookieUrl: string): Promise<{ success: boolean }> {
   if (currentUploader || uploadStarting) throw new Error('Upload in progress');
   if (!isTrustedAppUrl(agentConfig.apiUrl)) throw new Error('Scanner API URL is not trusted');
   uploadStarting = true;
   try {
     const browserSession = (mainWindow ?? scanPanel)?.webContents.session ?? session.defaultSession;
-    const auth = await getDesktopScannerAuth({
-      apiUrl: agentConfig.apiUrl,
+    const resolveAuth = () => getDesktopScannerAuth({
+      cookieUrl,
       scannerSecret: process.env.LARO_DESKTOP_SCANNER_SECRET || '',
       cookieStore: browserSession.cookies,
     });
+    await resolveAuth();
     const safeScanId = String(scanId).slice(0, 200);
     currentUploader = new FileUploader({
       scanId: safeScanId,
       apiUrl: agentConfig.apiUrl,
-      sessionCookie: auth.sessionCookie,
-      scannerSecret: auth.scannerSecret,
+      resolveAuth,
       concurrency: 3,
       maxRetries: 3,
     });

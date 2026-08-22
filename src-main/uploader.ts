@@ -11,13 +11,12 @@ import type { AppRouter } from '../server/routers';
 import { FileItem } from '../shared/types';
 import { evidenceTypeForMime, MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 import { updateFileStatus, updateScanProgress, getPendingFiles, getScanCaseId } from './database';
-import { DESKTOP_SCANNER_HEADER } from '../shared/desktopScannerAuth';
+import { createDesktopScannerHeaders } from './scannerAuth';
 
 export interface UploaderOptions {
   scanId: string;
   apiUrl: string;
-  sessionCookie: string;
-  scannerSecret: string;
+  resolveAuth: () => Promise<{ sessionCookie: string; scannerSecret: string }>;
   concurrency?: number; // Number of parallel uploads
   maxRetries?: number;
 }
@@ -50,10 +49,7 @@ export class FileUploader extends EventEmitter {
       links: [
         httpBatchLink({
           url: `${this.apiUrl.replace(/\/$/, '')}/api/trpc`,
-          headers: {
-            Cookie: options.sessionCookie,
-            [DESKTOP_SCANNER_HEADER]: options.scannerSecret,
-          },
+          headers: createDesktopScannerHeaders(options.resolveAuth),
         }),
       ],
     });
@@ -225,6 +221,13 @@ export class FileUploader extends EventEmitter {
       
       // Retry logic
       const message = error instanceof Error ? error.message : String(error);
+      const authorizationLost = /(?:sign in to LARO|authorization is unavailable)/i.test(message);
+      if (authorizationLost) {
+        updateFileStatus(file.id, 'pending', 0, message);
+        this.stop();
+        this.emit('authorization-lost', { error: message });
+        return;
+      }
       const nonRetryable = /(?:unauthorized|forbidden|not authenticated|not found|between 1 byte|file type)/i.test(message);
       if (retryCount < this.maxRetries && !nonRetryable) {
         console.log(`[Uploader] Retrying upload (${retryCount + 1}/${this.maxRetries}): ${file.name}`);

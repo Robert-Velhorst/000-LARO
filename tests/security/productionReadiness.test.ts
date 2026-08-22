@@ -829,8 +829,8 @@ describe('production readiness regressions', () => {
     expect(main).toContain("process.env.HOST = '127.0.0.1'");
     expect(main).not.toContain("ipcMain.handle('agent:token'");
     expect(uploader).toContain('evidenceFiles.upload.mutate');
-    expect(uploader).toContain('Cookie: options.sessionCookie');
-    expect(uploader).toContain('[DESKTOP_SCANNER_HEADER]: options.scannerSecret');
+    expect(uploader).toContain('createDesktopScannerHeaders(options.resolveAuth)');
+    expect(uploader).toContain("updateFileStatus(file.id, 'pending'");
     expect(uploader).not.toContain('Authorization:');
     expect(uploader).not.toContain('s3.example.com');
     expect(uploader).not.toMatch(/simulat(?:e|ed|ing) S3 upload/i);
