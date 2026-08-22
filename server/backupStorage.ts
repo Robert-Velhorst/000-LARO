@@ -40,6 +40,7 @@ export interface BundledS3StorageManifest {
     file: string;
     bytes: number;
     sha256: string;
+    contentType: string;
   }>;
 }
 
@@ -87,6 +88,8 @@ export function isBackupStorageManifest(value: unknown): value is BackupStorageM
         typeof entry.file !== "string" || !isSafeRelativePath(entry.file) ||
         !Number.isSafeInteger(entry.bytes) || Number(entry.bytes) < 0 ||
         !isHexDigest(entry.sha256) ||
+        typeof entry.contentType !== "string" || !entry.contentType ||
+        entry.contentType.length > 255 || /[\x00-\x1f\x7f]/.test(entry.contentType) ||
         keys.has(entry.key) || files.has(entry.file)
       ) return false;
       keys.add(entry.key);
@@ -261,7 +264,10 @@ export async function createS3StorageSnapshot(
   publishedDirectoryName: string,
   bucket: string,
   region: string,
-  readObject: (key: string, options: { maxBytes: number }) => Promise<Buffer>,
+  readObject: (
+    key: string,
+    options: { maxBytes: number },
+  ) => Promise<{ body: Buffer; contentType: string }>,
 ): Promise<BundledS3StorageManifest> {
   const keys = managedStorageKeys(databasePath);
   if (keys.length > MAX_BACKUP_STORAGE_FILES) {
@@ -272,8 +278,13 @@ export async function createS3StorageSnapshot(
   let totalBytes = 0;
   const objects: BundledS3StorageManifest["objects"] = [];
   for (const key of keys) {
-    const body = await readObject(key, { maxBytes: MAX_BACKUP_STORAGE_OBJECT_BYTES });
+    const snapshot = await readObject(key, { maxBytes: MAX_BACKUP_STORAGE_OBJECT_BYTES });
+    const body = snapshot?.body;
     if (!Buffer.isBuffer(body)) throw new Error(`S3 evidence reader returned invalid bytes for: ${key}`);
+    const contentType = snapshot.contentType?.trim() || "application/octet-stream";
+    if (contentType.length > 255 || /[\x00-\x1f\x7f]/.test(contentType)) {
+      throw new Error(`S3 evidence has an invalid content type: ${key}`);
+    }
     totalBytes += body.length;
     if (totalBytes > MAX_BACKUP_STORAGE_TOTAL_BYTES) {
       throw new Error("S3 evidence snapshot exceeds the 100 GB backup-set limit.");
@@ -287,6 +298,7 @@ export async function createS3StorageSnapshot(
       file,
       bytes: body.length,
       sha256: crypto.createHash("sha256").update(body).digest("hex"),
+      contentType,
     });
   }
   const files = listStorageFiles(snapshotRoot);

@@ -23,7 +23,7 @@ only after every member is complete:
   `laro-secrets.json` exists beside `DATABASE_URL`;
 - `<backup>.files/`: every database-referenced evidence object from local
   managed storage or S3, with per-file size and SHA-256 inventory in the
-  manifest.
+  manifest; S3 entries also retain their content type.
 
 The manifest is renamed into place last and acts as the completion marker. LARO
 refuses to overwrite an existing set. For a standalone server whose key comes
@@ -120,11 +120,12 @@ remains beside each live path with a `.bak-<timestamp>` suffix.
 An S3-backed version-3 set restores only when the active bucket and region
 exactly match the manifest. Before writing the backup bytes, LARO snapshots all
 objects referenced by the live database into a timestamped local previous-state
-directory. Every restored write must return the manifest SHA-256. A failed write
-is then read back from S3 and rehashed before restore continues. A failed write,
-read-back mismatch, or database replacement restores previous objects and
-removes newly introduced keys; incomplete rollback is reported and the
-previous-state directory is kept for operator recovery.
+directory plus its own manifest. Every restored write retains the recorded
+content type and must return the manifest SHA-256. It is then read back from S3;
+bytes, hash, size, and content type must all match before restore continues. A
+failed write, read-back mismatch, or database replacement restores previous
+objects and removes newly introduced keys; incomplete rollback is reported and
+the previous-state directory and manifest are kept for operator recovery.
 
 A legacy database-only restore is blocked by default. After separately proving
 that the correct historical key is installed, an operator can accept that risk

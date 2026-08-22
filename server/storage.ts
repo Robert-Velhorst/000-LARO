@@ -118,7 +118,15 @@ export async function storageGet(key: string): Promise<string> {
   return `file://${full}`;
 }
 
-export async function storageRead(key: string, options?: { maxBytes: number }): Promise<Buffer> {
+export interface StorageBackupObject {
+  body: Buffer;
+  contentType: string;
+}
+
+async function readStorageObject(
+  key: string,
+  options?: { maxBytes: number },
+): Promise<StorageBackupObject> {
   const safeKey = sanitizeStorageKey(key);
   if (!safeKey) throw new Error('Storage key must contain at least one valid path segment');
   const label = 'Storage object';
@@ -128,8 +136,10 @@ export async function storageRead(key: string, options?: { maxBytes: number }): 
     if (options && typeof response.ContentLength === 'number' && response.ContentLength > options.maxBytes) {
       throw new Error(`${label} exceeds the ${options.maxBytes} byte read limit`);
     }
-    if (options) return collectBoundedBytes(response.Body, { maxBytes: options.maxBytes, label });
-    return Buffer.from(await response.Body.transformToByteArray());
+    const body = options
+      ? await collectBoundedBytes(response.Body, { maxBytes: options.maxBytes, label })
+      : Buffer.from(await response.Body.transformToByteArray());
+    return { body, contentType: response.ContentType || 'application/octet-stream' };
   }
   const full = resolveLocalPath(safeKey);
   if (!fs.existsSync(full)) throw new Error(`Local storage object not found: ${safeKey}`);
@@ -139,7 +149,18 @@ export async function storageRead(key: string, options?: { maxBytes: number }): 
       throw new Error(`${label} exceeds the ${options.maxBytes} byte read limit`);
     }
   }
-  return fs.readFileSync(full);
+  return { body: fs.readFileSync(full), contentType: 'application/octet-stream' };
+}
+
+export async function storageRead(key: string, options?: { maxBytes: number }): Promise<Buffer> {
+  return (await readStorageObject(key, options)).body;
+}
+
+export async function storageReadForBackup(
+  key: string,
+  options: { maxBytes: number },
+): Promise<StorageBackupObject> {
+  return readStorageObject(key, options);
 }
 
 export async function storageOpenReadStream(

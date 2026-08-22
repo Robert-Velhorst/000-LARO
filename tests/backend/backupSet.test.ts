@@ -185,6 +185,7 @@ suite('recovery-ready backup sets', () => {
     const previousRegion = process.env.AWS_S3_REGION;
     const jwtSecret = desktopSecrets().jwtSecret;
     const objects = new Map([[managedKey, Buffer.from(originalEvidence)]]);
+    const contentTypes = new Map([[managedKey, 'text/plain']]);
     try {
       process.env.AWS_S3_BUCKET = 'laro-evidence-backup-a';
       process.env.AWS_S3_REGION = 'eu-west-1';
@@ -193,7 +194,7 @@ suite('recovery-ready backup sets', () => {
         externalStorageRead: async (key) => {
           const value = objects.get(key);
           if (!value) throw new Error(`missing ${key}`);
-          return Buffer.from(value);
+          return { body: Buffer.from(value), contentType: contentTypes.get(key) || 'application/octet-stream' };
         },
       });
       const validation = validateBackupSet(destination, { externalJwtSecret: jwtSecret });
@@ -222,27 +223,38 @@ suite('recovery-ready backup sets', () => {
 
       process.env.AWS_S3_BUCKET = 'laro-evidence-backup-a';
       objects.set(managedKey, Buffer.from('changed remote evidence'));
+      contentTypes.set(managedKey, 'application/pdf');
       const restored = await restoreBackupSet(destination, {
         externalJwtSecret: jwtSecret,
         desktopSecretsPath: secretsPath,
         externalStorageRead: async (key) => {
           const value = objects.get(key);
           if (!value) throw new Error(`missing ${key}`);
-          return Buffer.from(value);
+          return { body: Buffer.from(value), contentType: contentTypes.get(key) || 'application/octet-stream' };
         },
-        externalStoragePut: async (key, body) => {
+        externalStoragePut: async (key, body, contentType) => {
           objects.set(key, Buffer.from(body));
+          contentTypes.set(key, contentType);
           return { sha256: (await import('../../server/storage')).hashBuffer(body) };
         },
         externalStorageDelete: async (key) => { objects.delete(key); },
       });
       app.db = await (await import('../../server/db')).getDb();
       expect(objects.get(managedKey)?.toString('utf8')).toBe(originalEvidence);
+      expect(contentTypes.get(managedKey)).toBe('text/plain');
       expect(restored.backupOfPreviousStorage).toBeTruthy();
       expect(fs.readFileSync(
         path.join(restored.backupOfPreviousStorage!, bundledS3File(managedKey)),
         'utf8',
       )).toBe('changed remote evidence');
+      const previousManifest = JSON.parse(fs.readFileSync(
+        `${restored.backupOfPreviousStorage}.manifest.json`,
+        'utf8',
+      ));
+      expect(previousManifest.objects).toContainEqual(expect.objectContaining({
+        key: managedKey,
+        contentType: 'application/pdf',
+      }));
     } finally {
       if (previousBucket === undefined) delete process.env.AWS_S3_BUCKET;
       else process.env.AWS_S3_BUCKET = previousBucket;
@@ -309,7 +321,10 @@ suite('recovery-ready backup sets', () => {
       ]);
       await createBackupSet(destination, {
         externalJwtSecret: desktopSecrets().jwtSecret,
-        externalStorageRead: async (key) => Buffer.from(objects.get(key)!),
+        externalStorageRead: async (key) => ({
+          body: Buffer.from(objects.get(key)!),
+          contentType: 'text/plain',
+        }),
       });
       const validation = validateBackupSet(destination, {
         externalJwtSecret: desktopSecrets().jwtSecret,
@@ -368,7 +383,7 @@ suite('recovery-ready backup sets', () => {
       const read = async (key: string) => {
         const value = objects.get(key);
         if (!value) throw new Error(`missing ${key}`);
-        return Buffer.from(value);
+        return { body: Buffer.from(value), contentType: 'text/plain' };
       };
       await createBackupSet(destination, {
         externalJwtSecret: jwtSecret,

@@ -65,7 +65,10 @@ export interface CreateBackupSetOptions {
   desktopSecretsPath?: string;
   externalJwtSecret?: string;
   localStoragePath?: string;
-  externalStorageRead?: (key: string, options: { maxBytes: number }) => Promise<Buffer>;
+  externalStorageRead?: (
+    key: string,
+    options: { maxBytes: number },
+  ) => Promise<{ body: Buffer; contentType: string }>;
 }
 
 export interface ValidateBackupSetOptions {
@@ -84,8 +87,11 @@ export interface RestoreBackupSetOptions extends ValidateBackupSetOptions {
   desktopSecretsPath?: string;
   localStoragePath?: string;
   allowMissingStorage?: boolean;
-  externalStorageRead?: (key: string, options: { maxBytes: number }) => Promise<Buffer>;
-  externalStoragePut?: (key: string, body: Buffer) => Promise<{ sha256: string }>;
+  externalStorageRead?: (
+    key: string,
+    options: { maxBytes: number },
+  ) => Promise<{ body: Buffer; contentType: string }>;
+  externalStoragePut?: (key: string, body: Buffer, contentType: string) => Promise<{ sha256: string }>;
   externalStorageDelete?: (key: string) => Promise<void>;
 }
 
@@ -309,8 +315,8 @@ export async function createBackupSet(
       }
     } else {
       const readExternalObject = options.externalStorageRead || (async (key, readOptions) => {
-        const { storageRead } = await import("./storage");
-        return storageRead(key, readOptions);
+        const { storageReadForBackup } = await import("./storage");
+        return storageReadForBackup(key, readOptions);
       });
       storage = await createS3StorageSnapshot(
         temporaryDatabase,
@@ -525,12 +531,12 @@ async function installS3StorageSnapshot(
   options: RestoreBackupSetOptions,
 ): Promise<{ previous: string; rollback: () => Promise<void> }> {
   const readObject = options.externalStorageRead || (async (key, readOptions) => {
-    const { storageRead } = await import("./storage");
-    return storageRead(key, readOptions);
+    const { storageReadForBackup } = await import("./storage");
+    return storageReadForBackup(key, readOptions);
   });
-  const putObject = options.externalStoragePut || (async (key, body) => {
+  const putObject = options.externalStoragePut || (async (key, body, contentType) => {
     const { storagePut } = await import("./storage");
-    return storagePut(key, body);
+    return storagePut(key, body, contentType);
   });
   const deleteObject = options.externalStorageDelete || (async (key) => {
     const { storageDelete } = await import("./storage");
@@ -538,6 +544,7 @@ async function installS3StorageSnapshot(
   });
   const backupStoragePath = backupSetStoragePath(backupDatabasePath);
   const previousPath = `${currentDatabasePath()}.s3-files.bak-${Date.now()}`;
+  const previousManifestPath = `${previousPath}.manifest.json`;
   const previousInventoryDatabase = `${previousPath}.inventory.sqlite`;
   let previousManifest: BundledS3StorageManifest;
   try {
@@ -550,8 +557,14 @@ async function installS3StorageSnapshot(
       manifest.region,
       readObject,
     );
+    fs.writeFileSync(previousManifestPath, JSON.stringify(previousManifest, null, 2), {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
   } catch (error) {
     removeIfPresent(previousPath);
+    removeIfPresent(previousManifestPath);
     throw error;
   } finally {
     removeIfPresent(previousInventoryDatabase);
@@ -571,13 +584,17 @@ async function installS3StorageSnapshot(
         throw new Error(`Bundled S3 evidence has an invalid restore size: ${entry.key}`);
       }
       if (trackWrites) written.add(entry.key);
-      const stored = await putObject(entry.key, body);
+      const stored = await putObject(entry.key, body, entry.contentType);
       if (stored.sha256 !== entry.sha256) {
         throw new Error(`Restored S3 evidence hash does not match its manifest: ${entry.key}`);
       }
       const readBack = await readObject(entry.key, { maxBytes: MAX_BACKUP_STORAGE_OBJECT_BYTES });
-      const readBackHash = crypto.createHash("sha256").update(readBack).digest("hex");
-      if (readBack.length !== entry.bytes || readBackHash !== entry.sha256) {
+      const readBackHash = crypto.createHash("sha256").update(readBack.body).digest("hex");
+      if (
+        readBack.body.length !== entry.bytes ||
+        readBackHash !== entry.sha256 ||
+        readBack.contentType !== entry.contentType
+      ) {
         throw new Error(`Restored S3 evidence read-back hash does not match its manifest: ${entry.key}`);
       }
     }
@@ -594,7 +611,10 @@ async function installS3StorageSnapshot(
     } catch (error) {
       errors.push(error);
     }
-    if (errors.length === 0) removeIfPresent(previousPath);
+    if (errors.length === 0) {
+      removeIfPresent(previousPath);
+      removeIfPresent(previousManifestPath);
+    }
     if (errors.length > 0) {
       throw new AggregateError(errors, "Previous S3 evidence could not be fully reinstated.");
     }

@@ -636,9 +636,11 @@ describe('production readiness regressions', () => {
     expect(backupStorage).toContain('bundled-local');
     expect(backupStorage).toContain('bundled-s3');
     expect(backupStorage).toContain('createS3StorageSnapshot');
+    expect(backupStorage).toContain('contentType');
     expect(backupStorage).toContain('assertLocalStorageUnchanged');
     expect(backupStorage).toContain('managed local evidence object(s)');
     expect(backupSet).toContain('s3Install.rollback()');
+    expect(backupSet).toContain('readBack.contentType !== entry.contentType');
     expect(backupSet).toContain('legacy-external-s3');
     expect(backupCli).toContain('Refusing a database-only restore');
     expect(backupCli).toContain('parsed.allowLegacy');
