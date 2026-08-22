@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createHostedCaseRepository, createHostedEvidenceRepository, createHostedUserRepository } from '../../server/persistence/hostedCaseRepository';
+import { createHostedCaseRepository, createHostedDocumentAnalysisRepository, createHostedEvidenceRepository, createHostedUserRepository } from '../../server/persistence/hostedCaseRepository';
 
 describe('hosted case repository', () => {
   it('finds an account by email through a parameterized exact match', async () => {
@@ -65,6 +65,22 @@ describe('hosted case repository', () => {
     expect(queries[0]).toMatchObject({
       sql: expect.stringContaining('WHERE "id" = $1 AND "caseId" = $2 AND "userId" = $3'),
       values: ['evidence-1', 'CASE-1', 'user-a'],
+    });
+  });
+
+  it('reads an analysis only through its owned evidence and case scope', async () => {
+    const queries: Array<{ sql: string; values?: unknown[] }> = [];
+    const repository = createHostedDocumentAnalysisRepository({
+      query: async (sql, values) => {
+        queries.push({ sql, values });
+        return { rows: [{ id: 'analysis-1', evidenceId: 'evidence-1', caseId: 'CASE-1', userId: 'user-a' }] };
+      },
+    });
+
+    await expect(repository.findOwnedAnalysis('user-a', 'CASE-1', 'evidence-1', 'analysis-1')).resolves.toMatchObject({ id: 'analysis-1' });
+    expect(queries[0]).toMatchObject({
+      sql: expect.stringContaining('WHERE "id" = $1 AND "evidenceId" = $2 AND "caseId" = $3 AND "userId" = $4'),
+      values: ['analysis-1', 'evidence-1', 'CASE-1', 'user-a'],
     });
   });
 });

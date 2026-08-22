@@ -57,6 +57,25 @@ export type HostedUser = {
   lastSignedIn: number;
 };
 
+export type HostedDocumentAnalysis = {
+  id: string;
+  evidenceId: string;
+  caseId: string;
+  userId: string;
+  analysisVersion: string;
+  contentHash: string;
+  status: string;
+  extractionMethod: string;
+  providerStatus: string;
+  documentType: string;
+  confidence: number;
+  summary: string;
+  result: string;
+  analyzedChars: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
 /**
  * PostgreSQL access for the core public case domain. It is intentionally
  * separate from the existing SQLite/Drizzle implementation while routes are
@@ -120,6 +139,25 @@ export function createHostedEvidenceRepository(client: HostedQueryClient) {
         WHERE "id" = $1 AND "caseId" = $2 AND "userId" = $3
         LIMIT 1
       `, [evidenceId, caseId, userId]);
+      return result.rows[0] ?? null;
+    },
+  };
+}
+
+/** Source-linked analysis reads require the owned evidence, case, and account. */
+export function createHostedDocumentAnalysisRepository(client: HostedQueryClient) {
+  return {
+    async findOwnedAnalysis(
+      userId: string,
+      caseId: string,
+      evidenceId: string,
+      analysisId: string,
+    ): Promise<HostedDocumentAnalysis | null> {
+      const result = await client.query<HostedDocumentAnalysis>(`
+        SELECT * FROM "document_analyses"
+        WHERE "id" = $1 AND "evidenceId" = $2 AND "caseId" = $3 AND "userId" = $4
+        LIMIT 1
+      `, [analysisId, evidenceId, caseId, userId]);
       return result.rows[0] ?? null;
     },
   };
