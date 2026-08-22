@@ -545,7 +545,9 @@ summary fields, but excludes contacts, source bytes/quotes, and provider secrets
   tokens are rejected before storage, and provider network calls have bounded
   timeouts so connection, evidence collection, and sending cannot wait forever.
 - Owner-checked short-lived evidence links.
-- Bounded uploads, parsing, exports, searches, and provider calls.
+- Bounded uploads, parsing, exports, searches, and provider calls. Direct HTTP
+  provider responses are rejected from an oversized declared length or while
+  streaming, before JSON, XML, HTML, error text, or evidence bytes are parsed.
 - Electron context isolation, sandbox, restricted navigation, denied browser
   permissions, narrow IPC, and single-instance profile lock.
 - Demo mode and sample account seeding disabled in production.
@@ -661,7 +663,7 @@ deterministic tests, explicit live acceptance, and documentation.
 budgets, dependency audits, release-record validity, traceability, safety scans,
 Electron and Flask recovery drills, and Vitest.
 
-On 2026-08-22, the fresh gate passed **100 test files and 615 tests**, with 0
+On 2026-08-22, the fresh gate passed **101 test files and 625 tests**, with 0
 dependency vulnerabilities, 117/117 traceability rows cited, 0 suspect runtime
 placeholders, and 0 high-severity account-safety findings. This is a dated local
 verification snapshot; use the latest

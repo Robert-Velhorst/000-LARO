@@ -14,6 +14,8 @@
  * - Company status (active/inactive)
  */
 
+import { readBoundedResponseJson, withBoundedHttpResponse } from "./boundedHttpResponse";
+
 interface KvKCompanyData {
   datumAanvang: string; // Start date (YYYYMMDD format, may contain zeros for unknown parts)
   actief: "J" | "N"; // J = Yes (active), N = No (inactive)
@@ -53,9 +55,34 @@ type KvKLookupData = NonNullable<KvKLookupResult["data"]>;
 
 class KvKIntegrationService {
   private readonly BASE_URL = "https://opendata.kvk.nl/api/v1/hvds/basisbedrijfsgegevens";
+  private readonly MAX_RESPONSE_BYTES = 1024 * 1024;
+  private readonly REQUEST_TIMEOUT_MS = 15_000;
   private readonly RATE_LIMIT = 100; // 100 queries per 5 minutes
   private requestCount = 0;
   private resetTime = Date.now() + 5 * 60 * 1000;
+
+  private fetchCompanyData(cleanKvK: string): Promise<KvKCompanyData> {
+    return withBoundedHttpResponse(
+      () => fetch(`${this.BASE_URL}/kvknummer/${cleanKvK}`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+        redirect: "error",
+        signal: AbortSignal.timeout(this.REQUEST_TIMEOUT_MS),
+      }),
+      async (response) => {
+        if (response.status === 404) throw new Error("Company not found in KvK registry.");
+        if (!response.ok) {
+          throw new Error(`KvK API error: ${response.status} ${response.statusText}`);
+        }
+        return readBoundedResponseJson<KvKCompanyData>(response, {
+          maxBytes: this.MAX_RESPONSE_BYTES,
+          label: "KVK response",
+        });
+      },
+    );
+  }
 
   /**
    * Look up company information by KvK number
@@ -79,25 +106,7 @@ class KvKIntegrationService {
         };
       }
 
-      // Call KvK Open Dataset API
-      const response = await fetch(`${this.BASE_URL}/kvknummer/${cleanKvK}`, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-      });
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          return {
-            success: false,
-            error: "Company not found in KvK registry.",
-          };
-        }
-        throw new Error(`KvK API error: ${response.status} ${response.statusText}`);
-      }
-
-      const data: KvKCompanyData = await response.json();
+      const data = await this.fetchCompanyData(cleanKvK);
 
       // Parse insolvency status
       let insolvencyStatus: KvKLookupData["insolvencyStatus"];

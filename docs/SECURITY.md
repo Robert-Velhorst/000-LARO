@@ -30,6 +30,12 @@ Date: 2026-08-22
 - Electron keeps Node integration disabled, enables context isolation and renderer sandboxing, and permits external navigation only to HTTPS, `mailto:`, or loopback HTTP URLs.
 - Production startup fails if the database cannot initialize. The API binds to loopback by default; Docker explicitly opts into `0.0.0.0`.
 - Provider-backed AI fails closed without `FORGE_API_KEY`. Transactional email never reports delivery when no provider is configured and does not log reset codes in production.
+- Direct HTTP responses from OAuth, Gmail, KVK, KOOP legislation,
+  Rechtspraak, public outreach discovery, SendGrid errors, and signed evidence
+  acceptance downloads pass through shared byte admission. Oversized declared
+  lengths are rejected and cancellable bodies are stopped before reading;
+  undeclared or misleading bodies are rejected as soon as their streamed byte
+  count crosses the provider-specific ceiling.
 - Evidence storage rejects empty/traversal-only keys, confines local paths, preserves content hashes, and can use the AWS default credential chain instead of blank credentials.
 - Destructive evidence operations use an atomic SQLite outbox: metadata deletion and cleanup scheduling commit together, active shared references prevent premature object removal, failed local/S3 deletion remains durably queued and degrades worker health, and evidence, case, and account responses expose pending cleanup instead of reporting complete erasure.
 - The Flask runtime has no seeded users. It persists Werkzeug password hashes and SHA-256 digests of bearer/reset tokens in an ignored SQLite auth database; reset tokens are short-lived, single-use, and never returned by the API.

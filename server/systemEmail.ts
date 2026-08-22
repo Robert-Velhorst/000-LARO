@@ -1,9 +1,11 @@
 import nodemailer from "nodemailer";
 import { ENV } from "./_core/env";
 import { resolveOutboundEmailConfiguration } from "./emailConfig";
+import { readBoundedResponseText, withBoundedHttpResponse } from "./boundedHttpResponse";
 
 const EMAIL_PROVIDER_TIMEOUT_MS = 20_000;
 const EMAIL_PROVIDER_SOCKET_TIMEOUT_MS = 30_000;
+const EMAIL_PROVIDER_ERROR_MAX_BYTES = 64 * 1024;
 
 /**
  * System (transactional) email sender — used for app-generated mail like
@@ -54,28 +56,35 @@ function createSmtpTransport() {
 }
 
 async function sendViaSendGrid(email: SystemEmail): Promise<string | undefined> {
-  const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${ENV.SENDGRID_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      personalizations: [{ to: [{ email: email.to }] }],
-      from: { email: fromAddress() },
-      subject: email.subject,
-      content: [
-        { type: "text/plain", value: email.text },
-        ...(email.html ? [{ type: "text/html", value: email.html }] : []),
-      ],
+  return withBoundedHttpResponse(
+    () => fetch("https://api.sendgrid.com/v3/mail/send", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ENV.SENDGRID_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        personalizations: [{ to: [{ email: email.to }] }],
+        from: { email: fromAddress() },
+        subject: email.subject,
+        content: [
+          { type: "text/plain", value: email.text },
+          ...(email.html ? [{ type: "text/html", value: email.html }] : []),
+        ],
+      }),
+      signal: AbortSignal.timeout(EMAIL_PROVIDER_TIMEOUT_MS),
     }),
-    signal: AbortSignal.timeout(EMAIL_PROVIDER_TIMEOUT_MS),
-  });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`SendGrid send failed (${res.status}): ${detail}`);
-  }
-  return res.headers.get("x-message-id") || undefined;
+    async (res) => {
+      if (!res.ok) {
+        const detail = await readBoundedResponseText(res, {
+          maxBytes: EMAIL_PROVIDER_ERROR_MAX_BYTES,
+          label: "SendGrid error response",
+        }).catch(() => "Provider error response was unavailable");
+        throw new Error(`SendGrid send failed (${res.status}): ${detail}`);
+      }
+      return res.headers.get("x-message-id") || undefined;
+    },
+  );
 }
 
 async function sendViaSmtp(email: SystemEmail): Promise<string | undefined> {
