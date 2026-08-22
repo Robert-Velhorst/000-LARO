@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { createHostedCaseRepository, createHostedEvidenceRepository } from '../../server/persistence/hostedCaseRepository';
+import { createHostedCaseRepository, createHostedEvidenceRepository, createHostedUserRepository } from '../../server/persistence/hostedCaseRepository';
 
 describe('hosted case repository', () => {
+  it('finds an account by email through a parameterized exact match', async () => {
+    const queries: Array<{ sql: string; values?: unknown[] }> = [];
+    const repository = createHostedUserRepository({
+      query: async (sql, values) => {
+        queries.push({ sql, values });
+        return { rows: [{ id: 'user-a', email: 'person@example.test', role: 'user' }] };
+      },
+    });
+
+    await expect(repository.findByEmail('person@example.test')).resolves.toMatchObject({ id: 'user-a' });
+    expect(queries[0]).toMatchObject({
+      sql: expect.stringContaining('WHERE lower("email") = lower($1)'),
+      values: ['person@example.test'],
+    });
+  });
+
   it('reads a case only through its owning account scope', async () => {
     const queries: Array<{ sql: string; values?: unknown[] }> = [];
     const repository = createHostedCaseRepository({

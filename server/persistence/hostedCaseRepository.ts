@@ -46,6 +46,17 @@ export type HostedEvidence = {
   updatedAt: number;
 };
 
+export type HostedUser = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  password: string | null;
+  loginMethod: string | null;
+  role: string;
+  createdAt: number;
+  lastSignedIn: number;
+};
+
 /**
  * PostgreSQL access for the core public case domain. It is intentionally
  * separate from the existing SQLite/Drizzle implementation while routes are
@@ -82,6 +93,20 @@ export function createHostedCaseRepository(client: HostedQueryClient) {
       const created = result.rows[0];
       if (!created) throw new Error('Hosted case insert did not return a record.');
       return created;
+    },
+  };
+}
+
+/** Account lookup for hosted authentication; email comparison is exact but case-insensitive. */
+export function createHostedUserRepository(client: HostedQueryClient) {
+  return {
+    async findByEmail(email: string): Promise<HostedUser | null> {
+      const result = await client.query<HostedUser>(`
+        SELECT * FROM "users"
+        WHERE lower("email") = lower($1)
+        LIMIT 1
+      `, [email]);
+      return result.rows[0] ?? null;
     },
   };
 }
