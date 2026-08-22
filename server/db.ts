@@ -68,6 +68,58 @@ function ensureIndexes(sqlite: InstanceType<typeof Database>) {
     );
   }
 
+  // Provider account identity is case-insensitive. Repoint children to the
+  // newest connected legacy row before normalizing and enforcing uniqueness.
+  try {
+    const reconcileProviderAccounts = sqlite.transaction(() => {
+      const rows = sqlite.prepare(`
+        SELECT id, userId, provider, email, status, updatedAt, createdAt, rowid
+        FROM email_accounts
+        WHERE provider IS NOT NULL AND email IS NOT NULL
+        ORDER BY
+          CASE WHEN status = 'connected' THEN 0 ELSE 1 END,
+          COALESCE(updatedAt, 0) DESC,
+          COALESCE(createdAt, 0) DESC,
+          rowid DESC
+      `).all() as Array<{
+        id: string;
+        userId: string;
+        provider: string;
+        email: string;
+      }>;
+      const survivors = new Map<string, string>();
+      let duplicateCount = 0;
+      for (const row of rows) {
+        const key = `${row.userId}\u0000${row.provider}\u0000${row.email.trim().toLowerCase()}`;
+        const survivorId = survivors.get(key);
+        if (!survivorId) {
+          survivors.set(key, row.id);
+          continue;
+        }
+        for (const table of ['email_sync_jobs', 'email_messages', 'google_drive_files']) {
+          sqlite.prepare(`UPDATE ${table} SET accountId = ? WHERE accountId = ?`).run(survivorId, row.id);
+        }
+        sqlite.prepare(`DELETE FROM email_accounts WHERE id = ?`).run(row.id);
+        duplicateCount += 1;
+      }
+      sqlite.exec(`
+        UPDATE email_accounts
+        SET email = lower(trim(email))
+        WHERE email IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS email_accounts_identity_unique
+          ON email_accounts(userId, provider, email)
+          WHERE provider IS NOT NULL AND email IS NOT NULL;
+      `);
+      return duplicateCount;
+    });
+    const duplicateCount = reconcileProviderAccounts();
+    if (duplicateCount > 0) {
+      console.warn(`[Database] Reconciled ${duplicateCount} duplicate provider account row(s).`);
+    }
+  } catch (e) {
+    console.warn('[Database] Could not reconcile or index provider account identities:', e);
+  }
+
   // Phase 017 — idempotency / duplicate-action prevention: a case may only have
   // ONE outreach row per lawyer. This makes "initiate outreach" idempotent at
   // the DB level (a duplicate insert is rejected). Created defensively.

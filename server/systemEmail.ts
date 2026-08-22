@@ -2,6 +2,9 @@ import nodemailer from "nodemailer";
 import { ENV } from "./_core/env";
 import { resolveOutboundEmailConfiguration } from "./emailConfig";
 
+const EMAIL_PROVIDER_TIMEOUT_MS = 20_000;
+const EMAIL_PROVIDER_SOCKET_TIMEOUT_MS = 30_000;
+
 /**
  * System (transactional) email sender — used for app-generated mail like
  * password-reset codes and explicitly approved outreach.
@@ -44,6 +47,9 @@ function createSmtpTransport() {
         : undefined,
     disableFileAccess: true,
     disableUrlAccess: true,
+    connectionTimeout: EMAIL_PROVIDER_TIMEOUT_MS,
+    greetingTimeout: EMAIL_PROVIDER_TIMEOUT_MS,
+    socketTimeout: EMAIL_PROVIDER_SOCKET_TIMEOUT_MS,
   });
 }
 
@@ -63,6 +69,7 @@ async function sendViaSendGrid(email: SystemEmail): Promise<string | undefined> 
         ...(email.html ? [{ type: "text/html", value: email.html }] : []),
       ],
     }),
+    signal: AbortSignal.timeout(EMAIL_PROVIDER_TIMEOUT_MS),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
@@ -112,6 +119,7 @@ export async function verifyOutboundEmailConnection(): Promise<{
   if (configuration.provider === "sendgrid" && configuration.configured) {
     const response = await fetch("https://api.sendgrid.com/v3/user/profile", {
       headers: { Authorization: `Bearer ${ENV.SENDGRID_API_KEY}` },
+      signal: AbortSignal.timeout(EMAIL_PROVIDER_TIMEOUT_MS),
     });
     return { ok: response.ok, provider: "sendgrid" };
   }

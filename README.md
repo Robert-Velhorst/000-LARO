@@ -333,7 +333,9 @@ not publish the Electron interface.
 - Owner rows carry `userId`; case children pass `assertCaseOwnership`.
 - Lawyers are global reference data; private matches/outreach are owner-scoped.
 - Media and organization directories are owner-scoped.
-- Provider tokens stay server-side, encrypted, and absent from API responses.
+- Persisted OAuth tokens stay server-side, encrypted, and absent from API
+  responses. Trello and Telegram tokens are not persisted and are accepted only
+  in bounded POST bodies for explicit provider operations.
 - SQLite uses WAL, foreign-key enforcement, migrations, a busy timeout, and
   additional relationship guards for historical tables.
 
@@ -425,7 +427,7 @@ Credentials make a provider available; they do not prove live acceptance.
 | AWS S3 | Optional managed evidence storage |
 | HAI | Owner-bound, revocable, read-only feed |
 | KvK public records | Supported official open-data contract |
-| Telegram | Bot/API and desktop-export import paths are available when configured; bot history is limited by Telegram and target verification is still required |
+| Telegram | Bounded bot/API and desktop-export import paths are available when configured; bot history is limited by Telegram and target verification is still required |
 | Microsoft/OneDrive/Outlook | Reserved configuration; collection unavailable |
 | Trello OAuth | Unavailable until durable token lifecycle is complete |
 | Google Calendar/Contacts | Not implemented as LARO evidence connectors |
@@ -538,6 +540,10 @@ summary fields, but excludes contacts, source bytes/quotes, and provider secrets
 - Scanner uploads keep session and scanner authority in the Electron main
   process; reusable API credentials are not exposed to renderer JavaScript.
 - Server-owned encrypted provider credentials.
+- Provider connection and local disconnection records commit atomically with
+  their required audit evidence. Invalid account identities or empty access
+  tokens are rejected before storage, and provider network calls have bounded
+  timeouts so connection, evidence collection, and sending cannot wait forever.
 - Owner-checked short-lived evidence links.
 - Bounded uploads, parsing, exports, searches, and provider calls.
 - Electron context isolation, sandbox, restricted navigation, denied browser
@@ -655,7 +661,7 @@ deterministic tests, explicit live acceptance, and documentation.
 budgets, dependency audits, release-record validity, traceability, safety scans,
 Electron and Flask recovery drills, and Vitest.
 
-On 2026-08-22, the fresh gate passed **98 test files and 600 tests**, with 0
+On 2026-08-22, the fresh gate passed **100 test files and 615 tests**, with 0
 dependency vulnerabilities, 117/117 traceability rows cited, 0 suspect runtime
 placeholders, and 0 high-severity account-safety findings. This is a dated local
 verification snapshot; use the latest

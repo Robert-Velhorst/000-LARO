@@ -128,6 +128,12 @@ export const RATE_LIMITS = {
     windowMs: 15 * 60 * 1000,
     message: "Too many import requests. Please wait before importing another file.",
   },
+
+  providerOperation: {
+    maxRequests: 30,
+    windowMs: 60 * 1000,
+    message: "Too many provider requests. Please wait a moment.",
+  },
   
   // General API calls
   general: {

@@ -1,6 +1,8 @@
 import { ENV } from './_core/env';
 import { encryptSecret, decryptSecret, type DecryptSecretOptions } from './crypto';
 
+const OAUTH_PROVIDER_TIMEOUT_MS = 15_000;
+
 /**
  * Token Encryption & OAuth Refresh Utilities.
  *
@@ -35,7 +37,7 @@ export async function revokeGoogleToken(token: string): Promise<Exclude<GoogleRe
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ token }),
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(OAUTH_PROVIDER_TIMEOUT_MS),
   });
 
   if (!response.ok && response.status !== 400) {
@@ -84,6 +86,7 @@ export async function refreshGmailToken(refreshToken: string) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
+    signal: AbortSignal.timeout(OAUTH_PROVIDER_TIMEOUT_MS),
   });
 
   const data = await response.json();
@@ -117,6 +120,7 @@ export async function refreshOutlookToken(refreshToken: string) {
       grant_type:    'refresh_token',
       scope:         'https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read offline_access',
     }),
+    signal: AbortSignal.timeout(OAUTH_PROVIDER_TIMEOUT_MS),
   });
 
   const data = await response.json();

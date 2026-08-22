@@ -1,7 +1,12 @@
 import axios from "axios";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sanitizeErrorForLogging } from "../../server/errorHandler";
-import { getTelegramBotInfo } from "../../server/telegramService";
+import {
+  downloadTelegramFile,
+  getTelegramBotInfo,
+  isValidTelegramToken,
+} from "../../server/telegramService";
+import { MAX_EVIDENCE_FILE_BYTES } from "../../shared/evidenceFiles";
 
 describe("Telegram credential redaction", () => {
   afterEach(() => {
@@ -46,5 +51,42 @@ describe("Telegram credential redaction", () => {
     });
     expect(JSON.stringify(errorLog.mock.calls)).not.toContain(token);
     expect(JSON.stringify(errorLog.mock.calls)).not.toContain("api.telegram.org");
+  });
+
+  it("rejects oversized bot tokens before constructing a provider URL", () => {
+    expect(isValidTelegramToken(`123456789:${"a".repeat(256)}`)).toBe(false);
+  });
+
+  it("bounds Telegram metadata requests by time and response size", async () => {
+    const token = "123456789:bounded-token";
+    const getMock = vi.spyOn(axios, "get").mockResolvedValue({
+      data: { ok: true, result: { id: 1, first_name: "LARO" } },
+    });
+
+    await getTelegramBotInfo(token);
+
+    expect(getMock).toHaveBeenCalledWith(
+      expect.stringContaining("/getMe"),
+      expect.objectContaining({
+        timeout: 20_000,
+        maxContentLength: 1_048_576,
+      }),
+    );
+  });
+
+  it("bounds Telegram file downloads by time and evidence-file size", async () => {
+    const token = "123456789:bounded-token";
+    const getMock = vi.spyOn(axios, "get").mockResolvedValue({ data: Buffer.from("file") });
+
+    await downloadTelegramFile(token, "documents/evidence.pdf");
+
+    expect(getMock).toHaveBeenCalledWith(
+      expect.stringContaining("/documents/evidence.pdf"),
+      expect.objectContaining({
+        responseType: "arraybuffer",
+        timeout: 20_000,
+        maxContentLength: MAX_EVIDENCE_FILE_BYTES,
+      }),
+    );
   });
 });

@@ -1,12 +1,12 @@
 
 import { getDb } from "./db";
 import { emailAccounts } from "./schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import crypto from "crypto";
 import { encryptToken, decryptToken } from "./emailOAuth";
 import { ENV } from "./_core/env";
-import { AUDIT_ACTIONS, createAuditLog } from "./audit";
+import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
 
 export interface OAuth2Config {
   clientId: string;
@@ -366,21 +366,19 @@ export async function saveEmailAccount(
 ): Promise<string> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-
-  const existing = await db
-    .select()
-    .from(emailAccounts)
-    .where(and(
-      eq(emailAccounts.userId, userId),
-      eq(emailAccounts.provider, provider),
-      eq(emailAccounts.email, accountInfo.email),
-    ))
-    .limit(1);
+  const normalizedEmail = accountInfo.email.trim().toLowerCase();
+  if (
+    !tokens.accessToken.trim() ||
+    normalizedEmail.length > 320 ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
+  ) {
+    throw new Error("Provider connection did not return valid account credentials");
+  }
 
   const row = {
     userId,
     provider,
-    email: accountInfo.email,
+    email: normalizedEmail,
     accessToken: encryptToken(tokens.accessToken),
     refreshToken: tokens.refreshToken ? encryptToken(tokens.refreshToken) : null,
     tokenExpiry: new Date(Date.now() + tokens.expiresIn * 1000),
@@ -395,27 +393,36 @@ export async function saveEmailAccount(
     updatedAt: new Date(),
   };
 
-  const accountId = existing[0]?.id ?? nanoid();
-  if (existing[0]) {
-    await db.update(emailAccounts).set(row).where(eq(emailAccounts.id, existing[0].id));
-  } else {
-    await db.insert(emailAccounts).values({ id: accountId, ...row, createdAt: new Date() });
-  }
-
-  await createAuditLog({
-    userId,
-    action: AUDIT_ACTIONS.PROVIDER_CONNECTED,
-    entityType: "provider_connection",
-    entityId: accountId,
-    details: {
-      provider: provider === "gmail" ? "google" : "microsoft",
-      requestedScopes: getOAuth2Config(provider).scopes,
-      tokenReportedScopes: tokens.scope ? tokens.scope.split(/\s+/).filter(Boolean) : [],
-      refreshGrantStored: Boolean(tokens.refreshToken),
-    },
+  return db.transaction((tx: any) => {
+    const existing = tx.select()
+      .from(emailAccounts)
+      .where(and(
+        eq(emailAccounts.userId, userId),
+        eq(emailAccounts.provider, provider),
+        sql`lower(trim(${emailAccounts.email})) = ${normalizedEmail}`,
+      ))
+      .limit(1)
+      .get();
+    const accountId = existing?.id ?? nanoid();
+    if (existing) {
+      tx.update(emailAccounts).set(row).where(eq(emailAccounts.id, existing.id)).run();
+    } else {
+      tx.insert(emailAccounts).values({ id: accountId, ...row, createdAt: new Date() }).run();
+    }
+    writeAuditLogOrThrow(tx, {
+      userId,
+      action: AUDIT_ACTIONS.PROVIDER_CONNECTED,
+      entityType: "provider_connection",
+      entityId: accountId,
+      details: {
+        provider: provider === "gmail" ? "google" : "microsoft",
+        requestedScopes: getOAuth2Config(provider).scopes,
+        tokenReportedScopes: tokens.scope ? tokens.scope.split(/\s+/).filter(Boolean) : [],
+        refreshGrantStored: Boolean(tokens.refreshToken),
+      },
+    });
+    return accountId;
   });
-
-  return accountId;
 }
 
 export async function refreshAccessToken(
@@ -432,7 +439,7 @@ export async function refreshAccessToken(
     if (config.clientSecret) {
       body.set("client_secret", config.clientSecret);
     }
-    const res = await fetch("https://oauth2.googleapis.com/token", {
+    const res = await fetchTokenEndpoint("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
@@ -457,7 +464,7 @@ export async function refreshAccessToken(
     grant_type: "refresh_token",
     scope: config.scopes.join(" "),
   });
-  const res = await fetch("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
+  const res = await fetchTokenEndpoint("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,

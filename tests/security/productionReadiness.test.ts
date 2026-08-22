@@ -241,25 +241,54 @@ describe('production readiness regressions', () => {
 
   it('requests evidence-read OAuth permissions without delegated mail sending or label writes', async () => {
     const { getOAuth2Config } = await import('../../server/oauth2');
-    const { getGmailOAuthConfig } = await import('../../server/gmailService');
     const google = getOAuth2Config('gmail');
     const microsoft = getOAuth2Config('outlook');
-    const legacyGoogle = getGmailOAuthConfig();
+    const gmailService = readFileSync(join(ROOT, 'server/gmailService.ts'), 'utf8');
     const refreshSource = readFileSync(join(ROOT, 'server/emailOAuth.ts'), 'utf8');
+    const trelloService = readFileSync(join(ROOT, 'server/trelloService.ts'), 'utf8');
+    const trelloRouter = readFileSync(join(ROOT, 'server/routers/trelloEnhanced.ts'), 'utf8');
 
     expect(google.scopes).toEqual([
       'https://www.googleapis.com/auth/gmail.readonly',
       'https://www.googleapis.com/auth/userinfo.email',
       'https://www.googleapis.com/auth/drive.readonly',
     ]);
-    expect(legacyGoogle.scopes).toEqual(['https://www.googleapis.com/auth/gmail.readonly']);
     expect(microsoft.scopes).toEqual([
       'https://graph.microsoft.com/Mail.Read',
       'https://graph.microsoft.com/User.Read',
       'offline_access',
     ]);
+    expect(gmailService).not.toContain('getGmailAuthorizationUrl');
+    expect(gmailService).not.toContain('exchangeGmailCodeForTokens');
+    expect(gmailService).not.toContain("Buffer.from(JSON.stringify({ userId, caseId }))");
+    expect(trelloService).not.toContain('getTrelloAuthorizationUrl');
+    expect(trelloService).not.toContain("expiration: 'never'");
+    expect(trelloService).not.toContain("Buffer.from(JSON.stringify({ userId, caseId }))");
+    expect(trelloRouter).not.toContain('getTrelloAuthorizationUrl');
+    expect(trelloRouter).toContain('Trello OAuth is not available until secure token storage is implemented.');
     expect(refreshSource).not.toContain('Mail.Send');
-    expect(JSON.stringify({ google, microsoft, legacyGoogle })).not.toMatch(/gmail\.send|gmail\.labels|Mail\.Send/);
+    expect(JSON.stringify({ google, microsoft })).not.toMatch(/gmail\.send|gmail\.labels|Mail\.Send/);
+  });
+
+  it('keeps provider tokens out of query-string transports', async () => {
+    const { appRouter } = await import('../../server/routers');
+    const procedures = (appRouter as any)._def.procedures as Record<
+      string,
+      { _def: { mutation?: boolean; query?: boolean } }
+    >;
+    const tokenBearingProcedures = [
+      'trelloEnhanced.listBoards',
+      'trelloEnhanced.listLists',
+      'trelloEnhanced.listCards',
+      'trelloEnhanced.testConnection',
+      'telegramEnhanced.validateToken',
+      'telegramEnhanced.downloadFile',
+    ];
+
+    for (const name of tokenBearingProcedures) {
+      expect(procedures[name]?._def.mutation, name).toBe(true);
+      expect(procedures[name]?._def.query, name).not.toBe(true);
+    }
   });
 
   it('opens OAuth in the system browser and refreshes desktop connection state', () => {
@@ -525,7 +554,11 @@ describe('production readiness regressions', () => {
     expect(emailRouter).toContain('resolveOutboundEmailConfiguration()');
     expect(adminRouter).toContain('email: resolveOutboundEmailConfiguration().configured');
     expect(systemRouter).toContain('configured: outboundEmail.configured');
-    expect(readFileSync(join(ROOT, 'server/systemEmail.ts'), 'utf8')).toContain('tls: { minVersion: "TLSv1.2" }');
+    const systemEmail = readFileSync(join(ROOT, 'server/systemEmail.ts'), 'utf8');
+    expect(systemEmail).toContain('tls: { minVersion: "TLSv1.2" }');
+    expect(systemEmail).toContain('connectionTimeout: EMAIL_PROVIDER_TIMEOUT_MS');
+    expect(systemEmail).toContain('socketTimeout: EMAIL_PROVIDER_SOCKET_TIMEOUT_MS');
+    expect(systemEmail).toContain('signal: AbortSignal.timeout(EMAIL_PROVIDER_TIMEOUT_MS)');
     expect(providerSetup).toContain('$normalized = $plainText -replace "\\s", ""');
   });
 

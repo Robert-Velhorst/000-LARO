@@ -2,7 +2,7 @@
 
 Date: 2026-08-22
 Branch: `main` (updates proposed through pull requests)
-Baseline commit: `ea37e9440dbb9e4b9c1feac6026495f5366d34c9`
+Baseline commit: `bcb992c358351a169c99fd9ee5d29c9bc2b63bd4`
 Specification: `000-LARO__Giant_Codex_Goal_Prompt.pdf`, 124 pages, phases 000-115
 
 ## Scope and method
@@ -59,6 +59,12 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
   password reset, and protected admin boundaries are enforced server-side.
 - Provider tokens use authenticated encryption and are never included in debug
   bundles, exports, release artifacts, or version control.
+- Provider connection and local disconnection changes commit with their audit
+  rows. Empty credentials and invalid account identities are rejected, and
+  OAuth, Gmail, Telegram, SendGrid, SMTP, and acceptance calls use bounded
+  deadlines. Credential-bearing Trello and Telegram operations use POST bodies,
+  persistent per-user quotas, and bounded concurrent-read admission. Telegram
+  downloads enforce the evidence-file byte ceiling.
 - External contact is not autonomous: preparation, approval, and sending are
   separate state transitions; delivery is disabled by default and fail-closed.
 - Case and outreach transitions claim their exact prior state. Response and case
@@ -93,6 +99,11 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
 | Case and response transitions used stale check-then-update writes | High | Owner-bound compare-and-set transitions reject stale state; response plus case outcome updates commit or roll back together; no-match outreach leaves the case unchanged |
 | An unreachable duplicate outreach engine retained unsafe state writers | Medium | Removed the unreferenced `server/workflow.ts`; the registered tRPC workflow is the only runtime outreach authority |
 | Consequential legal-state writes could survive a failed audit insert | High | Case creation, classification, editing, transition, and deletion plus outreach initiation, single and batch draft decisions, dispatch claims, responses, and Gmail reply linking now commit with required audit rows or roll back together; injected SQLite failures verify each boundary |
+| Provider credentials could be stored or deleted without durable audit evidence | High | Connection and every registered local disconnect route now transact credentials, connected sources, and required audit rows; injected audit failures preserve the prior local state |
+| Dormant Gmail OAuth and provider calls retained unsafe or unbounded paths | Medium | Removed the unused unsigned-state/non-PKCE OAuth implementation, validate and normalize returned account credentials, and bound OAuth refresh, Gmail, SendGrid, SMTP, and live-acceptance calls |
+| Credential-bearing Trello and Telegram reads used query-string transports | High | Converted every token-bearing procedure to a POST-backed mutation, removed dormant unsigned/non-expiring Trello OAuth generation, bounded Telegram token/file inputs, and added provider deadlines and response-size ceilings |
+| Provider identity normalization could duplicate historical mixed-case accounts | High | Provider lookup now occurs case-insensitively inside the credential/audit transaction; startup reconciliation preserves child references, normalizes identities, and creates a unique owner/provider/email index; concurrent reconnect tests converge on one row |
+| Trello and Telegram token operations lacked aggregate admission controls | High | Added persistent per-user/provider request quotas and shared bounded-read admission around provider calls; the 31st request is rejected before provider contact |
 
 ## Verdict
 

@@ -22,6 +22,7 @@ import {
   normalizeTelegramExport,
   type TelegramExportedChat,
 } from './importLimits';
+import { MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 
 export type { TelegramExportedChat } from './importLimits';
 
@@ -78,6 +79,15 @@ export interface TelegramFile {
 }
 
 const TELEGRAM_API_BASE = 'https://api.telegram.org';
+const TELEGRAM_REQUEST_TIMEOUT_MS = 20_000;
+const TELEGRAM_METADATA_MAX_BYTES = 1_048_576;
+const TELEGRAM_TOKEN_MAX_CHARS = 256;
+
+function assertValidTelegramToken(token: string): void {
+  if (!isValidTelegramToken(token)) {
+    throw new Error('Invalid Telegram bot token format');
+  }
+}
 
 function telegramFailureMetadata(error: unknown): { status: number | null; providerCode: number | null } {
   if (!axios.isAxiosError(error)) return { status: null, providerCode: null };
@@ -109,10 +119,13 @@ export async function getTelegramFile(
   botToken: string,
   fileId: string
 ): Promise<TelegramFile> {
+  assertValidTelegramToken(botToken);
   try {
     const url = `${TELEGRAM_API_BASE}/bot${botToken}/getFile`;
     const response = await axios.get(url, {
       params: { file_id: fileId },
+      timeout: TELEGRAM_REQUEST_TIMEOUT_MS,
+      maxContentLength: TELEGRAM_METADATA_MAX_BYTES,
     });
 
     if (!response.data.ok) {
@@ -132,10 +145,13 @@ export async function downloadTelegramFile(
   botToken: string,
   filePath: string
 ): Promise<Buffer> {
+  assertValidTelegramToken(botToken);
   try {
     const url = `${TELEGRAM_API_BASE}/file/bot${botToken}/${filePath}`;
     const response = await axios.get(url, {
       responseType: 'arraybuffer',
+      timeout: TELEGRAM_REQUEST_TIMEOUT_MS,
+      maxContentLength: MAX_EVIDENCE_FILE_BYTES,
     });
 
     return Buffer.from(response.data);
@@ -148,9 +164,13 @@ export async function downloadTelegramFile(
  * Get bot info
  */
 export async function getTelegramBotInfo(botToken: string) {
+  assertValidTelegramToken(botToken);
   try {
     const url = `${TELEGRAM_API_BASE}/bot${botToken}/getMe`;
-    const response = await axios.get(url);
+    const response = await axios.get(url, {
+      timeout: TELEGRAM_REQUEST_TIMEOUT_MS,
+      maxContentLength: TELEGRAM_METADATA_MAX_BYTES,
+    });
 
     if (!response.data.ok) {
       throw new Error(response.data.description || 'Failed to get bot info');
@@ -169,11 +189,16 @@ export async function setTelegramWebhook(
   botToken: string,
   webhookUrl: string
 ): Promise<{ success: boolean }> {
+  assertValidTelegramToken(botToken);
   try {
     const url = `${TELEGRAM_API_BASE}/bot${botToken}/setWebhook`;
     const response = await axios.post(url, {
       url: webhookUrl,
       allowed_updates: ['message'],
+    }, {
+      timeout: TELEGRAM_REQUEST_TIMEOUT_MS,
+      maxContentLength: TELEGRAM_METADATA_MAX_BYTES,
+      maxBodyLength: TELEGRAM_METADATA_MAX_BYTES,
     });
 
     if (!response.data.ok) {
@@ -192,9 +217,14 @@ export async function setTelegramWebhook(
 export async function removeTelegramWebhook(
   botToken: string
 ): Promise<{ success: boolean }> {
+  assertValidTelegramToken(botToken);
   try {
     const url = `${TELEGRAM_API_BASE}/bot${botToken}/deleteWebhook`;
-    const response = await axios.post(url);
+    const response = await axios.post(url, undefined, {
+      timeout: TELEGRAM_REQUEST_TIMEOUT_MS,
+      maxContentLength: TELEGRAM_METADATA_MAX_BYTES,
+      maxBodyLength: TELEGRAM_METADATA_MAX_BYTES,
+    });
 
     if (!response.data.ok) {
       throw new Error(response.data.description || 'Failed to delete webhook');
@@ -355,5 +385,5 @@ export async function getTelegramStatus(
 export function isValidTelegramToken(token: string): boolean {
   // Telegram bot tokens format: 123456789:ABCdefGHIjklmnoPQRstuvWXYZ
   const tokenRegex = /^\d+:[A-Za-z0-9_-]+$/;
-  return tokenRegex.test(token);
+  return token.length <= TELEGRAM_TOKEN_MAX_CHARS && tokenRegex.test(token);
 }

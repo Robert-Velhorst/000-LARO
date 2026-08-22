@@ -9,7 +9,7 @@ describe("provider byte-read limits", () => {
 
   it("rejects an oversized Gmail attachment from headers before reading its body", async () => {
     const bodyRead = vi.fn();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+    const fetchMock = vi.fn().mockResolvedValue({
       headers: { get: () => String(MAX_EVIDENCE_BASE64_CHARS + 128 * 1024 + 1) },
       body: {
         [Symbol.asyncIterator]() {
@@ -17,12 +17,14 @@ describe("provider byte-read limits", () => {
           throw new Error("body should not be read");
         },
       },
-    }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const { getGmailAttachmentBytes } = await import("../../server/gmailService");
 
     await expect(getGmailAttachmentBytes("token", "message", "attachment"))
       .rejects.toThrow("Gmail attachment exceeds the 7 MB evidence limit");
     expect(bodyRead).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ signal: expect.any(AbortSignal) });
   });
 
   it("bounds concurrent provider and local byte reads before work starts", async () => {

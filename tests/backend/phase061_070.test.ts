@@ -158,7 +158,7 @@ suite('Phases 061–070', () => {
   it('removes a Google connection when the upstream token is already invalid', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 400 }));
     await app.db.insert(app.schema.emailAccounts).values({
-      id: 'GOOGLE_U61_INVALID', userId: U.id, provider: 'gmail', email: U.email,
+      id: 'GOOGLE_U61_INVALID', userId: U.id, provider: 'gmail', email: 'already-invalid@example.com',
       accessToken: encryptToken('already-invalid'), status: 'connected',
     } as any);
 
