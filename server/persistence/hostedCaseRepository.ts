@@ -27,6 +27,25 @@ export type HostedCase = {
 export type CreateHostedCase = Pick<HostedCase, 'id' | 'userId' | 'clientName' | 'caseType' | 'caseSummary' | 'urgency' | 'legalAreas'> &
   Partial<Omit<HostedCase, 'id' | 'userId' | 'clientName' | 'caseType' | 'caseSummary' | 'urgency' | 'legalAreas' | 'createdAt' | 'updatedAt'>>;
 
+export type HostedEvidence = {
+  id: string;
+  caseId: string;
+  userId: string;
+  type: string;
+  title: string;
+  source: string | null;
+  description: string | null;
+  fileUrl: string | null;
+  fileName: string | null;
+  fileSize: string | null;
+  mimeType: string | null;
+  metadata: string | null;
+  tags: string | null;
+  relevant: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
 /**
  * PostgreSQL access for the core public case domain. It is intentionally
  * separate from the existing SQLite/Drizzle implementation while routes are
@@ -63,6 +82,20 @@ export function createHostedCaseRepository(client: HostedQueryClient) {
       const created = result.rows[0];
       if (!created) throw new Error('Hosted case insert did not return a record.');
       return created;
+    },
+  };
+}
+
+/** Owner- and case-scoped evidence reads for the hosted runtime. */
+export function createHostedEvidenceRepository(client: HostedQueryClient) {
+  return {
+    async findOwnedEvidence(userId: string, caseId: string, evidenceId: string): Promise<HostedEvidence | null> {
+      const result = await client.query<HostedEvidence>(`
+        SELECT * FROM "evidence"
+        WHERE "id" = $1 AND "caseId" = $2 AND "userId" = $3
+        LIMIT 1
+      `, [evidenceId, caseId, userId]);
+      return result.rows[0] ?? null;
     },
   };
 }

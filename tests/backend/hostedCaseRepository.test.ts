@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createHostedCaseRepository } from '../../server/persistence/hostedCaseRepository';
+import { createHostedCaseRepository, createHostedEvidenceRepository } from '../../server/persistence/hostedCaseRepository';
 
 describe('hosted case repository', () => {
   it('reads a case only through its owning account scope', async () => {
@@ -33,6 +33,22 @@ describe('hosted case repository', () => {
     expect(queries[0]).toMatchObject({
       sql: expect.stringContaining('INSERT INTO "cases"'),
       values: expect.arrayContaining(['CASE-2', 'user-a', 'Client', 'Housing', 'Summary', 'High']),
+    });
+  });
+
+  it('reads evidence only through both its owner and case scope', async () => {
+    const queries: Array<{ sql: string; values?: unknown[] }> = [];
+    const repository = createHostedEvidenceRepository({
+      query: async (sql, values) => {
+        queries.push({ sql, values });
+        return { rows: [{ id: 'evidence-1', caseId: 'CASE-1', userId: 'user-a', title: 'Letter' }] };
+      },
+    });
+
+    await expect(repository.findOwnedEvidence('user-a', 'CASE-1', 'evidence-1')).resolves.toMatchObject({ id: 'evidence-1' });
+    expect(queries[0]).toMatchObject({
+      sql: expect.stringContaining('WHERE "id" = $1 AND "caseId" = $2 AND "userId" = $3'),
+      values: ['evidence-1', 'CASE-1', 'user-a'],
     });
   });
 });

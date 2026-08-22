@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createHostedDatabase } from '../../server/persistence/hostedDatabase';
-import { createHostedCaseRepository } from '../../server/persistence/hostedCaseRepository';
+import { createHostedCaseRepository, createHostedEvidenceRepository } from '../../server/persistence/hostedCaseRepository';
 import { applyHostedMigrations } from '../../server/persistence/hostedMigrations';
 
 const connectionString = process.env.LARO_HOSTED_TEST_DATABASE_URL;
@@ -61,5 +61,17 @@ suite('hosted PostgreSQL connection', () => {
     });
     await expect(repository.findOwnedCase('owner-a', 'CASE-hosted-test')).resolves.toMatchObject({ id: 'CASE-hosted-test' });
     await expect(repository.findOwnedCase('owner-b', 'CASE-hosted-test')).resolves.toBeNull();
+
+    await database.transaction(async (client) => {
+      await client.query(`
+        INSERT INTO "evidence" ("id", "caseId", "userId", "type", "title", "relevant", "createdAt", "updatedAt")
+        VALUES ('evidence-hosted-test', 'CASE-hosted-test', 'owner-a', 'document', 'Source letter', 1, 1, 1)
+      `);
+    });
+    const evidenceRepository = createHostedEvidenceRepository({
+      query: (sql, values) => database!.transaction((client) => client.query(sql, values)),
+    });
+    await expect(evidenceRepository.findOwnedEvidence('owner-a', 'CASE-hosted-test', 'evidence-hosted-test')).resolves.toMatchObject({ id: 'evidence-hosted-test' });
+    await expect(evidenceRepository.findOwnedEvidence('owner-b', 'CASE-hosted-test', 'evidence-hosted-test')).resolves.toBeNull();
   });
 });
