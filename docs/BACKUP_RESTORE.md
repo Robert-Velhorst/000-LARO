@@ -21,8 +21,9 @@ only after every member is complete:
 - `<backup>.manifest.json`: database size/hash and encryption compatibility;
 - `<backup>.secrets.json`: the matching desktop keys, when a valid
   `laro-secrets.json` exists beside `DATABASE_URL`;
-- `<backup>.files/`: every file from local managed storage, with per-file size
-  and SHA-256 inventory in the manifest.
+- `<backup>.files/`: every database-referenced evidence object from local
+  managed storage or S3, with per-file size and SHA-256 inventory in the
+  manifest; S3 entries also retain their content type.
 
 The manifest is renamed into place last and acts as the completion marker. LARO
 refuses to overwrite an existing set. For a standalone server whose key comes
@@ -36,9 +37,15 @@ root.
 For local storage, LARO copies and hashes every regular file, rejects symbolic
 links and unsafe paths, verifies that every database-managed storage key exists,
 then rescans the source after the SQLite snapshot. Any addition, removal, or byte
-change aborts publication. When `AWS_S3_BUCKET` is configured, remote objects are
-not copied; the manifest records the bucket, region, and database-derived key
-inventory. S3 versioning/replication remains an external operational requirement.
+change aborts publication. When `AWS_S3_BUCKET` is configured, LARO reads every
+database-referenced object through the bounded storage reader and writes the raw
+bytes into `<backup>.files/`. Missing objects, objects above 64 MB, more than
+100,000 managed objects, a set above 100 GB, unsafe keys, or any post-copy hash
+mismatch abort publication. The manifest binds the snapshot to its source bucket
+and region. Original S3 keys remain in the manifest while snapshot files use
+portable SHA-256 key names, including on Windows. S3 versioning and replication
+remain recommended defense in depth,
+but version-3 recovery no longer depends on the live object remaining present.
 
 The default destination is a timestamped file under `db-backups` beside the live
 database. Keep every set member together on access-controlled or encrypted
@@ -89,9 +96,10 @@ npm run db:validate -- C:\Backups\laro.sqlite
 
 Validation is read-only. For a backup set it verifies the manifest, filenames,
 sizes, SHA-256 hashes, SQLite integrity, foreign keys, core schema, encryption
-key compatibility, and local-file or S3-key coverage. A database-only backup is
-labelled legacy because token and file recovery cannot be proven. A version-1
-backup set can still be inspected, but is labelled as missing storage coverage.
+key compatibility, and complete local or bundled-S3 byte coverage. A
+database-only backup is labelled legacy because token and file recovery cannot
+be proven. Version-1 sets and version-2 S3 inventory-only sets can still be
+inspected, but are labelled as missing complete storage coverage.
 
 ## Electron Restore
 
@@ -109,8 +117,15 @@ then restores SQLite. A database failure independently rolls back storage and
 keys; an incomplete rollback is reported as a maintenance error. Previous state
 remains beside each live path with a `.bak-<timestamp>` suffix.
 
-An S3-backed set restores only when the active bucket and region exactly match
-the manifest. It never claims to have copied or restored remote objects.
+An S3-backed version-3 set restores only when the active bucket and region
+exactly match the manifest. Before writing the backup bytes, LARO snapshots all
+objects referenced by the live database into a timestamped local previous-state
+directory plus its own manifest. Every restored write retains the recorded
+content type and must return the manifest SHA-256. It is then read back from S3;
+bytes, hash, size, and content type must all match before restore continues. A
+failed write, read-back mismatch, or database replacement restores previous
+objects and removes newly introduced keys; incomplete rollback is reported and
+the previous-state directory and manifest are kept for operator recovery.
 
 A legacy database-only restore is blocked by default. After separately proving
 that the correct historical key is installed, an operator can accept that risk
@@ -120,8 +135,9 @@ explicitly:
 npm run db:restore -- C:\Backups\legacy.sqlite --allow-legacy
 ```
 
-A version-1 set without evidence coverage is also blocked. Only after separately
-restoring the matching local evidence may an operator use:
+Version-1 sets and version-2 S3 inventory-only sets without complete evidence
+coverage are also blocked. Only after separately restoring and verifying the
+matching evidence may an operator use:
 
 ```powershell
 npm run db:restore -- C:\Backups\v1.sqlite --allow-missing-storage

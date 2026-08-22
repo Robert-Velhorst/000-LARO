@@ -25,7 +25,7 @@ async function main() {
   if (commandOrDest === '--restore') {
     if (!file) throw new Error('Usage: npm run db:restore -- <backup.sqlite>');
     if (fs.existsSync(backupSetManifestPath(file))) {
-      const result = restoreBackupSet(file, {
+      const result = await restoreBackupSet(file, {
         desktopSecretsPath,
         localStoragePath,
         allowMissingStorage: parsed.allowMissingStorage,
@@ -54,15 +54,15 @@ async function main() {
     if (fs.existsSync(backupSetManifestPath(file))) {
       const result = validateBackupSet(file);
       if (!result.valid) throw new Error(`Invalid backup set: ${result.reason}`);
-      if (result.storageCoverage === 'legacy-missing') {
+      if (result.storageCoverage === 'legacy-missing' || result.storageCoverage === 'legacy-external-s3') {
         console.warn(
           `[Validate] Version-1 backup set is structurally valid with ${result.tables?.length || 0} tables, ` +
-            'but local evidence coverage is not proven.',
+            'but complete evidence coverage is not proven.',
         );
       } else {
         console.log(
           `[Validate] Valid backup set with ${result.tables?.length || 0} tables and ` +
-            `${result.storageCoverage === 'complete-local' ? 'complete local evidence' : 'external S3 inventory'}.`,
+            `${result.storageCoverage === 'complete-local' ? 'complete local evidence' : 'complete bundled S3 evidence'}.`,
         );
       }
       return;
@@ -86,7 +86,7 @@ async function main() {
   console.log(`[Backup] Wrote ${result.bytes} database bytes to ${result.databasePath}`);
   console.log(`[Backup] Recovery manifest: ${result.manifestPath}`);
   console.log(`[Backup] Desktop secrets: ${result.secretsPath || 'external environment; retain JWT_SECRET separately'}`);
-  console.log(`[Backup] Local evidence: ${result.storagePath || 'external S3 inventory recorded in manifest'}`);
+  console.log(`[Backup] Evidence snapshot: ${result.storagePath || 'not bundled'}`);
 }
 
 main().catch((error) => {

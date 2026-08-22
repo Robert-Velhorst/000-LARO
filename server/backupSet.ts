@@ -1,21 +1,30 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { backupDatabase, restoreDatabase, validateBackup } from "./backup";
+import {
+  backupDatabase,
+  cleanupBackupDatabaseSidecars,
+  restoreDatabase,
+  validateBackup,
+} from "./backup";
 import {
   assertLocalStorageUnchanged,
   backupSetStoragePath,
-  createExternalS3Manifest,
   createLocalStorageSnapshot,
+  createS3StorageSnapshot,
   installLocalStorageSnapshot,
   isBackupStorageManifest,
+  MAX_BACKUP_STORAGE_OBJECT_BYTES,
+  readStorageSnapshotFile,
   validateBackupStorage,
   type BackupStorageManifest,
   type BundledLocalStorageManifest,
+  type BundledS3StorageManifest,
 } from "./backupStorage";
 
 const FORMAT = "laro-backup-set";
-const VERSION = 2;
+const VERSION = 3;
+const INVENTORY_ONLY_VERSION = 2;
 const LEGACY_VERSION = 1;
 const SECRET_PATTERN = /^[a-f0-9]{64}$/;
 const COMPATIBILITY_CONTEXT = "LARO backup token-encryption compatibility v1";
@@ -45,7 +54,7 @@ type EncryptionManifestEntry =
 
 export interface BackupSetManifest {
   format: typeof FORMAT;
-  version: typeof VERSION | typeof LEGACY_VERSION;
+  version: typeof VERSION | typeof INVENTORY_ONLY_VERSION | typeof LEGACY_VERSION;
   createdAt: string;
   database: DatabaseManifestEntry;
   encryption: EncryptionManifestEntry;
@@ -56,6 +65,10 @@ export interface CreateBackupSetOptions {
   desktopSecretsPath?: string;
   externalJwtSecret?: string;
   localStoragePath?: string;
+  externalStorageRead?: (
+    key: string,
+    options: { maxBytes: number },
+  ) => Promise<{ body: Buffer; contentType: string }>;
 }
 
 export interface ValidateBackupSetOptions {
@@ -67,13 +80,19 @@ export interface BackupSetValidation {
   reason?: string;
   manifest?: BackupSetManifest;
   tables?: string[];
-  storageCoverage?: "complete-local" | "external-s3" | "legacy-missing";
+  storageCoverage?: "complete-local" | "complete-s3" | "legacy-external-s3" | "legacy-missing";
 }
 
 export interface RestoreBackupSetOptions extends ValidateBackupSetOptions {
   desktopSecretsPath?: string;
   localStoragePath?: string;
   allowMissingStorage?: boolean;
+  externalStorageRead?: (
+    key: string,
+    options: { maxBytes: number },
+  ) => Promise<{ body: Buffer; contentType: string }>;
+  externalStoragePut?: (key: string, body: Buffer, contentType: string) => Promise<{ sha256: string }>;
+  externalStorageDelete?: (key: string) => Promise<void>;
 }
 
 export interface RestoreBackupSetResult {
@@ -141,7 +160,7 @@ function parseManifest(manifestPath: string): BackupSetManifest {
   const encryption = candidate.encryption as Record<string, unknown> | undefined;
   const baseValid =
     candidate.format === FORMAT &&
-    (candidate.version === VERSION || candidate.version === LEGACY_VERSION) &&
+    (candidate.version === VERSION || candidate.version === INVENTORY_ONLY_VERSION || candidate.version === LEGACY_VERSION) &&
     typeof candidate.createdAt === "string" &&
     !Number.isNaN(Date.parse(candidate.createdAt)) &&
     database &&
@@ -160,8 +179,14 @@ function parseManifest(manifestPath: string): BackupSetManifest {
   } else if (encryption.mode !== "external-environment") {
     throw new Error("Backup-set encryption mode is unsupported.");
   }
-  if (candidate.version === VERSION && !isBackupStorageManifest(candidate.storage)) {
+  if (
+    (candidate.version === VERSION || candidate.version === INVENTORY_ONLY_VERSION) &&
+    !isBackupStorageManifest(candidate.storage)
+  ) {
     throw new Error("Backup-set storage metadata is invalid.");
+  }
+  if (candidate.version === VERSION && (candidate.storage as BackupStorageManifest).mode === "external-s3") {
+    throw new Error("Version-3 backup sets must bundle S3 evidence bytes.");
   }
   return parsed as BackupSetManifest;
 }
@@ -289,11 +314,27 @@ export async function createBackupSet(
         throw new Error(`Local evidence backup verification failed: ${storageValidation.reason}`);
       }
     } else {
-      storage = createExternalS3Manifest(
+      const readExternalObject = options.externalStorageRead || (async (key, readOptions) => {
+        const { storageReadForBackup } = await import("./storage");
+        return storageReadForBackup(key, readOptions);
+      });
+      storage = await createS3StorageSnapshot(
         temporaryDatabase,
+        temporaryStorage,
+        path.basename(storagePath),
         externalBucket,
         process.env.AWS_S3_REGION || "eu-west-1",
+        readExternalObject,
       );
+      const storageValidation = validateBackupStorage(
+        temporaryDatabase,
+        temporaryStorage,
+        storage,
+        path.basename(storagePath),
+      );
+      if (!storageValidation.valid) {
+        throw new Error(`S3 evidence backup verification failed: ${storageValidation.reason}`);
+      }
     }
 
     let encryption: EncryptionManifestEntry;
@@ -329,7 +370,7 @@ export async function createBackupSet(
       mode: 0o600,
     });
 
-    if (storage!.mode === "bundled-local") {
+    if (storage!.mode === "bundled-local" || storage!.mode === "bundled-s3") {
       fs.renameSync(temporaryStorage, storagePath);
       published.push(storagePath);
     }
@@ -346,7 +387,7 @@ export async function createBackupSet(
       databasePath: destination,
       manifestPath,
       secretsPath: secretSource.mode === "desktop" ? secretsPath : null,
-      storagePath: storage!.mode === "bundled-local" ? storagePath : null,
+      storagePath: storage!.mode === "bundled-local" || storage!.mode === "bundled-s3" ? storagePath : null,
       bytes: backup.bytes,
     };
   } catch (error) {
@@ -429,7 +470,11 @@ export function validateBackupSet(
       valid: true,
       manifest,
       tables: databaseValidation.tables,
-      storageCoverage: manifest.storage!.mode === "bundled-local" ? "complete-local" : "external-s3",
+      storageCoverage: manifest.storage!.mode === "bundled-local"
+        ? "complete-local"
+        : manifest.storage!.mode === "bundled-s3"
+          ? "complete-s3"
+          : "legacy-external-s3",
     };
   } catch (error) {
     return { valid: false, reason: error instanceof Error ? error.message : String(error) };
@@ -480,18 +525,132 @@ function installBundledSecrets(
   };
 }
 
-export function restoreBackupSet(
+async function installS3StorageSnapshot(
+  backupDatabasePath: string,
+  manifest: BundledS3StorageManifest,
+  options: RestoreBackupSetOptions,
+): Promise<{ previous: string; rollback: () => Promise<void> }> {
+  const readObject = options.externalStorageRead || (async (key, readOptions) => {
+    const { storageReadForBackup } = await import("./storage");
+    return storageReadForBackup(key, readOptions);
+  });
+  const putObject = options.externalStoragePut || (async (key, body, contentType) => {
+    const { storagePut } = await import("./storage");
+    return storagePut(key, body, contentType);
+  });
+  const deleteObject = options.externalStorageDelete || (async (key) => {
+    const { storageDelete } = await import("./storage");
+    return storageDelete(key);
+  });
+  const backupStoragePath = backupSetStoragePath(backupDatabasePath);
+  const previousPath = `${currentDatabasePath()}.s3-files.bak-${Date.now()}`;
+  const previousManifestPath = `${previousPath}.manifest.json`;
+  const previousInventoryDatabase = `${previousPath}.inventory.sqlite`;
+  let previousManifest: BundledS3StorageManifest;
+  try {
+    await backupDatabase(previousInventoryDatabase);
+    previousManifest = await createS3StorageSnapshot(
+      previousInventoryDatabase,
+      previousPath,
+      path.basename(previousPath),
+      manifest.bucket,
+      manifest.region,
+      readObject,
+    );
+    fs.writeFileSync(previousManifestPath, JSON.stringify(previousManifest, null, 2), {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+  } catch (error) {
+    removeIfPresent(previousPath);
+    removeIfPresent(previousManifestPath);
+    throw error;
+  } finally {
+    removeIfPresent(previousInventoryDatabase);
+    cleanupBackupDatabaseSidecars(previousInventoryDatabase);
+  }
+
+  const previousKeys = new Set(previousManifest.objects.map((entry) => entry.key));
+  const written = new Set<string>();
+  const writeFiles = async (
+    snapshotPath: string,
+    objects: BundledS3StorageManifest["objects"],
+    trackWrites: boolean,
+  ): Promise<void> => {
+    for (const entry of objects) {
+      const body = readStorageSnapshotFile(snapshotPath, entry.file);
+      if (body.length > MAX_BACKUP_STORAGE_OBJECT_BYTES || body.length !== entry.bytes) {
+        throw new Error(`Bundled S3 evidence has an invalid restore size: ${entry.key}`);
+      }
+      if (trackWrites) written.add(entry.key);
+      const stored = await putObject(entry.key, body, entry.contentType);
+      if (stored.sha256 !== entry.sha256) {
+        throw new Error(`Restored S3 evidence hash does not match its manifest: ${entry.key}`);
+      }
+      const readBack = await readObject(entry.key, { maxBytes: MAX_BACKUP_STORAGE_OBJECT_BYTES });
+      const readBackHash = crypto.createHash("sha256").update(readBack.body).digest("hex");
+      if (
+        readBack.body.length !== entry.bytes ||
+        readBackHash !== entry.sha256 ||
+        readBack.contentType !== entry.contentType
+      ) {
+        throw new Error(`Restored S3 evidence read-back hash does not match its manifest: ${entry.key}`);
+      }
+    }
+  };
+
+  const rollback = async (): Promise<void> => {
+    const errors: unknown[] = [];
+    for (const key of written) {
+      if (previousKeys.has(key)) continue;
+      try { await deleteObject(key); } catch (error) { errors.push(error); }
+    }
+    try {
+      await writeFiles(previousPath, previousManifest.objects, false);
+    } catch (error) {
+      errors.push(error);
+    }
+    if (errors.length === 0) {
+      removeIfPresent(previousPath);
+      removeIfPresent(previousManifestPath);
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, "Previous S3 evidence could not be fully reinstated.");
+    }
+  };
+
+  try {
+    await writeFiles(backupStoragePath, manifest.objects, true);
+    return { previous: previousPath, rollback };
+  } catch (error) {
+    try {
+      await rollback();
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "S3 evidence restore failed and the previous objects could not be fully reinstated.",
+      );
+    }
+    throw error;
+  }
+}
+
+export async function restoreBackupSet(
   databaseBackupPath: string,
   options: RestoreBackupSetOptions = {},
-): RestoreBackupSetResult {
+): Promise<RestoreBackupSetResult> {
   const databasePath = path.resolve(databaseBackupPath);
   const validation = validateBackupSet(databasePath, options);
   if (!validation.valid || !validation.manifest) {
     throw new Error(`Refusing to restore backup set: ${validation.reason || "validation failed"}`);
   }
-  if (validation.manifest.version === LEGACY_VERSION && !options.allowMissingStorage) {
+  if (
+    (validation.manifest.version === LEGACY_VERSION || validation.manifest.storage?.mode === "external-s3") &&
+    !options.allowMissingStorage
+  ) {
     throw new Error(
-      "Refusing to restore a version-1 backup set because local evidence coverage is not proven. " +
+      "Refusing to restore an inventory-only backup set because evidence coverage is not proven. " +
         "Restore the matching storage separately or use an explicit missing-storage override.",
     );
   }
@@ -523,7 +682,10 @@ export function restoreBackupSet(
     }
   }
 
-  if (validation.manifest.storage?.mode === "external-s3") {
+  if (
+    validation.manifest.storage?.mode === "external-s3" ||
+    validation.manifest.storage?.mode === "bundled-s3"
+  ) {
     const activeBucket = (process.env.AWS_S3_BUCKET || "").trim();
     const activeRegion = process.env.AWS_S3_REGION || "eu-west-1";
     if (
@@ -538,6 +700,7 @@ export function restoreBackupSet(
 
   let secretInstall: { previous: string | null; rollback: () => void } | null = null;
   let storageInstall: { previous: string | null; rollback: () => void } | null = null;
+  let s3Install: { previous: string; rollback: () => Promise<void> } | null = null;
 
   try {
     if (validation.manifest.encryption.mode === "bundled-desktop-secret") {
@@ -559,6 +722,13 @@ export function restoreBackupSet(
         validation.manifest.storage.files,
       );
     }
+    if (validation.manifest.storage?.mode === "bundled-s3") {
+      s3Install = await installS3StorageSnapshot(
+        databasePath,
+        validation.manifest.storage,
+        options,
+      );
+    }
     const restored = restoreDatabase(databasePath, {
       bytes: validation.manifest.database.bytes,
       sha256: validation.manifest.database.sha256,
@@ -567,10 +737,15 @@ export function restoreBackupSet(
       restored: true,
       backupOfPreviousDatabase: restored.backupOfPrevious,
       backupOfPreviousSecrets: secretInstall?.previous || null,
-      backupOfPreviousStorage: storageInstall?.previous || null,
+      backupOfPreviousStorage: storageInstall?.previous || s3Install?.previous || null,
     };
   } catch (error) {
     const rollbackErrors: unknown[] = [];
+    try {
+      if (s3Install) await s3Install.rollback();
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError);
+    }
     try {
       storageInstall?.rollback();
     } catch (rollbackError) {
