@@ -182,7 +182,11 @@
       "dist",
       "node_modules",
       "drizzle",
-      "package.json"
+      "package.json",
+      "!**/*.d.ts",
+      "!**/*.d.ts.map",
+      "!**/*.map",
+      "!**/*.tsbuildinfo"
     ],
     "asarUnpack": [
       "drizzle/**/*",

@@ -154,9 +154,22 @@ export const dashboardRouter = router({
         clientName: casesTable.clientName,
         status: casesTable.status,
         urgency: casesTable.urgency,
+        createdAt: casesTable.createdAt,
+        evidenceCount: sql<number>`count(${evidence.id})`,
       })
       .from(casesTable)
+      .leftJoin(evidence, and(
+        eq(evidence.caseId, casesTable.id),
+        eq(evidence.userId, userId),
+      ))
       .where(eq(casesTable.userId, userId))
+      .groupBy(
+        casesTable.id,
+        casesTable.clientName,
+        casesTable.status,
+        casesTable.urgency,
+        casesTable.createdAt,
+      )
       .orderBy(desc(casesTable.createdAt))
       .limit(25);
 
@@ -166,11 +179,7 @@ export const dashboardRouter = router({
       const title = c.clientName || c.id;
       const highUrgency = (c.urgency || "").toLowerCase() === "high";
 
-      const evCount = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(evidence)
-        .where(and(eq(evidence.userId, userId), eq(evidence.caseId, c.id)));
-      const hasEvidence = Number(evCount[0]?.count || 0) > 0;
+      const hasEvidence = Number(c.evidenceCount || 0) > 0;
 
       if (!hasEvidence) {
         actions.push({
@@ -218,9 +227,36 @@ export const dashboardRouter = router({
     const userId = ctx.user.id;
 
     const userCases = await db
-      .select({ id: casesTable.id, clientName: casesTable.clientName, clientEmail: casesTable.clientEmail, status: casesTable.status, urgency: casesTable.urgency, legalAreas: casesTable.legalAreas })
+      .select({
+        id: casesTable.id,
+        clientName: casesTable.clientName,
+        clientEmail: casesTable.clientEmail,
+        status: casesTable.status,
+        urgency: casesTable.urgency,
+        legalAreas: casesTable.legalAreas,
+        createdAt: casesTable.createdAt,
+        evidenceCount: sql<number>`count(distinct ${evidence.id})`,
+        pendingOutreachCount: sql<number>`count(distinct ${outreachStatus.id})`,
+      })
       .from(casesTable)
+      .leftJoin(evidence, and(
+        eq(evidence.caseId, casesTable.id),
+        eq(evidence.userId, userId),
+      ))
+      .leftJoin(outreachStatus, and(
+        eq(outreachStatus.caseId, casesTable.id),
+        eq(outreachStatus.status, "PendingApproval"),
+      ))
       .where(eq(casesTable.userId, userId))
+      .groupBy(
+        casesTable.id,
+        casesTable.clientName,
+        casesTable.clientEmail,
+        casesTable.status,
+        casesTable.urgency,
+        casesTable.legalAreas,
+        casesTable.createdAt,
+      )
       .orderBy(desc(casesTable.createdAt))
       .limit(100);
 
@@ -240,20 +276,12 @@ export const dashboardRouter = router({
         exceptions.push({ caseId: c.id, caseTitle: title, kind: "unclassified", detail: "Case has no legal area — classification needed before matching.", severity: high ? "high" : "medium" });
       }
       // No evidence yet.
-      const evCount = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(evidence)
-        .where(and(eq(evidence.userId, userId), eq(evidence.caseId, c.id)));
-      if (Number(evCount[0]?.count || 0) === 0) {
+      if (Number(c.evidenceCount || 0) === 0) {
         exceptions.push({ caseId: c.id, caseTitle: title, kind: "no-evidence", detail: "No evidence uploaded — the case cannot be assessed.", severity: high ? "high" : "medium" });
       }
       // Outreach drafts stuck awaiting approval.
-      const pending = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(outreachStatus)
-        .where(and(eq(outreachStatus.caseId, c.id), eq(outreachStatus.status, "PendingApproval")));
-      if (Number(pending[0]?.count || 0) > 0) {
-        exceptions.push({ caseId: c.id, caseTitle: title, kind: "awaiting-approval", detail: `${pending[0].count} outreach draft(s) awaiting your approval.`, severity: high ? "high" : "medium" });
+      if (Number(c.pendingOutreachCount || 0) > 0) {
+        exceptions.push({ caseId: c.id, caseTitle: title, kind: "awaiting-approval", detail: `${c.pendingOutreachCount} outreach draft(s) awaiting your approval.`, severity: high ? "high" : "medium" });
       }
     }
 

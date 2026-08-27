@@ -861,6 +861,7 @@ CREATE INDEX IF NOT EXISTS "document_analyses_user_idx" ON "document_analyses" (
 CREATE INDEX IF NOT EXISTS "document_analyses_user_updatedAt_idx" ON "document_analyses" ("userId","updatedAt");
 CREATE INDEX IF NOT EXISTS "evidence_caseId_idx" ON "evidence" ("caseId");
 CREATE INDEX IF NOT EXISTS "evidence_files_user_idx" ON "evidence_files" ("userId");
+CREATE INDEX IF NOT EXISTS "evidence_userId_caseId_idx" ON "evidence" ("userId","caseId");
 CREATE INDEX IF NOT EXISTS "evidence_userId_idx" ON "evidence" ("userId");
 CREATE UNIQUE INDEX IF NOT EXISTS "integration_access_tokens_hash_unique" ON "integration_access_tokens" ("tokenHash");
 CREATE INDEX IF NOT EXISTS "integration_access_tokens_user_status_idx" ON "integration_access_tokens" ("userId","status");
@@ -873,6 +874,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "legacy_import_records_source_unique" ON "lega
 CREATE INDEX IF NOT EXISTS "legacy_import_records_user_case_idx" ON "legacy_import_records" ("userId","caseId");
 CREATE UNIQUE INDEX IF NOT EXISTS "legacy_import_runs_source_user_unique" ON "legacy_import_runs" ("sourceRuntime","sourceInstanceId","userId");
 CREATE INDEX IF NOT EXISTS "legacy_import_runs_user_completed_idx" ON "legacy_import_runs" ("userId","completedAt");
+CREATE INDEX IF NOT EXISTS "outreach_status_caseId_status_idx" ON "outreach_status" ("caseId","status");
 CREATE INDEX IF NOT EXISTS "outreach_targets_user_type_status_idx" ON "outreach_directory_targets" ("userId","targetType","status");
 CREATE UNIQUE INDEX IF NOT EXISTS "outreach_targets_user_type_url_unique" ON "outreach_directory_targets" ("userId","targetType","url");
 CREATE INDEX IF NOT EXISTS "storage_deletion_queue_nextAttemptAt_idx" ON "storage_deletion_queue" ("nextAttemptAt");
