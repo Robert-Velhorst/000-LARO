@@ -9,6 +9,7 @@ import { getTableConfig } from "drizzle-orm/sqlite-core";
 import { ENV } from './_core/env';
 import { createCaseId } from './ids';
 import { ensureRelationshipIntegrityTriggers } from './relationshipIntegrity';
+import { assertDatabaseRuntimeIsSupported } from './persistence/hostedPersistenceGuard';
 
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 
@@ -188,7 +189,11 @@ function ensureIndexes(sqlite: InstanceType<typeof Database>) {
     `CREATE INDEX IF NOT EXISTS cases_userId_status_urgency_createdAt_idx ON cases(userId, status, urgency, createdAt);`,
     `CREATE INDEX IF NOT EXISTS cases_userId_clientName_idx ON cases(userId, clientName);`,
     `CREATE INDEX IF NOT EXISTS document_analyses_user_updatedAt_idx ON document_analyses(userId, updatedAt);`,
+    `CREATE INDEX IF NOT EXISTS evidence_userId_caseId_idx ON evidence(userId, caseId);`,
+    `CREATE INDEX IF NOT EXISTS communication_gaps_caseId_idx ON communication_gaps(caseId);`,
+    `CREATE INDEX IF NOT EXISTS expected_documents_caseId_idx ON expected_documents(caseId);`,
     `CREATE INDEX IF NOT EXISTS outreach_status_caseId_idx ON outreach_status(caseId);`,
+    `CREATE INDEX IF NOT EXISTS outreach_status_caseId_status_idx ON outreach_status(caseId, status);`,
     `CREATE INDEX IF NOT EXISTS outreach_status_lawyerId_idx ON outreach_status(lawyerId);`,
     `CREATE INDEX IF NOT EXISTS outreach_status_status_idx ON outreach_status(status);`,
     `CREATE INDEX IF NOT EXISTS email_messages_accountId_idx ON email_messages(accountId);`,
@@ -443,6 +448,10 @@ function findMigrationsFolder(): string {
 export async function getDb() {
   if (!_db) {
     try {
+      assertDatabaseRuntimeIsSupported({
+        runtimeMode: ENV.LARO_RUNTIME_MODE,
+        databaseUrl: ENV.DATABASE_URL,
+      });
       const dbPath = getDbPath();
       const sqlite = new Database(dbPath);
       _sqlite = sqlite;

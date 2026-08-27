@@ -1,16 +1,12 @@
 import { trpc } from "@/lib/trpc";
 import DashboardLayout from "@/components/DashboardLayout";
-import CaseCreationWizard from "@/components/CaseCreationWizard";
-import EnhancedCaseDetailsDialog from "@/components/EnhancedCaseDetailsDialog";
-import { useCallback, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Plus, MapPin, Clock, Briefcase, FileText, Upload, Trash2 } from "lucide-react";
 import SmartSearchFilters from "@/components/SmartSearchFilters";
-import { BulkCaseImport } from "@/components/BulkCaseImport";
-import BulkEvidenceUpload from "@/components/BulkEvidenceUpload";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -18,6 +14,29 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+
+const EnhancedCaseDetailsDialog = lazy(() => import("@/components/EnhancedCaseDetailsDialog"));
+const CaseCreationWizard = lazy(() => import("@/components/CaseCreationWizard"));
+const BulkCaseImport = lazy(() => import("@/components/BulkCaseImport").then((module) => ({
+  default: module.BulkCaseImport,
+})));
+const BulkEvidenceUpload = lazy(() => import("@/components/BulkEvidenceUpload"));
+
+function CaseWorkspaceLoadingDialog({ title }: { title: string }) {
+  return (
+    <Dialog open>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        <div role="status" aria-live="polite" className="space-y-3">
+          <Skeleton className="h-5 w-2/3" />
+          <Skeleton className="h-20 w-full" />
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function matchesUrgencyFilter(caseUrgency: string | null | undefined, filter: string | null) {
   if (!filter || filter === "all") return true;
@@ -410,40 +429,46 @@ export default function Cases() {
         )}
       </div>
       
-      <CaseCreationWizard 
-        open={newCaseOpen} 
-        onOpenChange={setNewCaseOpen}
-        onComplete={async (caseData) => {
-          try {
-            const created = await createCase.mutateAsync({
-              caseType: caseData.legalArea || "AI Classification Pending",
-              caseSummary: caseData.summary || "",
-              urgency: "Medium",
-              clientName: caseData.clientName,
-              clientEmail: caseData.clientEmail,
-            });
-            setPage(1);
-            await Promise.all([
-              utils.cases.list.invalidate(),
-              utils.dashboard.stats.invalidate(),
-              utils.dashboard.recentCases.invalidate(),
-            ]);
-            if (caseData.uploadDocumentsAfterCreate) {
-              setEvidenceUploadCaseId(created.id);
-            }
-            return true;
-          } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Failed to create case");
-            return false;
-          }
-        }}
-      />
+      {newCaseOpen && (
+        <Suspense fallback={<CaseWorkspaceLoadingDialog title="Opening new case form" />}>
+          <CaseCreationWizard
+            open={newCaseOpen}
+            onOpenChange={setNewCaseOpen}
+            onComplete={async (caseData) => {
+              try {
+                const created = await createCase.mutateAsync({
+                  caseType: caseData.legalArea || "AI Classification Pending",
+                  caseSummary: caseData.summary || "",
+                  urgency: "Medium",
+                  clientName: caseData.clientName,
+                  clientEmail: caseData.clientEmail,
+                });
+                setPage(1);
+                await Promise.all([
+                  utils.cases.list.invalidate(),
+                  utils.dashboard.stats.invalidate(),
+                  utils.dashboard.recentCases.invalidate(),
+                ]);
+                if (caseData.uploadDocumentsAfterCreate) {
+                  setEvidenceUploadCaseId(created.id);
+                }
+                return true;
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Failed to create case");
+                return false;
+              }
+            }}
+          />
+        </Suspense>
+      )}
       {selectedCaseId && (
-        <EnhancedCaseDetailsDialog
-          caseId={selectedCaseId}
-          open={!!selectedCaseId}
-          onOpenChange={(open) => !open && setSelectedCaseId(null)}
-        />
+        <Suspense fallback={<CaseWorkspaceLoadingDialog title="Opening case details" />}>
+          <EnhancedCaseDetailsDialog
+            caseId={selectedCaseId}
+            open={!!selectedCaseId}
+            onOpenChange={(open) => !open && setSelectedCaseId(null)}
+          />
+        </Suspense>
       )}
       
       <Dialog open={bulkImportOpen} onOpenChange={setBulkImportOpen}>
@@ -451,16 +476,22 @@ export default function Cases() {
           <DialogHeader>
             <DialogTitle>Bulk Case Import</DialogTitle>
           </DialogHeader>
-          <BulkCaseImport />
+          {bulkImportOpen && (
+            <Suspense fallback={<div role="status" aria-live="polite"><Skeleton className="h-48 w-full" /></div>}>
+              <BulkCaseImport />
+            </Suspense>
+          )}
         </DialogContent>
       </Dialog>
       {evidenceUploadCaseId && (
-        <BulkEvidenceUpload
-          caseId={evidenceUploadCaseId}
-          open={!!evidenceUploadCaseId}
-          onClose={() => setEvidenceUploadCaseId(null)}
-          onComplete={() => setEvidenceUploadCaseId(null)}
-        />
+        <Suspense fallback={<CaseWorkspaceLoadingDialog title="Opening evidence upload" />}>
+          <BulkEvidenceUpload
+            caseId={evidenceUploadCaseId}
+            open={!!evidenceUploadCaseId}
+            onClose={() => setEvidenceUploadCaseId(null)}
+            onComplete={() => setEvidenceUploadCaseId(null)}
+          />
+        </Suspense>
       )}
 
       <Dialog

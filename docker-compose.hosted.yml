@@ -1,0 +1,29 @@
+# Local integration dependencies for the hosted LARO runtime.
+#
+# This file deliberately binds PostgreSQL only to loopback and uses a
+# development-only default password. It is not a public production deployment;
+# production credentials and service endpoints must be supplied by the operator.
+services:
+  postgres:
+    image: postgres:16.15-alpine3.24
+    # A single local dependency does not need Compose service DNS. Reuse Docker's
+    # built-in bridge so this test stack works on development machines whose
+    # automatic Compose subnet pool is already exhausted.
+    network_mode: bridge
+    environment:
+      POSTGRES_DB: ${LARO_HOSTED_POSTGRES_DB:-laro}
+      POSTGRES_USER: ${LARO_HOSTED_POSTGRES_USER:-laro}
+      POSTGRES_PASSWORD: ${LARO_HOSTED_POSTGRES_PASSWORD:-laro-local-development-only}
+    ports:
+      - "127.0.0.1:${LARO_HOSTED_POSTGRES_PORT:-54329}:5432"
+    volumes:
+      - laro-hosted-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  laro-hosted-postgres:

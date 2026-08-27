@@ -1,5 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { MAX_EVIDENCE_BASE64_CHARS } from "../../shared/evidenceFiles";
+import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
+
+const sqliteSuite = sqliteAvailable ? describe : describe.skip;
 
 describe("provider byte-read limits", () => {
   afterEach(() => {
@@ -60,5 +63,47 @@ describe("provider byte-read limits", () => {
         setTimeout(() => reject(new Error("Gmail reads deadlocked")), 1_000);
       }),
     ])).resolves.toHaveLength(4);
+  });
+});
+
+sqliteSuite("Gmail thread sync read limits", () => {
+  let app: TestApp;
+
+  beforeAll(async () => {
+    app = await bootTestApp();
+  });
+
+  afterAll(() => app?.cleanup());
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it("rejects an oversized Gmail thread response before processing it", async () => {
+    const bodyRead = vi.fn();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ threads: [{ id: "thread-1" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }))
+      .mockResolvedValueOnce({
+        headers: { get: () => String(MAX_EVIDENCE_BASE64_CHARS + 128 * 1024 + 1) },
+        body: {
+          [Symbol.asyncIterator]() {
+            bodyRead();
+            throw new Error("body should not be read");
+          },
+        },
+        json: async () => ({ messages: [] }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    const { syncGmailForCase } = await import("../../server/gmailService");
+
+    const result = await syncGmailForCase("owner", "case", "token");
+
+    expect(result.processedThreads).toBe(0);
+    expect(result.errors.join(" ")).toContain("exceeds the 7 MB evidence limit");
+    expect(bodyRead).not.toHaveBeenCalled();
   });
 });
