@@ -14,6 +14,7 @@ import {
   suspiciousPatterns,
   legalInferences,
   caseStrengthAnalysis,
+  cases,
 } from "../schema";
 import { eq } from "drizzle-orm";
 
@@ -301,8 +302,22 @@ export const gapAnalysisRouter = router({
       }
 
       const userId = ctx.user.id;
-      // Get all user's cases directly from DB rather than allCases filter
-      const userCases = await db.select().from(require("../schema").cases).where(eq(require("../schema").cases.userId, userId));
+      const [userCases, gapRows, expectedDocRows] = await Promise.all([
+        db
+          .select({ id: cases.id, clientName: cases.clientName })
+          .from(cases)
+          .where(eq(cases.userId, userId)),
+        db
+          .select({ caseId: communicationGaps.caseId, data: communicationGaps.data })
+          .from(communicationGaps)
+          .innerJoin(cases, eq(communicationGaps.caseId, cases.id))
+          .where(eq(cases.userId, userId)),
+        db
+          .select({ caseId: expectedDocuments.caseId, data: expectedDocuments.data })
+          .from(expectedDocuments)
+          .innerJoin(cases, eq(expectedDocuments.caseId, cases.id))
+          .where(eq(cases.userId, userId)),
+      ]);
 
       if (userCases.length === 0) {
         return {
@@ -313,22 +328,24 @@ export const gapAnalysisRouter = router({
         };
       }
 
-      // Get gap analysis for each case
-      const caseAnalyses = await Promise.all(
-        userCases.map(async (caseItem) => {
-          const [gaps, expectedDocs] = await Promise.all([
-            db
-              .select()
-              .from(communicationGaps)
-              .where(eq(communicationGaps.caseId, caseItem.id)),
-            db
-              .select()
-              .from(expectedDocuments)
-              .where(eq(expectedDocuments.caseId, caseItem.id)),
-          ]);
+      const gapsByCase = new Map<string, Array<{ data: string | null }>>();
+      for (const row of gapRows) {
+        if (!row.caseId) continue;
+        const rows = gapsByCase.get(row.caseId) || [];
+        rows.push(row);
+        gapsByCase.set(row.caseId, rows);
+      }
+      const expectedDocsByCase = new Map<string, Array<{ data: string | null }>>();
+      for (const row of expectedDocRows) {
+        if (!row.caseId) continue;
+        const rows = expectedDocsByCase.get(row.caseId) || [];
+        rows.push(row);
+        expectedDocsByCase.set(row.caseId, rows);
+      }
 
-          const normalizedGaps = gaps.map((g) => ({ ...g, ...parseData(g.data) })) as any[];
-          const normalizedDocs = expectedDocs.map((d) => ({ ...d, ...parseData(d.data) })) as any[];
+      const caseAnalyses = userCases.map((caseItem) => {
+          const normalizedGaps = (gapsByCase.get(caseItem.id) || []).map((gap) => parseData(gap.data)) as any[];
+          const normalizedDocs = (expectedDocsByCase.get(caseItem.id) || []).map((document) => parseData(document.data)) as any[];
 
           const criticalGaps = normalizedGaps.filter((g) => g.significance === "critical");
           const missingDocs = normalizedDocs.filter((d) => d.status === "missing");
@@ -352,8 +369,7 @@ export const gapAnalysisRouter = router({
             oldestGapDays,
             totalSeverity: criticalGaps.length * 10 + missingDocs.length * 5,
           };
-        })
-      );
+      });
 
       // Filter cases with critical issues
       const casesWithIssues = caseAnalyses.filter(
