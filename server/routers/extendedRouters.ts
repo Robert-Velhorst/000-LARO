@@ -248,32 +248,32 @@ export const bulkFileOperationsRouter = router({
   deleteItems: protectedProcedure.input(z.object({ ids: z.array(z.string()).min(1).max(500) })).mutation(async ({ input, ctx }) => {
     const db = await getDb();
     if (!db) return { deleted: 0 };
-    let deleted = 0;
-    for (const id of input.ids) {
-      const res = await db.delete(evidenceItems).where(and(eq(evidenceItems.id, id), eq(evidenceItems.userId, ctx.user.id)));
-      deleted += (res as any)?.changes ?? 0;
-    }
-    return { deleted };
+    const ids = [...new Set(input.ids)];
+    const result = await db.delete(evidenceItems).where(and(
+      inArray(evidenceItems.id, ids),
+      eq(evidenceItems.userId, ctx.user.id),
+    ));
+    return { deleted: Number((result as any)?.changes ?? 0) };
   }),
   addTags: protectedProcedure.input(z.object({ ids: z.array(z.string()).min(1).max(500), tags: z.array(z.string().min(1).max(80)).max(50) })).mutation(async ({ input, ctx }) => {
     const db = await getDb();
     if (!db) return { updated: 0 };
-    let updated = 0;
-    for (const id of input.ids) {
-      const res = await db.update(evidenceItems).set({ tags: JSON.stringify(input.tags) } as any).where(and(eq(evidenceItems.id, id), eq(evidenceItems.userId, ctx.user.id)));
-      updated += (res as any)?.changes ?? 0;
-    }
-    return { updated };
+    const ids = [...new Set(input.ids)];
+    const result = await db.update(evidenceItems).set({ tags: JSON.stringify(input.tags) } as any).where(and(
+      inArray(evidenceItems.id, ids),
+      eq(evidenceItems.userId, ctx.user.id),
+    ));
+    return { updated: Number((result as any)?.changes ?? 0) };
   }),
   setRelevanceScore: protectedProcedure.input(z.object({ ids: z.array(z.string()).min(1).max(500), score: z.number().int().min(0).max(100) })).mutation(async ({ input, ctx }) => {
     const db = await getDb();
     if (!db) return { updated: 0 };
-    let updated = 0;
-    for (const id of input.ids) {
-      const result = await db.update(evidenceItems).set({ relevanceScore: input.score } as any).where(and(eq(evidenceItems.id, id), eq(evidenceItems.userId, ctx.user.id)));
-      updated += (result as any)?.changes ?? 0;
-    }
-    return { updated };
+    const ids = [...new Set(input.ids)];
+    const result = await db.update(evidenceItems).set({ relevanceScore: input.score } as any).where(and(
+      inArray(evidenceItems.id, ids),
+      eq(evidenceItems.userId, ctx.user.id),
+    ));
+    return { updated: Number((result as any)?.changes ?? 0) };
   }),
 });
 
