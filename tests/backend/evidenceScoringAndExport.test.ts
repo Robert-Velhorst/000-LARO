@@ -97,6 +97,39 @@ suite("evidence scoring and case export", () => {
     })).rejects.toThrow();
   });
 
+  it("commits relevance updates once per requested batch", async () => {
+    await app.db.insert(app.schema.cases).values(buildCase({
+      id: "CASE_BATCH_SCORE_OWNER",
+      userId: owner.id,
+      caseSummary: "Bezwaar tegen een besluit over een uitkering",
+    }));
+    await app.db.insert(app.schema.evidence).values([
+      buildEvidence({ id: "EVIDENCE_BATCH_SCORE_1", caseId: "CASE_BATCH_SCORE_OWNER", userId: owner.id, title: "Besluit uitkering bezwaar" }),
+      buildEvidence({ id: "EVIDENCE_BATCH_SCORE_2", caseId: "CASE_BATCH_SCORE_OWNER", userId: owner.id, title: "Gemeente besluit" }),
+      buildEvidence({ id: "EVIDENCE_BATCH_SCORE_3", caseId: "CASE_BATCH_SCORE_OWNER", userId: owner.id, title: "Bezwaar termijn" }),
+    ]);
+
+    const sqlite = app.db.$client as any;
+    const originalTransaction = sqlite.transaction.bind(sqlite);
+    let transactionCalls = 0;
+    sqlite.transaction = (...args: unknown[]) => {
+      transactionCalls += 1;
+      return originalTransaction(...args);
+    };
+
+    try {
+      const result = await app.makeCaller(owner).relevanceScoring.batchScore({
+        caseContext: { caseId: "CASE_BATCH_SCORE_OWNER" },
+        batchSize: 2,
+      });
+      expect(result.totalScored).toBe(3);
+    } finally {
+      sqlite.transaction = originalTransaction;
+    }
+
+    expect(transactionCalls).toBe(2);
+  });
+
   it("exports only the selected owner's case and includes available source files", async () => {
     const caller = app.makeCaller(owner);
     await app.db.insert(app.schema.evidence).values(buildEvidence({

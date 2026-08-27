@@ -64,17 +64,13 @@ export const adminAnalyticsRouter = router({
     const db = await getDb();
     if (!db) return [];
     const rows = await db
-      .select({ userId: casesTable.userId, cases: count })
+      .select({ userId: casesTable.userId, email: usersTable.email, cases: count })
       .from(casesTable)
-      .groupBy(casesTable.userId)
+      .leftJoin(usersTable, eq(usersTable.id, casesTable.userId))
+      .groupBy(casesTable.userId, usersTable.email)
       .orderBy(desc(count))
       .limit(10);
-    const out: Array<{ userId: string; email: string; cases: number }> = [];
-    for (const r of rows) {
-      const u = (await db.select({ email: usersTable.email }).from(usersTable).where(eq(usersTable.id, r.userId)).limit(1))[0];
-      out.push({ userId: r.userId, email: u?.email || "", cases: Number(r.cases) });
-    }
-    return out;
+    return rows.map((row) => ({ userId: row.userId, email: row.email || "", cases: Number(row.cases) }));
   }),
   conversionFunnel: adminProcedure.query(async () => {
     const db = await getDb();
@@ -98,9 +94,12 @@ function outreachResponded(row: typeof outreachStatus.$inferSelect): boolean {
 async function ownedOutreach(userId: string) {
   const db = await getDb();
   if (!db) return [] as Array<typeof outreachStatus.$inferSelect>;
-  const caseIds = (await db.select({ id: casesTable.id }).from(casesTable).where(eq(casesTable.userId, userId))).map((row) => row.id);
-  if (caseIds.length === 0) return [] as Array<typeof outreachStatus.$inferSelect>;
-  return db.select().from(outreachStatus).where(inArray(outreachStatus.caseId, caseIds));
+  const rows = await db
+    .select({ outreach: outreachStatus })
+    .from(casesTable)
+    .innerJoin(outreachStatus, eq(outreachStatus.caseId, casesTable.id))
+    .where(eq(casesTable.userId, userId));
+  return rows.map((row) => row.outreach);
 }
 
 export const outreachAnalyticsRouter = router({
