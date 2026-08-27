@@ -855,6 +855,7 @@ CREATE INDEX IF NOT EXISTS "cases_userId_status_createdAt_idx" ON "cases" ("user
 CREATE INDEX IF NOT EXISTS "cases_userId_status_urgency_createdAt_idx" ON "cases" ("userId","status","urgency","createdAt");
 CREATE INDEX IF NOT EXISTS "cases_userId_updatedAt_idx" ON "cases" ("userId","updatedAt");
 CREATE INDEX IF NOT EXISTS "cases_userId_urgency_createdAt_idx" ON "cases" ("userId","urgency","createdAt");
+CREATE INDEX IF NOT EXISTS "communication_gaps_caseId_idx" ON "communication_gaps" ("caseId");
 CREATE INDEX IF NOT EXISTS "document_analyses_case_created_idx" ON "document_analyses" ("caseId","createdAt");
 CREATE UNIQUE INDEX IF NOT EXISTS "document_analyses_evidence_version_unique" ON "document_analyses" ("evidenceId","analysisVersion");
 CREATE INDEX IF NOT EXISTS "document_analyses_user_idx" ON "document_analyses" ("userId");
@@ -863,6 +864,7 @@ CREATE INDEX IF NOT EXISTS "evidence_caseId_idx" ON "evidence" ("caseId");
 CREATE INDEX IF NOT EXISTS "evidence_files_user_idx" ON "evidence_files" ("userId");
 CREATE INDEX IF NOT EXISTS "evidence_userId_caseId_idx" ON "evidence" ("userId","caseId");
 CREATE INDEX IF NOT EXISTS "evidence_userId_idx" ON "evidence" ("userId");
+CREATE INDEX IF NOT EXISTS "expected_documents_caseId_idx" ON "expected_documents" ("caseId");
 CREATE UNIQUE INDEX IF NOT EXISTS "integration_access_tokens_hash_unique" ON "integration_access_tokens" ("tokenHash");
 CREATE INDEX IF NOT EXISTS "integration_access_tokens_user_status_idx" ON "integration_access_tokens" ("userId","status");
 CREATE INDEX IF NOT EXISTS "keyword_pull_jobs_user_case_created_idx" ON "keyword_pull_jobs" ("userId","caseId","createdAt");

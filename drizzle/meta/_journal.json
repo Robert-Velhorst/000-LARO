@@ -85,6 +85,13 @@
       "when": 1787788800000,
       "tag": "0011_dashboard_aggregate_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1787875200000,
+      "tag": "0012_gap_analysis_case_indexes",
+      "breakpoints": true
     }
   ]
 }

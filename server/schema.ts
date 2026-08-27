@@ -815,19 +815,31 @@ export const ratingCalculationLogs = sqliteTable("rating_calculation_logs", {
 
 // ─── Gap analysis & timeline ─────────────────────────────────────────────────
 
-export const communicationGaps = sqliteTable("communication_gaps", {
-  id: text("id").primaryKey(),
-  caseId: text("caseId"),
-  data: text("data"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
-});
+export const communicationGaps = sqliteTable(
+  "communication_gaps",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("caseId"),
+    data: text("data"),
+    createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
+  },
+  (table) => ({
+    caseIdIdx: index("communication_gaps_caseId_idx").on(table.caseId),
+  }),
+);
 
-export const expectedDocuments = sqliteTable("expected_documents", {
-  id: text("id").primaryKey(),
-  caseId: text("caseId"),
-  data: text("data"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
-});
+export const expectedDocuments = sqliteTable(
+  "expected_documents",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("caseId"),
+    data: text("data"),
+    createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
+  },
+  (table) => ({
+    caseIdIdx: index("expected_documents_caseId_idx").on(table.caseId),
+  }),
+);
 
 export const suspiciousPatterns = sqliteTable("suspicious_patterns", {
   id: text("id").primaryKey(),

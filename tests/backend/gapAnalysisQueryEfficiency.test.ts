@@ -63,4 +63,19 @@ suite("gap analysis query efficiency", () => {
       totalSeverity: 15,
     });
   });
+
+  it("uses case indexes for the owner-scoped gap joins", () => {
+    const sqlite: any = app.db.$client;
+    const plan = sqlite.prepare(`
+      EXPLAIN QUERY PLAN
+      SELECT communication_gaps.caseId, expected_documents.caseId
+      FROM cases
+      LEFT JOIN communication_gaps ON communication_gaps.caseId = cases.id
+      LEFT JOIN expected_documents ON expected_documents.caseId = cases.id
+      WHERE cases.userId = ?
+    `).all(owner.id).map((row: { detail: string }) => row.detail).join("\n");
+
+    expect(plan).toContain("communication_gaps_caseId_idx");
+    expect(plan).toContain("expected_documents_caseId_idx");
+  });
 });

@@ -190,6 +190,8 @@ function ensureIndexes(sqlite: InstanceType<typeof Database>) {
     `CREATE INDEX IF NOT EXISTS cases_userId_clientName_idx ON cases(userId, clientName);`,
     `CREATE INDEX IF NOT EXISTS document_analyses_user_updatedAt_idx ON document_analyses(userId, updatedAt);`,
     `CREATE INDEX IF NOT EXISTS evidence_userId_caseId_idx ON evidence(userId, caseId);`,
+    `CREATE INDEX IF NOT EXISTS communication_gaps_caseId_idx ON communication_gaps(caseId);`,
+    `CREATE INDEX IF NOT EXISTS expected_documents_caseId_idx ON expected_documents(caseId);`,
     `CREATE INDEX IF NOT EXISTS outreach_status_caseId_idx ON outreach_status(caseId);`,
     `CREATE INDEX IF NOT EXISTS outreach_status_caseId_status_idx ON outreach_status(caseId, status);`,
     `CREATE INDEX IF NOT EXISTS outreach_status_lawyerId_idx ON outreach_status(lawyerId);`,
