@@ -1234,6 +1234,21 @@ async function pullFromLocalFolders(
   if (!folderPaths.length) return { files: 0 };
 
   let ingested = 0;
+  const existingLocalEvidence = await db
+    .select({ metadata: evidenceTable.metadata })
+    .from(evidenceTable)
+    .where(and(eq(evidenceTable.caseId, caseId), eq(evidenceTable.source, 'local')));
+  const storedLocalPaths = new Set<string>();
+  for (const item of existingLocalEvidence) {
+    try {
+      const metadata = item.metadata ? JSON.parse(item.metadata) : {};
+      if (typeof metadata.absPath === 'string' && metadata.absPath) {
+        storedLocalPaths.add(metadata.absPath);
+      }
+    } catch {
+      // Invalid legacy metadata cannot safely participate in deduplication.
+    }
+  }
 
   for (const folderPath of folderPaths) {
     let resolvedFolderPath: string;
@@ -1255,19 +1270,7 @@ async function pullFromLocalFolders(
       let fileWords = 0;
       try {
         // Dedupe by absolute path.
-        const existing = await db
-          .select()
-          .from(evidenceTable)
-          .where(and(eq(evidenceTable.caseId, caseId), eq(evidenceTable.source, 'local')));
-        const already = existing.some((e) => {
-          try {
-            const meta = e.metadata ? JSON.parse(e.metadata) : {};
-            return meta.absPath === file.absPath;
-          } catch {
-            return false;
-          }
-        });
-        if (already) continue;
+        if (storedLocalPaths.has(file.absPath)) continue;
 
         const stat = await fs.stat(file.absPath);
         if (dateStart && stat.mtime < dateStart) continue;
@@ -1307,6 +1310,7 @@ async function pullFromLocalFolders(
           relevant: true,
         });
         fileWords = await analyzeImportedEvidence(evidenceId, userId, mimeType, file.name, errors);
+        storedLocalPaths.add(file.absPath);
         ingested++;
       } catch (err) {
         errors.push(`Local file "${file.absPath}" failed: ${err instanceof Error ? err.message : String(err)}`);
