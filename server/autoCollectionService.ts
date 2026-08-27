@@ -21,7 +21,7 @@ import {
   getGoogleDriveFileMetadata,
 } from './googleDriveService';
 import { decryptToken, encryptToken, refreshGmailToken } from './emailOAuth';
-import { searchGmailEmails, getGmailMessage, getGmailAttachmentBytes } from './gmailService';
+import { getGmailMessage, getGmailAttachmentBytes } from './gmailService';
 import { storagePut } from './storage';
 import { createEvidenceFile } from './evidence';
 import { analyzeStoredEvidence } from './documentAnalysisService';
@@ -772,17 +772,6 @@ async function pullFromGmail(
   const query = [keywordPart, datePart].filter(Boolean).join(' ');
 
   let threads: { id: string }[] = [];
-  try {
-    threads = await searchGmailEmails(cred.accessToken, { maxResults: 30 }).then(
-      // Cast: searchGmailEmails returns GmailThread[]
-      (t: any[]) => t.map((row) => ({ id: row.id })),
-    );
-    // searchGmailEmails ignores the query arg; bypass it by calling listGmailThreads directly.
-  } catch {
-    threads = [];
-  }
-
-  // Re-list with the real keyword query (searchGmailEmails only handles structured filters).
   try {
     const params = new URLSearchParams({ maxResults: '30', q: query });
     const data = await withByteReadAdmission(async () => {

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { join } from "path";
 import { writeFileSync } from "fs";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
@@ -65,5 +65,47 @@ suite("auto-collection query efficiency", () => {
     }
 
     expect(evidenceReads).toBe(1);
+  });
+
+  it("issues one Gmail search request for a keyword pull", async () => {
+    const { encryptToken } = await import("../../server/emailOAuth");
+    await app.db.insert(app.schema.emailAccounts).values({
+      id: "AUTO_COLLECTION_QUERY_GMAIL",
+      userId: user.id,
+      provider: "gmail",
+      email: user.email,
+      accessToken: encryptToken("test-access-token"),
+      tokenExpiry: new Date(Date.now() + 60 * 60 * 1000),
+      status: "connected",
+      connectedAt: new Date(),
+    });
+    const requestedUrls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      requestedUrls.push(String(input));
+      return new Response(JSON.stringify({ messages: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }));
+
+    try {
+      const { pullEvidenceByKeywords } = await import("../../server/autoCollectionService");
+      const result = await pullEvidenceByKeywords({
+        caseId,
+        userId: user.id,
+        keywords: ["contract"],
+        includeGmail: true,
+        includeDrive: false,
+        includeLocal: false,
+      });
+      expect(result.gmailMessages).toBe(0);
+      expect(result.errors).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(requestedUrls).toHaveLength(1);
+    expect(requestedUrls[0]).toContain("/messages?");
+    expect(requestedUrls[0]).toContain("q=%28contract%29");
   });
 });
