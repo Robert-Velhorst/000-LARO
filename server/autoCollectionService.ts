@@ -62,11 +62,12 @@ async function analyzeImportedEvidence(
   mimeType: string,
   label: string,
   errors: string[],
+  autoAnalyzeImports?: boolean,
 ): Promise<number> {
   if (!supportsDocumentAnalysisMime(mimeType)) return 0;
   try {
-    const preferences = await getWorkflowPreferences(userId);
-    if (!preferences.autoAnalyzeImports) return 0;
+    if (autoAnalyzeImports === false) return 0;
+    if (autoAnalyzeImports === undefined && !(await getWorkflowPreferences(userId)).autoAnalyzeImports) return 0;
     const analysis = await analyzeStoredEvidence({ userId, evidenceId });
     return analysis.result.analyzedWords ?? countWords(analysis.result.summary || '');
   } catch (error) {
@@ -723,6 +724,7 @@ async function pullFromGmail(
   includeAttachments = true,
   accountIds?: string[],
   onProgress?: PullProgressReporter,
+  autoAnalyzeImports?: boolean,
 ): Promise<{ messages: number; attachments: number }> {
   const db = await getDb();
   if (!db) return { messages: 0, attachments: 0 };
@@ -743,6 +745,7 @@ async function pullFromGmail(
         includeAttachments,
         [selectedAccountId],
         onProgress,
+        autoAnalyzeImports,
       );
       messages += result.messages;
       attachments += result.attachments;
@@ -904,7 +907,7 @@ async function pullFromGmail(
           contentHash: storedMessage.sha256,
           relevant: true,
         });
-        await analyzeImportedEvidence(messageEvidenceId, userId, 'message/rfc822', subject, errors);
+        await analyzeImportedEvidence(messageEvidenceId, userId, 'message/rfc822', subject, errors, autoAnalyzeImports);
         messagesIngested++;
       }
 
@@ -972,6 +975,7 @@ async function pullFromGmail(
             att.mimeType,
             safeName,
             errors,
+            autoAnalyzeImports,
           );
           storedState.attachmentIds.add(att.attachmentId);
           attachmentsIngested++;
@@ -1018,6 +1022,7 @@ async function pullFromDrive(
   dateStart?: Date,
   dateEnd?: Date,
   onProgress?: PullProgressReporter,
+  autoAnalyzeImports?: boolean,
 ): Promise<{ files: number }> {
   const db = await getDb();
   if (!db) return { files: 0 };
@@ -1100,7 +1105,7 @@ async function pullFromDrive(
             contentHash: fileData.sha256,
             relevant: true,
           });
-          fileWords = await analyzeImportedEvidence(evidenceId, userId, fileData.mimeType, file.name, errors);
+          fileWords = await analyzeImportedEvidence(evidenceId, userId, fileData.mimeType, file.name, errors, autoAnalyzeImports);
           await db.insert(googleDriveFiles).values({
             id: uuidv4(),
             userId,
@@ -1217,6 +1222,7 @@ async function pullFromLocalFolders(
   dateStart?: Date,
   dateEnd?: Date,
   onProgress?: PullProgressReporter,
+  autoAnalyzeImports?: boolean,
 ): Promise<{ files: number }> {
   const db = await getDb();
   if (!db) return { files: 0 };
@@ -1298,7 +1304,7 @@ async function pullFromLocalFolders(
           contentHash: storedFile.sha256,
           relevant: true,
         });
-        fileWords = await analyzeImportedEvidence(evidenceId, userId, mimeType, file.name, errors);
+        fileWords = await analyzeImportedEvidence(evidenceId, userId, mimeType, file.name, errors, autoAnalyzeImports);
         storedLocalPaths.add(file.absPath);
         ingested++;
       } catch (err) {
@@ -1389,6 +1395,7 @@ export async function pullEvidenceByKeywords(params: {
 
   const db = await getDb();
   if (!db) throw new Error('Database not available');
+  const autoAnalyzeImports = (await getWorkflowPreferences(params.userId)).autoAnalyzeImports;
   params.onProgress?.({ phase: 'discovering', message: 'Checking connected evidence sources' });
 
   // Resolve sources. Fall back to settings-configured sources, then to defaults.
@@ -1416,15 +1423,15 @@ export async function pullEvidenceByKeywords(params: {
   }
 
   const [gmail, drive, local] = await Promise.all([
-    (params.includeGmail === false ? Promise.resolve({ messages: 0, attachments: 0 }) : pullFromGmail(params.caseId, params.userId, params.keywords, matchMode, errors, params.dateStart, params.dateEnd, params.includeGmailAttachments !== false, gmailAccountIds, params.onProgress)).catch((err) => {
+    (params.includeGmail === false ? Promise.resolve({ messages: 0, attachments: 0 }) : pullFromGmail(params.caseId, params.userId, params.keywords, matchMode, errors, params.dateStart, params.dateEnd, params.includeGmailAttachments !== false, gmailAccountIds, params.onProgress, autoAnalyzeImports)).catch((err) => {
       errors.push(`Gmail pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { messages: 0, attachments: 0 };
     }),
-    (params.includeDrive === false ? Promise.resolve({ files: 0 }) : pullFromDrive(params.caseId, params.userId, params.keywords, matchMode, driveFolderIds, errors, params.driveAccountId, params.driveExactFileName, params.dateStart, params.dateEnd, params.onProgress)).catch((err) => {
+    (params.includeDrive === false ? Promise.resolve({ files: 0 }) : pullFromDrive(params.caseId, params.userId, params.keywords, matchMode, driveFolderIds, errors, params.driveAccountId, params.driveExactFileName, params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports)).catch((err) => {
       errors.push(`Drive pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { files: 0 };
     }),
-    (params.includeLocal === false ? Promise.resolve({ files: 0 }) : pullFromLocalFolders(params.caseId, params.userId, params.keywords, matchMode, localFolderPaths, errors, params.dateStart, params.dateEnd, params.onProgress)).catch((err) => {
+    (params.includeLocal === false ? Promise.resolve({ files: 0 }) : pullFromLocalFolders(params.caseId, params.userId, params.keywords, matchMode, localFolderPaths, errors, params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports)).catch((err) => {
       errors.push(`Local pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { files: 0 };
     }),
