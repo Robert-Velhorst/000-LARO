@@ -33,12 +33,18 @@ describe("case workspace bundle boundaries", () => {
     expect(existsSync(ASSETS)).toBe(true);
     const assets = builtJavaScriptAssets();
     const casesRoute = assets.find((asset) => /^Cases-[A-Za-z0-9_-]+\.js$/.test(asset.name));
+    const caseDetailsDialog = assets.find((asset) => /^EnhancedCaseDetailsDialog-[A-Za-z0-9_-]+\.js$/.test(asset.name));
 
     expect(casesRoute).toBeDefined();
     expect(casesRoute?.bytes).toBeLessThan(18 * 1024);
+    expect(caseDetailsDialog).toBeDefined();
+    expect(caseDetailsDialog?.bytes).toBeLessThan(70 * 1024);
     expect(assets.some((asset) => /^EnhancedCaseDetailsDialog-[A-Za-z0-9_-]+\.js$/.test(asset.name))).toBe(true);
     expect(assets.some((asset) => /^CaseCreationWizard-[A-Za-z0-9_-]+\.js$/.test(asset.name))).toBe(true);
     expect(assets.some((asset) => /^BulkCaseImport-[A-Za-z0-9_-]+\.js$/.test(asset.name))).toBe(true);
     expect(assets.some((asset) => /^BulkEvidenceUpload-[A-Za-z0-9_-]+\.js$/.test(asset.name))).toBe(true);
+    expect(assets.some((asset) => /^CaseReconstruction-[A-Za-z0-9_-]+\.js$/.test(asset.name))).toBe(true);
+    expect(assets.some((asset) => /^AutomatedDocumentAnalysis-[A-Za-z0-9_-]+\.js$/.test(asset.name))).toBe(true);
+    expect(assets.some((asset) => /^EvidenceGapAnalysisDashboard-[A-Za-z0-9_-]+\.js$/.test(asset.name))).toBe(true);
   }, 30_000);
 });
