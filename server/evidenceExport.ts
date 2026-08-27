@@ -136,6 +136,7 @@ async function loadCaseExportRows(
     ? await db.select({
       id: documentAnalyses.id,
       evidenceId: documentAnalyses.evidenceId,
+      result: documentAnalyses.result,
       resultBytes: sql<number>`length(CAST(${documentAnalyses.result} AS BLOB))`,
     }).from(documentAnalyses).where(and(
       eq(documentAnalyses.caseId, caseId),
@@ -157,7 +158,7 @@ async function loadCaseExportRows(
     .where(and(eq(evidence.caseId, caseId), eq(evidence.userId, userId)))
     .limit(MAX_EXPORT_EVIDENCE_ITEMS);
   throwIfExportAborted(options.signal);
-  return { db, caseRow, items, analysisRefs };
+  return { caseRow, items, analysisRefs };
 }
 
 function renderCaseCsv(items: Array<typeof evidence.$inferSelect>): Buffer {
@@ -303,7 +304,7 @@ export async function createCaseZipStream(
   let slotTransferred = false;
   try {
     throwIfExportAborted(lifecycle.signal);
-    const { db, caseRow, items, analysisRefs } = await loadCaseExportRows(userId, caseId, {
+    const { caseRow, items, analysisRefs } = await loadCaseExportRows(userId, caseId, {
       includeAnalyses: true,
       signal: lifecycle.signal,
     });
@@ -358,23 +359,12 @@ export async function createCaseZipStream(
           );
           const analysisRef = analysisByEvidence.get(item.id);
           if (analysisRef) {
-            const [analysis] = await db
-              .select({ result: documentAnalyses.result })
-              .from(documentAnalyses)
-              .where(and(
-                eq(documentAnalyses.id, analysisRef.id),
-                eq(documentAnalyses.caseId, caseId),
-                eq(documentAnalyses.userId, userId),
-              ))
-              .limit(1);
-            if (analysis) {
-              await appendGeneratedEntry(
-                archive,
-                `analysis/${item.id}.json`,
-                analysis.result,
-                generatedBudget,
-              );
-            }
+            await appendGeneratedEntry(
+              archive,
+              `analysis/${item.id}.json`,
+              analysisRef.result,
+              generatedBudget,
+            );
           }
         }
         for (const item of items) {
