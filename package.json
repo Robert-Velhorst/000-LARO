@@ -106,7 +106,7 @@
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.45.2",
     "electron-log": "^5.1.2",
-    "express": "^4.19.2",
+    "express": "^5.2.1",
     "google-auth-library": "^10.6.2",
     "googleapis": "^171.4.0",
     "jsonwebtoken": "^9.0.3",
