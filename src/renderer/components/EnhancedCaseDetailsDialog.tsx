@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { MultiAreaOutreachProgress } from "@/components/OutreachProgressBar";
 import {
@@ -57,23 +57,24 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { LegalAreasSelect } from "@/components/LegalAreasSelect";
-import { EvidenceCollection } from "@/components/EvidenceCollection";
-import TimelineView from "@/components/TimelineView";
-import CommunicationHub from "@/components/CommunicationHub";
-import EvidenceTimelineView from "@/components/EvidenceTimelineView";
-import OutreachAnalyticsView from "@/components/OutreachAnalyticsView";
-import { EvidenceGapAnalysisDashboard } from "@/components/EvidenceGapAnalysisDashboard";
-import EnhancedEvidenceUpload from "@/components/EnhancedEvidenceUpload";
-import { CollectionMonitoringDashboard } from "@/components/CollectionMonitoringDashboard";
-import ProgressTrackingDashboard from "@/components/ProgressTrackingDashboard";
-import { AutomatedDocumentAnalysis } from "@/components/AutomatedDocumentAnalysis";
-import { CaseTimeline } from "@/components/CaseTimeline";
-import { CaseReconstruction } from "@/components/CaseReconstruction";
 import { exportCaseSummary, printCaseSummary } from "@/lib/export";
 import { getElectronAPI, isElectron } from "@/lib/electronApiShim";
-import CaseStatusWorkflow from "@/components/CaseStatusWorkflow";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGoogleOAuthConnection } from "@/hooks/useGoogleOAuthConnection";
+
+const EvidenceCollection = lazy(() => import("@/components/EvidenceCollection").then((module) => ({ default: module.EvidenceCollection })));
+const TimelineView = lazy(() => import("@/components/TimelineView"));
+const CommunicationHub = lazy(() => import("@/components/CommunicationHub"));
+const EvidenceTimelineView = lazy(() => import("@/components/EvidenceTimelineView"));
+const OutreachAnalyticsView = lazy(() => import("@/components/OutreachAnalyticsView"));
+const EvidenceGapAnalysisDashboard = lazy(() => import("@/components/EvidenceGapAnalysisDashboard").then((module) => ({ default: module.EvidenceGapAnalysisDashboard })));
+const EnhancedEvidenceUpload = lazy(() => import("@/components/EnhancedEvidenceUpload"));
+const CollectionMonitoringDashboard = lazy(() => import("@/components/CollectionMonitoringDashboard").then((module) => ({ default: module.CollectionMonitoringDashboard })));
+const ProgressTrackingDashboard = lazy(() => import("@/components/ProgressTrackingDashboard"));
+const AutomatedDocumentAnalysis = lazy(() => import("@/components/AutomatedDocumentAnalysis").then((module) => ({ default: module.AutomatedDocumentAnalysis })));
+const CaseTimeline = lazy(() => import("@/components/CaseTimeline").then((module) => ({ default: module.CaseTimeline })));
+const CaseReconstruction = lazy(() => import("@/components/CaseReconstruction").then((module) => ({ default: module.CaseReconstruction })));
+const CaseStatusWorkflow = lazy(() => import("@/components/CaseStatusWorkflow"));
 
 interface EnhancedCaseDetailsDialogProps {
   caseId: string;
@@ -987,19 +988,21 @@ export default function EnhancedCaseDetailsDialog({
                     <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                       <Activity className="w-5 h-5 text-orange-500" /> Case Status
                     </h2>
-                    <CaseStatusWorkflow
-                      currentStatus={caseData.status || "Matching"}
-                      onStatusChange={(newStatus) => {
-                        updateCaseMutation.mutate(
-                          { id: caseId, status: newStatus as any },
-                          {
-                            onSuccess: () => { toast.success("Case status updated"); refetchCase(); },
-                            onError: () => { toast.error("Failed to update status"); },
-                          }
-                        );
-                      }}
-                      canEdit={true}
-                    />
+                    <Suspense fallback={<CaseWorkspaceLoading />}>
+                      <CaseStatusWorkflow
+                        currentStatus={caseData.status || "Matching"}
+                        onStatusChange={(newStatus) => {
+                          updateCaseMutation.mutate(
+                            { id: caseId, status: newStatus as any },
+                            {
+                              onSuccess: () => { toast.success("Case status updated"); refetchCase(); },
+                              onError: () => { toast.error("Failed to update status"); },
+                            }
+                          );
+                        }}
+                        canEdit={true}
+                      />
+                    </Suspense>
                   </div>
                 )}
 
@@ -1009,7 +1012,7 @@ export default function EnhancedCaseDetailsDialog({
                     <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                       <TrendingUp className="w-5 h-5 text-orange-500" /> Progress Tracking
                     </h2>
-                    <ProgressTrackingDashboard caseId={caseId} onNavigateTab={handleTabChange} />
+                    <Suspense fallback={<CaseWorkspaceLoading />}><ProgressTrackingDashboard caseId={caseId} onNavigateTab={handleTabChange} /></Suspense>
                   </div>
                 )}
 
@@ -1019,7 +1022,7 @@ export default function EnhancedCaseDetailsDialog({
                     <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                       <MessageSquare className="w-5 h-5 text-orange-500" /> Messages
                     </h2>
-                    <CommunicationHub caseId={caseId} />
+                    <Suspense fallback={<CaseWorkspaceLoading />}><CommunicationHub caseId={caseId} /></Suspense>
                   </div>
                 )}
 
@@ -1037,10 +1040,10 @@ export default function EnhancedCaseDetailsDialog({
                         <TabsTrigger value="monitoring" className="text-xs rounded-lg">Monitoring</TabsTrigger>
                       </TabsList>
                       <TabsContent value="upload" className="mt-4 space-y-4">
-                        <EnhancedEvidenceUpload caseId={caseId} />
+                        <Suspense fallback={<CaseWorkspaceLoading />}><EnhancedEvidenceUpload caseId={caseId} /></Suspense>
                         <div className="mt-6">
                           <h3 className="text-base font-semibold mb-4 text-foreground/80">Existing Evidence</h3>
-                          <EvidenceCollection caseId={caseId} />
+                          <Suspense fallback={<CaseWorkspaceLoading />}><EvidenceCollection caseId={caseId} /></Suspense>
                         </div>
                       </TabsContent>
                       <TabsContent value="google-drive" className="mt-4">
@@ -1057,7 +1060,7 @@ export default function EnhancedCaseDetailsDialog({
                         </Card>
                       </TabsContent>
                       <TabsContent value="monitoring" className="mt-4">
-                        <CollectionMonitoringDashboard caseId={caseId} />
+                        <Suspense fallback={<CaseWorkspaceLoading />}><CollectionMonitoringDashboard caseId={caseId} /></Suspense>
                       </TabsContent>
                     </Tabs>
                   </div>
@@ -1069,7 +1072,7 @@ export default function EnhancedCaseDetailsDialog({
                     <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                       <Sparkles className="w-5 h-5 text-orange-500" /> Document Analysis
                     </h2>
-                    <AutomatedDocumentAnalysis caseId={caseId} />
+                    <Suspense fallback={<CaseWorkspaceLoading />}><AutomatedDocumentAnalysis caseId={caseId} /></Suspense>
                   </div>
                 )}
 
@@ -1086,17 +1089,18 @@ export default function EnhancedCaseDetailsDialog({
                         <TabsTrigger value="activity" className="text-xs">Case activity</TabsTrigger>
                       </TabsList>
                       <TabsContent value="reconstruction" className="mt-4">
-                        <CaseReconstruction caseId={caseId} />
+                        <Suspense fallback={<CaseWorkspaceLoading />}><CaseReconstruction caseId={caseId} /></Suspense>
                       </TabsContent>
                       <TabsContent value="events" className="mt-4">
-                        <CaseTimeline caseId={caseId} />
+                        <Suspense fallback={<CaseWorkspaceLoading />}><CaseTimeline caseId={caseId} /></Suspense>
                       </TabsContent>
                       <TabsContent value="sources" className="mt-4">
-                        <EvidenceTimelineView caseId={caseId} />
+                        <Suspense fallback={<CaseWorkspaceLoading />}><EvidenceTimelineView caseId={caseId} /></Suspense>
                       </TabsContent>
                       <TabsContent value="activity" className="mt-4">
-                        <TimelineView
-                          events={[
+                        <Suspense fallback={<CaseWorkspaceLoading />}>
+                          <TimelineView
+                            events={[
                             {
                               id: "case-created",
                               date: caseData.createdAt ? new Date(caseData.createdAt) : new Date(),
@@ -1121,8 +1125,9 @@ export default function EnhancedCaseDetailsDialog({
                               description: outreach.response || "Lawyer responded to outreach",
                               metadata: { lawyer: outreach.lawyerName },
                             })) || []),
-                          ]}
-                        />
+                            ]}
+                          />
+                        </Suspense>
                       </TabsContent>
                     </Tabs>
                   </div>
@@ -1134,7 +1139,7 @@ export default function EnhancedCaseDetailsDialog({
                     <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                       <Shield className="w-5 h-5 text-orange-500" /> Gap Analysis
                     </h2>
-                    <EvidenceGapAnalysisDashboard caseId={caseId} />
+                    <Suspense fallback={<CaseWorkspaceLoading />}><EvidenceGapAnalysisDashboard caseId={caseId} /></Suspense>
                   </div>
                 )}
 
@@ -1387,7 +1392,7 @@ export default function EnhancedCaseDetailsDialog({
                     <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                       <BarChart3 className="w-5 h-5 text-orange-500" /> Outreach Analytics
                     </h2>
-                    <OutreachAnalyticsView caseId={caseId} />
+                    <Suspense fallback={<CaseWorkspaceLoading />}><OutreachAnalyticsView caseId={caseId} /></Suspense>
                   </div>
                 )}
 
@@ -1437,5 +1442,14 @@ export default function EnhancedCaseDetailsDialog({
       </DialogContent>
     </Dialog>
     </>
+  );
+}
+
+function CaseWorkspaceLoading() {
+  return (
+    <div className="flex min-h-32 items-center justify-center gap-2 text-sm text-muted-foreground" role="status">
+      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+      Loading workspace...
+    </div>
   );
 }

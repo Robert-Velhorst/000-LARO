@@ -7,7 +7,7 @@
  */
 import { getDb } from "./db";
 import { cases as casesTable, outreachStatus, evidence, lawyers } from "./schema";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 
 const SENT_OUTREACH_STATES = new Set(["Sent", "Interested", "Declined", "NoResponse"]);
 
@@ -19,13 +19,12 @@ function hasResponse(row: typeof outreachStatus.$inferSelect): boolean {
 async function getOwnedOutreach(userId: string) {
   const db = await getDb();
   if (!db) return [] as Array<typeof outreachStatus.$inferSelect>;
-  const caseIds = (await db
-    .select({ id: casesTable.id })
+  const rows = await db
+    .select({ outreach: outreachStatus })
     .from(casesTable)
-    .where(eq(casesTable.userId, userId)))
-    .map((row) => row.id);
-  if (!caseIds.length) return [] as Array<typeof outreachStatus.$inferSelect>;
-  return db.select().from(outreachStatus).where(inArray(outreachStatus.caseId, caseIds));
+    .innerJoin(outreachStatus, eq(outreachStatus.caseId, casesTable.id))
+    .where(eq(casesTable.userId, userId));
+  return rows.map((row) => row.outreach);
 }
 
 export async function overallStats(userId: string) {
@@ -33,19 +32,25 @@ export async function overallStats(userId: string) {
   const empty = { totalCases: 0, activeCases: 0, closedCases: 0, totalEvidence: 0, totalOutreach: 0, responseRate: 0 };
   if (!db) return empty;
 
-  const count = async (q: any) => Number((await q)[0]?.count || 0);
-
-  const totalCases = await count(db.select({ count: sql<number>`count(*)` }).from(casesTable).where(eq(casesTable.userId, userId)));
-  const activeCases = await count(db.select({ count: sql<number>`count(*)` }).from(casesTable).where(and(eq(casesTable.userId, userId), sql`status NOT IN ('Closed')`)));
+  const [caseCounts, evidenceCounts, outreachCounts] = await Promise.all([
+    db.select({
+      totalCases: sql<number>`count(*)`,
+      activeCases: sql<number>`coalesce(sum(case when ${casesTable.status} NOT IN ('Closed') then 1 else 0 end), 0)`,
+    }).from(casesTable).where(eq(casesTable.userId, userId)),
+    db.select({ totalEvidence: sql<number>`count(*)` }).from(evidence).where(eq(evidence.userId, userId)),
+    db.select({
+      totalOutreach: sql<number>`count(*)`,
+      responded: sql<number>`coalesce(sum(case when ${outreachStatus.status} IN ('Interested', 'Declined') then 1 else 0 end), 0)`,
+    }).from(outreachStatus)
+      .innerJoin(casesTable, eq(outreachStatus.caseId, casesTable.id))
+      .where(eq(casesTable.userId, userId)),
+  ]);
+  const totalCases = Number(caseCounts[0]?.totalCases || 0);
+  const activeCases = Number(caseCounts[0]?.activeCases || 0);
   const closedCases = totalCases - activeCases;
-  const totalEvidence = await count(db.select({ count: sql<number>`count(*)` }).from(evidence).where(eq(evidence.userId, userId)));
-
-  const totalOutreach = await count(
-    db.select({ count: sql<number>`count(*)` }).from(outreachStatus).innerJoin(casesTable, eq(outreachStatus.caseId, casesTable.id)).where(eq(casesTable.userId, userId))
-  );
-  const responded = await count(
-    db.select({ count: sql<number>`count(*)` }).from(outreachStatus).innerJoin(casesTable, eq(outreachStatus.caseId, casesTable.id)).where(and(eq(casesTable.userId, userId), sql`outreach_status.status IN ('Interested','Declined')`))
-  );
+  const totalEvidence = Number(evidenceCounts[0]?.totalEvidence || 0);
+  const totalOutreach = Number(outreachCounts[0]?.totalOutreach || 0);
+  const responded = Number(outreachCounts[0]?.responded || 0);
   const responseRate = totalOutreach > 0 ? Math.round((responded / totalOutreach) * 100) : 0;
 
   return { totalCases, activeCases, closedCases, totalEvidence, totalOutreach, responseRate };
@@ -97,8 +102,17 @@ export async function lawyerPerformance(userId: string) {
   const lawyerRows = await db.select({ id: lawyers.id, name: lawyers.name }).from(lawyers).where(inArray(lawyers.id, lawyerIds));
   const names = new Map(lawyerRows.map((row) => [row.id, row.name || "Unknown lawyer"]));
 
+  const byLawyer = new Map<string, typeof outreach>();
+  for (const row of outreach) {
+    if (!row.lawyerId) continue;
+    const rows = byLawyer.get(row.lawyerId) || [];
+    rows.push(row);
+    byLawyer.set(row.lawyerId, rows);
+  }
+
   return lawyerIds.map((lawyerId) => {
-    const sent = outreach.filter((row) => row.lawyerId === lawyerId && SENT_OUTREACH_STATES.has(String(row.status)));
+    const rows = byLawyer.get(lawyerId) || [];
+    const sent = rows.filter((row) => SENT_OUTREACH_STATES.has(String(row.status)));
     const responses = sent.filter(hasResponse);
     const accepted = responses.filter((row) => row.status === "Interested").length;
     const responseTimes = responses.map((row) => Number(row.responseTimeHours)).filter(Number.isFinite);
@@ -159,6 +173,11 @@ export async function workloadMetrics(userId: string) {
     .where(eq(evidence.userId, userId))
     .groupBy(evidence.caseId);
   const evidenceByCase = new Map(evidenceCounts.map((row) => [row.caseId, Number(row.count)]));
+  const outreachCountByCase = new Map<string, number>();
+  for (const item of outreach) {
+    if (!item.caseId) continue;
+    outreachCountByCase.set(item.caseId, (outreachCountByCase.get(item.caseId) || 0) + 1);
+  }
 
   return caseRows.map((row) => ({
     caseId: row.id,
@@ -166,7 +185,7 @@ export async function workloadMetrics(userId: string) {
     status: row.status || "Unknown",
     urgency: row.urgency || "Unknown",
     evidenceCount: evidenceByCase.get(row.id) ?? 0,
-    outreachCount: outreach.filter((item) => item.caseId === row.id).length,
+    outreachCount: outreachCountByCase.get(row.id) || 0,
     updatedAt: row.updatedAt?.toISOString() ?? null,
   })).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }

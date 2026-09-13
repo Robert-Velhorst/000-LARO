@@ -3,6 +3,10 @@ import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "./db";
 import { systemConfig } from "./schema";
+import type { RateLimitConsumeInput, RateLimitConsumeResult } from './rateLimitStore';
+import { createRedisRateLimitStore } from './rateLimitStore';
+import { getHostedRedisScriptClient } from './hostedRedis';
+import { ENV } from './_core/env';
 
 /**
  * Simple in-memory rate limiter
@@ -164,17 +168,46 @@ export function enforceRateLimit(
   checkRateLimit(identifier, config);
 }
 
+export async function enforceSharedRateLimit(options: {
+  store: { consume(input: RateLimitConsumeInput): Promise<RateLimitConsumeResult> };
+  key: string;
+  config: RateLimitConfig;
+}): Promise<void> {
+  const result = await options.store.consume({
+    key: options.key,
+    maxRequests: options.config.maxRequests,
+    windowMs: options.config.windowMs,
+  });
+  if (!result.allowed) {
+    const resetIn = Math.max(1, Math.ceil(result.resetAfterMs / 1_000));
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: options.config.message || `Rate limit exceeded. Try again in ${resetIn} seconds.`,
+    });
+  }
+}
+
 /** Persist expensive-operation limits so a service restart cannot reset them. */
 export async function enforcePersistentRateLimit(
   ctx: { user?: { id: string } | null; req: any },
   scope: string,
   config: RateLimitConfig,
 ): Promise<void> {
-  const db = await getDb();
-  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
   const identifier = getRateLimitIdentifier(ctx as any);
   const digest = createHash("sha256").update(`${scope}:${identifier}`).digest("hex");
   const configKey = `rate-limit:${scope}:${digest}`;
+  if (ENV.isHosted) {
+    const client = await getHostedRedisScriptClient();
+    await enforceSharedRateLimit({
+      store: createRedisRateLimitStore(client),
+      key: `laro:${configKey}`,
+      config,
+    });
+    return;
+  }
+
+  const db = await getDb();
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
   const now = Date.now();
 
   db.transaction((tx) => {

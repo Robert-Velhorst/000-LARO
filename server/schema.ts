@@ -145,6 +145,7 @@ export const evidence = sqliteTable(
   (table) => ({
     caseIdIdx: index("evidence_caseId_idx").on(table.caseId),
     userIdIdx: index("evidence_userId_idx").on(table.userId),
+    userCaseIdx: index("evidence_userId_caseId_idx").on(table.userId, table.caseId),
   })
 );
 
@@ -314,27 +315,33 @@ export const emailActivity = sqliteTable("email_activity", {
   createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
 });
 
-export const outreachStatus = sqliteTable("outreach_status", {
-  id: text("id").primaryKey(),
-  caseId: text("caseId"),
-  lawyerId: text("lawyerId"),
-  status: text("status"),
-  initialContact: integer("initialContact", { mode: "timestamp" }),
-  lastContact: integer("lastContact", { mode: "timestamp" }),
-  followUpsSent: integer("followUpsSent"),
-  followUp1SentAt: integer("followUp1SentAt", { mode: "timestamp" }),
-  followUp2SentAt: integer("followUp2SentAt", { mode: "timestamp" }),
-  responseTimeHours: text("responseTimeHours"),
-  lawyerCapacityPercentage: text("lawyerCapacityPercentage"),
-  acceptanceStatus: text("acceptanceStatus"),
-  response: text("response"),
-  responseReceived: text("responseReceived").default("No"),
-  notes: text("notes"),
-  distanceKm: integer("distanceKm"),
-  metadata: text("metadata"),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }).default(new Date()),
-  createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
-});
+export const outreachStatus = sqliteTable(
+  "outreach_status",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("caseId"),
+    lawyerId: text("lawyerId"),
+    status: text("status"),
+    initialContact: integer("initialContact", { mode: "timestamp" }),
+    lastContact: integer("lastContact", { mode: "timestamp" }),
+    followUpsSent: integer("followUpsSent"),
+    followUp1SentAt: integer("followUp1SentAt", { mode: "timestamp" }),
+    followUp2SentAt: integer("followUp2SentAt", { mode: "timestamp" }),
+    responseTimeHours: text("responseTimeHours"),
+    lawyerCapacityPercentage: text("lawyerCapacityPercentage"),
+    acceptanceStatus: text("acceptanceStatus"),
+    response: text("response"),
+    responseReceived: text("responseReceived").default("No"),
+    notes: text("notes"),
+    distanceKm: integer("distanceKm"),
+    metadata: text("metadata"),
+    updatedAt: integer("updatedAt", { mode: "timestamp" }).default(new Date()),
+    createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
+  },
+  (table) => ({
+    caseStatusIdx: index("outreach_status_caseId_status_idx").on(table.caseId, table.status),
+  }),
+);
 
 export const outreachDirectoryTargets = sqliteTable(
   "outreach_directory_targets",
@@ -808,19 +815,31 @@ export const ratingCalculationLogs = sqliteTable("rating_calculation_logs", {
 
 // ─── Gap analysis & timeline ─────────────────────────────────────────────────
 
-export const communicationGaps = sqliteTable("communication_gaps", {
-  id: text("id").primaryKey(),
-  caseId: text("caseId"),
-  data: text("data"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
-});
+export const communicationGaps = sqliteTable(
+  "communication_gaps",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("caseId"),
+    data: text("data"),
+    createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
+  },
+  (table) => ({
+    caseIdIdx: index("communication_gaps_caseId_idx").on(table.caseId),
+  }),
+);
 
-export const expectedDocuments = sqliteTable("expected_documents", {
-  id: text("id").primaryKey(),
-  caseId: text("caseId"),
-  data: text("data"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
-});
+export const expectedDocuments = sqliteTable(
+  "expected_documents",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("caseId"),
+    data: text("data"),
+    createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
+  },
+  (table) => ({
+    caseIdIdx: index("expected_documents_caseId_idx").on(table.caseId),
+  }),
+);
 
 export const suspiciousPatterns = sqliteTable("suspicious_patterns", {
   id: text("id").primaryKey(),

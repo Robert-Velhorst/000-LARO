@@ -33,31 +33,39 @@ export async function runRemindersForUser(userId: string, now: Date = new Date()
   const today = dayKey(now);
 
   const userCases = await db
-    .select({ id: casesTable.id, clientName: casesTable.clientName, urgency: casesTable.urgency })
+    .select({
+      id: casesTable.id,
+      clientName: casesTable.clientName,
+      urgency: casesTable.urgency,
+      pendingOutreachCount: sql<number>`count(distinct ${outreachStatus.id})`,
+      evidenceCount: sql<number>`count(distinct ${evidenceTable.id})`,
+    })
     .from(casesTable)
-    .where(eq(casesTable.userId, userId));
+    .leftJoin(evidenceTable, and(
+      eq(evidenceTable.caseId, casesTable.id),
+      eq(evidenceTable.userId, userId),
+    ))
+    .leftJoin(outreachStatus, and(
+      eq(outreachStatus.caseId, casesTable.id),
+      eq(outreachStatus.status, "PendingApproval"),
+    ))
+    .where(eq(casesTable.userId, userId))
+    .groupBy(casesTable.id, casesTable.clientName, casesTable.urgency);
 
   let created = 0;
   for (const c of userCases) {
     const title = c.clientName || c.id;
 
     // Reminder 1: outreach drafts awaiting approval.
-    const pending = await db
-      .select({ n: sql<number>`count(*)` })
-      .from(outreachStatus)
-      .where(and(eq(outreachStatus.caseId, c.id), eq(outreachStatus.status, "PendingApproval")));
-    if (Number(pending[0]?.n || 0) > 0) {
+    const pendingOutreachCount = Number(c.pendingOutreachCount || 0);
+    if (pendingOutreachCount > 0) {
       created += await emitOnce(userId, c.id, "approval-pending", today,
-        `Reminder: ${pending[0].n} outreach draft(s) for "${title}" are still awaiting your approval.`);
+        `Reminder: ${pendingOutreachCount} outreach draft(s) for "${title}" are still awaiting your approval.`);
     }
 
     // Reminder 2: high-urgency case with no evidence.
     if ((c.urgency || "").toLowerCase() === "high") {
-      const ev = await db
-        .select({ n: sql<number>`count(*)` })
-        .from(evidenceTable)
-        .where(and(eq(evidenceTable.caseId, c.id), eq(evidenceTable.userId, userId)));
-      if (Number(ev[0]?.n || 0) === 0) {
+      if (Number(c.evidenceCount || 0) === 0) {
         created += await emitOnce(userId, c.id, "urgent-no-evidence", today,
           `Reminder: high-urgency case "${title}" still has no evidence. Add documents so it can be assessed.`);
       }

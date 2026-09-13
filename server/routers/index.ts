@@ -62,8 +62,8 @@ import crypto from "crypto";
 import { ENV } from "../_core/env";
 import { sendPasswordResetEmail } from "../systemEmail";
 import { getUser, getDb } from "../db";
-import { users, cases } from "../schema";
-import { and, count, eq } from "drizzle-orm";
+import { users, cases, systemConfig } from "../schema";
+import { and, count, eq, gte, lt } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { invokeLLM, isLLMProviderConfigured } from "../llm";
 import { answerCaseQuestion } from "../caseAssistant";
@@ -402,11 +402,22 @@ export const appRouter = router({
     pending: protectedProcedure.query(async ({ ctx }) => {
       const db = await getDb();
       if (!db) return [] as Array<{ id: string; caseId: string; question: string; context: string }>;
-      const { getSystemSwitch } = await import("../systemState");
-      const rows = await db
+      const resolutionPrefix = `clarify:${ctx.user.id}:`;
+      const [rows, resolutionRows] = await Promise.all([
+        db
         .select({ id: cases.id, clientName: cases.clientName, clientEmail: cases.clientEmail, legalAreas: cases.legalAreas, status: cases.status })
         .from(cases)
-        .where(eq(cases.userId, ctx.user.id));
+        .where(eq(cases.userId, ctx.user.id)),
+        db
+          .select({ key: systemConfig.configKey })
+          .from(systemConfig)
+          .where(and(
+            gte(systemConfig.configKey, resolutionPrefix),
+            lt(systemConfig.configKey, `${resolutionPrefix}\uffff`),
+            eq(systemConfig.configValue, "true"),
+          )),
+      ]);
+      const resolved = new Set(resolutionRows.map((row) => row.key));
       const out: Array<{ id: string; caseId: string; question: string; context: string }> = [];
       for (const c of rows) {
         let areas: string[] = [];
@@ -414,14 +425,14 @@ export const appRouter = router({
         // Ambiguity 1: multiple legal areas → which should drive matching?
         if (areas.length > 1) {
           const cid = `${c.id}:primary-area`;
-          if (!(await getSystemSwitch(`clarify:${ctx.user.id}:${cid}`))) {
+          if (!resolved.has(`${resolutionPrefix}${cid}`)) {
             out.push({ id: cid, caseId: c.id, question: `This case matches multiple legal areas (${areas.join(", ")}). Which is the primary area for lawyer matching?`, context: "multiple-legal-areas" });
           }
         }
         // Ambiguity 2: no client email → outreach recipient is unresolved.
         if (!c.clientEmail) {
           const cid = `${c.id}:contact`;
-          if (!(await getSystemSwitch(`clarify:${ctx.user.id}:${cid}`))) {
+          if (!resolved.has(`${resolutionPrefix}${cid}`)) {
             out.push({ id: cid, caseId: c.id, question: `This case has no client contact email. Add one before preparing outreach.`, context: "missing-contact" });
           }
         }

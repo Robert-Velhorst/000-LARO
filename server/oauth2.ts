@@ -8,6 +8,8 @@ import { encryptToken, decryptToken } from "./emailOAuth";
 import { ENV } from "./_core/env";
 import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
 import { readBoundedResponseJson, withBoundedHttpResponse } from "./boundedHttpResponse";
+import { getHostedRedisOAuthStateClient } from "./hostedRedis";
+import { createRedisOAuthStateStore } from "./oauthStateStore";
 
 export interface OAuth2Config {
   clientId: string;
@@ -231,6 +233,22 @@ export function beginOAuthFlow(provider: OAuthProvider, userId: string): string 
   return `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params.toString()}`;
 }
 
+/** Starts an OAuth flow with a shared one-time state marker when hosted. */
+export async function beginOAuthFlowAsync(provider: OAuthProvider, userId: string): Promise<string> {
+  const authorizationUrl = beginOAuthFlow(provider, userId);
+  if (!ENV.isHosted) return authorizationUrl;
+
+  const state = new URL(authorizationUrl).searchParams.get("state");
+  if (!state) throw new OAuthStateError();
+  try {
+    const store = createRedisOAuthStateStore(await getHostedRedisOAuthStateClient());
+    await store.record(state, OAUTH_STATE_TTL_MS);
+  } catch {
+    throw new Error("OAuth flow could not be started safely because shared state storage is unavailable.");
+  }
+  return authorizationUrl;
+}
+
 /**
  * Consume and validate one-time OAuth state.
  */
@@ -282,10 +300,34 @@ export function consumeOAuthState(
 }
 
 /**
+ * Validates and consumes the hosted replay marker after local cryptographic
+ * validation. A Redis outage or a repeated callback is invalid state.
+ */
+export async function consumeOAuthStateAsync(
+  state: string,
+  provider: OAuthProvider
+): Promise<{ userId: string; codeVerifier: string }> {
+  const payload = consumeOAuthState(state, provider);
+  if (!ENV.isHosted) return payload;
+  try {
+    const store = createRedisOAuthStateStore(await getHostedRedisOAuthStateClient());
+    if (!await store.consume(state)) throw new OAuthStateError();
+  } catch (error) {
+    if (error instanceof OAuthStateError) throw error;
+    throw new OAuthStateError();
+  }
+  return payload;
+}
+
+/**
  * Generate OAuth2 authorization URL
  */
 export function getAuthorizationUrl(provider: 'gmail' | 'outlook', userId: string): string {
   return beginOAuthFlow(provider, userId);
+}
+
+export async function getAuthorizationUrlAsync(provider: 'gmail' | 'outlook', userId: string): Promise<string> {
+  return await beginOAuthFlowAsync(provider, userId);
 }
 
 /**

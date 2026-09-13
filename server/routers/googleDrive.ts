@@ -10,7 +10,7 @@ import {
 import { getDb } from "../db";
 import { emailAccounts, evidence } from "../schema";
 import { eq, and } from "drizzle-orm";
-import { beginOAuthFlow } from "../oauth2";
+import { beginOAuthFlowAsync } from "../oauth2";
 import { pullEvidenceByKeywords } from "../autoCollectionService";
 import { assertCaseOwnership } from "../_core/authz";
 import { createEvidenceFile } from "../evidence";
@@ -133,7 +133,7 @@ export const googleDriveRouter = router({
    * off the Gmail flow.
    */
   connect: protectedProcedure.mutation(async ({ ctx }) => {
-    const url = beginOAuthFlow("gmail", ctx.user.id);
+    const url = await beginOAuthFlowAsync("gmail", ctx.user.id);
     return { authUrl: url };
   }),
 
