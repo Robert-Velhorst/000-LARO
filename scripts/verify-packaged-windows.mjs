@@ -70,15 +70,25 @@ async function launch() {
   return new URL(page.url()).origin;
 }
 
-async function stop() {
-  if (browser) { await browser.close(); browser = undefined; }
+async function stop({ force = false } = {}) {
   if (child?.pid && child.exitCode === null) {
-    // Only this test's process tree is stopped. Restart below checks crash recovery.
-    spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-    const deadline = Date.now() + 15_000;
+    if (force) {
+      // Only this test's process tree is stopped, never other LARO profiles.
+      spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+    } else {
+      // A normal Windows window-close lets Chromium persist its buffered cookies.
+      // Killing seconds after signup instead tests cookie-flush timing, not quit.
+      const closed = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        `$ErrorActionPreference = 'Stop'; $laroProcess = Get-Process -Id ${child.pid}; if (-not $laroProcess.CloseMainWindow()) { throw 'Owned LARO window did not accept a close request' }`],
+      { encoding: 'utf8', windowsHide: true, timeout: 10_000 });
+      assert.equal(closed.status, 0, `Windows close request failed: ${closed.error || closed.stderr}`);
+    }
+    const deadline = Date.now() + 30_000;
     while (child.exitCode === null && child.signalCode === null && Date.now() < deadline) await pause(100);
     assert.ok(child.exitCode !== null || child.signalCode !== null, 'Owned packaged process did not stop');
+    if (!force) assert.equal(child.exitCode, 0, 'Normal packaged shutdown failed');
   }
+  if (browser) { await browser.close(); browser = undefined; }
 }
 
 async function rpc(procedure, input, mutation = false) {
@@ -152,7 +162,21 @@ try {
   assert.equal((await rpc('auth.me')).email, 'windows-verification@example.test');
   assert.equal((await rpc('evidenceFiles.get', { id: uploaded.id })).contentHash, uploaded.sha256);
   assert.equal(createHash('sha256').update(readFileSync(path.join(profile, 'laro-secrets.json'))).digest('hex'), secretHash);
-  checked('packaged restart preserves account, session, evidence, and encryption keys');
+  checked('normal Windows close and restart preserves account, session, evidence, and encryption keys');
+  // Also crash the restarted process. The established session has already been
+  // persisted by the normal close; committed evidence must survive either exit.
+  await stop({ force: true });
+  origin = await launch();
+  await page.getByRole('button', { name: 'Open account menu' }).waitFor();
+  assert.equal((await rpc('auth.me')).email, 'windows-verification@example.test');
+  assert.equal((await rpc('evidenceFiles.get', { id: uploaded.id })).contentHash, uploaded.sha256);
+  const recovered = await rpc('documentInbox.download', { id: item.id }, true);
+  assert.deepEqual(Buffer.from(recovered.base64, 'base64'), content);
+  assert.equal(createHash('sha256').update(readFileSync(path.join(profile, 'laro-secrets.json'))).digest('hex'), secretHash);
+  await page.goto(origin + '/evidence');
+  await page.getByRole('heading', { name: 'windows-inbox.txt', exact: true }).waitFor();
+  await page.screenshot({ path: path.join(output, 'windows-restarted.png') });
+  checked('forced-crash recovery preserves committed evidence, persisted session, and encryption keys');
   await rpc('auth.logout', undefined, true);
   assert.equal((await page.request.get(origin + '/api/trpc/cases.list')).status(), 401);
   checked('logout denies authenticated case access');
@@ -169,7 +193,7 @@ try {
   console.error(report.error);
   process.exitCode = 1;
 } finally {
-  try { await stop(); } catch (error) { report.cleanupError = String(error); report.passed = false; process.exitCode = 1; }
+  try { await stop({ force: true }); } catch (error) { report.cleanupError = String(error); report.passed = false; process.exitCode = 1; }
   writeFileSync(path.join(output, 'result.json'), JSON.stringify(report, null, 2) + '\n');
   writeFileSync(path.join(output, 'packaged-app.log'), appLog);
 }
