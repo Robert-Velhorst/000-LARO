@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 // Windows-only rendered smoke check of the packaged app, using disposable data.
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { chromium } from 'playwright';
+import { _electron as electron } from 'playwright';
 import superjson from 'superjson';
 
 assert.equal(process.platform, 'win32', 'Run this check on the Windows build runner');
@@ -24,39 +23,25 @@ const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
 Object.assign(env, { NODE_ENV: 'production', LARO_BACKGROUND_JOBS: 'false', LARO_LOCAL_TEST_ACCESS: 'false' });
 const report = { passed: false, checks: [], pageErrors: [], consoleErrors: [], failedRequests: [], badResponses: [] };
 let child;
-let browser;
+let application;
 let page;
 let appLog = '';
 const checked = name => { report.checks.push(name); console.log(`PASS ${name}`); };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function launch() {
-  const probe = createServer();
-  await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
-  const debugPort = probe.address().port;
-  await new Promise(resolve => probe.close(resolve));
-  child = spawn(executable, [`--user-data-dir=${profile}`, '--local', '--disable-gpu', `--remote-debugging-port=${debugPort}`],
-    { cwd: temporary, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  application = await electron.launch({
+    executablePath: executable,
+    args: [`--user-data-dir=${profile}`, '--local', '--disable-gpu'],
+    cwd: temporary,
+    env,
+    timeout: 120_000,
+  });
+  child = application.process();
   child.stdout.on('data', chunk => { appLog += chunk; });
   child.stderr.on('data', chunk => { appLog += chunk; });
-  let launchError;
-  child.on('error', error => { launchError = error; });
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    if (launchError) throw launchError;
-    if (child.exitCode !== null) throw new Error(`Packaged app exited ${child.exitCode}: ${appLog.slice(-5000)}`);
-    try {
-      const response = await fetch(`http://127.0.0.1:${debugPort}/json/version`, { signal: AbortSignal.timeout(1000) });
-      if (response.ok) {
-        browser = await chromium.connectOverCDP(`http://127.0.0.1:${debugPort}`);
-        break;
-      }
-    } catch { /* The packaged main process is still starting. */ }
-    await pause(300);
-  }
-  assert.ok(browser, 'Packaged app did not expose its test-only debugging endpoint');
-  const context = browser.contexts()[0];
-  page = context.pages()[0] || await context.waitForEvent('page', { timeout: 90_000 });
+  assert.equal(await application.evaluate(({ app }) => app.isPackaged), true);
+  page = await application.firstWindow({ timeout: 90_000 });
   page.on('pageerror', error => report.pageErrors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') report.consoleErrors.push(message.text()); });
   page.on('requestfailed', request => {
@@ -76,19 +61,27 @@ async function stop({ force = false } = {}) {
       // Only this test's process tree is stopped, never other LARO profiles.
       spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
     } else {
-      // A normal Windows window-close lets Chromium persist its buffered cookies.
-      // Killing seconds after signup instead tests cookie-flush timing, not quit.
-      const closed = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-        `$ErrorActionPreference = 'Stop'; $laroProcess = Get-Process -Id ${child.pid}; if (-not $laroProcess.CloseMainWindow()) { throw 'Owned LARO window did not accept a close request' }`],
-      { encoding: 'utf8', windowsHide: true, timeout: 10_000 });
-      assert.equal(closed.status, 0, `Windows close request failed: ${closed.error || closed.stderr}`);
+      // Playwright's Electron close calls app.quit() through the test-only main
+      // inspector and waits for exit. This exercises the real shutdown handler,
+      // including cookie persistence, without depending on a visible OS window.
+      let closeTimer;
+      try {
+        await Promise.race([
+          application.close(),
+          new Promise((_, reject) => {
+            closeTimer = setTimeout(() => reject(new Error('Normal packaged shutdown exceeded 30 seconds')), 30_000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(closeTimer);
+      }
     }
     const deadline = Date.now() + 30_000;
     while (child.exitCode === null && child.signalCode === null && Date.now() < deadline) await pause(100);
     assert.ok(child.exitCode !== null || child.signalCode !== null, 'Owned packaged process did not stop');
     if (!force) assert.equal(child.exitCode, 0, 'Normal packaged shutdown failed');
   }
-  if (browser) { await browser.close(); browser = undefined; }
+  application = undefined;
 }
 
 async function rpc(procedure, input, mutation = false) {
