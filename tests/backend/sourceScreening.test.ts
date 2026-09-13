@@ -22,30 +22,38 @@ describe("conservative fast screening rules", () => {
 
 (sqliteAvailable ? describe : describe.skip)("durable fast screening", () => {
   let app: TestApp;
+  let sourceRoot: string;
   const owner = { id: "SKIM_OWNER", email: "skim@example.test", role: "user" };
-  beforeAll(async () => { app = await bootTestApp(); await app.db.insert(app.schema.users).values(buildUser(owner)); });
+  beforeAll(async () => {
+    app = await bootTestApp();
+    // Windows TEMP may use an 8.3 alias. Production grants/queues use canonical
+    // paths; the direct screening fixtures must use that same root spelling.
+    const { grantLocalSourceRoot } = await import("../../server/localDocumentSource");
+    sourceRoot = await grantLocalSourceRoot(app.tmpDir);
+    await app.db.insert(app.schema.users).values(buildUser(owner));
+  });
   afterAll(() => app?.cleanup());
   it("samples bounded fragments from files above the import size limit, including the tail", async () => {
-    const file = join(app.tmpDir, "large.txt");
+    const file = join(sourceRoot, "large.txt");
     const bytes = Buffer.alloc(9 * 1024 * 1024, "x");
     bytes.write("\nZaaknummer 6789\n", bytes.length - 60);
     writeFileSync(file, bytes);
     const { screenLocalSourceFile, grantLocalSourceRoot } = await import("../../server/localDocumentSource");
-    const result = await screenLocalSourceFile(await grantLocalSourceRoot(app.tmpDir), file);
+    const result = await screenLocalSourceFile(await grantLocalSourceRoot(sourceRoot), file);
     expect(result.tier).toBe("priority");
     expect(result.sampledBytes).toBeLessThanOrEqual(24576);
     expect(result.fileBytes).toBe(bytes.length);
   });
   it("does not read protected locations and does not loop on unavailable screening", async () => {
     const { screenLocalSourceBatch, grantLocalSourceRoot } = await import("../../server/localDocumentSource");
-    const result = await screenLocalSourceBatch(await grantLocalSourceRoot(app.tmpDir), [join(app.tmpDir, ".ssh", "private.txt"), join(app.tmpDir, "missing.txt")]);
+    const result = await screenLocalSourceBatch(await grantLocalSourceRoot(sourceRoot), [join(sourceRoot, ".ssh", "private.txt"), join(sourceRoot, "missing.txt")]);
     expect(result.every(item => item.tier === "unavailable" && item.sampledBytes === 0)).toBe(true);
   });
   it("invalidates cached screening when source bytes change", async () => {
-    const folder = join(app.tmpDir, "src"); mkdirSync(folder);
+    const folder = join(sourceRoot, "src"); mkdirSync(folder);
     const file = join(folder, "example.py"); writeFileSync(file, "import os\n");
     const { screenLocalSourceFile, executeLocalSourceWork, grantLocalSourceRoot } = await import("../../server/localDocumentSource");
-    const root = await grantLocalSourceRoot(app.tmpDir);
+    const root = await grantLocalSourceRoot(sourceRoot);
     const screening = await screenLocalSourceFile(root, file);
     expect(screening.tier).toBe("low");
     writeFileSync(file, "# Zaaknummer: CHANGED-2026-123\nDocument evidence changed\n");
@@ -54,7 +62,7 @@ describe("conservative fast screening rules", () => {
       .rejects.toMatchObject({ check: { code: "unsupported_format", outcome: "needs_review" } });
   });
   it("defers likely assets with an audit, prioritizes content signals, and allows explicit inclusion", async () => {
-    const root = join(app.tmpDir, "collection"); mkdirSync(root); mkdirSync(join(root, "assets"));
+    const root = join(sourceRoot, "collection"); mkdirSync(root); mkdirSync(join(root, "assets"));
     writeFileSync(join(root, "assets", "icon.png"), "opaque test fixture, not a real image");
     writeFileSync(join(root, "notes.txt"), "Ordinary notes with uncertain relevance.");
     writeFileSync(join(root, "decision.txt"), "Zaaknummer: QUICK-2026-002\nBesluit gemeente.");
