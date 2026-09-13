@@ -1,0 +1,4 @@
+{$LARO_DOMAIN} {
+    encode zstd gzip
+    reverse_proxy laro:3000
+}
