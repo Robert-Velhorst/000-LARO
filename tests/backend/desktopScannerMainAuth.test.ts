@@ -2,9 +2,21 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createDesktopScannerHeaders,
   getDesktopScannerAuth,
+  getRemoteUploadAuth,
 } from "../../src-main/scannerAuth";
 
 describe("desktop scanner main-process session resolution", () => {
+  it("uses the remote session without exporting local scanner authority", async () => {
+    const get = vi.fn().mockResolvedValue([{ name: "laro_session", value: "remote-session" }]);
+    const headers = createDesktopScannerHeaders(() => getRemoteUploadAuth({
+      cookieUrl: "https://laro.example.test",
+      cookieStore: { get },
+    }));
+    await expect(headers()).resolves.toEqual({ Cookie: "laro_session=remote-session" });
+    expect(get).toHaveBeenCalledWith({ url: "https://laro.example.test", name: "laro_session" });
+    get.mockResolvedValue([]);
+    await expect(headers()).rejects.toThrow("Sign in to LARO");
+  });
   it("resolves the exact LARO session cookie without exposing extra cookies", async () => {
     const get = vi.fn().mockResolvedValue([
       { name: "other", value: "ignore" },

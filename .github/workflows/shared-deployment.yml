@@ -1,0 +1,51 @@
+name: Shared browser and desktop deployment
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Build the complete browser and API image
+        run: docker build -t laro-shared:${{ github.sha }} .
+      - name: Verify the rendered application, authorization, evidence, and persistence
+        run: node scripts/verify-shared-deployment.mjs --image=laro-shared:${{ github.sha }}
+        env:
+          LARO_BROWSER_CHANNEL: chromium
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: LARO-Shared-Verification
+          path: out/shared-verification/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Export the verified runtime for the small shared server
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          mkdir -p out/deployment
+          docker save laro-shared:${{ github.sha }} | gzip > out/deployment/laro-shared-image.tar.gz
+          cd out/deployment
+          sha256sum laro-shared-image.tar.gz > laro-shared-image.tar.gz.sha256
+      - name: Upload deployment image
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: LARO-Shared-Image
+          path: out/deployment/
+          if-no-files-found: error
+          retention-days: 7

@@ -29,6 +29,7 @@ not hidden or discarded.
 - [Configuration](#configuration)
 - [Google and outbound email](#google-and-outbound-email)
 - [API-only and ngrok deployment](#api-only-and-ngrok-deployment)
+- [Browser and connected desktop deployment](docs/HETZNER_DEPLOYMENT.md)
 - [Security, privacy, and recovery](#security-privacy-and-recovery)
 - [Developer guide](#developer-guide)
 - [Testing and production readiness](#testing-and-production-readiness)
@@ -324,6 +325,13 @@ Express/tRPC server
 
 Docker does not include Electron or Flask. The API-only ngrok deployment does
 not publish the Electron interface.
+
+For a persistent server shared by the browser and desktop, use the
+[Hetzner deployment guide](docs/HETZNER_DEPLOYMENT.md). `LARO_SERVE_WEB=true`
+serves the built React interface while retaining standalone owner enrollment.
+Launch the desktop with `--server-url=https://your-laro-domain` to use that
+server's account and data. The original local workspace remains selectable
+with `--local`.
 
 ### Data and Ownership
 

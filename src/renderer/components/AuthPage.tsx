@@ -18,6 +18,7 @@ export default function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [setupCode, setSetupCode] = useState("");
   const [code, setCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -25,6 +26,7 @@ export default function AuthPage() {
   const utils = trpc.useUtils();
   const loginMutation = trpc.auth.login.useMutation();
   const signupMutation = trpc.auth.signup.useMutation();
+  const enrollment = trpc.auth.enrollment.useQuery(undefined, { staleTime: 0 });
   const requestResetMutation = trpc.auth.requestPasswordReset.useMutation();
   const resetPasswordMutation = trpc.auth.resetPassword.useMutation();
 
@@ -38,7 +40,8 @@ export default function AuthPage() {
         toast.success(t("auth.welcomeBack"));
         await utils.auth.me.invalidate();
       } else if (mode === "signup") {
-        await signupMutation.mutateAsync({ email, password, name });
+        await signupMutation.mutateAsync({ email, password, name, bootstrapToken: setupCode || undefined });
+        setSetupCode("");
         toast.success(t("auth.accountCreated"));
         await utils.auth.me.invalidate();
       } else if (mode === "forgot") {
@@ -101,6 +104,23 @@ export default function AuthPage() {
           </CardHeader>
           <form onSubmit={handleSubmit}>
             <CardContent className="space-y-4">
+              {mode === "signup" && enrollment.data?.requiresSetupCode && (
+                <div className="space-y-2">
+                  <Label htmlFor="setup-code">{t("auth.setupCode")}</Label>
+                  <Input
+                    id="setup-code"
+                    type="password"
+                    autoComplete="off"
+                    value={setupCode}
+                    onChange={(e) => setSetupCode(e.target.value)}
+                    minLength={32}
+                    maxLength={256}
+                    required
+                    aria-describedby="setup-code-help"
+                  />
+                  <p id="setup-code-help" className="text-sm text-muted-foreground">{t("auth.setupCodeHelp")}</p>
+                </div>
+              )}
               {mode === "signup" && (
                 <div className="space-y-2">
                   <Label htmlFor="name">{t("auth.fullName")}</Label>
@@ -232,7 +252,7 @@ export default function AuthPage() {
               </Button>
 
               <div className="text-center space-y-2">
-                {(mode === "signin" || mode === "signup") && (
+                {(mode === "signup" || (mode === "signin" && enrollment.data?.open)) && (
                   <button
                     type="button"
                     onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
@@ -242,6 +262,9 @@ export default function AuthPage() {
                       ? t("auth.noAccount")
                       : t("auth.hasAccount")}
                   </button>
+                )}
+                {mode === "signin" && enrollment.data?.open === false && (
+                  <p className="text-sm text-muted-foreground">{t("auth.enrollmentClosed")}</p>
                 )}
 
                 {mode === "reset" && (

@@ -19,6 +19,7 @@ try {
     '# Private LARO installation configuration. Keep a protected backup of this file.',
     `LARO_DOMAIN=${url.hostname}`,
     'LARO_IMAGE_TAG=local',
+    'LARO_BIND_PORT=3187',
     `JWT_SECRET=${randomBytes(32).toString('hex')}`,
     `COOKIE_SECRET=${randomBytes(32).toString('hex')}`,
     '# Enter this setup code in the signup form to create the first owner.',

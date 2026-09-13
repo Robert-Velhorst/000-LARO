@@ -265,7 +265,7 @@ app.get('/api/case-export/:ticket.zip', async (req, res) => {
 
 // ─── OAuth2 routes ────────────────────────────────────────────────────────────
 
-if (ENV.SERVER_ONLY) {
+if (ENV.SERVER_ONLY && !ENV.SERVE_WEB) {
   app.get('/', (_req, res) => {
     res.status(200).json({
       service: 'LARO API',
@@ -295,7 +295,7 @@ app.use(
 
 // ─── Static files (Production) ────────────────────────────────────────────────
 
-if (!isDev && !ENV.SERVER_ONLY) {
+if (!isDev && (!ENV.SERVER_ONLY || ENV.SERVE_WEB)) {
   // In a packaged Electron app, we need to find the renderer files relative to this file
   // dist/main/server/index.js -> dist/renderer
   const possiblePaths = [
@@ -317,12 +317,14 @@ if (!isDev && !ENV.SERVER_ONLY) {
   if (rendererPath) {
     console.log(`[Server] Serving static files from: ${rendererPath}`);
     app.use(express.static(rendererPath));
-    app.get('*', (req, res) => {
-      if (!req.path.startsWith('/trpc') && !req.path.startsWith('/api')) {
-        res.sendFile(path.join(rendererPath, 'index.html'));
-      }
+    // Express 5 requires named wildcards. Include '/' and let unknown API
+    // routes/assets return 404 instead of hanging or serving HTML as JavaScript.
+    app.get('/{*page}', (req, res, next) => {
+      if (req.path.startsWith('/trpc') || req.path.startsWith('/api') || path.extname(req.path)) return next();
+      res.sendFile(path.join(rendererPath, 'index.html'));
     });
   } else {
+    if (ENV.SERVE_WEB) throw new Error('LARO_SERVE_WEB requires a built dist/renderer/index.html. Run npm run build:renderer.');
     console.error(`[Server] Critical: Could not find renderer path in: ${possiblePaths.join(', ')}`);
   }
 } else if (ENV.SERVER_ONLY) {

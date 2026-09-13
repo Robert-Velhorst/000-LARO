@@ -16,8 +16,11 @@ API replicas against this SQLite volume or enable `LARO_RUNTIME_MODE=hosted`.
 Use an EU Hetzner Linux server with Docker Engine and the Compose plugin. Build
 the image on a machine with enough memory for TypeScript (4 GB minimum for the
 build, 8 GB recommended), or transfer a previously verified image to the server.
-Point the intended domain's DNS records at the server. Open TCP 80 and 443 for
-Caddy and restrict SSH to the operator. The API and database have no public port.
+First inventory existing services, containers, listening ports, and the current
+reverse proxy. Point the intended domain's DNS records at the server and add
+LARO to that proxy. The API binds only to `127.0.0.1:3187`; set `LARO_BIND_PORT`
+to another free port if needed. The database has no public port. Existing
+applications keep their ports, storage, and proxy routes.
 
 Check out the reviewed integration commit, then run:
 
@@ -31,7 +34,37 @@ docker compose --env-file .env.hetzner -f docker-compose.hetzner.yml ps
 Replace the example address with the real domain. Setup creates fresh private
 secrets in `.env.hetzner` and refuses to overwrite an existing file. Keep a
 protected copy of it: the signing key also protects stored provider tokens.
-Caddy obtains and renews the HTTPS certificate, including after server restarts.
+Configure the existing proxy to serve the LARO domain over HTTPS and forward
+HTTP and WebSocket traffic to `127.0.0.1:3187`. A proxy running inside Docker
+needs a suitable private network/upstream address instead of its own loopback.
+Add only the LARO route, validate the proxy configuration, and reload it without
+replacing the other applications' configuration.
+
+Only on a server with no existing TLS proxy and free ports 80/443, enable the
+included Caddy service:
+
+```sh
+docker compose --env-file .env.hetzner -f docker-compose.hetzner.yml --profile standalone-tls up -d
+```
+
+Caddy obtains and renews the HTTPS certificate. On a shared server, leave this
+profile disabled and use the existing proxy's certificate management.
+
+For a small shared server, run the **Shared browser and desktop deployment**
+workflow manually against the reviewed branch. It builds the container on the
+CI runner, checks the rendered application inside that container, and exports
+the verified image as the `LARO-Shared-Image` artifact. This avoids compiling
+TypeScript or installing development dependencies on the live server.
+Download and transfer that artifact, verify its checksum, and load it:
+
+```sh
+sha256sum --check laro-shared-image.tar.gz.sha256
+docker load --input laro-shared-image.tar.gz
+```
+
+Set `LARO_IMAGE_TAG` in `.env.hetzner` to the exact commit SHA shown by that
+workflow run, then use `up -d --no-build` in place of `up -d --build`. Loading an
+image does not itself start the application or replace another container.
 
 Open the HTTPS address, select **Sign up**, and enter the setup code from
 `STANDALONE_SIGNUP_TOKEN` in `.env.hetzner`. Sign in with the resulting owner
@@ -97,7 +130,9 @@ with its previous image in a recovery environment before switching traffic.
 Verify `/api/live`, `/api/ready`, HTTPS and certificate validity, deep-route
 reloads, and browser console/network errors. Create a case, upload a harmless
 document, analyze and export it, then view the same records in the connected
-desktop. Check logout and unauthorized access. Restart the application and the
-server and confirm the same account, records, files, and HTTPS service return.
+desktop. Check logout and unauthorized access. Restart only the LARO application
+and confirm the same account, records, files, and HTTPS service return. Check
+Docker boot enablement and the container restart policy. A full shared-server
+reboot requires an owner-approved maintenance window for the other applications.
 Verify a backup restore and any enabled external providers. Local test results
 do not substitute for these Hetzner and desktop-device checks.

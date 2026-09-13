@@ -34,6 +34,9 @@ services:
       - backups:/backups
     expose:
       - "3000"
+    ports:
+      # An existing host proxy can route the LARO domain here.
+      - "127.0.0.1:${LARO_BIND_PORT:-3187}:3000"
     stop_grace_period: 45s
     logging:
       driver: json-file
@@ -42,6 +45,8 @@ services:
         max-file: "3"
 
   caddy:
+    # Enable only if the server does not already have a proxy on 80/443.
+    profiles: [standalone-tls]
     image: caddy:2-alpine
     restart: unless-stopped
     environment:

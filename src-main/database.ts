@@ -6,15 +6,16 @@ import Database from 'better-sqlite3';
 import { app } from 'electron';
 import path from 'path';
 import { FileItem, ScanProgress, ScanStatus, UploadStatus } from '../shared/types';
+import { remoteScannerDatabaseName } from './remoteConnection';
 
 let db: Database.Database | null = null;
 
 /**
  * Initialize the local database
  */
-export function initDatabase(): void {
+export function initDatabase(serverUrl?: string): void {
   const userDataPath = app.getPath('userData');
-  const dbPath = path.join(userDataPath, 'laro-agent.db');
+  const dbPath = path.join(userDataPath, serverUrl ? remoteScannerDatabaseName(serverUrl) : 'laro-agent.db');
   
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');

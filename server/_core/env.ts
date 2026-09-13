@@ -33,6 +33,7 @@ export const ENV = {
   HOST:             process.env.HOST || '127.0.0.1',
   API_BODY_LIMIT:   process.env.API_BODY_LIMIT || '10mb',
   SERVER_ONLY:      process.env.SERVER_ONLY === 'true',
+  SERVE_WEB:        process.env.LARO_SERVE_WEB === 'true',
   LARO_RUNTIME_MODE: resolveRuntimeMode(process.env),
   STANDALONE_SIGNUP_TOKEN: process.env.STANDALONE_SIGNUP_TOKEN || '',
   NODE_ENV:         process.env.NODE_ENV || 'production',

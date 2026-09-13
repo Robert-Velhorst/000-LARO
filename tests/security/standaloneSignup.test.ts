@@ -51,6 +51,7 @@ suite("standalone signup integration", () => {
   });
 
   it("rejects an unauthorised first claim without creating an account", async () => {
+    await expect(app.makeCaller(null).auth.enrollment()).resolves.toEqual({ open: true, requiresSetupCode: true });
     await expect(app.makeCaller(null).auth.signup({
       email: "attacker@example.com",
       password: "not-the-owner-password",
@@ -91,6 +92,7 @@ suite("standalone signup integration", () => {
       bootstrapToken: BOOTSTRAP_TOKEN,
     })).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(await app.db.select().from(app.schema.users)).toHaveLength(1);
+    await expect(app.makeCaller(null).auth.enrollment()).resolves.toEqual({ open: false, requiresSetupCode: true });
   });
 
   it("preserves normal multi-account signup in the desktop runtime", async () => {

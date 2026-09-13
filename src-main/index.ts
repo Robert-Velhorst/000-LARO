@@ -21,7 +21,8 @@ import { acquireSingleInstanceLock } from './singleInstance';
 import { installDenyByDefaultPermissions } from './sessionPermissions';
 import { ensureDesktopSecrets } from './desktopSecrets';
 import { loadProtectedProviderConfig } from './providerConfig';
-import { getDesktopScannerAuth } from './scannerAuth';
+import { getDesktopScannerAuth, getRemoteUploadAuth } from './scannerAuth';
+import { resolveDesktopConnection } from './remoteConnection';
 // NOTE: server/index.ts reads `.env` (dotenv) at import time, so it is imported
 // lazily in startApp() AFTER we pin NODE_ENV from app.isPackaged. This guarantees
 // a packaged build runs the server in production mode even if the bundled .env
@@ -29,6 +30,7 @@ import { getDesktopScannerAuth } from './scannerAuth';
 
 const DEFAULT_PORT = 3000;
 let laroUrl = `http://127.0.0.1:${DEFAULT_PORT}`;
+let remoteServerUrl: string | null = null;
 let stopIntegratedServer: (() => Promise<void>) | null = null;
 let shutdownStarted = false;
 const isDev = isDesktopDevelopmentMode(app.isPackaged, process.env.NODE_ENV);
@@ -67,7 +69,7 @@ function isTrustedAppUrl(rawUrl: string): boolean {
   try {
     const origin = new URL(rawUrl).origin;
     if (origin === new URL(laroUrl).origin) return true;
-    return isDev && (origin === 'http://localhost:5173' || origin === 'http://127.0.0.1:5173');
+    return !remoteServerUrl && isDev && (origin === 'http://localhost:5173' || origin === 'http://127.0.0.1:5173');
   } catch {
     return false;
   }
@@ -159,7 +161,7 @@ async function createMainWindow(): Promise<void> {
   console.log(`[Electron] NODE_ENV: ${process.env.NODE_ENV}`);
   console.log(`[Electron] isDev: ${isDev}`);
 
-  if (isDev) {
+  if (isDev && !remoteServerUrl) {
     const devUrl = 'http://localhost:5173';
     console.log(`[Electron] Attempting to load Vite Dev Server: ${devUrl}`);
     try {
@@ -177,6 +179,9 @@ async function createMainWindow(): Promise<void> {
       await mainWindow.loadURL(laroUrl);
     } catch (err) {
       console.error('[Electron] Failed to load Production URL. Did you run npm run build? Error:', err);
+      if (remoteServerUrl) {
+        dialog.showErrorBox('LARO server unavailable', 'The configured LARO server could not be reached. Check your connection and server address, then use LARO > Reload to try again.');
+      }
     }
     if (process.env.DEBUG) mainWindow.webContents.openDevTools();
   }
@@ -204,7 +209,7 @@ function createScanPanel(): void {
 
   hardenWindowNavigation(scanPanel);
 
-  if (isDev) {
+  if (isDev && !remoteServerUrl) {
     scanPanel.loadURL('http://localhost:5173/?mode=scanner');
   } else {
     scanPanel.loadURL(`${laroUrl}/?mode=scanner`);
@@ -255,6 +260,33 @@ if (ownsDesktopProfile) app.whenReady().then(async () => {
   const userDataPath = app.getPath('userData');
   if (!fs.existsSync(userDataPath)) {
     fs.mkdirSync(userDataPath, { recursive: true });
+  }
+
+  try {
+    remoteServerUrl = resolveDesktopConnection({
+      userDataPath,
+      argv: process.argv,
+      serverUrl: process.env.LARO_DESKTOP_SERVER_URL,
+    });
+  } catch (error) {
+    dialog.showErrorBox('Server Connection', error instanceof Error ? error.message : String(error));
+    app.quit();
+    return;
+  }
+
+  if (remoteServerUrl) {
+    laroUrl = remoteServerUrl;
+    agentConfig.apiUrl = remoteServerUrl;
+    // Keep native scan/review state local and isolated per server. Cases,
+    // evidence, provider tokens, and sign-in are owned by the remote backend.
+    initAgentDb(remoteServerUrl);
+    buildMenu();
+    setupIPC();
+    await createMainWindow();
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) void createMainWindow();
+    });
+    return;
   }
 
   try {
@@ -518,7 +550,10 @@ async function startUpload(scanId: string, cookieUrl: string): Promise<{ success
   uploadStarting = true;
   try {
     const browserSession = (mainWindow ?? scanPanel)?.webContents.session ?? session.defaultSession;
-    const resolveAuth = () => getDesktopScannerAuth({
+    const resolveAuth = () => remoteServerUrl ? getRemoteUploadAuth({
+      cookieUrl: remoteServerUrl,
+      cookieStore: browserSession.cookies,
+    }) : getDesktopScannerAuth({
       cookieUrl,
       scannerSecret: process.env.LARO_DESKTOP_SCANNER_SECRET || '',
       cookieStore: browserSession.cookies,
@@ -529,6 +564,7 @@ async function startUpload(scanId: string, cookieUrl: string): Promise<{ success
       scanId: safeScanId,
       apiUrl: agentConfig.apiUrl,
       resolveAuth,
+      remote: !!remoteServerUrl,
       concurrency: 3,
       maxRetries: 3,
     });

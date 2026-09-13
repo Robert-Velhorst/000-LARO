@@ -159,6 +159,17 @@ export const appRouter = router({
   // Auth procedures
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
+    enrollment: publicProcedure.query(async () => {
+      if (!ENV.SERVER_ONLY) return { open: true, requiresSetupCode: false };
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+      const [userCount] = await db.select({ value: count() }).from(users);
+      const tokenLength = ENV.STANDALONE_SIGNUP_TOKEN.trim().length;
+      return {
+        open: Number(userCount?.value || 0) === 0 && tokenLength >= 32 && tokenLength <= 256,
+        requiresSetupCode: true,
+      };
+    }),
     
     signup: publicProcedure
       .input(z.object({

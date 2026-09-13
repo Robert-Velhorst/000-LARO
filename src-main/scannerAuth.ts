@@ -8,6 +8,18 @@ interface CookieStore {
   get(filter: { url: string; name: string }): Promise<Array<{ name: string; value: string }>>;
 }
 
+// Remote selected-file uploads use normal owner-scoped session authorization.
+// Never send the local per-launch scanner credential to a network service.
+export async function getRemoteUploadAuth(options: {
+  cookieUrl: string;
+  cookieStore: CookieStore;
+}): Promise<{ sessionCookie: string; scannerSecret: string }> {
+  const cookies = await options.cookieStore.get({ url: options.cookieUrl, name: COOKIE_NAME });
+  const cookie = cookies.find((value) => value.name === COOKIE_NAME)?.value;
+  if (!cookie) throw new Error('Sign in to LARO before uploading evidence');
+  return { sessionCookie: `${COOKIE_NAME}=${cookie}`, scannerSecret: '' };
+}
+
 export async function getDesktopScannerAuth(options: {
   cookieUrl: string;
   scannerSecret: string;
@@ -32,7 +44,7 @@ export function createDesktopScannerHeaders(
     const auth = await resolveAuth();
     return {
       Cookie: auth.sessionCookie,
-      [DESKTOP_SCANNER_HEADER]: auth.scannerSecret,
+      ...(auth.scannerSecret ? { [DESKTOP_SCANNER_HEADER]: auth.scannerSecret } : {}),
     };
   };
 }
