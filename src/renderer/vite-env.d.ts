@@ -7,6 +7,7 @@ interface Window {
     getConfig: () => Promise<unknown>;
     setConfig: (config: unknown) => Promise<unknown>;
     selectFolder: () => Promise<string[] | null>;
+    startLocalSource?: () => Promise<{ id: string } | null>;
   };
 }
 

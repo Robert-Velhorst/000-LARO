@@ -65,7 +65,7 @@ export function GoogleDriveFolderBrowser({
   }, [connectionData, initialAccountId]);
 
   // List folders
-  const { data: foldersData, isLoading: isLoadingFolders } = trpc.googleDrive.listFolders.useQuery(
+  const { data: foldersData, isLoading: isLoadingFolders, error: foldersError, refetch: retryFolders } = trpc.googleDrive.listFolders.useQuery(
     { parentId, accountId: selectedAccountId || undefined },
     { enabled: !!connectionData?.connected && !!selectedAccountId }
   );
@@ -245,6 +245,10 @@ export function GoogleDriveFolderBrowser({
           </div>
 
           {/* Breadcrumb Navigation */}
+          {onFoldersSelected && <Button variant="outline" disabled={!selectedAccountId}
+            onClick={() => onFoldersSelected(["root"], ["My Drive (all folders)"], selectedAccountId)}>
+            <Cloud className="mr-2 h-4 w-4" />Select all of My Drive
+          </Button>}
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <button
               onClick={() => handleBreadcrumbClick(-1)}
@@ -280,7 +284,12 @@ export function GoogleDriveFolderBrowser({
 
           {/* Folder List */}
           <ScrollArea className="h-[400px] border rounded-md">
-            {isLoadingFolders ? (
+            {foldersError ? (
+              <div role="alert" className="space-y-3 p-4 text-sm">
+                <p>Folders could not be loaded for this Google account. {foldersError.message}</p>
+                <Button variant="outline" onClick={() => void retryFolders()}>Retry</Button>
+              </div>
+            ) : isLoadingFolders ? (
               <div className="flex items-center justify-center p-8">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>

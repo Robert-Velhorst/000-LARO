@@ -341,6 +341,17 @@ describe("document analysis resource limits", () => {
     expect((error as Error).message).toBe("PDF extracted text exceeds the 8 MB analysis limit");
   });
 
+  it.each(["", "Pagina 1"])("accepts fractional renderer dimensions and retains OCR beside a short text layer: %j", async (layer) => {
+    pdf.getText.mockResolvedValue({ text: layer, pages: [{ text: layer }] });
+    pdf.getScreenshot.mockResolvedValue({ total: 1, pages: [{ pageNumber: 1, width: layer ? 1800 : 1799.9999999999998,
+      height: layer ? 2547 : 2547.2268907563025, data: new Uint8Array(pngHeader(1800, 2547)) }] });
+    ocrWorker.recognize.mockResolvedValue({ data: { text: "De gemeente heeft het besluit op 2026-08-01 verzonden.", confidence: 95 } });
+    const result = await extractDocumentText(Buffer.from("pdf"), "application/pdf");
+    expect(result.method).toBe("pdf_ocr");
+    expect(result.text).toContain("De gemeente heeft het besluit");
+    if (layer) expect(result.text).toContain(layer);
+  });
+
   it("rejects oversized OCR batches before starting a worker", async () => {
     const pages = Array.from({ length: 26 }, () => pngHeader());
 

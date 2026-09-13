@@ -23,6 +23,7 @@ export function writeAuditLogOrThrow(db: any, log: AuditLogInput): string {
     details: log.details ? JSON.stringify(log.details) : null,
     ipAddress: log.ipAddress,
     userAgent: log.userAgent,
+    createdAt: new Date(),
   };
   db.insert(auditLogs).values(auditLog).run();
   return auditLog.id;

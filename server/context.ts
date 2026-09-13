@@ -1,6 +1,6 @@
 import { type Request, type Response } from "express";
 import jwt from "jsonwebtoken";
-import { COOKIE_NAME } from "../shared/const";
+import { SESSION_COOKIE_NAME as COOKIE_NAME } from "./sessionCookie";
 import { ENV } from "./_core/env";
 import { getUser } from "./db";
 import { isDesktopScannerRequest } from "./desktopScannerAuth";

@@ -7,6 +7,9 @@
   "engines": {
     "node": ">=22.12 <23"
   },
+  "overrides": {
+    "qs": "6.16.0"
+  },
   "scripts": {
     "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:main\"",
     "dev:renderer": "vite",
@@ -27,6 +30,7 @@
     "lint": "eslint . --ext .ts,.tsx",
     "test": "npm run rebuild:node && vitest run",
     "test:watch": "vitest",
+    "eval:dossiers": "tsx scripts/evaluate-dossier-discovery.ts",
     "test:a11y:browser": "npm run rebuild:node && playwright test --config playwright.a11y.config.ts",
     "test:a11y:server": "cross-env NODE_ENV=development SERVER_ONLY=false PORT=3015 DATABASE_URL=.laro-a11y.sqlite ALLOWED_ORIGINS=http://127.0.0.1:5181 JWT_SECRET=laro-a11y-jwt-secret-32-characters-minimum COOKIE_SECRET=laro-a11y-cookie-secret-32-characters-minimum tsx server/index.ts",
     "test:a11y:renderer": "cross-env VITE_LARO_IGNORE_DOTENV=true VITE_LARO_API_URL=http://127.0.0.1:3015 vite --host 127.0.0.1 --port 5181",
@@ -131,6 +135,7 @@
     "superjson": "^1.13.1",
     "tailwind-merge": "^2.2.2",
     "tesseract.js": "7.0.0",
+    "undici": "7.29.0",
     "unzipper": "0.12.5",
     "uuid": "^11.1.1",
     "wouter": "^3.1.2",

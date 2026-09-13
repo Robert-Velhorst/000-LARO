@@ -2,7 +2,7 @@ import type { Server as HttpServer } from "http";
 import jwt from "jsonwebtoken";
 import { Server } from "socket.io";
 
-import { COOKIE_NAME } from "../shared/const";
+import { SESSION_COOKIE_NAME as COOKIE_NAME } from "./sessionCookie";
 import { ENV } from "./_core/env";
 import { getUser } from "./db";
 import { isTokenRevoked } from "./sessionRevocation";

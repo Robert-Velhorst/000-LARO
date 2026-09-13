@@ -1,6 +1,7 @@
 import { useWebSocket } from "@/contexts/WebSocketContext";
 import { Badge } from "@/components/ui/badge";
 import { Wifi, WifiOff } from "lucide-react";
+import { useI18n } from "@/contexts/I18nContext";
 import {
   Tooltip,
   TooltipContent,
@@ -9,23 +10,24 @@ import {
 
 export function ConnectionStatus() {
   const { isConnected } = useWebSocket();
+  const { locale } = useI18n();
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <Badge
           variant={isConnected ? "outline" : "destructive"}
-          className="cursor-pointer"
+          role="status"
         >
           {isConnected ? (
             <>
               <Wifi className="w-3 h-3 mr-1" />
-              <span className="hidden sm:inline">Connected</span>
+              <span className="hidden sm:inline">{locale === "nl" ? "Live bijgewerkt" : "Live updates"}</span>
             </>
           ) : (
             <>
               <WifiOff className="w-3 h-3 mr-1" />
-              <span className="hidden sm:inline">Disconnected</span>
+              <span className="hidden sm:inline">{locale === "nl" ? "Live verbinding verbroken" : "Live updates offline"}</span>
             </>
           )}
         </Badge>

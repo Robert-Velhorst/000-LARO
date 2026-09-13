@@ -22,17 +22,20 @@ export async function getRemoteUploadAuth(options: {
 
 export async function getDesktopScannerAuth(options: {
   cookieUrl: string;
+  cookieName?: string;
   scannerSecret: string;
   cookieStore: CookieStore;
 }): Promise<{ sessionCookie: string; scannerSecret: string }> {
   if (options.scannerSecret.length < MIN_DESKTOP_SCANNER_SECRET_LENGTH) {
     throw new Error("Desktop scanner authorization is unavailable");
   }
-  const cookies = await options.cookieStore.get({ url: options.cookieUrl, name: COOKIE_NAME });
-  const sessionCookie = cookies.find((cookie) => cookie.name === COOKIE_NAME)?.value;
+  const cookieName = options.cookieName ?? COOKIE_NAME;
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(cookieName)) throw new Error('Invalid session cookie name');
+  const cookies = await options.cookieStore.get({ url: options.cookieUrl, name: cookieName });
+  const sessionCookie = cookies.find((cookie) => cookie.name === cookieName)?.value;
   if (!sessionCookie) throw new Error("Sign in to LARO before uploading evidence");
   return {
-    sessionCookie: `${COOKIE_NAME}=${sessionCookie}`,
+    sessionCookie: `${cookieName}=${sessionCookie}`,
     scannerSecret: options.scannerSecret,
   };
 }

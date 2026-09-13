@@ -483,6 +483,21 @@ export async function getDb() {
         // migration recovery can stamp journal entries on an installed DB.
         ensureStorageDeletionQueueTable(sqlite);
 
+        // This additive migration must exist even when an older journal fails
+        // before reaching it; never stamp an inbox migration without its table.
+        const inboxMigration = path.join(foundFolder, "0013_document_inbox.sql");
+        if (!tableExists(sqlite, "document_inbox")) {
+          sqlite.exec(fs.readFileSync(inboxMigration, "utf8"));
+        }
+        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0015_document_sources.sql"), "utf8"));
+        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0017_case_action_proposals.sql"), "utf8"));
+        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0018_case_action_evidence.sql"), "utf8"));
+        const inboxColumns = new Set((sqlite.prepare('PRAGMA table_info("document_inbox")').all() as Array<{ name: string }>).map((column) => column.name));
+        if (!inboxColumns.has("sourceType")) sqlite.exec("ALTER TABLE document_inbox ADD COLUMN sourceType text NOT NULL DEFAULT 'manual'");
+        if (!inboxColumns.has("provenance")) sqlite.exec("ALTER TABLE document_inbox ADD COLUMN provenance text");
+        // Source domains remain separate when recovering an older journal.
+        sqlite.exec('DROP INDEX IF EXISTS document_inbox_owner_source_hash_idx; CREATE UNIQUE INDEX IF NOT EXISTS document_inbox_owner_source_identity_idx ON document_inbox(userId, sourceType, sourcePath, contentHash)');
+
         // Recovery: if any expected core table is missing after migrate(), the
         // bookkeeping is out of sync with reality (stale userData DB, partial
         // prior run, db:push without migration entries, etc.). Replay the SQL

@@ -1,4 +1,5 @@
-import { COOKIE_NAME, SESSION_MAX_AGE_MS, SESSION_EXPIRES_IN } from "../../shared/const";
+import { SESSION_MAX_AGE_MS, SESSION_EXPIRES_IN } from "../../shared/const";
+import { SESSION_COOKIE_NAME as COOKIE_NAME } from "../sessionCookie";
 import { getSessionCookieOptions } from "../cookies";
 import { systemRouter } from '../_core/systemRouter';
 import { publicProcedure, router, protectedProcedure } from '../_core/trpc';
@@ -12,6 +13,10 @@ import { outreachDirectoryRouter } from "./outreachDirectory";
 import { savedSearchesRouter } from "./savedSearches";
 import { workflowRouter } from "./workflow";
 import { evidenceFilesRouter } from "./evidenceFiles";
+import { documentInboxRouter } from "./documentInbox";
+import { documentSourcesRouter } from "./documentSources";
+import { actionProposalsRouter } from "./actionProposals";
+import { actionEvidenceRouter } from "./actionEvidence";
 import { evidenceExportRouter } from "./evidenceExport";
 import { evidenceTimelineRouter } from "./evidenceTimeline";
 import { documentAnalysisRouter } from "./documentAnalysis";
@@ -47,7 +52,8 @@ import {
 import { adminRouter } from "./admin";
 import { auditRouter } from "./audit";
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
-import { createAuditLog, AUDIT_ACTIONS } from "../audit";
+import { createAuditLog, writeAuditLogOrThrow, AUDIT_ACTIONS } from "../audit";
+import { verifyLocalTestTicket } from "../localTestAccess";
 import {
   gmailEnhancedRouter,
   outlookEnhancedRouter,
@@ -89,6 +95,10 @@ export const appRouter = router({
   savedSearches: savedSearchesRouter,
   workflow: workflowRouter,
   evidenceFiles: evidenceFilesRouter,
+  documentInbox: documentInboxRouter,
+  documentSources: documentSourcesRouter,
+  actionProposals: actionProposalsRouter,
+  actionEvidence: actionEvidenceRouter,
   evidenceTimeline: evidenceTimelineRouter,
   documentAnalysis: documentAnalysisRouter,
   search: searchRouter,
@@ -170,6 +180,32 @@ export const appRouter = router({
         requiresSetupCode: true,
       };
     }),
+    localTestAccess: publicProcedure.input(z.object({ ticket: z.string().max(2048) })).mutation(async ({ input, ctx }) => {
+      enforceRateLimit(ctx, 'localTestAccess', RATE_LIMITS.auth);
+      let claims;
+      try { claims = verifyLocalTestTicket(ctx.req, input.ticket); }
+      catch { throw new TRPCError({ code: 'FORBIDDEN', message: 'Local test access is unavailable or expired. Open a new local test link.' }); }
+      const db = await getDb();
+      const user = await getUser(claims.userId);
+      if (!user) throw new TRPCError({ code: 'FORBIDDEN' });
+      const key = `local-test-used:${claims.nonce}`;
+      db.transaction(tx => {
+        if (tx.select().from(systemConfig).where(eq(systemConfig.configKey, key)).get()) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'This local test link has already been used.' });
+        }
+        tx.insert(systemConfig).values({ configKey: key, configValue: 'used', updatedAt: new Date() }).run();
+        writeAuditLogOrThrow(tx, { userId: user.id, action: 'auth.local_test_access', entityType: 'user', entityId: user.id,
+          details: { method: 'local_operator_ticket', sessionHours: 1 } });
+      });
+      const token = jwt.sign({ userId: user.id }, ENV.JWT_SECRET, { expiresIn: '1h' });
+      ctx.res.cookie(COOKIE_NAME, token, { ...getSessionCookieOptions(ctx.req), maxAge: 3_600_000 });
+      return { success: true };
+    }),
+    environment: publicProcedure.query(() => ({
+      workspace: process.env.LARO_WORKSPACE_KIND === 'preview' ? 'preview' as const
+        : process.env.LARO_WORKSPACE_KIND === 'local' ? 'local' as const : 'default' as const,
+      backgroundJobsEnabled: process.env.LARO_BACKGROUND_JOBS !== 'false',
+    })),
     
     signup: publicProcedure
       .input(z.object({

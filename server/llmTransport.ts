@@ -1,3 +1,5 @@
+import { Agent } from "undici";
+
 export const LLM_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 export const LLM_ERROR_MAX_BYTES = 2 * 1024;
 export const LLM_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
@@ -20,6 +22,22 @@ function abortError(signal: AbortSignal, label: string): Error {
 
 function throwIfAborted(signal: AbortSignal, label: string): void {
   if (signal.aborted) throw abortError(signal, label);
+}
+
+export async function checkLLMAuthorization(check: () => Promise<boolean>, signal: AbortSignal, label: string): Promise<boolean> {
+  throwIfAborted(signal, label);
+  let onAbort: () => void = () => {};
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(abortError(signal, label));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    const allowed = await Promise.race([Promise.resolve().then(check), cancelled]);
+    throwIfAborted(signal, label);
+    return allowed;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
 }
 
 async function acquireRequestSlot(signal: AbortSignal, label: string): Promise<void> {
@@ -129,7 +147,13 @@ export async function requestLLMJson<T>(options: {
   init: RequestInit;
   label: string;
   signal?: AbortSignal;
+  requestTimeoutMs?: number;
+  beforeDispatch?: () => Promise<boolean>;
 }): Promise<T> {
+  const requestTimeoutMs = options.requestTimeoutMs ?? LLM_REQUEST_TIMEOUT_MS;
+  if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 600_000) {
+    throw new Error("LLM request timeout must be an integer from 1 to 600000 milliseconds");
+  }
   const lifecycle = new AbortController();
   const cancelFromCaller = () => lifecycle.abort(
     options.signal?.reason instanceof Error
@@ -139,16 +163,28 @@ export async function requestLLMJson<T>(options: {
   options.signal?.addEventListener("abort", cancelFromCaller, { once: true });
   if (options.signal?.aborted) cancelFromCaller();
   const timeout = setTimeout(
-    () => lifecycle.abort(new Error(`${options.label} request exceeded the 300 second limit`)),
-    LLM_REQUEST_TIMEOUT_MS,
+    () => lifecycle.abort(new Error(`${options.label} request exceeded the ${requestTimeoutMs / 1000} second limit`)),
+    requestTimeoutMs,
   );
   timeout.unref?.();
   let acquired = false;
+  let dispatcher: Agent | undefined;
   try {
     await acquireRequestSlot(lifecycle.signal, options.label);
     acquired = true;
     throwIfAborted(lifecycle.signal, options.label);
-    const response = await fetch(options.url, { ...options.init, signal: lifecycle.signal });
+    if (options.beforeDispatch && !await checkLLMAuthorization(options.beforeDispatch, lifecycle.signal, options.label)) {
+      throw new Error(`${options.label} request authorization changed before dispatch`);
+    }
+    throwIfAborted(lifecycle.signal, options.label);
+    // Native fetch also defaults to five-minute HTTP header/body deadlines.
+    // Do not change its global dispatcher or extend unrelated provider requests.
+    if (requestTimeoutMs > LLM_REQUEST_TIMEOUT_MS) {
+      dispatcher = new Agent({ headersTimeout: requestTimeoutMs, bodyTimeout: requestTimeoutMs });
+    }
+    const init: RequestInit & { dispatcher?: Agent } = { ...options.init, signal: lifecycle.signal };
+    if (dispatcher) init.dispatcher = dispatcher;
+    const response = await fetch(options.url, init);
     if (!response.ok) {
       const errorBody = await readBoundedBody(
         response,
@@ -179,6 +215,7 @@ export async function requestLLMJson<T>(options: {
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener("abort", cancelFromCaller);
-    if (acquired) releaseRequestSlot();
+    try { if (dispatcher) await dispatcher.destroy(); }
+    finally { if (acquired) releaseRequestSlot(); }
   }
 }

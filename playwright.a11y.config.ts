@@ -10,6 +10,7 @@ export default defineConfig({
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: "http://127.0.0.1:5181",
+    channel: process.env.LARO_BROWSER_CHANNEL || undefined,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },

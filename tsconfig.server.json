@@ -13,6 +13,7 @@
     "shared/**/*",
     "scripts/backup.ts",
     "scripts/backupArguments.ts",
+    "scripts/import-local-source.ts",
     "scripts/data-readiness.ts"
   ]
 }

@@ -21,8 +21,12 @@ import { acquireSingleInstanceLock } from './singleInstance';
 import { installDenyByDefaultPermissions } from './sessionPermissions';
 import { ensureDesktopSecrets } from './desktopSecrets';
 import { loadProtectedProviderConfig } from './providerConfig';
-import { getDesktopScannerAuth, getRemoteUploadAuth } from './scannerAuth';
+import { getDesktopScannerAuth, getRemoteUploadAuth, createDesktopScannerHeaders } from './scannerAuth';
 import { resolveDesktopConnection } from './remoteConnection';
+import { pickAndStartLocalSource } from './documentSources';
+import { createTRPCProxyClient, httpBatchLink } from '@trpc/client';
+import superjson from 'superjson';
+import type { AppRouter } from '../server/routers';
 // NOTE: server/index.ts reads `.env` (dotenv) at import time, so it is imported
 // lazily in startApp() AFTER we pin NODE_ENV from app.isPackaged. This guarantees
 // a packaged build runs the server in production mode even if the bundled .env
@@ -418,7 +422,7 @@ app.on('before-quit', (event) => {
 function setupIPC(): void {
   ipcMain.handle(IPC_CHANNELS.CONFIG_GET, (event) => {
     assertTrustedIpc(event);
-    return { ...agentConfig };
+    return { ...agentConfig, localSourcesAvailable: !remoteServerUrl };
   });
   ipcMain.handle(IPC_CHANNELS.CONFIG_SET, (event, c: Partial<AgentConfig>) => {
     assertTrustedIpc(event);
@@ -479,6 +483,34 @@ function setupIPC(): void {
     return folders;
   });
   
+  ipcMain.handle(IPC_CHANNELS.SOURCE_FOLDER_START, async (event) => {
+    assertTrustedIpc(event);
+    if (!isTrustedAppUrl(agentConfig.apiUrl)) throw new Error('Source API URL is not trusted');
+    const cookieUrl = event.sender.getURL();
+    const browserSession = event.sender.session;
+    const apiUrl = agentConfig.apiUrl;
+    return pickAndStartLocalSource({
+      apiUrl,
+      remote: !!remoteServerUrl,
+      pickFolder: async () => {
+        const parent = mainWindow ?? scanPanel;
+        if (!parent) return null;
+        const result = await dialog.showOpenDialog(parent, { properties: ['openDirectory'], title: 'Select source folder' });
+        assertTrustedIpc(event);
+        return result.canceled ? null : result.filePaths[0] || null;
+      },
+      start: async (input) => {
+        const client = createTRPCProxyClient<AppRouter>({ transformer: superjson, links: [httpBatchLink({
+          url: `${apiUrl.replace(/\/$/, '')}/api/trpc`,
+          headers: createDesktopScannerHeaders(() => getDesktopScannerAuth({ cookieUrl,
+            cookieName: process.env.LARO_SESSION_COOKIE_NAME,
+            scannerSecret: process.env.LARO_DESKTOP_SCANNER_SECRET || '', cookieStore: browserSession.cookies })),
+        })] });
+        return client.documentSources.start.mutate(input);
+      },
+    });
+  });
+
   ipcMain.handle(IPC_CHANNELS.SCAN_START, async (event, config: ScanConfig) => {
     assertTrustedIpc(event);
     if (currentScanner) throw new Error('Scan already in progress');
@@ -555,6 +587,7 @@ async function startUpload(scanId: string, cookieUrl: string): Promise<{ success
       cookieStore: browserSession.cookies,
     }) : getDesktopScannerAuth({
       cookieUrl,
+      cookieName: process.env.LARO_SESSION_COOKIE_NAME,
       scannerSecret: process.env.LARO_DESKTOP_SCANNER_SECRET || '',
       cookieStore: browserSession.cookies,
     });

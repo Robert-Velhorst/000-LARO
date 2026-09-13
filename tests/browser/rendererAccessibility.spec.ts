@@ -2,6 +2,10 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import Database from "better-sqlite3";
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import jwt from "jsonwebtoken";
+import { COOKIE_NAME } from "../../shared/const";
 
 const ROUTES = [
   "/",
@@ -26,16 +30,36 @@ const VIEWPORTS = [
   { name: "mobile", width: 390, height: 844 },
 ] as const;
 
-async function createAccount(page: Page) {
+async function createAccountThroughSignup(page: Page) {
   const email = `a11y-${Date.now()}-${Math.random().toString(16).slice(2)}@example.test`;
   await page.goto("/");
   await page.getByRole("button", { name: "Don't have an account? Sign up" }).click();
   await page.getByLabel("Full Name").fill("Accessibility Audit");
   await page.getByLabel("Email Address").fill(email);
-  await page.getByLabel("Password").fill("A11yAudit!2026");
+  await page.getByLabel("Password", { exact: true }).fill("A11yAudit!2026");
   await page.getByRole("button", { name: "Sign Up", exact: true }).click();
   await expect(page.getByRole("button", { name: /Open account menu|Accountmenu openen/ })).toBeVisible();
   await page.waitForLoadState("networkidle");
+  return email;
+}
+
+async function createAccount(page: Page) {
+  // Feature tests get isolated sessions without exhausting the real signup guard.
+  const id = `A11Y_${randomUUID()}`;
+  const email = `${id.toLowerCase()}@example.test`;
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    database.prepare("INSERT INTO users (id, email, name, role, createdAt) VALUES (?, ?, ?, 'user', ?)")
+      .run(id, email, "Accessibility Audit", Math.floor(Date.now() / 1000));
+  } finally {
+    database.close();
+  }
+  const token = jwt.sign({ userId: id }, "laro-a11y-jwt-secret-32-characters-minimum", { expiresIn: "1h" });
+  await page.context().addCookies([{
+    name: COOKIE_NAME, value: token, url: "http://127.0.0.1:5181", httpOnly: true, sameSite: "Lax",
+  }]);
+  await page.goto("/", { waitUntil: "networkidle" });
+  await expect(page.getByRole("button", { name: /Open account menu|Accountmenu openen/ })).toBeVisible();
   return email;
 }
 
@@ -84,21 +108,17 @@ async function expectVisibleKeyboardFocus(page: Page, locator: Locator) {
 }
 
 async function expectInsideViewport(locator: Locator) {
-  const geometry = await locator.evaluate((element) => {
+  await expect.poll(() => locator.evaluate((element) => {
     const rect = element.getBoundingClientRect();
     return {
-      width: rect.width,
-      height: rect.height,
+      hasSize: rect.width > 0 && rect.height > 0,
       insideViewport:
         rect.left >= -1
         && rect.top >= -1
         && rect.right <= window.innerWidth + 1
         && rect.bottom <= window.innerHeight + 1,
     };
-  });
-  expect(geometry.width).toBeGreaterThan(0);
-  expect(geometry.height).toBeGreaterThan(0);
-  expect(geometry.insideViewport).toBe(true);
+  })).toEqual({ hasSize: true, insideViewport: true });
 }
 
 function analysisResult(options: { party: string; date: string; title: string; text: string }) {
@@ -169,7 +189,8 @@ test("all supported routes pass the blocking renderer accessibility audit", asyn
             const labelledBy = element.getAttribute("aria-labelledby");
             const label = element.getAttribute("aria-label")?.trim();
             const id = element.getAttribute("id");
-            const associatedLabel = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
+            const associatedLabel = (id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null)
+              || (element.closest("label")?.textContent?.trim() ? element.closest("label") : null);
             return !label && !labelledBy && !associatedLabel && !element.textContent?.trim() && !element.getAttribute("title");
           })
           .map((element) => element.outerHTML.slice(0, 240)),
@@ -192,7 +213,7 @@ test("all supported routes pass the blocking renderer accessibility audit", asyn
 });
 
 test("language selection changes the mounted shell and persists across reloads", async ({ page }) => {
-  await createAccount(page);
+  await createAccountThroughSignup(page);
 
   await page.getByRole("button", { name: "Open account menu" }).click();
   await page.getByRole("group", { name: "Language" }).getByRole("button", { name: "nl", exact: true }).click();
@@ -261,8 +282,10 @@ test("keyboard navigation exposes the skip link, traps the mobile menu, and keep
     page.getByRole("button", { name: "Collapse sidebar" }),
     page.getByRole("button", { name: "Home", exact: true }),
     page.getByRole("button", { name: "My Cases", exact: true }),
-    page.getByRole("button", { name: "Evidence", exact: true }),
+    page.getByRole("button", { name: "Documents", exact: true }),
     page.getByRole("button", { name: "Outreach", exact: true }),
+    page.getByRole("button", { name: "Notes", exact: true }),
+    page.getByRole("button", { name: "Settings", exact: true }),
     page.getByRole("button", { name: "Help & Resources", exact: true }),
     page.getByRole("button", { name: "Open account menu" }),
   ];
@@ -371,7 +394,11 @@ test("Settings presents an owned Flask migration without responsive overflow", a
   for (const viewport of VIEWPORTS) {
     await page.setViewportSize(viewport);
     await page.goto("/settings", { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Security" }).click();
+    if (viewport.name === "mobile") {
+      await page.getByRole("combobox", { name: "Settings sections" }).selectOption("security");
+    } else {
+      await page.getByRole("button", { name: "Security" }).click();
+    }
     await expect(page.getByText("reviewed-workspace")).toBeVisible();
     await expect(page.getByText("2 cases, 37 archived records, 5 files")).toBeVisible();
     await expect(page.getByText("Files verified")).toBeVisible();
@@ -379,6 +406,286 @@ test("Settings presents an owned Flask migration without responsive overflow", a
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1))
       .toBe(true);
   }
+});
+
+test("case actions can be completed and reopened without refreshing the page", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const email = await createAccount(page);
+  const database = new Database(resolve(".laro-a11y.sqlite"));
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    const user = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    database.prepare(`INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, legalAreas, createdAt, updatedAt)
+      VALUES (?, ?, 'Action workflow', 'Contract', 'Case action browser verification', 'Medium', 'active', '["contract law"]', ?, ?)`)
+      .run(`A11Y_ACTION_${Date.now()}`, user.id, now, now);
+  } finally { database.close(); }
+  await page.goto("/cases", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Open case", exact: true }).click();
+  const panel = page.getByRole("region", { name: "Actions and deadlines" });
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await panel.getByRole("button", { name: "Add action", exact: true }).click();
+  await panel.getByLabel("Action", { exact: true }).fill("Request the missing decision");
+  await panel.getByRole("button", { name: "Save action" }).click();
+  await expect(panel.getByText("Request the missing decision", { exact: true })).toBeVisible();
+  await expect(panel.getByText("No due date", { exact: true })).toBeVisible();
+  await panel.getByRole("button", { name: "Complete: Request the missing decision", exact: true }).click();
+  await expect(panel.getByText("No open actions.")).toBeVisible();
+  await panel.getByRole("button", { name: "Completed", exact: true }).click();
+  await panel.getByRole("button", { name: "Reopen: Request the missing decision", exact: true }).click();
+  await expect(panel.getByText("No completed actions.")).toBeVisible();
+  await panel.getByRole("button", { name: "Open", exact: true }).click();
+  await expect(panel.getByText("Request the missing decision", { exact: true })).toBeVisible();
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await expectInsideViewport(panel.getByRole("button", { name: "Add action", exact: true }));
+    const audit = await new AxeBuilder({ page }).include('[aria-label="Actions and deadlines"]').analyze();
+    expect(audit.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: `test-results/case-actions-${viewport.name}.png`, fullPage: false });
+  }
+  expect(pageErrors).toEqual([]);
+});
+
+test("document obligations become reviewable source-backed actions without manual retyping", async ({ page }) => {
+  const errors: string[] = [];
+  const matchingRequests: string[] = [];
+  page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("request", (request) => { if (request.url().includes("matching.findOfficialLawyers")) matchingRequests.push(request.url()); });
+  await createAccount(page);
+  await page.goto("/evidence", { waitUntil: "networkidle" });
+  const inbox = page.getByRole("region", { name: "Document inbox" });
+  await inbox.getByLabel("Upload documents").setInputFiles({ name: "action-source.txt", mimeType: "text/plain",
+    buffer: Buffer.from("Zaaknummer: ACTION-QA-2026-3131\nDe gemeente moet uiterlijk 2026-10-12 het besluit toezenden.\nBinnen 6 weken kunt u bezwaar maken.") });
+  await expect(inbox.getByText("1 / 1 processed", { exact: true })).toBeVisible({ timeout: 120_000 });
+  await page.goto("/cases", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Open case", exact: true }).click();
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  const proposals = page.getByRole("region", { name: "Suggested actions" });
+  await expect(proposals).toBeVisible();
+  await proposals.getByRole("button", { name: "Accept proposal" }).first().click();
+  await expect(proposals.getByText("Accepted", { exact: true })).toBeVisible();
+  const actions = page.getByRole("region", { name: "Actions and deadlines" });
+  await expect(actions.getByText("No due date", { exact: true })).toBeVisible();
+  await actions.getByText("Action source", { exact: true }).click();
+  await expect(actions.getByText("Not a verified legal obligation or deadline", { exact: true }).first()).toBeVisible();
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).include('[aria-label="Actions and deadlines"]').analyze();
+    expect(audit.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: `../artifacts/action-proposals-${viewport.name}.png`, fullPage: false });
+  }
+  expect(matchingRequests, "reviewing source-based actions must not trigger an unrelated provider search").toEqual([]);
+  expect(errors).toEqual([]);
+  await page.setViewportSize(VIEWPORTS[0]);
+  await page.getByRole("navigation", { name: "Case sections", exact: true }).locator("summary").click();
+  await page.getByRole("button", { name: "Lawyers", exact: true }).click();
+  const search = page.getByRole("button", { name: "Search NOvA", exact: true });
+  await expect(search).toBeEnabled();
+  expect(matchingRequests).toEqual([]);
+  await search.click();
+  // This provisional fixture has no classified legal area; failure occurs before a provider lookup.
+  await expect(page.getByRole("alert").filter({ hasText: "Case must have at least one legal area specified" })).toBeVisible();
+  expect(matchingRequests).toHaveLength(1);
+});
+
+test("action execution evidence preserves passages and reversible assessments without auto-completing", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
+  await createAccount(page);
+  await page.goto("/evidence", { waitUntil: "networkidle" });
+  const inbox = page.getByRole("region", { name: "Document inbox" });
+  await inbox.getByLabel("Upload documents").setInputFiles({ name: "execution.txt", mimeType: "text/plain",
+    buffer: Buffer.from("Zaaknummer: EXECUTION-QA-2026-9171\nDe gemeente moet het besluit toezenden.\nOp 2026-09-04 schreef de gemeente: het besluit is verzonden.") });
+  await expect(inbox.getByText("1 / 1 processed", { exact: true })).toBeVisible({ timeout: 120_000 });
+  await page.goto("/cases", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Open case", exact: true }).click();
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await page.getByRole("region", { name: "Suggested actions" }).getByRole("button", { name: "Accept proposal" }).first().click();
+  const actions = page.getByRole("region", { name: "Actions and deadlines" });
+  await actions.getByText("Execution evidence", { exact: true }).click();
+  const links = actions.getByRole("region", { name: "Execution evidence links" });
+  await links.getByRole("button", { name: "Link evidence", exact: true }).click();
+  await links.getByLabel("Evidence document").selectOption({ label: "execution.txt" });
+  await links.getByRole("checkbox", { name: /het besluit is verzonden/ }).check();
+  await links.getByLabel("Assessment").fill("De gemeente meldt verzending; ontvangst is nog niet bevestigd.");
+  await links.getByRole("button", { name: "Save evidence link" }).click();
+  await expect(links.getByText("Supports execution", { exact: true })).toBeVisible();
+  await expect(links.getByText("User assessment; not independently verified", { exact: true })).toBeVisible();
+  await expect(actions.getByRole("button", { name: /^Complete:/ })).toBeVisible();
+  await links.getByText("Source passages", { exact: true }).click();
+  await expect(links.getByText(/Lines .*het besluit is verzonden/)).toBeVisible();
+  const sourceDownload = page.waitForEvent("download");
+  await links.getByRole("button", { name: "Open execution source" }).click();
+  const original = await sourceDownload;
+  expect(readFileSync((await original.path())!, "utf8")).toContain("Zaaknummer: EXECUTION-QA-2026-9171");
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).include('[aria-label="Execution evidence links"]').analyze();
+    expect(audit.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: `../artifacts/action-execution-${viewport.name}.png` });
+  }
+  await links.getByRole("button", { name: "Withdraw evidence link" }).click();
+  await expect(links.getByText("Withdrawn", { exact: true })).toBeVisible();
+  await links.getByRole("button", { name: "Restore evidence link" }).click();
+  await expect(links.getByText("Withdrawn", { exact: true })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("inbox corrects and reverses dossier assignments without losing the source", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await createAccount(page);
+  await page.goto("/evidence", { waitUntil: "networkidle" });
+  const inbox = page.getByRole("region", { name: "Document inbox" });
+  await inbox.getByLabel("Upload documents").setInputFiles([
+    { name: "correct-source.txt", mimeType: "text/plain", buffer: Buffer.from("Zaaknummer: CORRECT-QA-2026-1101\nOp 2026-09-01 moet de gemeente het besluit toezenden.") },
+    { name: "target-source.txt", mimeType: "text/plain", buffer: Buffer.from("Zaaknummer: TARGET-QA-2026-2202\nOp 2026-09-02 schreef de gemeente over een andere situatie.") },
+  ]);
+  await expect(inbox.getByText("2 / 2 processed", { exact: true })).toBeVisible({ timeout: 120_000 });
+  await inbox.getByRole("button", { name: "Details: correct-source.txt" }).click();
+  const correction = inbox.getByRole("region", { name: "Dossier assignment" });
+  await correction.getByRole("button", { name: "Correct dossier", exact: true }).click();
+  await correction.getByRole("combobox", { name: "Target dossier", exact: true }).selectOption({ label: "Dossier TARGET-QA-2026-2202" });
+  await expect(correction.getByRole("button", { name: "Move document" })).toBeDisabled();
+  await correction.getByLabel("Correction reason").fill("Deze brief hoort bij de tweede situatie.");
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await correction.scrollIntoViewIfNeeded();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).include('[aria-label="Dossier assignment"]').analyze();
+    expect(audit.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: `../artifacts/inbox-correction-${viewport.name}.png` });
+  }
+  await correction.getByRole("button", { name: "Move document" }).click();
+  await expect(correction.getByText("Current dossier: Dossier TARGET-QA-2026-2202", { exact: true })).toBeVisible();
+  await expect(correction.getByText("Deze brief hoort bij de tweede situatie.", { exact: true })).toBeVisible();
+  const downloaded = page.waitForEvent("download");
+  await inbox.getByRole("button", { name: "Download: correct-source.txt" }).click();
+  expect(readFileSync((await (await downloaded).path())!, "utf8")).toContain("CORRECT-QA-2026-1101");
+  await correction.getByRole("button", { name: "Correct dossier", exact: true }).click();
+  await correction.getByRole("combobox", { name: "Target dossier", exact: true }).selectOption({ label: "Dossier CORRECT-QA-2026-1101" });
+  await correction.getByLabel("Correction reason").fill("Na controle herstel ik de eerdere koppeling.");
+  await correction.getByRole("button", { name: "Move document" }).click();
+  await expect(correction.getByText("Current dossier: Dossier CORRECT-QA-2026-1101", { exact: true })).toBeVisible();
+  await expect(correction.getByRole("listitem")).toHaveCount(2);
+  await page.reload({ waitUntil: "networkidle" });
+  await inbox.getByRole("button", { name: "Details: correct-source.txt" }).click();
+  await expect(correction.getByText("Current dossier: Dossier CORRECT-QA-2026-1101", { exact: true })).toBeVisible();
+  await correction.getByRole("button", { name: "Correction history" }).click();
+  await expect(correction.getByRole("listitem")).toHaveCount(2);
+  expect(errors).toEqual([]);
+});
+
+test("source controls retain paused work and refresh status without reloading", async ({ page }) => {
+  const email = await createAccount(page);
+  const database = new Database(resolve(".laro-a11y.sqlite"));
+  const jobId = crypto.randomUUID();
+  try {
+    const user = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    const now = Math.floor(Date.now() / 1000);
+    // Persisted UI fixture, not an authorized live Google source.
+    database.prepare("INSERT INTO document_source_jobs (id,userId,kind,config,status,createdAt,updatedAt) VALUES (?,?, 'gmail', ?, 'paused', ?, ?)")
+      .run(jobId, user.id, JSON.stringify({ kind: "gmail", accountId: "disconnected-test-account", query: "", includeSpamTrash: false }), now, now);
+    database.prepare("INSERT INTO document_source_work (id,jobId,userId,kind,payload,label,isDocument,status,createdAt,updatedAt) VALUES (?,?,?, 'gmail_page', '{}', 'Gmail inventory', 0, 'queued', ?, ?)")
+      .run(`${jobId}-page`, jobId, user.id, now, now);
+  } finally { database.close(); }
+  await page.goto("/evidence", { waitUntil: "networkidle" });
+  const sources = page.getByRole("region", { name: "Document sources" });
+  await expect(sources).toBeVisible();
+  await expect(sources.getByText("Paused", { exact: true })).toBeVisible();
+  await sources.getByRole("button", { name: "Add source" }).click();
+  await expect(sources.getByRole("button", { name: "Start source" })).toBeDisabled();
+  await expect(sources.getByRole("button", { name: "Check Google access" })).toBeDisabled();
+  for (const label of ["Originals saved", "Analyzed", "Filed in dossiers"]) await expect(sources.getByText(label, { exact: true })).toBeVisible();
+  await expect(sources.getByRole("button", { name: "Select local source" })).toHaveCount(0);
+  await sources.getByRole("button", { name: "Resume source" }).click();
+  await expect(sources.getByText("Completed with errors", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(sources.getByRole("button", { name: "Retry unfinished processing" })).toBeVisible();
+  await expect(sources.getByRole("button", { name: "Check source for new or changed files" })).toBeVisible();
+  await sources.getByRole("button", { name: "Source details" }).click();
+  // The handoff maps raw provider errors to a cause and actionable recovery text.
+  const failures = sources.getByRole("region", { name: "Source failures" });
+  await expect(failures.getByText("Google rejected access or the account connection is no longer available.", { exact: true })).toBeVisible();
+  await expect(failures.getByText("Reconnect the Google account in Settings and check its permissions.", { exact: true })).toBeVisible();
+  await expect(sources.getByText("Failure code: google_access", { exact: true })).toBeVisible();
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).include('[aria-label="Document sources"]').analyze();
+    expect(audit.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: `test-results/document-sources-${viewport.name}.png`, fullPage: false });
+  }
+});
+
+test("inbox discovers and grows a dossier without preselecting a case", async ({ page }) => {
+  await createAccount(page);
+  await page.goto("/evidence", { waitUntil: "networkidle" });
+  const inbox = page.getByRole("region", { name: "Document inbox" });
+  await expect(inbox).toBeVisible();
+  await inbox.getByLabel("Upload documents").setInputFiles([
+    { name: "first.txt", mimeType: "text/plain", buffer: Buffer.from("Zaaknummer: QA-2026-7451\nOp 2026-08-01 verklaart de gemeente dat het besluit is verzonden.") },
+    { name: "second.txt", mimeType: "text/plain", buffer: Buffer.from("Zaaknummer: QA-2026-7451\nOp 2026-08-10 moet de gemeente een ontbrekend document toezenden.") },
+  ]);
+  await expect(inbox.getByText("2 / 2 processed", { exact: true })).toBeVisible({ timeout: 120_000 });
+  await expect(inbox.getByText("Dossier QA-2026-7451", { exact: true })).toHaveCount(2);
+  await inbox.getByRole("button", { name: "Details: first.txt" }).click();
+  await expect(inbox.getByText("New provisional dossier from source reference: QA-2026-7451", { exact: true }).first()).toBeVisible();
+  await expect(inbox.getByText("Source passages", { exact: true })).toBeVisible();
+  const downloaded = page.waitForEvent("download");
+  await inbox.getByRole("button", { name: "Download: first.txt" }).click();
+  const original = await downloaded;
+  expect(original.suggestedFilename()).toBe("first.txt");
+  expect(readFileSync((await original.path())!, "utf8")).toContain("Zaaknummer: QA-2026-7451");
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).include('[aria-label="Document inbox"]').analyze();
+    expect(audit.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: `test-results/document-inbox-${viewport.name}.png`, fullPage: false });
+  }
+  await inbox.getByRole("button", { name: "Open case: first.txt" }).click();
+  await expect(page.getByRole("heading", { name: "Evidence Timeline" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show document map" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Chronological events" }).getByText("Details and source: first.txt", { exact: true }).first()).toBeVisible();
+});
+
+test("inbox shows a retained discovery explanation without presenting a review as an applied decision", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const email = await createAccount(page);
+  await page.goto("/evidence", { waitUntil: "networkidle" });
+  const inbox = page.getByRole("region", { name: "Document inbox" });
+  const source = "De verhuurder heeft de brief ontvangen.\n\nHet geschil betreft lekkage in de woning.";
+  await inbox.getByLabel("Upload documents").setInputFiles({ name: "discovery-review.txt", mimeType: "text/plain", buffer: Buffer.from(source) });
+  await expect(inbox.getByText("1 / 1 processed", { exact: true })).toBeVisible({ timeout: 120_000 });
+  // This fixture validates presentation, not a live language-model decision.
+  const database = new Database(resolve(".laro-a11y.sqlite"));
+  try {
+    const user = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    database.prepare("UPDATE document_inbox SET discovery = ?, reason = ? WHERE userId = ? AND fileName = ?").run(JSON.stringify({
+      action: "review", confidence: "low", caseId: null, title: "", summary: "", provider: "ollama",
+      reason: "More than one situation requires review.",
+      basis: [{ kind: "situation", citationId: "citation-1", quote: "Het geschil betreft lekkage in de woning.",
+        caseCitationId: "case:qa:context", caseQuote: "Eerder gemelde lekkage in de woning." }],
+    }), "More than one situation requires review.", user.id, "discovery-review.txt");
+  } finally { database.close(); }
+  await inbox.getByRole("button", { name: "Details: discovery-review.txt" }).click();
+  await inbox.getByText("Dossier decision", { exact: true }).click();
+  await expect(inbox.getByText("Not applied; review required | ollama", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Case context (not independent evidence)", { exact: true })).toBeVisible();
+  await expect(inbox.getByText("Eerder gemelde lekkage in de woning.", { exact: true })).toBeVisible();
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).include('[aria-label="Document inbox"]').analyze();
+    expect(audit.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: `test-results/discovery-explanation-${viewport.name}.png`, fullPage: false });
+  }
+  expect(errors).toEqual([]);
 });
 
 test("document reconstruction focuses source-linked participants, topics, and actions", async ({ page }) => {
@@ -431,21 +738,226 @@ test("document reconstruction focuses source-linked participants, topics, and ac
   }
 
   await page.goto("/cases", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "View Your Case Details" }).click();
+  await page.getByRole("button", { name: "Open case", exact: true }).click();
   await page.getByRole("button", { name: "Timeline", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Evidence Timeline" })).toBeVisible();
-  const focus = page.getByLabel("Focus");
+  await page.getByText("Filter documents and links", { exact: true }).click();
+  const focus = page.getByRole("combobox", { name: "Focus", exact: true });
   await expect(focus).toContainText("Gemeente Utrecht (1)");
   await expect(focus).toContainText("administrative law (2)");
   await focus.selectOption({ label: "Jan de Vries (1)" });
-  await expect(page.getByText("Objection.txt", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Municipal decision.txt", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("Dated actions in this document")).toBeVisible();
-  await expect(page.getByText("Objection submitted", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Objection submitted", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open source document for Municipal decision issued", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Correct event Objection submitted", exact: true })).toBeVisible();
 
   for (const viewport of VIEWPORTS) {
     await page.setViewportSize(viewport);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   }
-  await page.screenshot({ path: "test-results/case-reconstruction-focus.png", fullPage: false });
+  await page.screenshot({ path: test.info().outputPath("case-reconstruction-focus.png"), fullPage: false });
+  await focus.selectOption("all");
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await expectInsideViewport(page.getByRole("dialog"));
+    for (const orientation of ["horizontal", "vertical"]) {
+      await page.getByRole("button", { name: "Show document map", exact: true }).click();
+      await page.getByRole("button", { name: `Show ${orientation} map`, exact: true }).click();
+      const map = page.getByLabel("Scrollable document reconstruction map", { exact: true });
+      await expect(map.locator("svg[role=img]")).toBeVisible();
+      const box = await map.boundingBox();
+      expect(box!.width).toBeGreaterThan(180);
+      expect(box!.height).toBeGreaterThan(100);
+      await map.screenshot({ path: test.info().outputPath(`reconstruction-${orientation}-${viewport.name}.png`) });
+    }
+    await page.getByRole("button", { name: "Show Gantt timeline", exact: true }).click();
+    const gantt = page.getByLabel("Evidence Gantt timeline", { exact: true });
+    await expect(gantt).toBeVisible();
+    await expect(gantt.getByRole("button", { name: /Select Objection/ })).toBeVisible();
+    await gantt.screenshot({ path: test.info().outputPath(`reconstruction-gantt-${viewport.name}.png`) });
+    await page.getByRole("button", { name: "Show document list", exact: true }).click();
+    await expect(page.locator("article").filter({ hasText: "Objection.txt" })).toBeVisible();
+    const audit = await new AxeBuilder({ page }).include('[aria-label="Case content"]').analyze();
+    expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+  }
+});
+
+test("workspace preserves navigation, view links and visible settings controls", async ({ page }, testInfo) => {
+  await createAccount(page);
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await page.getByRole("button", { name: "Documents", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
+  await page.getByRole("button", { name: "Timeline", exact: true }).click();
+  await expect(page).toHaveURL(/view=timeline/);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Select a case", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: "Select a case", exact: true })).toBeVisible();
+  await page.goto("/settings?section=workflow");
+  const toggle = page.getByRole("switch", { name: "Analyze imports automatically", exact: true });
+  await expect(toggle).toBeEnabled();
+  const checked = await toggle.getAttribute("aria-checked");
+  const before = await toggle.evaluate(element => ({ width: element.getBoundingClientRect().width, background: getComputedStyle(element).backgroundColor }));
+  expect(before.width).toBeGreaterThanOrEqual(40);
+  expect(before.background).not.toBe("rgba(0, 0, 0, 0)");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", checked === "true" ? "false" : "true");
+  await expect.poll(() => toggle.evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe(before.background);
+  await page.reload();
+  await expect(toggle).toHaveAttribute("aria-checked", checked === "true" ? "false" : "true");
+  await page.screenshot({ path: testInfo.outputPath("settings-visible-switches.png"), fullPage: true });
+  await page.setViewportSize(VIEWPORTS[1]);
+  await page.getByRole("button", { name: "Toggle sidebar" }).click();
+  await page.getByRole("button", { name: "Documents", exact: true }).click();
+  await expect(page.locator("#laro-mobile-sidebar")).toHaveAttribute("aria-hidden", "true");
+  await expect(page.getByRole("heading", { name: "Documents", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Toggle sidebar" })).toHaveAttribute("aria-expanded", "false");
+});
+
+test("assistant preserves an unsent draft while closing and navigating", async ({ page }) => {
+  await createAccount(page);
+  await page.getByRole("button", { name: "Open LARO assistant" }).click();
+  await page.getByRole("textbox", { name: "Message LARO assistant" }).fill("Unsent review draft");
+  await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "Documents", exact: true }).click();
+  await page.getByRole("button", { name: "Open LARO assistant" }).click();
+  await expect(page.getByRole("textbox", { name: "Message LARO assistant" })).toHaveValue("Unsent review draft");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("notes preserve a draft, save once and reveal the full text without sending mail", async ({ page }, testInfo) => {
+  const email = await createAccount(page);
+  const outbound: string[] = [];
+  page.on("request", request => {
+    if (/sendApproved|email\.send/.test(request.url())) outbound.push(request.url());
+  });
+  await page.goto("/messages", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "New note", exact: true }).click();
+  const draft = Array.from({ length: 14 }, (_, index) => `Saved note paragraph ${index + 1} with original review details.`).join("\n");
+  await page.getByRole("textbox", { name: "Case note message", exact: true }).fill(draft);
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "New note", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Case note message", exact: true })).toHaveValue(draft);
+  await page.getByRole("button", { name: "Save Note", exact: true }).click();
+  await expect(page.getByText("Note saved. No email was sent.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Read full note", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Collapse note", exact: true })).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("article p").filter({ hasText: "Saved note paragraph 14" })).toHaveText(draft);
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).analyze();
+    expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`notes-${viewport.name}.png`) });
+  }
+  const db = new Database(resolve(".laro-a11y.sqlite"));
+  try {
+    const count = db.prepare("SELECT COUNT(*) AS total FROM messages WHERE content = ? AND userId = (SELECT id FROM users WHERE email = ?)").get(draft, email) as { total: number };
+    expect(count.total).toBe(1);
+  } finally { db.close(); }
+  expect(outbound).toEqual([]);
+});
+
+test("case selectors search beyond the first hundred records and keep the chosen context", async ({ page }, testInfo) => {
+  const email = await createAccount(page);
+  const db = new Database(resolve(".laro-a11y.sqlite"));
+  const caseIds: string[] = [];
+  try {
+    const user = db.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    const insert = db.prepare("INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, createdAt, updatedAt) VALUES (?, ?, ?, 'Contract', 'Isolated selector test', 'Low', 'Intake', ?, ?)");
+    db.transaction(() => {
+      for (let index = 0; index < 112; index++) {
+        const id = randomUUID();
+        caseIds.push(id);
+        insert.run(id, user.id, `Case ${String(index + 1).padStart(3, "0")}`, 1700000000 + index, 1700000000 + index);
+      }
+    })();
+  } finally { db.close(); }
+  await page.goto("/outreach?view=media", { waitUntil: "networkidle" });
+  await expect(page.getByRole("button", { name: "Discover", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Case: Select a case", exact: true }).click();
+  await page.getByLabel("Find a case").fill("Case 001");
+  await page.getByRole("button", { name: "Case 001", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(caseIds[0]));
+  await expect(page.getByRole("button", { name: "Discover", exact: true })).toBeEnabled();
+  await page.getByRole("tab", { name: "Organizations", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Case: Case 001", exact: true })).toBeVisible();
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.getByRole("button", { name: "Case: Case 001", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Add source", exact: true }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Review draft, not submitted");
+  await page.getByLabel("Public URL", { exact: true }).fill("https://example.test/review");
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).analyze();
+    expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`outreach-review-${viewport.name}.png`) });
+  }
+});
+
+test("authentication exposes password visibility and preserves fields on an inline error", async ({ page }, testInfo) => {
+  await page.goto("/", { waitUntil: "networkidle" });
+  await page.getByLabel("Email Address", { exact: true }).fill("invalid-session@example.test");
+  const password = page.getByLabel("Password", { exact: true });
+  await password.fill("NotARealAccount!2026");
+  await page.getByRole("button", { name: "Show password", exact: true }).click();
+  await expect(password).toHaveAttribute("type", "text");
+  await page.getByRole("button", { name: "Hide password", exact: true }).click();
+  await expect(password).toHaveAttribute("type", "password");
+  await page.getByRole("button", { name: "Sign In", exact: true }).click();
+  await expect(page.locator("form").getByRole("alert")).toBeVisible();
+  await expect(password).toHaveValue("NotARealAccount!2026");
+  await page.getByRole("button", { name: "Don't have an account? Sign up" }).click();
+  await expect(page.locator("form").getByRole("alert")).toHaveCount(0);
+  await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute("minlength", "8");
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).analyze();
+    expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`authentication-${viewport.name}.png`) });
+  }
+});
+
+test("unavailable data stays distinct from empty results and disabled case actions recover", async ({ page }) => {
+  await createAccount(page);
+  const failure = /\/api\/trpc\/.*messages\.list/;
+  await page.route(failure, route => route.fulfill({
+    status: 503, contentType: "application/json",
+    body: JSON.stringify([{ error: { json: { message: "Temporary notes outage", code: -32603, data: { code: "INTERNAL_SERVER_ERROR", httpStatus: 503 } } } }]),
+  }));
+  await page.getByRole("button", { name: "Notes", exact: true }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Could not load data" })).toBeVisible();
+  await expect(page.getByText("No case notes found", { exact: true })).toHaveCount(0);
+  await page.unroute(failure);
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByText("No case notes found", { exact: true })).toBeVisible();
+  await page.goto("/cases?case=missing-ui-case");
+  await expect(page.getByRole("dialog").getByText("Case not found", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Export case", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Edit case", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Close case details", exact: true }).click();
+  await expect(page).toHaveURL(/\/cases$/);
+  await page.goto("/settings?section=security", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Privacy settings", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Privacy and data", exact: true })).toBeVisible();
+});
+
+test("scanner configuration failure offers retry instead of an endless spinner", async ({ page }) => {
+  await createAccount(page);
+  await page.addInitScript(() => {
+    (window as any).__configAttempts = 0;
+    (window as any).electronAPI = {
+      getConfig: async () => { (window as any).__configAttempts++; throw new Error("Test bridge unavailable"); },
+    };
+  });
+  await page.goto("/?mode=scanner");
+  await expect(page.getByRole("heading", { name: "Scanner unavailable", exact: true })).toBeVisible();
+  await expect(page.getByText("Test bridge unavailable", { exact: true })).toBeVisible();
+  const attempts = await page.evaluate(() => (window as any).__configAttempts);
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__configAttempts)).toBeGreaterThan(attempts);
+  await expect(page.getByRole("heading", { name: "Scanner unavailable", exact: true })).toBeVisible();
 });

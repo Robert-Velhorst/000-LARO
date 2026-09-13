@@ -274,7 +274,7 @@ function Sidebar({
           id="laro-mobile-sidebar"
           data-slot="sidebar"
           data-state={openMobile ? "expanded" : "collapsed"}
-          data-collapsible={collapsible}
+          data-collapsible=""
           data-variant={variant}
           data-side={side}
           aria-hidden={!openMobile}
@@ -303,7 +303,7 @@ function Sidebar({
     <aside
       data-slot="sidebar"
       data-state={state}
-      data-collapsible={collapsible}
+      data-collapsible={state === "collapsed" ? collapsible : ""}
       data-variant={variant}
       data-side={side}
       className={cn(

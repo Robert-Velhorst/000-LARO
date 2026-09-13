@@ -77,6 +77,7 @@ export const IPC = {
   SYSTEM_INFO:     'system:info',
   APP_VERSION:     'app:version',
   FOLDER_SELECT:   'folder:select',
+  SOURCE_FOLDER_START: 'source:folder:start',
   SCAN_START:      'scan:start',
   SCAN_STOP:       'scan:stop',
   SCAN_PAUSE:      'scan:pause',

@@ -17,6 +17,7 @@ function buildRenderer(): void {
     cwd: ROOT,
     stdio: "pipe",
     windowsHide: true,
+    timeout: 120_000,
   });
 }
 
@@ -44,7 +45,9 @@ describe("case workspace bundle boundaries", () => {
     expect(assets.some((asset) => /^BulkCaseImport-[A-Za-z0-9_-]+\.js$/.test(asset.name))).toBe(true);
     expect(assets.some((asset) => /^BulkEvidenceUpload-[A-Za-z0-9_-]+\.js$/.test(asset.name))).toBe(true);
     expect(assets.some((asset) => /^CaseReconstruction-[A-Za-z0-9_-]+\.js$/.test(asset.name))).toBe(true);
+    expect(assets.some((asset) => /^CaseActionManager-[A-Za-z0-9_-]+\.js$/.test(asset.name))).toBe(true);
     expect(assets.some((asset) => /^AutomatedDocumentAnalysis-[A-Za-z0-9_-]+\.js$/.test(asset.name))).toBe(true);
     expect(assets.some((asset) => /^EvidenceGapAnalysisDashboard-[A-Za-z0-9_-]+\.js$/.test(asset.name))).toBe(true);
-  }, 30_000);
+  // This checks emitted bundle boundaries, not the host's compiler speed.
+  }, 150_000);
 });

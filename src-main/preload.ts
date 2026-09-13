@@ -10,6 +10,7 @@ const IPC_CHANNELS = {
   SYSTEM_INFO: 'system:info',
   APP_VERSION: 'app:version',
   FOLDER_SELECT: 'folder:select',
+  SOURCE_FOLDER_START: 'source:folder:start',
   SCAN_START: 'scan:start',
   SCAN_STOP: 'scan:stop',
   SCAN_PAUSE: 'scan:pause',
@@ -46,6 +47,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Folder selection
   selectFolder: () => ipcRenderer.invoke(IPC_CHANNELS.FOLDER_SELECT),
+  startLocalSource: () => ipcRenderer.invoke(IPC_CHANNELS.SOURCE_FOLDER_START),
   
   // Scanning
   startScan: (config: any) => ipcRenderer.invoke(IPC_CHANNELS.SCAN_START, config),
@@ -87,6 +89,7 @@ declare global {
       openExternal: (url: string) => Promise<void>;
       reportRendererError: (report: { message: string; stack?: string; componentStack?: string; route?: string }) => Promise<void>;
       selectFolder: () => Promise<string[] | null>;
+      startLocalSource: () => Promise<{ id: string } | null>;
       startScan: (config: any) => Promise<{ scanId: string }>;
       stopScan: () => Promise<{ success: boolean }>;
       pauseScan: () => Promise<{ success: boolean }>;

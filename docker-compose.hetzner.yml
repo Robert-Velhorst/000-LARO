@@ -17,6 +17,10 @@ services:
       PORT: "3000"
       SERVER_ONLY: "true"
       LARO_SERVE_WEB: "true"
+      # Remote native uploads use the shared server's standard session cookie.
+      LARO_SESSION_COOKIE_NAME: laro_session
+      # Local operator tickets must never enable passwordless hosted access.
+      LARO_LOCAL_TEST_ACCESS: "false"
       # This single-process installation uses the existing SQLite data layer.
       # The separate PostgreSQL/public-replica migration is not enabled here.
       LARO_RUNTIME_MODE: local

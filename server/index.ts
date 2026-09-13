@@ -42,7 +42,7 @@ import oauth2CallbacksRouter from './oauth2Callbacks';
 import haiIntegrationRoutes from './haiIntegrationRoutes';
 import { closeDatabaseForMaintenance, getDb } from './db';
 import { assertSecurityConfig, ENV } from './_core/env';
-import { closeHttpServer, listenHttpServer } from './listen';
+import { closeSharedHttpServer, listenHttpServer } from './listen';
 import { APP_VERSION } from './_core/version';
 import { EvidenceAccessError, readSignedEvidenceDownload } from './evidenceAccess';
 import { sanitizeFilename } from './storage';
@@ -86,7 +86,8 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-XSS-Protection', '0'); // rely on CSP, not the legacy auditor
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  // The renderer must retain its Google OAuth popup; API resources stay isolated.
+  res.setHeader('Cross-Origin-Opener-Policy', req.path.startsWith('/api/') ? 'same-origin' : 'same-origin-allow-popups');
   res.setHeader(
     'Permissions-Policy',
     'geolocation=(), microphone=(), camera=(), payment=()'
@@ -365,8 +366,7 @@ export function stopServer(): Promise<void> {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
     stopCronScheduler();
-    await closeRealtimeServer();
-    await closeHttpServer(httpServer);
+    await closeSharedHttpServer(httpServer, closeRealtimeServer);
     closeDatabaseForMaintenance();
   })().finally(() => {
     shutdownPromise = null;

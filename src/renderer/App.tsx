@@ -1,18 +1,25 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import HomePage from "./pages/HomePage";
 import ScanPage from "./pages/ScanPage";
 import SettingsPage from "./pages/SettingsPage";
-import { getElectronAPI } from "@/lib/electronApiShim";
+import { getElectronAPI, isElectron } from "@/lib/electronApiShim";
+import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
 import type { AgentConfig, Page } from "../../shared/types";
 import { useI18n } from "./contexts/I18nContext";
 
 export default function App() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const electronAPI = getElectronAPI();
   const [currentPage, setCurrentPage] = useState<Page>("home");
   const [config, setConfig] = useState<AgentConfig | null>(null);
   const [activeScanId, setActiveScanId] = useState<string | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const loadConfig = useCallback(async () => {
+    setConfigError(null);
+    try { setConfig(await getElectronAPI().getConfig()); }
+    catch (error) { setConfigError(error instanceof Error ? error.message : "Scanner configuration unavailable"); }
+  }, []);
 
   const session = trpc.auth.me.useQuery(undefined, {
     refetchInterval: 60_000,
@@ -20,23 +27,27 @@ export default function App() {
     retry: false,
   });
   useEffect(() => {
-    void electronAPI.getConfig().then(setConfig).catch((error: unknown) => {
-      console.error("Failed to load scanner configuration:", error);
-    });
-  }, []);
+    void loadConfig();
+  }, [loadConfig]);
 
   useEffect(() => {
-    if (!session.isFetched || session.data || !config?.caseId) return;
+    if (!session.isSuccess || session.data || !config?.caseId) return;
     void electronAPI
       .setConfig({ caseId: null })
       .then(setConfig)
       .catch((error: unknown) => console.error("Failed to clear scanner case selection:", error));
-  }, [session.isFetched, session.data, config?.caseId]);
+  }, [session.isSuccess, session.data, config?.caseId]);
 
   const saveSettings = async (updates: Partial<AgentConfig>) => {
     const updated = await electronAPI.setConfig({ caseId: updates.caseId ?? null });
     setConfig(updated);
   };
+
+  if (configError || session.error) {
+    return <ScannerStatus title={locale === "nl" ? "Scanner niet beschikbaar" : "Scanner unavailable"}
+      detail={configError || session.error!.message} actionLabel={t("common.retry")}
+      onAction={() => { void loadConfig(); void session.refetch(); }} />;
+  }
 
   if (session.isLoading || !config) {
     return <ScannerStatus title={t("scanner.preparing")} detail={t("scanner.verifySession")} />;
@@ -96,19 +107,19 @@ function ScannerStatus({
 }) {
   const { t } = useI18n();
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white">
-      <section className="w-full max-w-md border border-slate-800 bg-slate-900 p-6">
+    <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
+      <section className="w-full max-w-md space-y-3">
         <h1 className="text-lg font-semibold">{title}</h1>
-        <p className="mt-2 text-sm leading-6 text-slate-400">{detail}</p>
+        <p role="status" className="mt-2 break-words text-sm leading-6 text-muted-foreground">{detail}</p>
         <div className="mt-5 flex gap-3">
           {actionLabel && onAction ? (
-            <button type="button" onClick={onAction} className="bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-700">
+            <Button type="button" onClick={onAction}>
               {actionLabel}
-            </button>
+            </Button>
           ) : null}
-          <button type="button" onClick={() => window.close()} className="border border-slate-700 px-4 py-2 text-sm hover:bg-slate-800">
-            {t("common.close")}
-          </button>
+          <Button type="button" variant="outline" onClick={() => isElectron() ? window.close() : window.location.assign("/")}>
+            {isElectron() ? t("common.close") : "LARO"}
+          </Button>
         </div>
       </section>
     </main>

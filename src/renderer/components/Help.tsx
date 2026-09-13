@@ -52,7 +52,7 @@ export default function Help() {
     },
     {
       question: "What if I need to clarify something about my case?",
-      answer: "On the Home dashboard, use the Input & control chat column, or open the floating assistant from other pages. LARO can ask clarifying questions about your situation.",
+      answer: "The Assistant is available in the top bar of each workspace. Pending clarification questions appear in the overview and in the assistant.",
     },
   ];
 
@@ -72,20 +72,17 @@ export default function Help() {
 
   return (
     <DashboardLayout>
-      <div className="mx-auto max-w-5xl space-y-8 p-1 sm:p-4">
+      <div className="max-w-5xl space-y-8">
         {/* Header */}
-        <div className="text-center">
+        <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
             Help & Resources
           </h1>
-          <p className="text-muted-foreground mt-2 text-lg">
-            Find answers to common questions or reach out to our team
-          </p>
         </div>
 
         {/* FAQs - Collapsible */}
         <section className="space-y-4">
-          <h2 className="text-2xl font-bold flex items-center gap-2">
+          <h2 className="text-base font-semibold flex items-center gap-2">
             <HelpCircle className="w-6 h-6 text-orange-500" />
             Frequently Asked Questions
           </h2>

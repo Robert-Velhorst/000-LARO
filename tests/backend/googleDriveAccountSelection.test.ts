@@ -321,6 +321,93 @@ suite("Google Drive account selection", () => {
     expect(JSON.parse(result.settings.googleDriveFolderIds)).toEqual(["folder-two"]);
   });
 
+  it("stores and runs two Drive selections with their own folders and credentials", async () => {
+    const caller = app.makeCaller({ id: userId, role: "user" });
+    const sources = [
+      { accountId: "GOOGLE_DRIVE_FIRST", folderIds: ["folder-a"], folderNames: ["Legal A"] },
+      { accountId: "GOOGLE_DRIVE_SECOND", folderIds: ["folder-b"], folderNames: ["Legal B"] },
+    ];
+    googleMocks.credentials.length = 0;
+    googleMocks.listRequests.length = 0;
+    googleMocks.listResponses.splice(0, Infinity, { data: { files: [] } }, { data: { files: [] } });
+    const saved = await caller.autoCollection.upsertSettings({
+      caseId: "CASE_DRIVE_ACCOUNT_SELECTION", keywords: ["contract"], keywordMatchMode: "any",
+      emailAccountIds: [], googleDriveSources: sources,
+      autoDownloadAttachments: false, autoDownloadGoogleDriveFiles: true,
+    });
+    expect(saved.runResult?.errors).toEqual([]);
+    expect(googleMocks.credentials).toEqual([
+      { access_token: "first-access-token" }, { access_token: "second-access-token" },
+    ]);
+    expect(googleMocks.listRequests.map((request) => request.q)).toEqual([
+      "'folder-a' in parents and trashed = false", "'folder-b' in parents and trashed = false",
+    ]);
+    const result = await caller.autoCollection.getSettings({ caseId: "CASE_DRIVE_ACCOUNT_SELECTION" });
+    expect(JSON.parse(result.settings.metadata).googleDriveSources).toEqual(sources);
+    expect(result.settings.googleDriveFolderIds).toBeNull();
+  });
+
+  it("does not fall back to root or old folders when the selection is explicitly empty", async () => {
+    googleMocks.credentials.length = 0;
+    const { pullEvidenceByKeywords } = await import("../../server/autoCollectionService");
+    const result = await pullEvidenceByKeywords({
+      caseId: "CASE_DRIVE_ACCOUNT_SELECTION", userId, keywords: ["contract"],
+      driveSources: [], includeGmail: false, includeLocal: false,
+    });
+    expect(result.errors).toEqual([]);
+    expect(googleMocks.credentials).toEqual([]);
+  });
+
+  it("rejects a mixed-owner Drive selection before accessing any account", async () => {
+    googleMocks.credentials.length = 0;
+    const { pullEvidenceByKeywords } = await import("../../server/autoCollectionService");
+    await expect(pullEvidenceByKeywords({
+      caseId: "CASE_DRIVE_ACCOUNT_SELECTION", userId, keywords: ["contract"],
+      driveSources: [
+        { accountId: "GOOGLE_DRIVE_FIRST", folderIds: ["folder-a"] },
+        { accountId: "GOOGLE_DRIVE_OTHER_OWNER", folderIds: ["folder-b"] },
+      ], includeGmail: false, includeLocal: false,
+    })).rejects.toThrow("Selected Google Drive account is unavailable");
+    expect(googleMocks.credentials).toEqual([]);
+  });
+
+  it("rejects empty-folder and duplicate-account multi-source selections", async () => {
+    const { googleDriveSourcesSchema, savedGoogleDriveSources } = await import("../../shared/googleDriveSources");
+    expect(googleDriveSourcesSchema.safeParse([{ accountId: "a", folderIds: [] }]).success).toBe(false);
+    expect(googleDriveSourcesSchema.safeParse([
+      { accountId: "a", folderIds: ["one"] }, { accountId: "a", folderIds: ["two"] },
+    ]).success).toBe(false);
+    expect(() => savedGoogleDriveSources('{"googleDriveSources":null}')).toThrow();
+  });
+
+  it("reconnecting the same email preserves its refresh grant and other accounts", async () => {
+    const { saveEmailAccount } = await import("../../server/oauth2");
+    const { decryptToken } = await import("../../server/emailOAuth");
+    const id = await saveEmailAccount(userId, "gmail", {
+      accessToken: "renewed-first", expiresIn: 3600, tokenType: "Bearer",
+    }, { email: " FIRST@example.com " });
+    expect(id).toBe("GOOGLE_DRIVE_FIRST");
+    const accounts = await app.db.select().from(app.schema.emailAccounts);
+    expect(decryptToken(accounts.find((account: any) => account.id === id).refreshToken)).toBe("first-refresh-token");
+    expect(decryptToken(accounts.find((account: any) => account.id === "GOOGLE_DRIVE_SECOND").accessToken)).toBe("second-access-token");
+  });
+
+  it("adding a different email creates a separate account without replacing existing grants", async () => {
+    const { saveEmailAccount } = await import("../../server/oauth2");
+    const { decryptToken } = await import("../../server/emailOAuth");
+    const id = await saveEmailAccount(userId, "gmail", {
+      accessToken: "third-access", refreshToken: "third-refresh", expiresIn: 3600, tokenType: "Bearer",
+    }, { email: "third@example.com" });
+    const accounts = await app.db.select().from(app.schema.emailAccounts);
+    expect(accounts.filter((account: any) => account.userId === userId)).toHaveLength(3);
+    expect(decryptToken(accounts.find((account: any) => account.id === id).accessToken)).toBe("third-access");
+    expect(decryptToken(accounts.find((account: any) => account.id === "GOOGLE_DRIVE_SECOND").accessToken)).toBe("second-access-token");
+    const listed = await app.makeCaller({ id: userId, role: "user" }).emailAccounts.list();
+    expect(listed).toHaveLength(3);
+    expect(JSON.stringify(listed)).not.toContain("accessToken");
+    expect(JSON.stringify(listed)).not.toContain("other@example.com");
+  });
+
   it("rejects a Drive account owned by another user in saved settings", async () => {
     const caller = app.makeCaller({ id: userId, role: "user" });
     await expect(caller.autoCollection.upsertSettings({

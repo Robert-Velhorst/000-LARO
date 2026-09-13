@@ -100,8 +100,8 @@ async function rpc(page, procedure, input, mutation = false) {
   return superjson.deserialize(payload.data.result.data);
 }
 
-async function login(page) {
-  await page.goto(origin);
+async function login(page, navigate = true) {
+  if (navigate) await page.goto(origin);
   await page.getByLabel('Email Address').fill('owner@example.test');
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Sign In', exact: true }).click();
@@ -127,15 +127,25 @@ async function checkDesktop(caseId, evidenceId, contentHash) {
     });
     const page = await desktop.firstWindow({ timeout: 90_000 });
     watch(page);
+    // The main process is already calling loadURL. Navigating again before it
+    // finishes cancels that request and opens the app's network-error dialog.
+    await page.waitForURL(origin + '/', { waitUntil: 'domcontentloaded', timeout: 90_000 });
     return page;
   };
   let page = await launch(true);
-  await login(page);
+  await login(page, false);
   assert.equal(await page.evaluate(async () => (await window.electronAPI.getConfig()).apiUrl), origin);
+  assert.equal(await page.evaluate(async () => (await window.electronAPI.getConfig()).localSourcesAvailable), false);
   assert.equal((await rpc(page, 'evidenceFiles.get', { id: evidenceId })).contentHash, contentHash);
   assert.equal(existsSync(path.join(profile, 'laro-server.sqlite')), false);
   assert.equal(existsSync(path.join(profile, 'laro-secrets.json')), false);
   checked('real Electron client signs in to the shared backend without a second case database');
+
+  await page.goto(origin + '/evidence');
+  await page.getByRole('button', { name: 'Add source', exact: true }).click();
+  assert.equal(await page.getByRole('button', { name: 'Select local source', exact: true }).count(), 0);
+  await page.getByText('To copy a folder from this computer, use Folder in the Document inbox below.', { exact: false }).waitFor();
+  checked('connected desktop offers folder uploads without exposing server-local path intake');
 
   const folder = path.join(temporary, 'selected-desktop-documents');
   mkdirSync(folder);
@@ -156,7 +166,7 @@ async function checkDesktop(caseId, evidenceId, contentHash) {
     await window.electronAPI.startUpload(scanId);
   }, { scanId: scan.scanId, id: files[0].id });
   await page.waitForFunction(async (scanId) => (await window.electronAPI.getScanFiles(scanId)).files[0]?.uploadStatus === 'completed', scan.scanId, { timeout: 60_000 });
-  await page.goto(origin + '/evidence');
+  await page.goto(origin + '/evidence?view=items');
   await page.getByText('desktop-notice.txt', { exact: true }).first().waitFor();
   await page.screenshot({ path: path.join(output, 'electron-shared-evidence.png') });
   checked('native selected-folder scan and reviewed upload reach the shared evidence store');
@@ -224,7 +234,7 @@ try {
     await page.getByRole('heading', { level: 1 }).waitFor();
   }
   await page.goto(origin + '/cases');
-  await page.getByText('Your Employment Case', { exact: true }).first().waitFor();
+  await page.getByRole('button', { name: 'Shared verification case', exact: true }).waitFor();
   await page.screenshot({ path: path.join(output, 'browser-cases.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
@@ -232,6 +242,19 @@ try {
   await page.screenshot({ path: path.join(output, 'browser-mobile.png'), fullPage: true });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'Mobile page overflows horizontally');
   checked('rendered desktop/mobile pages and deep-route reloads');
+
+  await rpc(page, 'userPreferences.updateWorkflow', { autoAnalyzeImports: false }, true);
+  await page.goto(origin + '/evidence');
+  await page.getByLabel('Upload documents', { exact: true }).setInputFiles({
+    name: 'inbox-browser-upload.txt', mimeType: 'text/plain', buffer: content,
+  });
+  await page.getByRole('heading', { name: 'inbox-browser-upload.txt', exact: true }).waitFor();
+  const inbox = await rpc(page, 'documentInbox.list', { view: 'all', offset: 0, limit: 20 });
+  const inboxDocument = inbox.items.find((item) => item.fileName === 'inbox-browser-upload.txt');
+  assert.ok(inboxDocument, 'Uploaded inbox document was not persisted');
+  const original = await rpc(page, 'documentInbox.download', { id: inboxDocument.id }, true);
+  assert.equal(Buffer.from(original.base64, 'base64').toString(), content.toString());
+  checked('real browser file selection persists inbox originals without a preselected case');
 
   const secondContext = await browser.newContext({ locale: 'en-US' });
   let secondPage = await secondContext.newPage();
@@ -259,7 +282,7 @@ try {
   secondPage = await secondContext.newPage();
   watch(secondPage);
   await secondPage.goto(origin + '/cases');
-  await secondPage.getByText('Your Employment Case', { exact: true }).first().waitFor();
+  await secondPage.getByRole('button', { name: 'Shared verification case', exact: true }).waitFor();
   const persisted = await rpc(secondPage, 'evidenceFiles.get', { id: uploaded.id });
   assert.equal(persisted.contentHash, uploaded.sha256);
   checked('account, session, case, and evidence survive server restart');
@@ -271,6 +294,11 @@ try {
 } catch (error) {
   report.passed = false;
   report.error = error instanceof Error ? error.message : String(error);
+  const lastPage = desktop?.windows().at(-1) || browser?.contexts().flatMap((context) => context.pages()).at(-1);
+  if (lastPage && !lastPage.isClosed()) {
+    report.lastPage = lastPage.url();
+    try { await lastPage.screenshot({ path: path.join(output, 'failure.png'), timeout: 5000 }); } catch { /* Preserve the original failure. */ }
+  }
   console.error(report.error);
   process.exitCode = 1;
 } finally {

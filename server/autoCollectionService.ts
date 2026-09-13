@@ -22,7 +22,8 @@ import {
 } from './googleDriveService';
 import { decryptToken, encryptToken, refreshGmailToken } from './emailOAuth';
 import { getGmailMessage, getGmailAttachmentBytes } from './gmailService';
-import { storagePut } from './storage';
+import { searchGmailMessageIds } from './gmailMessageSearch';
+import { getLocalStorageDirectory, hashBuffer, storageDelete, storagePut } from './storage';
 import { createEvidenceFile } from './evidence';
 import { analyzeStoredEvidence } from './documentAnalysisService';
 import { supportsDocumentAnalysisMime } from './documentIntelligence';
@@ -34,8 +35,8 @@ import * as fs from 'fs/promises';
 import { createReadStream } from 'fs';
 import * as path from 'path';
 import { collectBoundedBytes, withByteReadAdmission } from './boundedBytes';
-import { readBoundedResponseJson } from './boundedHttpResponse';
 import { MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
+import { googleDriveSourcesSchema, savedGoogleDriveSources, type GoogleDriveSource } from '../shared/googleDriveSources';
 
 /**
  * Evidence Auto-Collection Service
@@ -51,6 +52,7 @@ interface AutoCollectionConfig {
   dateRangeEnd?: Date;
   emailAccountIds: string[];
   googleDriveAccountId?: string;
+  googleDriveSources?: GoogleDriveSource[];
   googleDriveFolderIds?: string[];
   autoDownloadAttachments: boolean;
   autoDownloadGoogleDriveFiles: boolean;
@@ -111,6 +113,12 @@ export async function upsertAutoCollectionSettings(config: AutoCollectionConfig)
     : {};
   if (config.googleDriveAccountId) metadata.googleDriveAccountId = config.googleDriveAccountId;
   else delete metadata.googleDriveAccountId;
+  if (config.googleDriveSources !== undefined) {
+    metadata.googleDriveSources = googleDriveSourcesSchema.parse(config.googleDriveSources);
+    delete metadata.googleDriveAccountId;
+  } else {
+    delete metadata.googleDriveSources;
+  }
 
   const settingsData = {
     caseId: config.caseId,
@@ -121,7 +129,7 @@ export async function upsertAutoCollectionSettings(config: AutoCollectionConfig)
     dateRangeEnd: config.dateRangeEnd,
     emailAccountIds: JSON.stringify(config.emailAccountIds),
     metadata: JSON.stringify(metadata),
-    googleDriveFolderIds: config.googleDriveFolderIds ? JSON.stringify(config.googleDriveFolderIds) : null,
+    googleDriveFolderIds: config.googleDriveSources !== undefined ? null : config.googleDriveFolderIds ? JSON.stringify(config.googleDriveFolderIds) : null,
     autoDownloadAttachments: config.autoDownloadAttachments,
     autoDownloadGoogleDriveFiles: config.autoDownloadGoogleDriveFiles,
   };
@@ -774,31 +782,9 @@ async function pullFromGmail(
   ].filter(Boolean).join(' ');
   const query = [keywordPart, datePart].filter(Boolean).join(' ');
 
-  let threads: { id: string }[] = [];
-  try {
-    const params = new URLSearchParams({ maxResults: '30', q: query });
-    const data = await withByteReadAdmission(async () => {
-      const res = await fetch(
-        `https://www.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`,
-        {
-          headers: { Authorization: `Bearer ${cred.accessToken}` },
-          signal: AbortSignal.timeout(30_000),
-        },
-      );
-      return readBoundedResponseJson<{
-        messages?: { id: string; threadId: string }[];
-        error?: { message: string };
-      }>(res, {
-        maxBytes: 1024 * 1024,
-        label: 'Gmail search response',
-      });
-    });
-    if (data.error) throw new Error(data.error.message);
-    threads = (data.messages || []).map((m) => ({ id: m.id }));
-  } catch (err) {
-    errors.push(`Gmail search failed: ${err instanceof Error ? err.message : String(err)}`);
-    return { messages: 0, attachments: 0 };
-  }
+  const search = await searchGmailMessageIds(cred.accessToken, query);
+  const threads = search.messages;
+  errors.push(...search.warnings);
 
   let messagesIngested = 0;
   let attachmentsIngested = 0;
@@ -1157,9 +1143,25 @@ async function scanLocalDirectory(
   maxDepth = 6,
 ): Promise<{ absPath: string; name: string }[]> {
   const matches: { absPath: string; name: string }[] = [];
+  const storageDirectory = await fs.realpath(getLocalStorageDirectory()).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return getLocalStorageDirectory();
+    throw error;
+  });
+  const within = (candidate: string, root: string) => {
+    const relative = path.relative(root, candidate);
+    return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+  };
+  if (within(rootPath, storageDirectory)) {
+    errors.push('Local folder rejected: LARO managed evidence storage is not an import source');
+    return matches;
+  }
+  let fileLimitReached = false;
+  let depthLimitReached = false;
 
   async function walk(dir: string, depth: number) {
-    if (matches.length >= maxFiles || depth > maxDepth) return;
+    if (within(dir, storageDirectory)) return;
+    if (matches.length >= maxFiles) { fileLimitReached = true; return; }
+    if (depth > maxDepth) { depthLimitReached = true; return; }
     let entries: any[] = [];
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
@@ -1168,7 +1170,7 @@ async function scanLocalDirectory(
       return;
     }
     for (const entry of entries) {
-      if (matches.length >= maxFiles) return;
+      if (matches.length >= maxFiles) { fileLimitReached = true; return; }
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         // Skip common noise.
@@ -1183,6 +1185,8 @@ async function scanLocalDirectory(
   }
 
   await walk(rootPath, 0);
+  if (fileLimitReached) errors.push(`Partial local scan: file limit of ${maxFiles} reached in ${rootPath}; select smaller source folders to collect the remainder`);
+  if (depthLimitReached) errors.push(`Partial local scan: depth limit of ${maxDepth} reached in ${rootPath}; select deeper source folders to collect the remainder`);
   return matches;
 }
 
@@ -1230,15 +1234,19 @@ async function pullFromLocalFolders(
 
   let ingested = 0;
   const existingLocalEvidence = await db
-    .select({ metadata: evidenceTable.metadata })
+    .select({ id: evidenceTable.id, metadata: evidenceTable.metadata })
     .from(evidenceTable)
-    .where(and(eq(evidenceTable.caseId, caseId), eq(evidenceTable.source, 'local')));
-  const storedLocalPaths = new Set<string>();
+    .where(and(eq(evidenceTable.caseId, caseId), eq(evidenceTable.userId, userId), eq(evidenceTable.source, 'local')));
+  const pathKey = (value: string) => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
+  const storedLocalVersions = new Map<string, Array<{ id: string; hash: string | null }>>();
   for (const item of existingLocalEvidence) {
     try {
       const metadata = item.metadata ? JSON.parse(item.metadata) : {};
       if (typeof metadata.absPath === 'string' && metadata.absPath) {
-        storedLocalPaths.add(metadata.absPath);
+        const key = pathKey(metadata.absPath);
+        const versions = storedLocalVersions.get(key) || [];
+        versions.push({ id: item.id, hash: typeof metadata.contentHash === 'string' ? metadata.contentHash : null });
+        storedLocalVersions.set(key, versions);
       }
     } catch {
       // Invalid legacy metadata cannot safely participate in deduplication.
@@ -1264,9 +1272,6 @@ async function pullFromLocalFolders(
     for (const file of found) {
       let fileWords = 0;
       try {
-        // Dedupe by absolute path.
-        if (storedLocalPaths.has(file.absPath)) continue;
-
         const stat = await fs.stat(file.absPath);
         if (dateStart && stat.mtime < dateStart) continue;
         if (dateEnd && stat.mtime > dateEnd) continue;
@@ -1278,34 +1283,49 @@ async function pullFromLocalFolders(
           label: 'Local evidence file',
           limitMessage: 'Local evidence file exceeds the 7 MB evidence limit',
         }));
+        // A source path can change; preserve each distinct byte version instead
+        // of treating the filename as permanent proof that the file is imported.
+        const key = pathKey(file.absPath);
+        const versions = storedLocalVersions.get(key) || [];
+        const contentHash = hashBuffer(buf);
+        if (versions.some((version) => version.hash === contentHash)) continue;
         const ext = path.extname(file.name).toLowerCase();
         const mimeType = guessMimeFromExt(ext);
         const storageKey = `evidence/${caseId}/local/${uuidv4()}-${file.name}`;
         const storedFile = await storagePut(storageKey, buf, mimeType);
 
-        const evidenceId = await createEvidenceFile(userId, {
-          caseId,
-          type: determineEvidenceType(mimeType),
-          source: 'local',
-          title: file.name,
-          description: `Auto-collected from local folder ${resolvedFolderPath}`,
-          fileUrl: storedFile.url,
-          fileName: file.name,
-          fileSize: String(stat.size),
-          mimeType,
-          metadata: JSON.stringify({
-            storageKey: storedFile.key,
-            absPath: file.absPath,
-            sourceFolder: resolvedFolderPath,
-            autoCollected: true,
-            collectedAt: new Date().toISOString(),
-            modifiedTime: stat.mtime.toISOString(),
-          }),
-          contentHash: storedFile.sha256,
-          relevant: true,
-        });
+        let evidenceId: string;
+        try {
+          evidenceId = await createEvidenceFile(userId, {
+            caseId,
+            type: determineEvidenceType(mimeType),
+            source: 'local',
+            title: file.name,
+            description: `Auto-collected from local folder ${resolvedFolderPath}`,
+            fileUrl: storedFile.url,
+            fileName: file.name,
+            fileSize: String(buf.length),
+            mimeType,
+            metadata: JSON.stringify({
+              storageKey: storedFile.key,
+              absPath: file.absPath,
+              sourceFolder: resolvedFolderPath,
+              autoCollected: true,
+              collectedAt: new Date().toISOString(),
+              modifiedTime: stat.mtime.toISOString(),
+              previousVersionIds: versions.map((version) => version.id),
+            }),
+            contentHash: storedFile.sha256,
+            relevant: true,
+          });
+        } catch (error) {
+          try { await storageDelete(storedFile.key); }
+          catch { errors.push(`Storage cleanup failed for local import "${file.name}"`); }
+          throw error;
+        }
         fileWords = await analyzeImportedEvidence(evidenceId, userId, mimeType, file.name, errors, autoAnalyzeImports);
-        storedLocalPaths.add(file.absPath);
+        versions.push({ id: evidenceId, hash: contentHash });
+        storedLocalVersions.set(key, versions);
         ingested++;
       } catch (err) {
         errors.push(`Local file "${file.absPath}" failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -1375,6 +1395,7 @@ export async function pullEvidenceByKeywords(params: {
   matchMode?: 'all' | 'any';
   gmailAccountIds?: string[];
   driveAccountId?: string;
+  driveSources?: GoogleDriveSource[];
   driveFolderIds?: string[];
   driveExactFileName?: string;
   localFolderPaths?: string[];
@@ -1417,6 +1438,37 @@ export async function pullEvidenceByKeywords(params: {
   }
   driveFolderIds = driveFolderIds || [];
 
+  const driveSources = params.driveSources !== undefined
+    ? googleDriveSourcesSchema.parse(params.driveSources)
+    : params.driveAccountId !== undefined || params.driveFolderIds !== undefined
+      ? undefined
+      : savedGoogleDriveSources(settings?.metadata);
+  // Validate every selected account before any provider request starts.
+  if (params.includeDrive !== false && driveSources) {
+    for (const source of driveSources) {
+      const [account] = await db.select({ id: emailAccounts.id }).from(emailAccounts).where(and(
+        eq(emailAccounts.id, source.accountId), eq(emailAccounts.userId, params.userId),
+        eq(emailAccounts.provider, 'gmail'), eq(emailAccounts.status, 'connected'),
+      )).limit(1);
+      if (!account) throw new Error('Selected Google Drive account is unavailable. Reconnect it or remove it from Sources.');
+    }
+  }
+  const collectDriveSources = async () => {
+    let files = 0;
+    const sources = driveSources ?? [{ accountId: params.driveAccountId, folderIds: driveFolderIds }];
+    for (const source of sources) {
+      try {
+        const result = await pullFromDrive(params.caseId, params.userId, params.keywords, matchMode,
+          source.folderIds, errors, source.accountId, params.driveExactFileName,
+          params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports);
+        files += result.files;
+      } catch (error) {
+        errors.push(`Drive account ${source.accountId || 'default'} failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return { files };
+  };
+
   let localFolderPaths = params.localFolderPaths;
   if (!localFolderPaths || localFolderPaths.length === 0) {
     localFolderPaths = await getConfiguredLocalFolders(params.caseId);
@@ -1427,7 +1479,7 @@ export async function pullEvidenceByKeywords(params: {
       errors.push(`Gmail pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { messages: 0, attachments: 0 };
     }),
-    (params.includeDrive === false ? Promise.resolve({ files: 0 }) : pullFromDrive(params.caseId, params.userId, params.keywords, matchMode, driveFolderIds, errors, params.driveAccountId, params.driveExactFileName, params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports)).catch((err) => {
+    (params.includeDrive === false ? Promise.resolve({ files: 0 }) : collectDriveSources()).catch((err) => {
       errors.push(`Drive pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { files: 0 };
     }),
@@ -1680,6 +1732,7 @@ export async function runAutoCollection(caseId: string): Promise<{
     keywords,
     matchMode: settings.keywordMatchMode === 'all' ? 'all' : 'any',
     gmailAccountIds: accountIds,
+    driveSources: savedGoogleDriveSources(settings.metadata),
     driveAccountId,
     driveFolderIds,
     dateStart: settings.dateRangeStart || undefined,

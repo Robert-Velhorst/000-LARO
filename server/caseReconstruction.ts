@@ -162,8 +162,12 @@ function normalizeText(value: string): string {
 
 function validDate(value: unknown): string | null {
   if (typeof value !== "string" || !value.trim()) return null;
-  const direct = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (direct) return `${direct[1]}-${direct[2]}-${direct[3]}`;
+  const direct = value.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|T|\s)/);
+  if (direct) {
+    const day = `${direct[1]}-${direct[2]}-${direct[3]}`;
+    const parsed = new Date(`${day}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === day ? day : null;
+  }
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
 }
@@ -172,11 +176,12 @@ function dateForDocument(document: ReconstructionDocument, events: Reconstructio
   const eventDate = events.map((event) => validDate(event.date)).find(Boolean);
   if (eventDate) return eventDate;
   const metadata = parseMetadata(document.metadata);
-  for (const value of [metadata.date, metadata.modifiedTime, metadata.collectedAt]) {
-    const parsed = validDate(value);
-    if (parsed) return parsed;
-  }
-  return document.createdAt?.toISOString().slice(0, 10) ?? "Undated";
+  // Collection and filesystem timestamps describe storage, not the event.
+  return validDate(metadata.date) ?? "Undated";
+}
+
+function sameProviderAccount(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  return (left.accountId ?? null) === (right.accountId ?? null);
 }
 
 function routeForDocument(document: ReconstructionDocument, events: ReconstructionEvent[]): ReconstructionRoute {
@@ -252,20 +257,35 @@ function explicitEdges(documents: ReconstructionDocument[], nodes: Map<string, R
       ? normalizeText(attachmentMetadata.parentSubject)
       : "";
     if (typeof attachmentMetadata.attachmentId !== "string" && !parentSubject) continue;
-    const parent = documents.find((candidate) => {
+    const exactParents = documents.filter((candidate) => {
       if (candidate.evidenceId === attachment.evidenceId) return false;
       const candidateMetadata = parseMetadata(candidate.metadata);
       const sameMessage = typeof attachmentMetadata.gmailMessageId === "string" &&
+        sameProviderAccount(attachmentMetadata, candidateMetadata) &&
         attachmentMetadata.gmailMessageId === candidateMetadata.gmailMessageId &&
-        typeof candidateMetadata.attachmentId !== "string";
-      return sameMessage || (parentSubject.length > 0 && parentSubject === normalizeText(candidate.title));
+        typeof candidateMetadata.attachmentId !== "string" &&
+        typeof candidateMetadata.parentSubject !== "string";
+      return sameMessage;
     });
+    // Subject lines are not unique document identifiers. Keep that weaker
+    // suggestion distinct, and never use it to override a provider identity.
+    const subjectParents = exactParents.length || attachmentMetadata.gmailMessageId ? [] : documents.filter((candidate) => {
+      const metadata = parseMetadata(candidate.metadata);
+      return candidate.evidenceId !== attachment.evidenceId &&
+        sameProviderAccount(attachmentMetadata, metadata) &&
+        typeof metadata.attachmentId !== "string" && typeof metadata.parentSubject !== "string" &&
+        parentSubject.length > 0 && parentSubject === normalizeText(candidate.title);
+    });
+    const isExact = exactParents.length === 1;
+    const parent = isExact ? exactParents[0] : subjectParents.length === 1 ? subjectParents[0] : null;
     if (!parent) continue;
     const key = edgeKey(parent.evidenceId, attachment.evidenceId);
     edges.set(key, {
       id: `${key}:attachment_of`, from: parent.evidenceId, to: attachment.evidenceId,
-      relationship: "attachment_of", evidence: "explicit", confidence: 1,
-      basis: ["The imported provider metadata identifies this document as an attachment to the message."],
+      relationship: "attachment_of", evidence: isExact ? "explicit" : "inferred", confidence: isExact ? 1 : 0.5,
+      basis: [isExact
+        ? "The imported provider metadata identifies this document as an attachment to the message."
+        : "The parent subject matches this document title; the attachment relationship needs source verification."],
     });
   }
 
@@ -279,12 +299,13 @@ function explicitEdges(documents: ReconstructionDocument[], nodes: Map<string, R
       const key = edgeKey(earlier.evidenceId, later.evidenceId);
       if (edges.has(key)) continue;
       const sameThread = typeof laterMetadata.gmailThreadId === "string" &&
+        sameProviderAccount(laterMetadata, earlierMetadata) &&
         laterMetadata.gmailThreadId === earlierMetadata.gmailThreadId;
       if (sameThread) {
         edges.set(key, {
-          id: `${key}:responds_to`, from: earlier.evidenceId, to: later.evidenceId,
-          relationship: "responds_to", evidence: "explicit", confidence: 0.98,
-          basis: ["Both messages carry the same Gmail thread identifier."],
+          id: `${key}:related`, from: earlier.evidenceId, to: later.evidenceId,
+          relationship: "related", evidence: "inferred", confidence: 0.7,
+          basis: ["Both messages carry the same Gmail thread identifier; this does not establish a direct reply or causation."],
         });
         continue;
       }
@@ -541,7 +562,10 @@ export function buildCaseReconstruction(options: {
     missingAnalysis
       ? `${missingAnalysis} document${missingAnalysis === 1 ? " has" : "s have"} not been analyzed; those stations use metadata only.`
       : null,
-    inferred.length
+    nodes.some((node) => node.date === "Undated")
+      ? "Undated documents have no supported historical date; import and filesystem timestamps are not used as event dates."
+      : null,
+    edges.some((edge) => edge.evidence === "inferred")
       ? "Dashed links are analytical suggestions, not established causation. Review their basis before relying on them."
       : null,
   ].filter((item): item is string => Boolean(item));

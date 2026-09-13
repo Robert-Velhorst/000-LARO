@@ -109,6 +109,58 @@ suite("auto-collection query efficiency", () => {
     expect(requestedUrls[0]).toContain("q=%28contract%29");
   });
 
+  it("does not ingest its own stored copies when scanning a parent directory again", async () => {
+    const { pullEvidenceByKeywords } = await import("../../server/autoCollectionService");
+    const result = await pullEvidenceByKeywords({
+      caseId, userId: user.id, keywords: ["contract-evidence"],
+      includeGmail: false, includeDrive: false, includeLocal: true,
+      localFolderPaths: [app.tmpDir],
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.localFiles).toBe(0);
+  });
+
+  it("preserves changed local files as new versions and leaves unchanged versions alone", async () => {
+    await app.makeCaller(user).userPreferences.updateWorkflow({ autoAnalyzeImports: false });
+    const directory = join(app.tmpDir, "versions");
+    mkdirSync(directory);
+    const source = join(directory, "contract-version.txt");
+    writeFileSync(source, "Original contract statement");
+    const { pullEvidenceByKeywords } = await import("../../server/autoCollectionService");
+    const pull = () => pullEvidenceByKeywords({
+      caseId, userId: user.id, keywords: ["contract-version"],
+      includeGmail: false, includeDrive: false, includeLocal: true,
+      localFolderPaths: [directory, directory],
+    });
+    expect((await pull()).localFiles).toBe(1);
+    expect((await pull()).localFiles).toBe(0);
+    writeFileSync(source, "Corrected contract statement");
+    expect((await pull()).localFiles).toBe(1);
+    expect((await pull()).localFiles).toBe(0);
+    const rows = (await app.makeCaller(user).evidenceFiles.byCase({ caseId }))
+      .filter((row: any) => row.title === "contract-version.txt");
+    expect(rows).toHaveLength(2);
+    const { storageRead } = await import("../../server/storage");
+    const texts = await Promise.all(rows.map(async (row: any) =>
+      (await storageRead(JSON.parse(row.metadata).storageKey)).toString("utf8")));
+    expect(texts.sort()).toEqual(["Corrected contract statement", "Original contract statement"]);
+  });
+
+  it("reports a partial scan when files are below the depth limit", async () => {
+    const root = join(app.tmpDir, "deep-scan");
+    const nested = join(root, ...Array.from({ length: 8 }, (_, index) => `level-${index}`));
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(nested, "contract-hidden.txt"), "Source beyond depth limit");
+    const { pullEvidenceByKeywords } = await import("../../server/autoCollectionService");
+    const result = await pullEvidenceByKeywords({
+      caseId, userId: user.id, keywords: ["contract-hidden"],
+      includeGmail: false, includeDrive: false, includeLocal: true,
+      localFolderPaths: [root],
+    });
+    expect(result.localFiles).toBe(0);
+    expect(result.errors.join(" ")).toMatch(/partial.*depth/i);
+  });
+
   it("reads workflow preferences once for a multi-file pull", async () => {
     await app.makeCaller(user).userPreferences.updateWorkflow({ autoAnalyzeImports: false });
     const analysisDirectory = join(app.tmpDir, "preference-read");

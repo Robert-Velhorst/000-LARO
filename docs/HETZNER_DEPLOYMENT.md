@@ -24,6 +24,10 @@ applications keep their ports, storage, and proxy routes.
 
 Check out the reviewed integration commit, then run:
 
+The setup below is for a **fresh** installation. For an existing workspace,
+first follow the migration section below; generating replacement keys can make
+its saved provider tokens unreadable.
+
 ```sh
 node scripts/setup-hetzner.mjs https://laro.example.com
 docker compose --env-file .env.hetzner -f docker-compose.hetzner.yml config --quiet
@@ -90,6 +94,14 @@ use the signed-in account's ordinary evidence upload authorization; they do not
 claim the per-launch local scanner credential. Browser users select files using
 the normal upload control. Native filesystem scanning requires the desktop.
 
+The handoff's case-neutral Document inbox also accepts a user-selected folder
+in either client. This copies selected files to the shared server. Background
+local-folder source jobs belong to the local desktop workspace and cannot scan
+a Windows path from Hetzner. In connected mode their native picker is disabled;
+the inbox Folder control and reviewed case-scanner uploads remain available.
+The shared deployment fixes its session cookie name to `laro_session`; separate
+local workspaces may retain their own cookie names.
+
 ## Providers and existing data
 
 Add required provider credentials to `.env.hetzner` and recreate the application
@@ -99,11 +111,41 @@ connections with the owner before declaring them operational. Local analysis
 does not need a paid model provider. Outreach keeps its existing approval and
 send controls.
 
-A new installation starts empty. Do not overwrite it with an existing desktop
-database or rotate keys casually. Any migration must first back up the source
-database, evidence, and matching encryption keys, then validate a recovery copy.
-Provider grants may need reconnecting on the server. Record the owner's data
-migration choice before the production cutover.
+### Migrate an existing workspace
+
+The September 2026 milestone requires existing data, not an empty replacement.
+The developer handoff contains source code only and is not a workspace backup.
+
+1. Identify the actual active desktop workspace and stop changes to it for the
+   final transfer. Preserve an untouched source copy. Create and validate a full
+   recovery set with `BACKUP_RESTORE.md`: database, complete managed evidence and
+   inbox originals, and matching signing/encryption keys. Retain private provider
+   configuration separately. Transfer these through an access-controlled channel,
+   never chat, Git, CI artifacts, or a public download.
+2. Inspect the manifest and storage mode before choosing restore targets. Restore
+   a copy into isolated storage with the same keys, not the final live volumes.
+   S3-backed sets have bucket/region compatibility checks; do not silently change
+   their storage mode. Run migrations against the copy, compare table counts and
+   representative original-file hashes, and verify provider-token decryption
+   without initiating sends or external collection.
+3. Set `LARO_BACKGROUND_JOBS=false` for the first restored server start. Review
+   and pause imported source jobs before enabling workers. Desktop paths and old
+   local-folder collection settings are not server paths. Keep their history and
+   original bytes, but reselect/upload local files from the connected desktop.
+   Review Google grants, callback addresses, schedules, and backup destinations
+   with the owner before any automatic collection resumes.
+4. Provision the LARO-only volumes and private environment using the **original**
+   key material. Validate the restored deployment, then switch only LARO's proxy
+   route. Sign in with the existing account rather than creating another owner.
+   Check representative cases, inbox documents, evidence downloads, and the same
+   records in the desktop client. Take and restore a new off-server recovery set.
+5. Preserve the pre-transfer backup, previous runtime, and source workspace until
+   owner acceptance. Returning the desktop to `--local` opens its independent
+   local data; it does not synchronize later changes back from the shared server.
+
+Local operator test tickets are forced off in the shared Compose configuration.
+Provider grants may need reconnecting on the server. A synthetic recovery drill
+does not prove that the owner's unavailable backup has migrated successfully.
 
 ## Persistence, recovery, and upgrades
 

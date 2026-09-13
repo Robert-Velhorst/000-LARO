@@ -42,6 +42,7 @@ export const userPreferencesRouter = router({
         analysisMode: z.enum(["local", "cloud"]).optional(),
         analysisProvider: z.enum(["local", ...LLM_PROVIDERS]).optional(),
         autoAnalyzeImports: z.boolean().optional(),
+        autoOrganizeDocuments: z.boolean().optional(),
         shareRawDocumentContent: z.boolean().optional(),
         outreachReviewMode: z.enum(["each", "batch", "automatic"]).optional(),
         messageApprovalMode: z.enum(["each", "batch", "automatic"]).optional(),

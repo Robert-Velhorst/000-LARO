@@ -1,5 +1,8 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
+import { useLocation, useSearchParams } from "wouter";
+import { useI18n } from "@/contexts/I18nContext";
+import { PageHeading, QueryNotice, SectionNavigation } from "./WorkspaceUi";
 import {
   AlertCircle,
   BrainCircuit,
@@ -80,7 +83,12 @@ function providerName(provider: string) {
 }
 
 export default function Settings() {
-  const [section, setSection] = useState<SettingsSection>("workflow");
+  const { locale } = useI18n();
+  const nl = locale === "nl";
+  const [location, setLocation] = useLocation();
+  const [params, setParams] = useSearchParams();
+  const section = (NAV_ITEMS.some(item => item.id === params.get("section")) ? params.get("section") : ["/email-settings", "/email-preferences"].includes(location) ? "email" : "workflow") as SettingsSection;
+  const setSection = (value: string) => setParams(previous => { const next = new URLSearchParams(previous); next.set("section", value); return next; });
   const [testEmail, setTestEmail] = useState("");
   const [isTesting, setIsTesting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -91,7 +99,8 @@ export default function Settings() {
   const [revealedHaiToken, setRevealedHaiToken] = useState<string | null>(null);
   const utils = trpc.useUtils();
 
-  const { data: providerInfo } = trpc.email.getProviderInfo.useQuery();
+  const providerQuery = trpc.email.getProviderInfo.useQuery(undefined, { enabled: section === "email" });
+  const providerInfo = providerQuery.data;
   const workflowPreferences = trpc.userPreferences.workflow.useQuery();
   const analysisCapabilities = trpc.documentAnalysis.capabilities.useQuery();
   const updateWorkflowMutation = trpc.userPreferences.updateWorkflow.useMutation();
@@ -113,7 +122,8 @@ export default function Settings() {
   const createHaiTokenMutation = trpc.haiIntegration.createToken.useMutation();
   const revokeHaiTokenMutation = trpc.haiIntegration.revokeToken.useMutation();
 
-  const activeMeta = useMemo(() => NAV_ITEMS.find((item) => item.id === section), [section]);
+  const preferencesUnavailable = !workflowPreferences.data || updateWorkflowMutation.isPending;
+  const navItems = NAV_ITEMS.map(item => ({ ...item, label: nl ? ({ workflow: "Analyse en controle", email: "E-mail", sources: "Bronnen", hai: "HAI-koppeling", security: "Gegevens en privacy" }[item.id]) : item.label }));
 
   const updateWorkflow = async (updates: Parameters<typeof updateWorkflowMutation.mutateAsync>[0]) => {
     try {
@@ -237,53 +247,28 @@ export default function Settings() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-4xl font-bold tracking-tight text-foreground">Settings</h1>
-          <p className="mt-2 text-lg text-muted-foreground">Integrations, evidence sources, and account controls</p>
-        </div>
-
-        <Card className="border-border/50 bg-card/40">
-          <CardContent className="pt-4">
-            <div className="flex flex-wrap gap-2">
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <Button
-                    key={item.id}
-                    variant={section === item.id ? "default" : "outline"}
-                    onClick={() => setSection(item.id)}
-                  >
-                    <Icon className="mr-2 h-4 w-4" />
-                    {item.label}
-                  </Button>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-
-        {activeMeta ? (
-          <div className="border-b border-border/50 pb-3">
-            <p className="text-sm font-medium text-foreground">{activeMeta.label}</p>
-            <p className="text-xs text-muted-foreground">{activeMeta.description}</p>
-          </div>
-        ) : null}
+        <PageHeading title={nl ? "Instellingen" : "Settings"} />
+        <SectionNavigation label={nl ? "Instellingengroepen" : "Settings sections"} items={navItems} value={section} onChange={setSection} />
+        {section === "workflow" && workflowPreferences.error && <QueryNotice error={workflowPreferences.error} retry={workflowPreferences.refetch} />}
+        {section === "workflow" && analysisCapabilities.error && <QueryNotice error={analysisCapabilities.error} retry={analysisCapabilities.refetch} />}
+        {section === "email" && providerQuery.error && <QueryNotice error={providerQuery.error} retry={providerQuery.refetch} />}
+        {section === "workflow" && <p role="status" className="text-xs text-muted-foreground">{updateWorkflowMutation.isPending ? (nl ? "Opslaan..." : "Saving...") : updateWorkflowMutation.isError ? (nl ? "Wijziging niet opgeslagen" : "Change not saved") : updateWorkflowMutation.isSuccess ? (nl ? "Wijziging opgeslagen" : "Change saved") : ""}</p>}
 
         {section === "workflow" ? (
           <div className="space-y-4">
-            <Card className="border-border/50 bg-card/50 shadow-sm">
-              <CardHeader>
+            <Card className="rounded-none border-0 border-t border-border bg-transparent shadow-none">
+              <CardHeader className="px-0 py-5">
                 <CardTitle>Document analysis</CardTitle>
                 <CardDescription>Choose how LARO analyzes new and existing evidence</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-5">
+              <CardContent className="px-0 space-y-5">
                 <div className="grid gap-4 md:grid-cols-2">
                   <label className="space-y-2 text-sm">
                     <span className="font-medium">Analysis provider</span>
                     <select
                       className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       value={workflowPreferences.data?.analysisProvider ?? "local"}
-                      disabled={workflowPreferences.isLoading || analysisCapabilities.isLoading || updateWorkflowMutation.isPending}
+                      disabled={preferencesUnavailable || !analysisCapabilities.data}
                       onChange={(event) => void updateWorkflow({ analysisProvider: event.target.value as "local" | "ollama" | "forge" | "openai" | "anthropic" | "google" | "deepseek" | "groq" | "together" })}
                     >
                       <option value="local">Local source extraction - no AI model</option>
@@ -303,9 +288,15 @@ export default function Settings() {
                     <Switch
                       id="auto-analyze-imports"
                       checked={workflowPreferences.data?.autoAnalyzeImports ?? true}
-                      disabled={workflowPreferences.isLoading || updateWorkflowMutation.isPending}
+                      disabled={preferencesUnavailable}
                       onCheckedChange={(checked) => void updateWorkflow({ autoAnalyzeImports: checked })}
                     />
+                  </div>
+                  <div className="flex items-center justify-between gap-4 border border-border/60 p-4">
+                    <Label htmlFor="auto-organize-documents">Discover and build dossiers automatically</Label>
+                    <Switch id="auto-organize-documents" checked={workflowPreferences.data?.autoOrganizeDocuments ?? true}
+                      disabled={preferencesUnavailable}
+                      onCheckedChange={(checked) => void updateWorkflow({ autoOrganizeDocuments: checked })} />
                   </div>
                 </div>
                 <div className="flex items-center justify-between gap-4 border-t border-border/60 pt-4">
@@ -316,25 +307,25 @@ export default function Settings() {
                   <Switch
                     id="share-raw-analysis"
                     checked={workflowPreferences.data?.shareRawDocumentContent ?? true}
-                    disabled={workflowPreferences.isLoading || updateWorkflowMutation.isPending}
+                    disabled={preferencesUnavailable}
                     onCheckedChange={(checked) => void updateWorkflow({ shareRawDocumentContent: checked })}
                   />
                 </div>
               </CardContent>
             </Card>
 
-            <Card className="border-border/50 bg-card/50 shadow-sm">
-              <CardHeader>
+            <Card className="rounded-none border-0 border-t border-border bg-transparent shadow-none">
+              <CardHeader className="px-0 py-5">
                 <CardTitle>Review and approval</CardTitle>
                 <CardDescription>Keep maximum control or reduce repetitive confirmations</CardDescription>
               </CardHeader>
-              <CardContent className="grid gap-5 md:grid-cols-2">
+              <CardContent className="px-0 grid gap-5 md:grid-cols-2">
                 <label className="space-y-2 text-sm">
                   <span className="font-medium">Outreach shortlist review</span>
                   <select
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={workflowPreferences.data?.outreachReviewMode ?? "each"}
-                    disabled={workflowPreferences.isLoading || updateWorkflowMutation.isPending}
+                    disabled={preferencesUnavailable}
                     onChange={(event) => void updateWorkflow({ outreachReviewMode: event.target.value as "each" | "batch" | "automatic" })}
                   >
                     <option value="each">Review every suggestion</option>
@@ -347,7 +338,7 @@ export default function Settings() {
                   <select
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     value={workflowPreferences.data?.messageApprovalMode ?? "each"}
-                    disabled={workflowPreferences.isLoading || updateWorkflowMutation.isPending}
+                    disabled={preferencesUnavailable}
                     onChange={(event) => void updateWorkflow({ messageApprovalMode: event.target.value as "each" | "batch" | "automatic" })}
                   >
                     <option value="each">Approve every message</option>
@@ -365,8 +356,8 @@ export default function Settings() {
         ) : null}
 
         {section === "email" ? (
-          <Card className="border-border/50 bg-card/50 shadow-sm">
-            <CardHeader>
+          <Card className="rounded-none border-0 border-t border-border bg-transparent shadow-none">
+            <CardHeader className="px-0 py-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <CardTitle>Email service</CardTitle>
@@ -380,7 +371,7 @@ export default function Settings() {
                 ) : null}
               </div>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="px-0 space-y-6">
               <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
                 <div className="space-y-2">
                   <Label>Provider</Label>
@@ -436,12 +427,12 @@ export default function Settings() {
         {section === "sources" ? (
           <div className="space-y-4">
             <EvidenceConnectionsCard />
-            <Card className="border-border/50 bg-card/50 shadow-sm">
-              <CardHeader>
+            <Card className="rounded-none border-0 border-t border-border bg-transparent shadow-none">
+              <CardHeader className="px-0 py-5">
                 <CardTitle>Local computer</CardTitle>
                 <CardDescription>Folders included in case keyword pulls</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="px-0 space-y-3">
                 <Button variant="outline" onClick={() => void openScanner()}>
                   <HardDrive className="mr-2 h-4 w-4" />
                   Add folder
@@ -473,8 +464,8 @@ export default function Settings() {
 
         {section === "hai" ? (
           <div className="space-y-4">
-            <Card className="border-border/50 bg-card/50 shadow-sm">
-              <CardHeader>
+            <Card className="rounded-none border-0 border-t border-border bg-transparent shadow-none">
+              <CardHeader className="px-0 py-5">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <CardTitle className="flex items-center gap-2"><Link2 className="h-5 w-5" />HAI connector</CardTitle>
@@ -483,7 +474,7 @@ export default function Settings() {
                   <Badge variant="outline">Read only</Badge>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-5">
+              <CardContent className="px-0 space-y-5">
                 <div className="grid gap-4 lg:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="hai-base-url">LARO base URL</Label>
@@ -575,12 +566,12 @@ export default function Settings() {
               </CardContent>
             </Card>
 
-            <Card className="border-border/50 bg-card/50 shadow-sm">
-              <CardHeader>
+            <Card className="rounded-none border-0 border-t border-border bg-transparent shadow-none">
+              <CardHeader className="px-0 py-5">
                 <CardTitle>Credentials</CardTitle>
                 <CardDescription>Active, expired, and revoked HAI access</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="px-0">
                 {haiTokens.isLoading ? (
                   <p className="text-sm text-muted-foreground">Loading credentials...</p>
                 ) : haiTokens.error ? (
@@ -624,26 +615,31 @@ export default function Settings() {
 
         {section === "security" ? (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <Card className="border-border/50 bg-card/50 shadow-sm">
-              <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4 lg:col-span-2">
+              <h2 className="text-base font-semibold">{nl ? "Privacy en account" : "Privacy and account"}</h2>
+              <Button variant="outline" onClick={() => setLocation("/privacy")}><Shield className="h-4 w-4" />{nl ? "Privacy-instellingen" : "Privacy settings"}</Button>
+            </div>
+            <Card className="rounded-none border-0 border-t border-border bg-transparent shadow-none">
+              <CardHeader className="px-0 py-5">
                 <CardTitle className="flex items-center gap-2"><FileArchive className="h-5 w-5" />Account archive</CardTitle>
                 <CardDescription>Portable JSON export of data owned by your account</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="px-0">
                 <Button variant="outline" onClick={() => void handleAccountExport()} disabled={isExporting}>
                   <FileArchive className="mr-2 h-4 w-4" />
                   {isExporting ? "Exporting..." : "Download archive"}
                 </Button>
               </CardContent>
             </Card>
-            <Card className="border-border/50 bg-card/50 shadow-sm">
-              <CardHeader>
+            <Card className="rounded-none border-0 border-t border-border bg-transparent shadow-none">
+              <CardHeader className="px-0 py-5">
                 <CardTitle className="flex items-center gap-2"><History className="h-5 w-5" />Activity history</CardTitle>
                 <CardDescription>Up to 200 recent audit entries for your account</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="px-0 space-y-3">
+                {auditLog.error && <QueryNotice error={auditLog.error} retry={auditLog.refetch} />}
                 <p className="text-sm text-muted-foreground">
-                  {auditLog.isLoading ? "Loading..." : `${auditLog.data?.length ?? 0} entries available`}
+                  {auditLog.isLoading ? "Loading..." : auditLog.data ? `${auditLog.data.length} entries available` : ""}
                 </p>
                 <Button variant="outline" onClick={() => void handleActivityExport()} disabled={isDownloadingActivity}>
                   <History className="mr-2 h-4 w-4" />
@@ -651,12 +647,12 @@ export default function Settings() {
                 </Button>
               </CardContent>
             </Card>
-            <Card className="border-border/50 bg-card/50 shadow-sm lg:col-span-2">
-              <CardHeader>
+            <Card className="rounded-none border-0 border-t border-border bg-transparent shadow-none lg:col-span-2">
+              <CardHeader className="px-0 py-5">
                 <CardTitle className="flex items-center gap-2"><HardDrive className="h-5 w-5" />Legacy workspace imports</CardTitle>
                 <CardDescription>Owner-bound Flask migrations retained with source hashes and provenance</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="px-0 space-y-3">
                 {legacyImports.isLoading ? (
                   <p className="text-sm text-muted-foreground">Loading migration history...</p>
                 ) : legacyImports.error ? (

@@ -14,6 +14,7 @@ export interface WorkflowPreferences {
   analysisMode: AnalysisMode;
   analysisProvider: AnalysisProvider;
   autoAnalyzeImports: boolean;
+  autoOrganizeDocuments: boolean;
   shareRawDocumentContent: boolean;
   outreachReviewMode: ReviewMode;
   messageApprovalMode: ReviewMode;
@@ -23,6 +24,7 @@ export const DEFAULT_WORKFLOW_PREFERENCES: WorkflowPreferences = {
   analysisMode: "local",
   analysisProvider: "local",
   autoAnalyzeImports: true,
+  autoOrganizeDocuments: true,
   shareRawDocumentContent: true,
   outreachReviewMode: "each",
   messageApprovalMode: "each",
@@ -42,6 +44,7 @@ function parseWorkflowPreferences(value: string | null | undefined): WorkflowPre
       analysisMode: analysisProvider === "local" || isLocalLLMProvider(analysisProvider) ? "local" : "cloud",
       analysisProvider,
       autoAnalyzeImports: parsed.autoAnalyzeImports !== false,
+      autoOrganizeDocuments: parsed.autoOrganizeDocuments !== false,
       shareRawDocumentContent: parsed.shareRawDocumentContent !== false,
       outreachReviewMode: ["each", "batch", "automatic"].includes(parsed.outreachReviewMode || "")
         ? parsed.outreachReviewMode as ReviewMode

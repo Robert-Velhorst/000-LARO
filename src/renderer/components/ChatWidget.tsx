@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { getElectronAPI } from "@/lib/electronApiShim";
 import { useWebSocket } from "@/contexts/WebSocketContext";
+import { CasePicker } from "@/components/WorkspaceUi";
 
 interface MessageCitation {
   evidenceId: string;
@@ -28,20 +29,21 @@ interface Message {
   notice?: string | null;
 }
 
-export default function ChatWidget({ embedded = false }: { embedded?: boolean }) {
+export function useChatSession() {
+  const [message, setMessage] = useState("");
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [caseId, setCaseId] = useState<string | null>(null);
+  return { message, setMessage, messages, setMessages, caseId, setCaseId };
+}
+
+export default function ChatWidget({ embedded = false, session }: { embedded?: boolean; session?: ReturnType<typeof useChatSession> }) {
   const { isConnected } = useWebSocket();
   const [location] = useLocation();
   const [isOpen, setIsOpen] = useState(embedded);
   const [isMinimized, setIsMinimized] = useState(false);
-  const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      role: "assistant",
-      content: "Hi! I'm LARO, your legal assistant. I'm here to help clarify any questions about your cases. Feel free to ask me anything!",
-      timestamp: new Date(),
-    },
-  ]);
+  const localSession = useChatSession();
+  const { message, setMessage, messages, setMessages, caseId, setCaseId } = session || localSession;
+  const utils = trpc.useUtils();
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { data: pendingQuestions } = trpc.clarifications.pending.useQuery(undefined, {
@@ -52,6 +54,7 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
   const answerMutation = trpc.clarifications.answer.useMutation({
     onSuccess: () => {
       toast.success("Answer recorded successfully!");
+      void utils.clarifications.pending.invalidate();
     },
     onError: (error: { message?: string }) => {
       toast.error(`Failed to record answer: ${error.message ?? "Unknown error"}`);
@@ -70,7 +73,7 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
   }, [messages]);
 
   const handleSend = async () => {
-    if (!message.trim() || askAssistantMutation.isPending) return;
+    if (!message.trim() || askAssistantMutation.isPending || answerMutation.isPending) return;
 
     const outgoingMessage = message;
     const newMessage: Message = {
@@ -91,25 +94,17 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
 
     if (matchingQuestion) {
       // Record answer to clarification question
-      answerMutation.mutate({
-        questionId: matchingQuestion.id,
-        answer: outgoingMessage,
-      });
-
-      const response: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: "Thank you! I've recorded your answer and will use it to improve your case matching.",
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, response]);
+      try {
+        await answerMutation.mutateAsync({ questionId: matchingQuestion.id, answer: outgoingMessage });
+        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: "assistant", content: "Your answer has been recorded.", timestamp: new Date() }]);
+      } catch {
+        setMessage(outgoingMessage);
+      }
     } else {
-      const caseIdFromLocalStorage =
-        typeof window !== "undefined" ? localStorage.getItem("active-case-context-id") || undefined : undefined;
       try {
         const result = await askAssistantMutation.mutateAsync({
           question: outgoingMessage,
-          caseId: caseIdFromLocalStorage,
+          caseId: caseId || undefined,
           page: location,
         });
         const response: Message = {
@@ -122,6 +117,7 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
         };
         setMessages(prev => [...prev, response]);
       } catch {
+        setMessage((current) => current || outgoingMessage);
         const fallback: Message = {
           id: (Date.now() + 1).toString(),
           role: "assistant",
@@ -179,17 +175,17 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
         <Card 
           className={
             embedded
-              ? `flex h-full min-h-[420px] max-h-[640px] flex-col border-border/50 bg-card/95 shadow-md ${isMinimized ? "min-h-14" : ""}`
+              ? "flex h-[min(600px,calc(100dvh_-_4rem))] min-h-0 flex-col rounded-none border-0 bg-background"
               : `fixed bottom-3 left-3 right-3 z-50 shadow-2xl border-border/50 bg-card/95 backdrop-blur-lg transition-all duration-300 sm:bottom-6 sm:left-auto sm:right-6 ${
                   isMinimized ? "h-14 sm:w-80" : "h-[calc(100dvh-1.5rem)] sm:h-[600px] sm:w-96"
                 }`
           }
         >
           {/* Header */}
-          <CardHeader className="flex flex-row items-center justify-between p-4 border-b border-border/50">
+          <CardHeader className={`flex flex-row items-center justify-between border-b border-border p-4 ${embedded ? "pr-12" : ""}`}>
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-full bg-gradient-to-r from-orange-500 to-orange-600 flex items-center justify-center">
-                <MessageSquare className="h-5 h-5 text-white" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10">
+                <MessageSquare className="h-5 w-5 text-primary" />
               </div>
               <div>
                 <CardTitle className="text-base">LARO Assistant</CardTitle>
@@ -201,7 +197,7 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <Button
+              {!embedded && <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => setIsMinimized(!isMinimized)}
@@ -213,7 +209,7 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
                 ) : (
                   <Minimize2 className="h-4 w-4" />
                 )}
-              </Button>
+              </Button>}
               {!embedded && (
                 <Button
                   variant="ghost"
@@ -227,6 +223,9 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
               )}
             </div>
           </CardHeader>
+          {!isMinimized && <div className="border-b border-border px-4 py-2">
+            <CasePicker value={caseId} onChange={setCaseId} disabled={askAssistantMutation.isPending || answerMutation.isPending} />
+          </div>}
 
           {/* Messages */}
           {!isMinimized && (
@@ -245,6 +244,7 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
                     {pendingQuestions.map((q) => (
                       <div key={q.id} className="text-sm text-foreground mb-2 last:mb-0">
                         <p className="font-medium">• {q.question}</p>
+                        <Button variant="ghost" size="sm" onClick={() => setMessages(previous => [...previous, { id: crypto.randomUUID(), role: "assistant", content: q.question, timestamp: new Date() }])}>Answer</Button>
                         {q.context && (
                           <p className="text-xs text-muted-foreground ml-3 mt-1">{q.context}</p>
                         )}
@@ -261,11 +261,11 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
                     <div
                       className={`max-w-[80%] rounded-lg p-3 ${
                         msg.role === "user"
-                          ? "bg-gradient-to-r from-orange-500 to-orange-600 text-white"
+                          ? "bg-primary text-primary-foreground"
                           : "bg-muted text-foreground"
                       }`}
                     >
-                      <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
+                      <p className="whitespace-pre-wrap break-words text-sm">{msg.content}</p>
                       {msg.notice ? (
                         <p className="mt-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
                           {msg.notice}
@@ -292,7 +292,7 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
                           ))}
                         </div>
                       ) : null}
-                      <p className={`text-xs mt-1 ${msg.role === "user" ? "text-orange-100" : "text-muted-foreground"}`}>
+                      <p className={`text-xs mt-1 ${msg.role === "user" ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
                         {msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </p>
                     </div>
@@ -316,8 +316,7 @@ export default function ChatWidget({ embedded = false }: { embedded?: boolean })
                     onClick={handleSend}
                     size="icon"
                     aria-label="Send message"
-                    className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700"
-                    disabled={!message.trim() || askAssistantMutation.isPending}
+                    disabled={!message.trim() || askAssistantMutation.isPending || answerMutation.isPending}
                   >
                     {askAssistantMutation.isPending
                       ? <Loader2 className="h-4 w-4 animate-spin" />

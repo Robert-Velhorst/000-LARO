@@ -97,6 +97,8 @@ jobs:
         run: npm run gate
       - name: Build application
         run: npm run build
+      - name: Install the selected Electron runtime
+        run: node node_modules/electron/install.js
       - name: Rebuild native modules for Electron
         run: npm run rebuild:electron
       - name: Verify Electron native database binding
@@ -104,8 +106,9 @@ jobs:
       - name: Package Windows portable application
         run: npx electron-builder --win --publish never
         env:
-          CSC_LINK: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'pfx' && secrets.WINDOWS_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ vars.WINDOWS_SIGNING_PROVIDER == 'pfx' && secrets.WINDOWS_CSC_KEY_PASSWORD || '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          CSC_LINK: ${{ startsWith(github.ref, 'refs/tags/') && vars.WINDOWS_SIGNING_PROVIDER == 'pfx' && secrets.WINDOWS_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && vars.WINDOWS_SIGNING_PROVIDER == 'pfx' && secrets.WINDOWS_CSC_KEY_PASSWORD || '' }}
       - name: Resolve portable artifact
         id: portable
         shell: pwsh
@@ -152,6 +155,19 @@ jobs:
       - name: Verify packaged single-instance profile lock
         shell: pwsh
         run: ./scripts/verify-single-instance.ps1 -ArtifactPath '${{ steps.portable.outputs.path }}'
+      - name: Verify the packaged Windows renderer and data workflows
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          node scripts/verify-packaged-windows.mjs "--app=release/$version/win-unpacked/LARO Desktop.exe"
+      - name: Upload packaged Windows verification
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: LARO-Windows-Verification
+          path: out/windows-verification/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Verify and stage release artifact
         shell: pwsh
         run: |

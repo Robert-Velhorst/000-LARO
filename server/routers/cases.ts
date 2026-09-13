@@ -6,7 +6,7 @@ import { assertCaseOwnership } from "../_core/authz";
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
 import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "../audit";
 import { cases as casesTable, outreachStatus, lawyers, evidence, systemConfig } from '../schema';
-import { eq, desc, asc, and, sql } from "drizzle-orm";
+import { eq, desc, asc, and, or, inArray, gte, sql, type SQL } from "drizzle-orm";
 import { sanitizeLegalAreas } from "../legalAreasValidator";
 import { classifyLegalAreas } from "../classification";
 import { createNotification } from "../notifications";
@@ -24,31 +24,61 @@ export const casesRouter = router({
   // client name and case summary.
   list: protectedProcedure
     .input(z.object({
-      page: z.number().min(1).optional().default(1),
-      limit: z.number().min(1).max(100).optional().default(10),
+      page: z.number().int().min(1).optional().default(1),
+      limit: z.number().int().min(1).max(100).optional().default(10),
       status: z.string().optional(),
+      statusGroup: z.enum(["open", "in_progress", "waiting_for_lawyer", "closed"]).optional(),
       urgency: z.enum(["Low", "Medium", "High"]).optional(),
       search: z.string().optional(),
+      matchingIds: z.array(z.string()).max(500).optional(),
+      legalArea: z.string().max(200).optional(),
+      createdWithin: z.enum(["today", "week", "month", "year"]).optional(),
       sortBy: z.enum(["createdAt", "updatedAt", "urgency", "clientName", "status"]).optional().default("createdAt"),
       sortDir: z.enum(["asc", "desc"]).optional().default("desc"),
     }).optional())
     .query(async ({ ctx, input }) => {
       const db = await getDb();
-      if (!db) return { cases: [], pagination: { total: 0, totalPages: 0, page: 1, limit: 10 } };
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Case storage is unavailable" });
 
       const userId = ctx.user.id;
       const page = input?.page || 1;
       const limit = input?.limit || 10;
       const offset = (page - 1) * limit;
 
-      const conditions: any[] = [eq(casesTable.userId, userId)];
+      const conditions: SQL[] = [eq(casesTable.userId, userId)];
       if (input?.status) conditions.push(eq(casesTable.status, input.status));
+      if (input?.statusGroup) {
+        const groups = {
+          open: ["intake", "matching", "active", "pending", "open", "new"],
+          in_progress: ["outreach", "in_progress", "review", "progress"],
+          waiting_for_lawyer: ["waiting_for_lawyer", "waiting"],
+          closed: ["closed", "matched", "resolved", "complete"],
+        };
+        conditions.push(inArray(sql`lower(replace(${casesTable.status}, ' ', '_'))`, groups[input.statusGroup]));
+      }
       if (input?.urgency) conditions.push(eq(casesTable.urgency, input.urgency));
       if (input?.search?.trim()) {
         const q = `%${input.search.trim().toLowerCase()}%`;
-        conditions.push(
-          sql`(lower(cases.clientName) LIKE ${q} OR lower(cases.caseSummary) LIKE ${q})`
-        );
+        const keyword = sql`(lower(${casesTable.clientName}) LIKE ${q} OR lower(${casesTable.caseSummary}) LIKE ${q} OR lower(${casesTable.caseType}) LIKE ${q})`;
+        // The owner condition still applies to every expanded result before pagination.
+        conditions.push(input.matchingIds?.length ? or(keyword, inArray(casesTable.id, input.matchingIds))! : keyword);
+      }
+      if (input?.legalArea?.trim()) {
+        const area = input.legalArea.trim().toLowerCase();
+        const aliases: Record<string, string[]> = {
+          family: ["family", "divorce", "custody", "familierecht", "marriage"],
+          employment: ["employment", "labor", "arbeid", "workplace", "termination", "wrongful"],
+          contract: ["contract", "agreement", "lease", "verbint", "commercial"],
+          "real-estate": ["real estate", "property", "huur", "tenancy", "huurrecht", "landlord"],
+        };
+        conditions.push(or(...(aliases[area] || [area]).map(term => {
+          const pattern = `%${term}%`;
+          return sql`(lower(${casesTable.caseType}) LIKE ${pattern} OR lower(${casesTable.caseSummary}) LIKE ${pattern} OR lower(${casesTable.legalAreas}) LIKE ${pattern})`;
+        }))!);
+      }
+      if (input?.createdWithin) {
+        const days = { today: 1, week: 7, month: 30, year: 365 }[input.createdWithin];
+        conditions.push(gte(casesTable.createdAt, new Date(Date.now() - days * 86400000)));
       }
       const where = and(...conditions);
 
@@ -64,7 +94,7 @@ export const casesRouter = router({
         .select()
         .from(casesTable)
         .where(where)
-        .orderBy(order)
+        .orderBy(order, asc(casesTable.id))
         .limit(limit)
         .offset(offset);
 

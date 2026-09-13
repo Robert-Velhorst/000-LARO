@@ -1,0 +1,8 @@
+SYNTHETIC TEST DOCUMENT - NOT A REAL CASE
+
+This file is used only to verify the isolated local LARO product preview.
+On 2026-08-01, Test Sender sent a letter about a fictional repair request.
+On 2026-08-03, Test Recipient acknowledged receipt of that letter.
+The repair has not been confirmed. No legal deadline has been established.
+
+This document contains no real client information and must not be sent externally.

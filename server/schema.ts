@@ -149,6 +149,61 @@ export const evidence = sqliteTable(
   })
 );
 
+export const documentInbox = sqliteTable("document_inbox", {
+  id: text("id").primaryKey(),
+  userId: text("userId").notNull().references(() => users.id),
+  fileName: text("fileName").notNull(),
+  sourcePath: text("sourcePath").notNull(),
+  sourceType: text("sourceType").notNull().default("manual"),
+  provenance: text("provenance"),
+  mimeType: text("mimeType").notNull(),
+  fileSize: integer("fileSize").notNull(),
+  storageKey: text("storageKey").notNull(),
+  contentHash: text("contentHash").notNull(),
+  analysis: text("analysis"),
+  sourceText: text("sourceText"),
+  discovery: text("discovery"),
+  error: text("error"),
+  decision: text("decision").notNull().default("pending"),
+  reason: text("reason"),
+  evidenceId: text("evidenceId").references(() => evidence.id, { onDelete: "set null" }),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+}, (table) => ({
+  sourceHashUnique: uniqueIndex("document_inbox_owner_source_identity_idx").on(table.userId, table.sourceType, table.sourcePath, table.contentHash),
+  ownerCreatedIdx: index("document_inbox_owner_created_idx").on(table.userId, table.createdAt),
+}));
+
+export const documentSourceJobs = sqliteTable("document_source_jobs", {
+  id: text("id").primaryKey(),
+  userId: text("userId").notNull().references(() => users.id),
+  kind: text("kind").notNull(),
+  config: text("config").notNull(),
+  status: text("status").notNull().default("running"),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+}, (table) => ({ ownerStatusIdx: index("document_source_jobs_owner_status_idx").on(table.userId, table.status) }));
+
+export const documentSourceWork = sqliteTable("document_source_work", {
+  id: text("id").primaryKey(),
+  jobId: text("jobId").notNull().references(() => documentSourceJobs.id, { onDelete: "cascade" }),
+  userId: text("userId").notNull().references(() => users.id),
+  kind: text("kind").notNull(),
+  payload: text("payload").notNull(),
+  label: text("label").notNull(),
+  isDocument: integer("isDocument", { mode: "boolean" }).notNull().default(false),
+  status: text("status").notNull().default("queued"),
+  inboxId: text("inboxId").references(() => documentInbox.id, { onDelete: "set null" }),
+  error: text("error"),
+  leaseToken: text("leaseToken"),
+  leaseUntil: integer("leaseUntil"),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+}, (table) => ({
+  jobStatusIdx: index("document_source_work_job_status_idx").on(table.jobId, table.status),
+  leaseIdx: index("document_source_work_lease_idx").on(table.status, table.leaseUntil),
+}));
+
 export const documentAnalyses = sqliteTable(
   "document_analyses",
   {
@@ -1046,3 +1101,32 @@ export const deadlines = sqliteTable("deadlines", {
   createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
   updatedAt: integer("updatedAt", { mode: "timestamp" }).default(new Date()),
 });
+
+export const caseActionEvidence = sqliteTable("case_action_evidence", {
+  id: text("id").primaryKey(),
+  userId: text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  caseId: text("caseId").notNull().references(() => cases.id, { onDelete: "cascade" }),
+  actionId: text("actionId").notNull().references(() => deadlines.id, { onDelete: "cascade" }),
+  evidenceId: text("evidenceId").references(() => evidence.id, { onDelete: "set null" }),
+  relation: text("relation").notNull(),
+  state: text("state").notNull(),
+  note: text("note").notNull(),
+  snapshot: text("snapshot").notNull(),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+}, (table) => ({ ownerAction: index("case_action_evidence_owner_action_idx").on(table.userId, table.actionId) }));
+
+export const caseActionProposals = sqliteTable("case_action_proposals", {
+  id: text("id").primaryKey(),
+  userId: text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  caseId: text("caseId").notNull().references(() => cases.id, { onDelete: "cascade" }),
+  evidenceId: text("evidenceId").references(() => evidence.id, { onDelete: "set null" }),
+  actionId: text("actionId").references(() => deadlines.id, { onDelete: "set null" }),
+  state: text("state").notNull(),
+  snapshot: text("snapshot").notNull(),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+}, (table) => ({
+  ownerCase: index("case_action_proposals_owner_case_idx").on(table.userId, table.caseId),
+  action: uniqueIndex("case_action_proposals_action_idx").on(table.actionId),
+}));

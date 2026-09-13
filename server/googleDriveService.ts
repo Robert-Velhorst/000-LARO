@@ -243,7 +243,7 @@ export async function getAllFilesInFolder(
   return allFiles;
 }
 
-function escapeDriveQueryLiteral(value: string): string {
+export function escapeDriveQueryLiteral(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 

@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, Plus, X, Search, Calendar, Mail, Play, Settings2, Sparkles, Folder, Cloud } from "lucide-react";
 import { toast } from "sonner";
 import { GoogleDriveFolderBrowser } from "./GoogleDriveFolderBrowser";
+import { savedGoogleDriveSources, type GoogleDriveSource } from "../../../shared/googleDriveSources";
 
 interface AutoCollectionSettingsProps {
   caseId: string;
@@ -26,8 +27,8 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
   const [selectedDriveAccountId, setSelectedDriveAccountId] = useState("");
   const [autoDownloadAttachments, setAutoDownloadAttachments] = useState(true);
   const [autoDownloadGoogleDriveFiles, setAutoDownloadGoogleDriveFiles] = useState(true);
-  const [selectedDriveFolderIds, setSelectedDriveFolderIds] = useState<string[]>([]);
-  const [selectedDriveFolderNames, setSelectedDriveFolderNames] = useState<string[]>([]);
+  const [driveSources, setDriveSources] = useState<GoogleDriveSource[]>([]);
+  const [driveSelectionError, setDriveSelectionError] = useState("");
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
 
   // Fetch existing settings
@@ -37,7 +38,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
   );
 
   // Fetch connected email accounts
-  const { data: accountsData } = trpc.emailAccounts.list.useQuery();
+  const { data: accountsData } = trpc.emailAccounts.list.useQuery(undefined, { refetchOnWindowFocus: true });
   
   const emailAccounts = accountsData ?? [];
   const googleAccounts = emailAccounts.filter((account) => account.provider === "gmail");
@@ -48,6 +49,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
       toast.success("Auto-collection settings saved");
       if (data.runResult) {
         toast.success(`Evidence automatically pulled: ${data.runResult.emailsProcessed} emails, ${data.runResult.filesDownloaded} files`);
+        if (data.runResult.errors.length) toast.error(data.runResult.errors.join("; "));
       } else if (data.error) {
         toast.error(`Settings saved, but auto-pull failed: ${data.error}`);
       }
@@ -62,6 +64,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
       toast.success(
         `Collection complete: ${data.result.emailsProcessed} emails, ${data.result.filesDownloaded} files`
       );
+      if (data.result.errors.length) toast.error(data.result.errors.join("; "));
     },
     onError: (error) => {
       toast.error(`Collection failed: ${error.message}`);
@@ -87,30 +90,22 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
         ? JSON.parse(s.emailAccountIds)
         : (Array.isArray(s.emailAccountIds) ? s.emailAccountIds : []);
       setSelectedAccountIds(parsedAccountIds);
-      if (s.metadata) {
-        try {
-          const metadata = JSON.parse(s.metadata);
-          setSelectedDriveAccountId(
-            typeof metadata.googleDriveAccountId === "string" ? metadata.googleDriveAccountId : "",
-          );
-        } catch {
-          setSelectedDriveAccountId("");
-        }
+      setDriveSelectionError("");
+      try {
+        const saved = savedGoogleDriveSources(s.metadata);
+        const metadata = JSON.parse(s.metadata || "{}");
+        const legacyFolders = JSON.parse(s.googleDriveFolderIds || "[]") as string[];
+        const legacyId = metadata.googleDriveAccountId || "";
+        setDriveSources(saved ?? (legacyId || legacyFolders.length ? [{
+          accountId: legacyId, folderIds: legacyFolders.length ? legacyFolders : ["root"],
+        }] : []));
+      } catch {
+        setDriveSelectionError("Saved Drive selection could not be read. Reload before saving.");
       }
       
       setAutoDownloadAttachments(s.autoDownloadAttachments ?? true);
       setAutoDownloadGoogleDriveFiles(s.autoDownloadGoogleDriveFiles ?? true);
       
-      if (s.googleDriveFolderIds) {
-        try {
-          const folderIds = typeof s.googleDriveFolderIds === 'string'
-            ? JSON.parse(s.googleDriveFolderIds)
-            : s.googleDriveFolderIds;
-          setSelectedDriveFolderIds(folderIds);
-        } catch (e) {
-          console.error("Failed to parse Google Drive folder IDs:", e);
-        }
-      }
       
       if (s.dateRangeStart) {
         setDateRangeStart(new Date(s.dateRangeStart).toISOString().split("T")[0]);
@@ -134,6 +129,10 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
   };
 
   const handleSaveSettings = () => {
+    if (driveSelectionError || driveSources.some((source) => !source.accountId)) {
+      toast.error(driveSelectionError || "Select the Google account for the existing Drive folders first.");
+      return;
+    }
     if (keywords.length === 0) {
       toast.error("Please add at least one keyword");
       return;
@@ -146,8 +145,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
       dateRangeStart: dateRangeStart ? new Date(dateRangeStart) : undefined,
       dateRangeEnd: dateRangeEnd ? new Date(dateRangeEnd) : undefined,
       emailAccountIds: selectedAccountIds,
-      googleDriveAccountId: selectedDriveAccountId || undefined,
-      googleDriveFolderIds: selectedDriveFolderIds,
+      googleDriveSources: driveSources,
       autoDownloadAttachments,
       autoDownloadGoogleDriveFiles,
     });
@@ -161,18 +159,23 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
     runCollectionMutation.mutate({ caseId });
   };
 
-  const handleRemoveDriveFolder = (index: number) => {
-    const newFolderIds = [...selectedDriveFolderIds];
-    const newFolderNames = [...selectedDriveFolderNames];
-    newFolderIds.splice(index, 1);
-    newFolderNames.splice(index, 1);
-    setSelectedDriveFolderIds(newFolderIds);
-    setSelectedDriveFolderNames(newFolderNames);
+  const handleRemoveDriveFolder = (accountId: string, folderId: string) => {
+    setDriveSources((sources) => sources.map((source) => source.accountId !== accountId ? source : {
+      ...source,
+      folderIds: source.folderIds.filter((id) => id !== folderId),
+      folderNames: source.folderIds.flatMap((id, index) => id === folderId ? [] : [source.folderNames?.[index] || id]),
+    }).filter((source) => source.folderIds.length > 0));
   };
 
   const handleFoldersSelected = (folderIds: string[], folderNames: string[], accountId: string) => {
-    setSelectedDriveFolderIds(folderIds);
-    setSelectedDriveFolderNames(folderNames);
+    setDriveSources((sources) => {
+      const existing = sources.find((source) => source.accountId === accountId);
+      const folders = new Map(existing?.folderIds.map((id, index) => [id, existing.folderNames?.[index] || id]));
+      folderIds.forEach((id, index) => folders.set(id, folderNames[index] || id));
+      return [...sources.filter((source) => source.accountId !== accountId), {
+        accountId, folderIds: [...folders.keys()], folderNames: [...folders.values()],
+      }];
+    });
     setSelectedDriveAccountId(accountId);
     setShowFolderBrowser(false);
     toast.success(`Selected ${folderIds.length} folder(s)`);
@@ -359,29 +362,31 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                     Select specific folders in Google Drive to monitor for evidence
                   </p>
 
-                  {selectedDriveAccountId && (
-                    <Badge variant="outline">
-                      {googleAccounts.find((account) => account.id === selectedDriveAccountId)?.email || "Selected Google account"}
-                    </Badge>
-                  )}
-                  
-                  <div className="flex flex-wrap gap-2">
-                    {selectedDriveFolderIds.map((folderId, index) => (
-                      <Badge key={folderId} variant="secondary" className="gap-1 px-3 py-1">
-                        <Folder className="h-3 w-3" />
-                        {selectedDriveFolderNames[index] || folderId}
-                        <button
-                          onClick={() => handleRemoveDriveFolder(index)}
-                          className="ml-1 hover:text-destructive"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </Badge>
-                    ))}
-                    {selectedDriveFolderIds.length === 0 && (
-                      <span className="text-sm text-muted-foreground">No folders selected</span>
-                    )}
-                  </div>
+                  {driveSelectionError && <p role="alert" className="text-sm text-destructive">{driveSelectionError}</p>}
+                  {driveSources.map((source) => (
+                    <div key={source.accountId} className="space-y-2 border-b pb-3" data-testid="drive-source-selection">
+                      <p className="break-all text-sm font-medium">
+                        {googleAccounts.find((account) => account.id === source.accountId)?.email || "Google account unavailable"}
+                      </p>
+                      {!source.accountId && <Select onValueChange={(accountId) => setDriveSources((sources) => sources.map((item) => item === source ? { ...item, accountId } : item))}>
+                        <SelectTrigger aria-label="Account for existing Drive folders"><SelectValue placeholder="Select account for existing folders" /></SelectTrigger>
+                        <SelectContent>{googleAccounts.filter((account) => !driveSources.some((item) => item.accountId === account.id)).map((account) => <SelectItem key={account.id} value={account.id}>{account.email}</SelectItem>)}</SelectContent>
+                      </Select>}
+                      <div className="flex flex-wrap gap-2">
+                        {source.folderIds.map((folderId, index) => (
+                          <Badge key={folderId} variant="secondary" className="max-w-full gap-1 px-3 py-1">
+                            <Folder className="h-3 w-3 shrink-0" />
+                            <span className="break-all">{folderId === "root" ? "My Drive (all folders)" : source.folderNames?.[index] || folderId}</span>
+                            <button type="button" aria-label={`Remove ${source.folderNames?.[index] || folderId}`}
+                              onClick={() => handleRemoveDriveFolder(source.accountId, folderId)} className="ml-1 shrink-0 hover:text-destructive">
+                              <X className="h-3 w-3" />
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  {driveSources.length === 0 && <p className="text-sm text-muted-foreground">No Drive folders selected</p>}
 
                   <Button
                     variant="outline"

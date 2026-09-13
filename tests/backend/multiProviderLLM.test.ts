@@ -78,6 +78,52 @@ describe("multi-provider LLM adapter", () => {
     });
   });
 
+  it("preserves the full schema for local structured analysis instead of silently downgrading it", async () => {
+    vi.stubEnv("LARO_OLLAMA_MODEL", "qwen-test");
+    vi.stubEnv("LARO_OLLAMA_BASE_URL", "http://127.0.0.1:11434");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: '{"action":"review"}' } }] })));
+    vi.stubGlobal("fetch", fetchMock);
+    const format = { type: "json_schema" as const, json_schema: { name: "decision", strict: true,
+      schema: { type: "object", properties: { action: { type: "string", enum: ["create", "assign", "review"] } }, required: ["action"], additionalProperties: false } } };
+    await invokeLLM({ provider: "ollama", messages: [{ role: "system", content: "Use source evidence." }, { role: "user", content: "Source document" }], response_format: format });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(String(init.body));
+    expect(payload.response_format).toEqual(format);
+    expect(payload.temperature).toBe(0);
+    expect(payload.messages.some((message: any) => message.role === "system" && message.content.includes(JSON.stringify(format.json_schema.schema)))).toBe(true);
+    expect(payload.messages).toContainEqual({ role: "user", content: "Source document" });
+  });
+
+  it("keeps schema instructions when a compatible provider needs a JSON-object fallback", async () => {
+    vi.stubEnv("GROQ_API_KEY", "test-groq-key");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: "{}" } }] })));
+    vi.stubGlobal("fetch", fetchMock);
+    const schema = { type: "object", properties: { decision: { type: "string" } }, required: ["decision"] };
+    await invokeLLM({ provider: "groq", messages: [{ role: "user", content: "Source document" }], outputSchema: { name: "decision", schema } });
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(String(init.body));
+    expect(payload.response_format).toEqual({ type: "json_object" });
+    expect(payload.messages.some((message: any) => message.role === "system" && message.content.includes(JSON.stringify(schema)))).toBe(true);
+    expect(payload.messages).toContainEqual({ role: "user", content: "Source document" });
+  });
+
+  it("uses explicit local reasoning controls without silently changing the default", async () => {
+    vi.stubEnv("LARO_OLLAMA_MODEL", "qwen-test");
+    vi.stubEnv("LARO_OLLAMA_BASE_URL", "http://127.0.0.1:11434");
+    vi.stubEnv("LARO_OLLAMA_REASONING_EFFORT", "");
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ choices: [{ message: { content: "{}" } }] })));
+    vi.stubGlobal("fetch", fetchMock);
+    const request = { provider: "ollama" as const, messages: [{ role: "user" as const, content: "Source document" }] };
+    await invokeLLM(request);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).not.toHaveProperty("reasoning_effort");
+    vi.stubEnv("LARO_OLLAMA_REASONING_EFFORT", "none");
+    await invokeLLM(request);
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1].body)).reasoning_effort).toBe("none");
+    vi.stubEnv("LARO_OLLAMA_REASONING_EFFORT", "invalid");
+    await expect(invokeLLM(request)).rejects.toThrow(/LARO_OLLAMA_REASONING_EFFORT/);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("uses OpenAI's current completion-token field", async () => {
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({

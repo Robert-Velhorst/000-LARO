@@ -212,7 +212,7 @@ export function beginOAuthFlow(provider: OAuthProvider, userId: string): string 
       response_type: "code",
       scope: config.scopes.join(" "),
       access_type: "offline",
-      prompt: "consent",
+      prompt: "consent select_account",
       state,
       code_challenge: codeChallenge,
       code_challenge_method: "S256",
@@ -484,7 +484,10 @@ export async function saveEmailAccount(
       .get();
     const accountId = existing?.id ?? nanoid();
     if (existing) {
-      tx.update(emailAccounts).set(row).where(eq(emailAccounts.id, existing.id)).run();
+      tx.update(emailAccounts).set({
+        ...row,
+        refreshToken: row.refreshToken ?? existing.refreshToken,
+      }).where(eq(emailAccounts.id, existing.id)).run();
     } else {
       tx.insert(emailAccounts).values({ id: accountId, ...row, createdAt: new Date() }).run();
     }
@@ -497,7 +500,7 @@ export async function saveEmailAccount(
         provider: provider === "gmail" ? "google" : "microsoft",
         requestedScopes: getOAuth2Config(provider).scopes,
         tokenReportedScopes: tokens.scope ? tokens.scope.split(/\s+/).filter(Boolean) : [],
-        refreshGrantStored: Boolean(tokens.refreshToken),
+        refreshGrantStored: Boolean(row.refreshToken ?? existing?.refreshToken),
       },
     });
     return accountId;

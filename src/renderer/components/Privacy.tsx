@@ -8,6 +8,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
+import { PageHeading, QueryNotice } from "@/components/WorkspaceUi";
+import { Link } from "wouter";
 
 export default function Privacy() {
   const [confirmEmail, setConfirmEmail] = useState("");
@@ -65,11 +67,9 @@ export default function Privacy() {
 
   return (
     <DashboardLayout>
-      <main className="space-y-6 p-4 md:p-6">
-        <header>
-          <h1 className="text-2xl font-semibold">Privacy and data</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Export account data, control optional processing, or erase the account.</p>
-        </header>
+      <section className="space-y-6">
+        <PageHeading title="Privacy and data" actions={<Button variant="outline" asChild><Link href="/settings?section=security">Back to settings</Link></Button>} />
+        {me.error && <QueryNotice error={me.error} retry={me.refetch} />}
 
         <section className="grid gap-4 lg:grid-cols-2">
           <Card>
@@ -90,8 +90,8 @@ export default function Privacy() {
                 <div className="space-y-3">
                   <Input aria-label="Confirm signed-in email" type="email" value={confirmEmail} onChange={(event) => setConfirmEmail(event.target.value)} placeholder={me.data?.email || "Signed-in email"} autoComplete="email" />
                   <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => { setShowDelete(false); setConfirmEmail(""); }}>Cancel</Button>
-                    <Button variant="destructive" onClick={removeAccount} disabled={deleteData.isPending}>{deleteData.isPending ? "Deleting..." : "Erase account"}</Button>
+                    <Button variant="outline" disabled={deleteData.isPending} onClick={() => { setShowDelete(false); setConfirmEmail(""); }}>Cancel</Button>
+                    <Button variant="destructive" onClick={removeAccount} disabled={deleteData.isPending || !me.data?.email || confirmEmail.trim().toLowerCase() !== me.data.email.toLowerCase()}>{deleteData.isPending ? "Deleting..." : "Erase account"}</Button>
                   </div>
                 </div>
               )}
@@ -101,13 +101,15 @@ export default function Privacy() {
 
         <section>
           <div className="mb-3 flex items-center gap-2"><Shield className="h-4 w-4" /><h2 className="text-base font-semibold">Optional processing</h2></div>
+          {consent.error && <QueryNotice error={consent.error} retry={consent.refetch} />}
+          {consent.isLoading && <p role="status" className="py-3 text-sm text-muted-foreground">Loading privacy preferences...</p>}
           <div className="divide-y rounded-md border">
             <div className="flex items-center justify-between gap-4 p-4"><div><p className="text-sm font-medium">Service data processing</p><p className="text-xs text-muted-foreground">Required to operate cases, evidence, and matching.</p></div><span className="text-xs font-medium">Required</span></div>
-            <div className="flex items-center justify-between gap-4 p-4"><div><p className="text-sm font-medium">Marketing communication</p><p className="text-xs text-muted-foreground">Optional product and service communication.</p></div><Switch aria-label="Allow marketing communication" checked={Boolean(consent.data?.marketing)} onCheckedChange={(value) => setConsent("marketing", value)} disabled={updateConsent.isPending} /></div>
-            <div className="flex items-center justify-between gap-4 p-4"><div><p className="text-sm font-medium">Usage analytics</p><p className="text-xs text-muted-foreground">Optional product-usage measurement.</p></div><Switch aria-label="Allow usage analytics" checked={Boolean(consent.data?.analytics)} onCheckedChange={(value) => setConsent("analytics", value)} disabled={updateConsent.isPending} /></div>
+            <div className="flex items-center justify-between gap-4 p-4"><div><p className="text-sm font-medium">Marketing communication</p><p className="text-xs text-muted-foreground">Optional product and service communication.</p></div><Switch aria-label="Allow marketing communication" checked={Boolean(consent.data?.marketing)} onCheckedChange={(value) => setConsent("marketing", value)} disabled={updateConsent.isPending || !consent.data || !!consent.error} /></div>
+            <div className="flex items-center justify-between gap-4 p-4"><div><p className="text-sm font-medium">Usage analytics</p><p className="text-xs text-muted-foreground">Optional product-usage measurement.</p></div><Switch aria-label="Allow usage analytics" checked={Boolean(consent.data?.analytics)} onCheckedChange={(value) => setConsent("analytics", value)} disabled={updateConsent.isPending || !consent.data || !!consent.error} /></div>
           </div>
         </section>
-      </main>
+      </section>
     </DashboardLayout>
   );
 }

@@ -37,8 +37,8 @@ function isS3Configured(): boolean {
   return !!process.env.AWS_S3_BUCKET;
 }
 
-function localBaseDir(): string {
-  return process.env.LOCAL_STORAGE_DIR || path.join(process.cwd(), 'laro-uploads');
+export function getLocalStorageDirectory(): string {
+  return path.resolve(process.env.LOCAL_STORAGE_DIR || path.join(process.cwd(), 'laro-uploads'));
 }
 
 /**
@@ -75,7 +75,7 @@ export function hashBuffer(body: Buffer | string): string {
 }
 
 function resolveLocalPath(key: string): string {
-  const base = path.resolve(localBaseDir());
+  const base = getLocalStorageDirectory();
   const full = path.resolve(base, key);
   // Defence in depth: ensure the resolved path stays inside the base dir.
   if (full !== base && !full.startsWith(base + path.sep)) {
