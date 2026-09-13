@@ -193,8 +193,8 @@ describe('production readiness regressions', () => {
     const dashboardLayout = readFileSync(join(ROOT, 'src/renderer/components/DashboardLayout.tsx'), 'utf8');
     const translations = readFileSync(join(ROOT, 'shared/i18n.ts'), 'utf8');
     expect(dashboardRoutes).toContain('<Route path="/evidence" component={Evidence} />');
-    expect(dashboardLayout).toContain('labelKey: "nav.evidence", path: "/evidence"');
-    expect(translations).toContain('"nav.evidence": { nl: "Bewijs", en: "Evidence" }');
+    expect(dashboardLayout).toContain('label: "nav.evidence", path: "/evidence"');
+    expect(translations).toContain('"nav.evidence": { nl: "Documenten", en: "Documents" }');
   });
 
   it('uses encrypted PKCE state for Google OAuth', async () => {
@@ -289,7 +289,9 @@ describe('production readiness regressions', () => {
       expect(procedures[name]?._def.mutation, name).toBe(true);
       expect(procedures[name]?._def.query, name).not.toBe(true);
     }
-  });
+  // This imports the complete source router graph, not a timed HTTP operation.
+  // Cold TypeScript transforms on a loaded or mounted drive can exceed 30 seconds.
+  }, 120_000);
 
   it('opens OAuth in the system browser and refreshes desktop connection state', () => {
     const main = readFileSync(join(ROOT, 'src-main/index.ts'), 'utf8');
@@ -316,8 +318,9 @@ describe('production readiness regressions', () => {
     expect(caseDetails).toContain('connectingGoogle ? "Finishing Google connection..." : "Connect Google"');
     expect(oauthFlow).toContain('document.addEventListener("visibilitychange", refreshOnReturn)');
     expect(oauthFlow).toContain('oauthWindowRef.current?.closed');
-    expect(connections).toContain('Finishing Google connection...');
-    expect(connections).toContain('Google connection status could not be loaded.');
+    expect(connections).toContain('connecting ? "Waiting for Google..." : "Add Google account"');
+    expect(connections).toContain('Accounts could not be loaded.');
+    expect(connections).toContain('onClick={cancelConnection}');
     expect(caseDetails).toContain('Google status unavailable');
     expect(existsSync(join(ROOT, 'src/renderer/components/GmailSimple.tsx'))).toBe(false);
     expect(existsSync(join(ROOT, 'src/renderer/components/GoogleDriveSimple.tsx'))).toBe(false);
@@ -814,7 +817,8 @@ describe('production readiness regressions', () => {
     expect(dashboard).not.toContain('/billing');
     expect(dashboard).not.toContain('/reports');
     expect(dashboard).toContain('lazy(() => import("@/components/Cases"))');
-    expect(dashboard).toContain('<Suspense fallback={<DashboardSkeleton />}>');
+    expect(dashboard).toContain('<Suspense fallback={<div role="status"');
+    expect(dashboard).toContain('{t("common.loading")}');
   });
 
   it('ships review-gated media and organization matching inside Outreach', () => {

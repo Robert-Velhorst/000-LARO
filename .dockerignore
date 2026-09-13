@@ -3,10 +3,10 @@ dist
 release
 .git
 .github
-src
 src-main
 assets/*
 !assets/legal-taxonomy-mapping.json
+!assets/legal-keywords.json
 !assets/rechtspraak-keywords-analysis.json
 tests
 docs

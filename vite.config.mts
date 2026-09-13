@@ -21,6 +21,17 @@ export default defineConfig({
   build: {
     outDir: 'dist/renderer',
     emptyOutDir: true,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: 'react-runtime', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/, priority: 20 },
+            { name: 'ui-primitives', test: /node_modules[\\/](@radix-ui|@floating-ui)[\\/]/, entriesAware: true, priority: 10 },
+            { name: 'realtime', test: /node_modules[\\/](socket.io-client|engine.io-client|socket.io-parser|engine.io-parser)[\\/]/, priority: 10 },
+          ],
+        },
+      },
+    },
   },
 
   server: {

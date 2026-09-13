@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { MultiAreaOutreachProgress } from "@/components/OutreachProgressBar";
 import {
@@ -57,23 +57,26 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { LegalAreasSelect } from "@/components/LegalAreasSelect";
-import { EvidenceCollection } from "@/components/EvidenceCollection";
-import TimelineView from "@/components/TimelineView";
-import CommunicationHub from "@/components/CommunicationHub";
-import EvidenceTimelineView from "@/components/EvidenceTimelineView";
-import OutreachAnalyticsView from "@/components/OutreachAnalyticsView";
-import { EvidenceGapAnalysisDashboard } from "@/components/EvidenceGapAnalysisDashboard";
-import EnhancedEvidenceUpload from "@/components/EnhancedEvidenceUpload";
-import { CollectionMonitoringDashboard } from "@/components/CollectionMonitoringDashboard";
-import ProgressTrackingDashboard from "@/components/ProgressTrackingDashboard";
-import { AutomatedDocumentAnalysis } from "@/components/AutomatedDocumentAnalysis";
-import { CaseTimeline } from "@/components/CaseTimeline";
-import { CaseReconstruction } from "@/components/CaseReconstruction";
 import { exportCaseSummary, printCaseSummary } from "@/lib/export";
 import { getElectronAPI, isElectron } from "@/lib/electronApiShim";
-import CaseStatusWorkflow from "@/components/CaseStatusWorkflow";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGoogleOAuthConnection } from "@/hooks/useGoogleOAuthConnection";
+import { QueryNotice } from "@/components/WorkspaceUi";
+
+const EvidenceCollection = lazy(() => import("@/components/EvidenceCollection").then((module) => ({ default: module.EvidenceCollection })));
+const TimelineView = lazy(() => import("@/components/TimelineView"));
+const CommunicationHub = lazy(() => import("@/components/CommunicationHub"));
+const EvidenceTimelineView = lazy(() => import("@/components/EvidenceTimelineView"));
+const OutreachAnalyticsView = lazy(() => import("@/components/OutreachAnalyticsView"));
+const EvidenceGapAnalysisDashboard = lazy(() => import("@/components/EvidenceGapAnalysisDashboard").then((module) => ({ default: module.EvidenceGapAnalysisDashboard })));
+const EnhancedEvidenceUpload = lazy(() => import("@/components/EnhancedEvidenceUpload"));
+const CollectionMonitoringDashboard = lazy(() => import("@/components/CollectionMonitoringDashboard").then((module) => ({ default: module.CollectionMonitoringDashboard })));
+const ProgressTrackingDashboard = lazy(() => import("@/components/ProgressTrackingDashboard"));
+const AutomatedDocumentAnalysis = lazy(() => import("@/components/AutomatedDocumentAnalysis").then((module) => ({ default: module.AutomatedDocumentAnalysis })));
+const CaseTimeline = lazy(() => import("@/components/CaseTimeline").then((module) => ({ default: module.CaseTimeline })));
+const CaseReconstruction = lazy(() => import("@/components/CaseReconstruction").then((module) => ({ default: module.CaseReconstruction })));
+const CaseActionManager = lazy(() => import("@/components/CaseActionManager"));
+const CaseStatusWorkflow = lazy(() => import("@/components/CaseStatusWorkflow"));
 
 interface EnhancedCaseDetailsDialogProps {
   caseId: string;
@@ -521,8 +524,8 @@ const NAV_ITEMS = [
   { id: "overview", label: "Overview", icon: Briefcase },
   { id: "status", label: "Status", icon: Activity },
   { id: "progress", label: "Progress", icon: TrendingUp },
-  { id: "messages", label: "Messages", icon: MessageSquare },
-  { id: "evidence", label: "Evidence", icon: FileText },
+  { id: "messages", label: "Notes", icon: MessageSquare },
+  { id: "evidence", label: "Documents", icon: FileText },
   { id: "analysis", label: "Analysis", icon: Sparkles },
   { id: "evidence-timeline", label: "Timeline", icon: GitBranch },
   { id: "gap-analysis", label: "Gap Analysis", icon: Shield },
@@ -530,6 +533,17 @@ const NAV_ITEMS = [
   { id: "outreach", label: "Outreach", icon: Send },
   { id: "outreach-analytics", label: "Analytics", icon: BarChart3 },
 ] as const;
+
+const PRIMARY_CASE_TABS = ["overview", "evidence", "evidence-timeline", "messages", "outreach"];
+function savedCaseTab(caseId: string): string {
+  try {
+    const saved = localStorage.getItem(`case-tab-${caseId}`);
+    const value = saved === "timeline" ? "evidence-timeline" : saved;
+    return NAV_ITEMS.some((item) => item.id === value) ? value! : "overview";
+  } catch {
+    return "overview";
+  }
+}
 
 /* ─── Outreach progress wrapper ─── */
 function OutreachProgressVisualization({ caseId }: { caseId: string }) {
@@ -555,6 +569,7 @@ export default function EnhancedCaseDetailsDialog({
   const [matchLocation, setMatchLocation] = useState("");
   const [requireSpecializationAssociation, setRequireSpecializationAssociation] = useState(false);
   const [requiresFinancedLegalAid, setRequiresFinancedLegalAid] = useState(false);
+  const [searchedCaseId, setSearchedCaseId] = useState<string | null>(null);
   const [appliedMatchFilters, setAppliedMatchFilters] = useState({
     maxDistance: 50,
     location: "",
@@ -570,28 +585,26 @@ export default function EnhancedCaseDetailsDialog({
   const [reviewLoading, setReviewLoading] = useState(false);
   const utils = trpc.useUtils();
 
-  const [activeTab, setActiveTab] = useState(() => {
-    const saved = localStorage.getItem(`case-tab-${caseId}`);
-    return saved === "timeline" ? "evidence-timeline" : saved || "overview";
-  });
+  const [activeTab, setActiveTab] = useState(() => savedCaseTab(caseId));
 
   useEffect(() => {
-    const saved = localStorage.getItem(`case-tab-${caseId}`);
-    setActiveTab(saved === "timeline" ? "evidence-timeline" : saved || "overview");
-    localStorage.setItem("active-case-context-id", caseId);
+    setActiveTab(savedCaseTab(caseId));
+    setIsEditing(false);
+    setEditedCase(null);
   }, [caseId]);
 
   const handleTabChange = (value: string) => {
     setActiveTab(value);
-    localStorage.setItem(`case-tab-${caseId}`, value);
-    localStorage.setItem("active-case-context-id", caseId);
+    try {
+      localStorage.setItem(`case-tab-${caseId}`, value);
+    } catch { /* View selection still works when storage is unavailable. */ }
   };
 
   /* ── queries ── */
-  const { data: caseData, isLoading: caseLoading, refetch: refetchCase } =
+  const { data: caseData, isLoading: caseLoading, error: caseError, refetch: refetchCase } =
     trpc.cases.byId.useQuery(caseId, { enabled: open && !!caseId });
 
-  const { data: officialMatches, isLoading: matchingLoading, refetch: refetchMatches } =
+  const { data: officialMatches, isFetching: matchingLoading, error: matchingError, refetch: refetchMatches } =
     trpc.matching.findOfficialLawyers.useQuery(
       {
         caseId,
@@ -602,7 +615,7 @@ export default function EnhancedCaseDetailsDialog({
         requiresFinancedLegalAid: appliedMatchFilters.requiresFinancedLegalAid,
       },
       {
-        enabled: open && !!caseId,
+        enabled: open && !!caseId && activeTab === "matching" && searchedCaseId === caseId,
         staleTime: 10 * 60 * 1000,
         refetchOnWindowFocus: false,
         retry: false,
@@ -618,10 +631,11 @@ export default function EnhancedCaseDetailsDialog({
       requireSpecializationAssociation,
       requiresFinancedLegalAid,
     };
-    if (JSON.stringify(nextFilters) === JSON.stringify(appliedMatchFilters)) {
+    if (searchedCaseId === caseId && JSON.stringify(nextFilters) === JSON.stringify(appliedMatchFilters)) {
       void refetchMatches();
       return;
     }
+    setSearchedCaseId(caseId);
     setAppliedMatchFilters(nextFilters);
   };
 
@@ -670,7 +684,7 @@ export default function EnhancedCaseDetailsDialog({
   });
 
   const handleInitiateOutreach = () => { if (caseId) initiateOutreachMutation.mutate({ caseId }); };
-  const handleEdit = () => { setEditedCase(caseData); setIsEditing(true); };
+  const handleEdit = () => { if (caseData) { setEditedCase(caseData); setIsEditing(true); handleTabChange("overview"); } };
   const handleCancelEdit = () => { setIsEditing(false); setEditedCase(null); };
   const handleSaveEdit = () => {
     if (!editedCase || !caseId) return;
@@ -747,21 +761,21 @@ export default function EnhancedCaseDetailsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="h-[94vh] w-[calc(100vw-1rem)] max-w-[1400px] overflow-hidden border-border/40 bg-background p-0 shadow-2xl shadow-black/40 sm:h-[88vh] sm:max-w-[92vw]"
+        className="flex h-[94dvh] w-[calc(100vw-1rem)] max-w-[1400px] flex-col gap-0 overflow-hidden border-border bg-background p-0 sm:h-[90dvh] sm:max-w-[92vw]"
       >
         {/* ─── top header bar ─── */}
-        <div className="flex items-center justify-between border-b border-border/40 bg-gradient-to-r from-background via-card to-background px-3 py-3 sm:px-6 sm:py-4">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-card px-3 py-3 sm:px-6 sm:py-4">
           <div className="flex min-w-0 items-center gap-2 sm:gap-4">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-orange-500/15 ring-1 ring-orange-500/30 sm:h-10 sm:w-10 sm:rounded-xl">
-              <Briefcase className="h-5 w-5 text-orange-500" />
+            <div className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 sm:flex">
+              <Briefcase className="h-5 w-5 text-primary" />
             </div>
             <div className="min-w-0">
               <DialogHeader className="p-0 space-y-0">
-                <DialogTitle className="text-lg font-semibold text-foreground truncate">
-                  {caseLoading ? "Loading…" : caseData?.caseType || "Case Details"}
+                <DialogTitle className="break-words text-base font-semibold text-foreground">
+                  {caseLoading ? "Loading..." : caseData?.clientName || "Case Details"}
                 </DialogTitle>
-                <DialogDescription className="text-xs text-muted-foreground truncate">
-                  {caseLoading ? "" : caseData?.clientName} · Created {caseData?.createdAt ? new Date(caseData.createdAt).toLocaleDateString() : ""}
+                <DialogDescription className="text-xs text-muted-foreground">
+                  {caseData?.caseType || "Case workspace"}
                 </DialogDescription>
               </DialogHeader>
             </div>
@@ -778,14 +792,14 @@ export default function EnhancedCaseDetailsDialog({
           </div>
 
           <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
-            <Button onClick={() => exportCaseSummary(caseData)} variant="ghost" size="sm" title="Export case" aria-label="Export case" className="h-8 w-8 px-0 text-xs text-muted-foreground hover:text-foreground sm:w-auto sm:px-2.5">
+            <Button disabled={!caseData || !!caseError} onClick={() => exportCaseSummary(caseData)} variant="ghost" size="sm" title="Export case" aria-label="Export case" className="h-8 w-8 px-0 text-xs text-muted-foreground hover:text-foreground sm:w-auto sm:px-2.5">
               <Download className="h-3.5 w-3.5 sm:mr-1.5" /> <span className="hidden sm:inline">Export</span>
             </Button>
-            <Button onClick={() => printCaseSummary(caseData)} variant="ghost" size="sm" title="Print case" aria-label="Print case" className="h-8 w-8 px-0 text-xs text-muted-foreground hover:text-foreground sm:w-auto sm:px-2.5">
+            <Button disabled={!caseData || !!caseError} onClick={() => printCaseSummary(caseData)} variant="ghost" size="sm" title="Print case" aria-label="Print case" className="h-8 w-8 px-0 text-xs text-muted-foreground hover:text-foreground sm:w-auto sm:px-2.5">
               <Printer className="h-3.5 w-3.5 sm:mr-1.5" /> <span className="hidden sm:inline">Print</span>
             </Button>
             {!isEditing && (
-              <Button onClick={handleEdit} variant="ghost" size="sm" title="Edit case" aria-label="Edit case" className="h-8 w-8 px-0 text-xs text-orange-400 hover:bg-orange-500/10 hover:text-orange-300 sm:w-auto sm:px-2.5">
+              <Button disabled={!caseData || !!caseError} onClick={handleEdit} variant="ghost" size="sm" title="Edit case" aria-label="Edit case" className="h-8 w-8 px-0 text-xs text-primary sm:w-auto sm:px-2.5">
                 <Edit className="h-3.5 w-3.5 sm:mr-1.5" /> <span className="hidden sm:inline">Edit</span>
               </Button>
             )}
@@ -799,40 +813,44 @@ export default function EnhancedCaseDetailsDialog({
         {/* ─── body: sidebar + content ─── */}
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
           {/* sidebar nav */}
-          <nav className="w-full shrink-0 overflow-x-auto border-b border-border/40 bg-card/30 py-2 md:w-[200px] md:overflow-y-auto md:border-b-0 md:border-r md:py-3">
-            <div className="flex gap-1 px-2 md:block md:space-y-0.5">
-              {NAV_ITEMS.map((item) => {
+          <nav aria-label="Case sections" className="shrink-0 border-b border-border bg-card/30 p-3 md:w-[190px] md:overflow-y-auto md:border-b-0 md:border-r">
+            <label className="block text-sm md:hidden"><span className="sr-only">Case section</span>
+              <select aria-label="Case section" value={activeTab} onChange={(event) => handleTabChange(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3">
+                {NAV_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+              </select>
+            </label>
+            <div className="hidden space-y-1 md:block">
+              {PRIMARY_CASE_TABS.map((id) => {
+                const item = NAV_ITEMS.find((entry) => entry.id === id)!;
                 const Icon = item.icon;
-                const active = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => handleTabChange(item.id)}
-                    className={`
-                      group flex w-auto shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium transition-all duration-150 md:w-full md:gap-2.5
-                      ${active
-                        ? "bg-orange-500/12 text-orange-400 ring-1 ring-orange-500/20"
-                        : "text-muted-foreground hover:text-foreground hover:bg-card/60"
-                      }
-                    `}
-                  >
-                    <Icon className={`w-4 h-4 shrink-0 transition-colors ${active ? "text-orange-500" : "text-muted-foreground/60 group-hover:text-muted-foreground"}`} />
-                    <span className="truncate">{item.label}</span>
-                    {active && <ChevronRight className="ml-auto hidden h-3 w-3 text-orange-500/60 md:block" />}
-                  </button>
-                );
+                return <button key={id} type="button" aria-current={activeTab === id ? "page" : undefined} onClick={() => handleTabChange(id)}
+                  className={`flex min-h-10 w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm ${activeTab === id ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+                  <Icon className="h-4 w-4 shrink-0" />{item.label}
+                </button>;
               })}
+              <details className="border-t border-border pt-3" open={PRIMARY_CASE_TABS.includes(activeTab) ? undefined : true}>
+                <summary className="cursor-pointer px-3 py-2 text-sm text-muted-foreground">More</summary>
+                <div className="mt-1 space-y-1">
+                  {NAV_ITEMS.filter((item) => !PRIMARY_CASE_TABS.includes(item.id)).map((item) => <button key={item.id} type="button"
+                    aria-current={activeTab === item.id ? "page" : undefined} onClick={() => handleTabChange(item.id)}
+                    className={`flex min-h-10 w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm ${activeTab === item.id ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+                    <item.icon className="h-4 w-4 shrink-0" />{item.label}
+                  </button>)}
+                </div>
+              </details>
             </div>
           </nav>
 
           {/* main content area */}
-          <main className="min-w-0 flex-1 overflow-y-auto p-4 sm:p-6">
+          <section className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 sm:p-6" aria-label="Case content">
             {caseLoading ? (
               <div className="space-y-4">
                 <Skeleton className="h-8 w-48 rounded-lg" />
                 <Skeleton className="h-40 w-full rounded-xl" />
                 <Skeleton className="h-64 w-full rounded-xl" />
               </div>
+            ) : caseError ? (
+              <QueryNotice error={caseError} retry={refetchCase} />
             ) : !caseData ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 <XCircle className="w-12 h-12 text-muted-foreground/40 mb-4" />
@@ -846,6 +864,7 @@ export default function EnhancedCaseDetailsDialog({
                     <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                       <Briefcase className="w-5 h-5 text-orange-500" /> Case Overview
                     </h2>
+                    <Suspense fallback={<CaseWorkspaceLoading />}><CaseActionManager key={caseId} caseId={caseId} /></Suspense>
 
                     {isEditing ? (
                       <Card className="border-border/40 bg-card/60 backdrop-blur-sm">
@@ -987,19 +1006,21 @@ export default function EnhancedCaseDetailsDialog({
                     <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                       <Activity className="w-5 h-5 text-orange-500" /> Case Status
                     </h2>
-                    <CaseStatusWorkflow
-                      currentStatus={caseData.status || "Matching"}
-                      onStatusChange={(newStatus) => {
-                        updateCaseMutation.mutate(
-                          { id: caseId, status: newStatus as any },
-                          {
-                            onSuccess: () => { toast.success("Case status updated"); refetchCase(); },
-                            onError: () => { toast.error("Failed to update status"); },
-                          }
-                        );
-                      }}
-                      canEdit={true}
-                    />
+                    <Suspense fallback={<CaseWorkspaceLoading />}>
+                      <CaseStatusWorkflow
+                        currentStatus={caseData.status || "Matching"}
+                        onStatusChange={(newStatus) => {
+                          updateCaseMutation.mutate(
+                            { id: caseId, status: newStatus as any },
+                            {
+                              onSuccess: () => { toast.success("Case status updated"); refetchCase(); },
+                              onError: () => { toast.error("Failed to update status"); },
+                            }
+                          );
+                        }}
+                        canEdit={true}
+                      />
+                    </Suspense>
                   </div>
                 )}
 
@@ -1009,7 +1030,7 @@ export default function EnhancedCaseDetailsDialog({
                     <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                       <TrendingUp className="w-5 h-5 text-orange-500" /> Progress Tracking
                     </h2>
-                    <ProgressTrackingDashboard caseId={caseId} onNavigateTab={handleTabChange} />
+                    <Suspense fallback={<CaseWorkspaceLoading />}><ProgressTrackingDashboard caseId={caseId} onNavigateTab={handleTabChange} /></Suspense>
                   </div>
                 )}
 
@@ -1019,7 +1040,7 @@ export default function EnhancedCaseDetailsDialog({
                     <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                       <MessageSquare className="w-5 h-5 text-orange-500" /> Messages
                     </h2>
-                    <CommunicationHub caseId={caseId} />
+                    <Suspense fallback={<CaseWorkspaceLoading />}><CommunicationHub caseId={caseId} /></Suspense>
                   </div>
                 )}
 
@@ -1037,10 +1058,10 @@ export default function EnhancedCaseDetailsDialog({
                         <TabsTrigger value="monitoring" className="text-xs rounded-lg">Monitoring</TabsTrigger>
                       </TabsList>
                       <TabsContent value="upload" className="mt-4 space-y-4">
-                        <EnhancedEvidenceUpload caseId={caseId} />
+                        <Suspense fallback={<CaseWorkspaceLoading />}><EnhancedEvidenceUpload caseId={caseId} /></Suspense>
                         <div className="mt-6">
                           <h3 className="text-base font-semibold mb-4 text-foreground/80">Existing Evidence</h3>
-                          <EvidenceCollection caseId={caseId} />
+                          <Suspense fallback={<CaseWorkspaceLoading />}><EvidenceCollection caseId={caseId} /></Suspense>
                         </div>
                       </TabsContent>
                       <TabsContent value="google-drive" className="mt-4">
@@ -1057,7 +1078,7 @@ export default function EnhancedCaseDetailsDialog({
                         </Card>
                       </TabsContent>
                       <TabsContent value="monitoring" className="mt-4">
-                        <CollectionMonitoringDashboard caseId={caseId} />
+                        <Suspense fallback={<CaseWorkspaceLoading />}><CollectionMonitoringDashboard caseId={caseId} /></Suspense>
                       </TabsContent>
                     </Tabs>
                   </div>
@@ -1069,7 +1090,7 @@ export default function EnhancedCaseDetailsDialog({
                     <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                       <Sparkles className="w-5 h-5 text-orange-500" /> Document Analysis
                     </h2>
-                    <AutomatedDocumentAnalysis caseId={caseId} />
+                    <Suspense fallback={<CaseWorkspaceLoading />}><AutomatedDocumentAnalysis caseId={caseId} /></Suspense>
                   </div>
                 )}
 
@@ -1086,17 +1107,18 @@ export default function EnhancedCaseDetailsDialog({
                         <TabsTrigger value="activity" className="text-xs">Case activity</TabsTrigger>
                       </TabsList>
                       <TabsContent value="reconstruction" className="mt-4">
-                        <CaseReconstruction caseId={caseId} />
+                        <Suspense fallback={<CaseWorkspaceLoading />}><CaseReconstruction caseId={caseId} /></Suspense>
                       </TabsContent>
                       <TabsContent value="events" className="mt-4">
-                        <CaseTimeline caseId={caseId} />
+                        <Suspense fallback={<CaseWorkspaceLoading />}><CaseTimeline caseId={caseId} /></Suspense>
                       </TabsContent>
                       <TabsContent value="sources" className="mt-4">
-                        <EvidenceTimelineView caseId={caseId} />
+                        <Suspense fallback={<CaseWorkspaceLoading />}><EvidenceTimelineView caseId={caseId} /></Suspense>
                       </TabsContent>
                       <TabsContent value="activity" className="mt-4">
-                        <TimelineView
-                          events={[
+                        <Suspense fallback={<CaseWorkspaceLoading />}>
+                          <TimelineView
+                            events={[
                             {
                               id: "case-created",
                               date: caseData.createdAt ? new Date(caseData.createdAt) : new Date(),
@@ -1121,8 +1143,9 @@ export default function EnhancedCaseDetailsDialog({
                               description: outreach.response || "Lawyer responded to outreach",
                               metadata: { lawyer: outreach.lawyerName },
                             })) || []),
-                          ]}
-                        />
+                            ]}
+                          />
+                        </Suspense>
                       </TabsContent>
                     </Tabs>
                   </div>
@@ -1134,7 +1157,7 @@ export default function EnhancedCaseDetailsDialog({
                     <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                       <Shield className="w-5 h-5 text-orange-500" /> Gap Analysis
                     </h2>
-                    <EvidenceGapAnalysisDashboard caseId={caseId} />
+                    <Suspense fallback={<CaseWorkspaceLoading />}><EvidenceGapAnalysisDashboard caseId={caseId} /></Suspense>
                   </div>
                 )}
 
@@ -1234,7 +1257,9 @@ export default function EnhancedCaseDetailsDialog({
                       )}
                     </div>
 
-                    {matchingLoading ? (
+                    {matchingError ? <p role="alert" className="break-words text-sm text-destructive">{matchingError.message}</p> : searchedCaseId !== caseId ? (
+                      <p className="text-sm text-muted-foreground">No lawyer search started.</p>
+                    ) : matchingLoading ? (
                       <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-32 w-full rounded-xl" />)}</div>
                     ) : matchedLawyers && matchedLawyers.length > 0 ? (
                       <div className="space-y-3">
@@ -1387,13 +1412,13 @@ export default function EnhancedCaseDetailsDialog({
                     <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
                       <BarChart3 className="w-5 h-5 text-orange-500" /> Outreach Analytics
                     </h2>
-                    <OutreachAnalyticsView caseId={caseId} />
+                    <Suspense fallback={<CaseWorkspaceLoading />}><OutreachAnalyticsView caseId={caseId} /></Suspense>
                   </div>
                 )}
 
               </>
             )}
-          </main>
+          </section>
         </div>
       </DialogContent>
     </Dialog>
@@ -1437,5 +1462,14 @@ export default function EnhancedCaseDetailsDialog({
       </DialogContent>
     </Dialog>
     </>
+  );
+}
+
+function CaseWorkspaceLoading() {
+  return (
+    <div className="flex min-h-32 items-center justify-center gap-2 text-sm text-muted-foreground" role="status">
+      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+      Loading workspace...
+    </div>
   );
 }

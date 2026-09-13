@@ -1,7 +1,7 @@
 import { randomBytes } from 'crypto';
 import { Router, type Request, type Response } from 'express';
 import {
-  consumeOAuthState,
+  consumeOAuthStateAsync,
   exchangeCodeForTokens,
   getAccountInfo,
   isRetryableOAuthNetworkError,
@@ -98,7 +98,7 @@ function callbackHandler(provider: OAuthProvider) {
         return;
       }
 
-      const oauthState = consumeOAuthState(state, provider);
+      const oauthState = await consumeOAuthStateAsync(state, provider);
       const tokens = await exchangeCodeForTokens(provider, code, oauthState.codeVerifier);
       tokenExchangeCompleted = true;
       const accountInfo = await getAccountInfo(provider, tokens.accessToken);

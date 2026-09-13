@@ -44,6 +44,7 @@ export const CRON_SCHEDULES = {
   retention: '30 3 * * *',
   backup: '15 1 * * *',
   storageDeletion: '*/15 * * * *',
+  documentSources: '*/15 * * * * *',
 } as const;
 
 function ensureStatus(name: string): JobStatus {
@@ -152,6 +153,22 @@ export function initCronScheduler() {
   ensureStatus('retention');
   ensureStatus('backup');
   ensureStatus('storage-deletion');
+  ensureStatus('document-sources');
+
+  if (process.env.LARO_BACKGROUND_JOBS === 'false') {
+    for (const status of getJobStatus()) status.enabled = false;
+    console.log('[Cron] Background jobs disabled by the operator.');
+    return;
+  }
+
+  const processSources = async () => {
+    const { drainSourceQueue } = await import('./documentSourceQueue');
+    await drainSourceQueue();
+  };
+  void runJob('document-sources', processSources, { retries: 0 });
+  scheduledTasks.push(cron.schedule(CRON_SCHEDULES.documentSources, () => {
+    void runJob('document-sources', processSources, { retries: 0 });
+  }));
 
   // Daily auto-collection at 02:00.
   scheduledTasks.push(cron.schedule(CRON_SCHEDULES.autoCollection, () => {

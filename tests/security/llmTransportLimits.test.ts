@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { invokeLLM } from "../../server/llm";
+import { Agent } from "undici";
 
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
@@ -34,6 +35,27 @@ afterEach(() => {
 });
 
 describe("LLM transport resource limits", () => {
+  it("uses and disposes a request-scoped HTTP dispatcher for extended deadlines only", async () => {
+    configureGroq();
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit & { dispatcher?: Agent }) => validGroqResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    await invokeLLM({ provider: "groq", messages: [{ role: "user", content: "Synthetic" }], requestTimeoutMs: 450_000 });
+    const firstInit = fetchMock.mock.calls[0][1];
+    expect(firstInit.dispatcher).toBeInstanceOf(Agent);
+    expect(firstInit.dispatcher?.destroyed).toBe(true);
+    await invokeGroq();
+    const secondInit = fetchMock.mock.calls[1][1];
+    expect(secondInit.dispatcher).toBeUndefined();
+  });
+
+  it("disposes the extended-request dispatcher after a failed fetch", async () => {
+    configureGroq();
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit & { dispatcher?: Agent }) => { throw new Error("connection failed"); });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(invokeLLM({ provider: "groq", messages: [{ role: "user", content: "Synthetic" }], requestTimeoutMs: 450_000 }))
+      .rejects.toThrow("connection failed");
+    expect(fetchMock.mock.calls[0][1].dispatcher?.destroyed).toBe(true);
+  });
   it("rejects oversized declared response bodies before reading them", async () => {
     configureGroq();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", {
@@ -138,6 +160,49 @@ describe("LLM transport resource limits", () => {
     await rejected;
   });
 
+  it.each(["groq", "anthropic", "ollama"] as const)("rechecks authorization after queueing for %s", async (provider) => {
+    configureGroq();
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-anthropic-key");
+    vi.stubEnv("LARO_OLLAMA_MODEL", "test-local-model");
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true });
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const controllers = Array.from({ length: 3 }, () => new AbortController());
+    let allowed = true;
+    const beforeDispatch = vi.fn(async () => allowed);
+    const pending = controllers.map((controller, index) => invokeLLM({
+      provider, messages: [{ role: "user", content: "Synthetic authorization test" }],
+      signal: controller.signal, ...(index === 2 ? { beforeDispatch } : {}),
+    }));
+    const settled = Promise.allSettled(pending);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(beforeDispatch).not.toHaveBeenCalled();
+    allowed = false;
+    controllers[0].abort(new Error("release occupied slot"));
+    await vi.waitFor(() => expect(beforeDispatch.mock.calls.length > 0 || fetchMock.mock.calls.length > 2).toBe(true));
+    const dispatchCount = fetchMock.mock.calls.length;
+    controllers.forEach((controller) => controller.abort(new Error("test cleanup")));
+    const results = await settled;
+    expect(dispatchCount).toBe(2);
+    expect(beforeDispatch).toHaveBeenCalledTimes(1);
+    expect(results[2]).toMatchObject({ status: "rejected", reason: expect.objectContaining({ message: expect.stringContaining("authorization changed") }) });
+  });
+
+  it("bounds a stalled dispatch authorization check and releases its slot", async () => {
+    configureGroq();
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockImplementation(async () => validGroqResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const pending = invokeLLM({ provider: "groq", messages: [{ role: "user", content: "Synthetic" }],
+      requestTimeoutMs: 25, beforeDispatch: () => new Promise<boolean>(() => {}) });
+    const settled = pending.then(() => null, (error: Error) => error);
+    await vi.advanceTimersByTimeAsync(26);
+    expect((await settled)?.message).toContain("0.025 second limit");
+    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(invokeGroq()).resolves.toMatchObject({ id: "recovered-response" });
+  });
+
   it("limits global concurrency and rejects queue overflow", async () => {
     configureGroq();
     const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
@@ -159,5 +224,34 @@ describe("LLM transport resource limits", () => {
 
     fetchMock.mockImplementationOnce(async () => validGroqResponse());
     await expect(invokeGroq()).resolves.toMatchObject({ id: "recovered-response" });
+  });
+
+  it.each(["groq", "anthropic", "ollama"] as const)("honors an explicit bounded deadline for %s", async (provider) => {
+    configureGroq();
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-anthropic-key");
+    vi.stubEnv("LARO_OLLAMA_MODEL", "test-local-model");
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true });
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const pending = invokeLLM({ provider, messages: [{ role: "user", content: "Synthetic deadline test" }], requestTimeoutMs: 450_000 });
+    const settled = pending.then(() => null, (error: Error) => error);
+    await vi.advanceTimersByTimeAsync(300_001);
+    const abortedAtDefault = fetchMock.mock.calls[0][1]!.signal!.aborted;
+    await vi.advanceTimersByTimeAsync(150_000);
+    const error = await settled;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(abortedAtDefault).toBe(false);
+    expect(error?.message).toContain("450 second limit");
+  });
+
+  it.each([0, -1, 600_001, Number.NaN, Number.POSITIVE_INFINITY, 1500.5])("rejects an invalid explicit transport budget %s before fetch", async (requestTimeoutMs) => {
+    configureGroq();
+    const fetchMock = vi.fn().mockResolvedValue(validGroqResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(invokeLLM({ provider: "groq", messages: [{ role: "user", content: "Synthetic" }], requestTimeoutMs }))
+      .rejects.toThrow("request timeout must be an integer from 1 to 600000 milliseconds");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

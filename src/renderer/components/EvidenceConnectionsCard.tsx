@@ -1,320 +1,102 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useCallback, useRef, useState } from "react";
+import { Mail, Cloud, Plus, RefreshCw, Unplug, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { trpc } from "@/lib/trpc";
-import { 
-  Mail, 
-  Cloud, 
-  CheckCircle2,
-  XCircle,
-  Loader2,
-  ExternalLink,
-  AlertCircle,
-  RefreshCw,
-} from "lucide-react";
-import { toast } from "sonner";
-import { useCallback, useState } from "react";
 import { useGoogleOAuthConnection } from "@/hooks/useGoogleOAuthConnection";
 
-// Get current user context (adjust based on your auth implementation)
-const useCurrentUser = () => {
-  const { data: user } = trpc.auth.me.useQuery();
-  return user;
-};
-
-/**
- * Evidence Connections Card
- * Displays the shared Google evidence grant as Gmail and Drive capabilities.
- */
-
-interface PlatformConnection {
-  id: string;
-  name: string;
-  icon: React.ReactNode;
-  description: string;
-  color: string;
-  connected: boolean;
-  lastSync?: Date;
-  itemCount?: number;
-}
+type AccountRevision = { id: string; status: string | null; updatedAt: Date | null; connectedAt: Date | null };
+const revision = (account: AccountRevision) => JSON.stringify([account.status, account.updatedAt, account.connectedAt]);
 
 export default function EvidenceConnectionsCard() {
-  // Get current user
-  const currentUser = useCurrentUser();
-  const utils = trpc.useContext();
-  const [connectingPlatform, setConnectingPlatform] = useState<"gmail" | "google-drive" | null>(null);
-  
-  // Query both capabilities because they share one owner-scoped Google grant.
-  const {
-    data: gmailStatus,
-    error: gmailStatusError,
-    isLoading: gmailLoading,
-    refetch: refetchGmailStatus,
-  } = trpc.gmailEnhanced.getStatus.useQuery(undefined, {
-    enabled: !!currentUser,
-    refetchOnWindowFocus: true,
-  });
-  const {
-    data: driveStatus,
-    error: driveStatusError,
-    isLoading: driveLoading,
-    refetch: refetchDriveStatus,
-  } = trpc.googleDrive.checkConnection.useQuery(undefined, {
-    enabled: !!currentUser,
-    refetchOnWindowFocus: true,
-  });
-  // OAuth URL mutations
-  const gmailOAuthMutation = trpc.gmailEnhanced.getOAuthUrl.useMutation();
-  const driveOAuthMutation = trpc.googleDriveEnhanced.getOAuthUrl.useMutation();
-
-  // Disconnect mutations
-  const gmailDisconnectMutation = trpc.gmailEnhanced.disconnect.useMutation();
-  const driveDisconnectMutation = trpc.googleDriveEnhanced.disconnect.useMutation();
-
-  const refreshGoogleConnection = useCallback(async () => {
-    const [gmailResult, driveResult] = await Promise.all([
-      refetchGmailStatus(),
-      refetchDriveStatus(),
-    ]);
-    return Boolean(gmailResult.data?.connected || driveResult.data?.connected);
-  }, [refetchDriveStatus, refetchGmailStatus]);
-
-  const handleGoogleConnected = useCallback(() => {
-    setConnectingPlatform(null);
-    void Promise.all([
-      utils.gmailEnhanced.getStatus.invalidate(),
-      utils.googleDrive.checkConnection.invalidate(),
-    ]);
+  const utils = trpc.useUtils();
+  const accounts = trpc.emailAccounts.list.useQuery(undefined, { refetchOnWindowFocus: true, refetchInterval: 5000 });
+  const oauth = trpc.emailAccounts.getAuthUrl.useMutation();
+  const revoke = trpc.emailAccounts.revoke.useMutation();
+  const baseline = useRef(new Map<string, string>());
+  const [removing, setRemoving] = useState<string | null>(null);
+  const refreshAll = useCallback(() => {
+    void utils.emailAccounts.list.invalidate();
+    void utils.gmailEnhanced.getStatus.invalidate();
+    void utils.googleDrive.checkConnection.invalidate();
   }, [utils]);
-
-  const {
-    connecting,
-    beginConnection,
-    cancelConnection: cancelGoogleOAuth,
-  } = useGoogleOAuthConnection({
-    connected: connectingPlatform === "gmail"
-      ? Boolean(gmailStatus?.connected)
-      : connectingPlatform === "google-drive"
-        ? Boolean(driveStatus?.connected)
-        : false,
-    refreshConnection: refreshGoogleConnection,
-    onConnected: handleGoogleConnected,
+  const refreshConnection = useCallback(async () => {
+    const result = await accounts.refetch();
+    return (result.data ?? []).some((account) => account.provider === "gmail"
+      && account.status === "connected" && baseline.current.get(account.id) !== revision(account));
+  }, [accounts.refetch]);
+  const { connecting, beginConnection, cancelConnection } = useGoogleOAuthConnection({
+    // Existing grants must not complete an add-account or reconnect attempt.
+    connected: false, refreshConnection, onConnected: refreshAll,
   });
-
-  const platforms: PlatformConnection[] = [
-    {
-      id: 'gmail',
-      name: 'Gmail',
-      icon: <Mail className="w-5 h-5" />,
-      description: 'Connect your Gmail account to collect email evidence',
-      color: 'bg-red-500',
-      connected: gmailStatus?.connected || false,
-      lastSync: gmailStatus?.lastSync ? new Date(gmailStatus.lastSync) : undefined,
-      itemCount: gmailStatus?.itemCount,
-    },    
-    {
-      id: 'google-drive',
-      name: 'Google Drive',
-      icon: <Cloud className="w-5 h-5" />,
-      description: 'Connect Google Drive to collect document evidence',
-      color: 'bg-yellow-500',
-      connected: driveStatus?.connected || false,
-      lastSync: undefined,
-      itemCount: driveStatus?.accounts?.length || 0,
-    },
-  ];
-
-  const handleConnect = async (platformId: string) => {
-    if (!currentUser?.id) {
-      toast.error('Please sign in to connect accounts');
-      return;
-    }
-
+  const connect = async () => {
     try {
-      // Google OAuth covers both Gmail and Drive; request the protected URL from tRPC.
-      if (platformId === 'gmail' || platformId === 'google-drive') {
-        const result = platformId === 'gmail'
-          ? await gmailOAuthMutation.mutateAsync()
-          : await driveOAuthMutation.mutateAsync();
-        if (!result.success || !result.authUrl) {
-          toast.error(result.reason || 'Google OAuth is unavailable.');
-          return;
-        }
-        if (beginConnection(result.authUrl)) setConnectingPlatform(platformId);
-        return;
-      }
-
-      toast.error('Unknown platform');
+      const latest = await accounts.refetch();
+      if (latest.error) throw latest.error;
+      baseline.current = new Map((latest.data ?? []).map((account) => [account.id, revision(account)]));
+      const result = await oauth.mutateAsync({ provider: "gmail" });
+      beginConnection(result.authUrl);
     } catch (error) {
-      toast.error(`Failed to connect: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      toast.error(error instanceof Error ? error.message : "Google connection could not be started");
     }
   };
-
-  const cancelConnection = () => {
-    cancelGoogleOAuth();
-    setConnectingPlatform(null);
-  };
-
-  const handleDisconnect = async (platformId: string) => {
+  const disconnect = async (accountId: string) => {
     try {
-      switch (platformId) {
-        case 'gmail':
-          await gmailDisconnectMutation.mutateAsync();
-          break;        
-        case 'google-drive':
-          await driveDisconnectMutation.mutateAsync();
-          break;        
-        default:
-          toast.error('Unknown platform');
-          return;
-      }
-
-      await Promise.all([
-        utils.gmailEnhanced.getStatus.invalidate(),
-        utils.googleDrive.checkConnection.invalidate(),
-      ]);
-      toast.success(`Disconnected from ${platformId}`);
+      await revoke.mutateAsync({ accountId });
+      setRemoving(null);
+      refreshAll();
+      toast.success("Google account disconnected");
     } catch (error) {
-      toast.error(`Failed to disconnect: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      toast.error(error instanceof Error ? error.message : "Could not disconnect this account");
     }
   };
-
-  const formatLastSync = (date?: Date) => {
-    if (!date) return 'Never';
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    return `${days}d ago`;
-  };
-
-  const isLoading = gmailLoading || driveLoading;
-  const statusUnavailable = Boolean(gmailStatusError || driveStatusError);
-
+  const googleAccounts = (accounts.data ?? []).filter((account) => account.provider === "gmail");
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-2xl">Evidence Collection Sources</CardTitle>
-        <CardDescription>
-          Connect Google once to collect selected Gmail and Drive evidence
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {statusUnavailable ? (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
-              <span>Google connection status could not be loaded. No connection changes were made.</span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void Promise.all([refetchGmailStatus(), refetchDriveStatus()])}
-              >
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Retry
+    <section aria-label="Google accounts" className="space-y-4 border-b pb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold">Google accounts</h2>
+        <Button onClick={() => void connect()} disabled={connecting || oauth.isPending || revoke.isPending}>
+          {connecting || oauth.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+          {connecting ? "Waiting for Google..." : "Add Google account"}
+        </Button>
+      </div>
+      {connecting && <Button variant="outline" onClick={cancelConnection}>Cancel connection</Button>}
+      {accounts.error ? <Alert variant="destructive"><AlertDescription>
+        Accounts could not be loaded. <Button variant="outline" onClick={() => void accounts.refetch()}>Retry</Button>
+      </AlertDescription></Alert> : accounts.isLoading ? <p role="status">Loading accounts...</p>
+        : googleAccounts.length === 0 ? <p className="text-sm text-muted-foreground">No Google accounts connected</p> : null}
+      {googleAccounts.map((account) => (
+        <div key={account.id} className="space-y-3 border-b py-3 last:border-0" data-testid="google-account">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <h3 className="break-all text-sm font-medium">{account.email}</h3>
+              <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1"><Mail className="h-3 w-3" />Gmail</span>
+                <span className="inline-flex items-center gap-1"><Cloud className="h-3 w-3" />Google Drive</span>
+                <span>{account.status === "connected" ? "Connection saved" : "Reconnect required"}</span>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={connecting || oauth.isPending || revoke.isPending}
+                aria-label={`Reconnect ${account.email}`} onClick={() => void connect()}>
+                <RefreshCw className="mr-2 h-4 w-4" />Reconnect
               </Button>
-            </AlertDescription>
-          </Alert>
-        ) : isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+              <Button variant="ghost" size="sm" disabled={revoke.isPending || connecting}
+                aria-label={`Disconnect ${account.email}`} onClick={() => setRemoving(account.id)}>
+                <Unplug className="mr-2 h-4 w-4" />Disconnect
+              </Button>
+            </div>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {platforms.map((platform) => {
-              const isConnecting = connecting && connectingPlatform === platform.id;
-              return (
-                <div
-                  key={platform.id}
-                  className="border rounded-lg p-4 space-y-3 hover:border-primary/50 transition-colors"
-                >
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-lg ${platform.color} text-white`}>
-                      {platform.icon}
-                    </div>
-                    <div>
-                      <h3 className="font-semibold">{platform.name}</h3>
-                      <p className="text-sm text-muted-foreground">
-                        {platform.description}
-                      </p>
-                    </div>
-                  </div>
-                  {platform.connected ? (
-                    <Badge variant="default" className="bg-green-500">
-                      <CheckCircle2 className="w-3 h-3 mr-1" />
-                      Connected
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary">
-                      <XCircle className="w-3 h-3 mr-1" />
-                      Not Connected
-                    </Badge>
-                  )}
-                </div>
-
-                {platform.connected && (
-                  <div className="text-sm text-muted-foreground space-y-1">
-                    <div className="flex justify-between">
-                      <span>Last Sync:</span>
-                      <span className="font-medium">{formatLastSync(platform.lastSync)}</span>
-                    </div>
-                    {platform.itemCount !== undefined && (
-                      <div className="flex justify-between">
-                        <span>Items Collected:</span>
-                        <span className="font-medium">{platform.itemCount}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="flex gap-2">
-                  {platform.connected ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="flex-1"
-                      onClick={() => handleDisconnect(platform.id)}
-                    >
-                      Disconnect
-                    </Button>
-                  ) : (
-                    <>
-                      <Button
-                        variant="default"
-                        size="sm"
-                        className="flex-1"
-                        disabled={connecting}
-                        onClick={() => handleConnect(platform.id)}
-                      >
-                        {isConnecting ? (
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        ) : (
-                          <ExternalLink className="w-4 h-4 mr-2" />
-                        )}
-                        {isConnecting ? "Finishing Google connection..." : "Connect"}
-                      </Button>
-                      {isConnecting ? (
-                        <Button variant="outline" size="sm" onClick={cancelConnection}>
-                          Cancel
-                        </Button>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          {removing === account.id && <Alert><AlertDescription className="space-y-3">
+            <p className="break-words">Disconnect Gmail and Drive for {account.email}? Other accounts and collected documents stay unchanged.</p>
+            <div className="flex gap-2">
+              <Button variant="destructive" size="sm" disabled={revoke.isPending} onClick={() => void disconnect(account.id)}>Confirm disconnect</Button>
+              <Button variant="outline" size="sm" disabled={revoke.isPending} onClick={() => setRemoving(null)}>Cancel</Button>
+            </div>
+          </AlertDescription></Alert>}
+        </div>
+      ))}
+    </section>
   );
 }

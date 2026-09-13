@@ -284,7 +284,8 @@ export async function extractDocumentTextInAcquiredSlot(bytes: Buffer, mimeType:
           throw new Error("PDF renderer did not return every requested page");
         }
         for (const page of rendered.pages) {
-          const actualPixels = page.width * page.height;
+          // PDF viewports can be fractional; round up for a conservative pixel bound.
+          const actualPixels = Math.ceil(page.width) * Math.ceil(page.height);
           if (!Number.isFinite(page.width) || !Number.isFinite(page.height) ||
               page.width < 1 || page.height < 1 || !Number.isSafeInteger(actualPixels) ||
               actualPixels > MAX_PDF_PAGE_PIXELS) {
@@ -305,7 +306,9 @@ export async function extractDocumentTextInAcquiredSlot(bytes: Buffer, mimeType:
       const merged = pages.map((text, index) => {
         const pageNumber = index + 1;
         const ocr = ocrByPage.get(pageNumber);
-        return `[PDF page ${pageNumber}]\n${text || normalizeText(ocr?.text || "")}`;
+        const recognizedText = normalizeText(ocr?.text || "");
+        const pageText = recognizedText ? (text && !recognizedText.includes(text) ? `${text}\n${recognizedText}` : recognizedText) : text;
+        return `[PDF page ${pageNumber}]\n${pageText}`;
       });
       const confidences = [...ocrByPage.values()].map((item) => item.confidence);
       const extractedText = normalizeText(merged.join("\n\n"));
@@ -769,10 +772,11 @@ const FINDING_SCHEMA = {
   required: ["text", "citations", "evidenceQuotes"],
 };
 
-async function analyzeProviderChunk(provider: LLMProvider, citations: Citation[]): Promise<AiResult> {
+async function analyzeProviderChunk(provider: LLMProvider, citations: Citation[], beforeDispatch?: () => Promise<boolean>): Promise<AiResult> {
   const sourceText = citations.map((citation) => `[${citation.id}] ${citation.quote}`).join("\n");
   const response = await invokeLLM({
     provider,
+    beforeDispatch,
     messages: [
       {
         role: "system",
@@ -843,7 +847,7 @@ async function analyzeProviderChunk(provider: LLMProvider, citations: Citation[]
   return parsed;
 }
 
-async function analyzeProviderChunks(provider: LLMProvider, chunks: Citation[][]): Promise<Array<{ result?: AiResult; error?: string }>> {
+async function analyzeProviderChunks(provider: LLMProvider, chunks: Citation[][], beforeDispatch?: () => Promise<boolean>): Promise<Array<{ result?: AiResult; error?: string }>> {
   const outcomes: Array<{ result?: AiResult; error?: string }> = new Array(chunks.length);
   let next = 0;
   const workers = Array.from({ length: Math.min(2, chunks.length) }, async () => {
@@ -851,7 +855,7 @@ async function analyzeProviderChunks(provider: LLMProvider, chunks: Citation[][]
       const index = next;
       next += 1;
       try {
-        outcomes[index] = { result: await analyzeProviderChunk(provider, chunks[index]) };
+        outcomes[index] = { result: await analyzeProviderChunk(provider, chunks[index], beforeDispatch) };
       } catch (error) {
         outcomes[index] = { error: error instanceof Error ? error.message.slice(0, 300) : "Provider chunk failed" };
       }
@@ -871,7 +875,7 @@ function uniqueContradictions(items: AiContradiction[]): ContradictionFinding[] 
   });
 }
 
-async function enrichAnalysis(base: DocumentAnalysisResult, provider: LLMProvider): Promise<DocumentAnalysisResult> {
+async function enrichAnalysis(base: DocumentAnalysisResult, provider: LLMProvider, beforeDispatch?: () => Promise<boolean>): Promise<DocumentAnalysisResult> {
   const providerModel = getLLMProviderDescriptors().find((item) => item.id === provider)?.model ?? null;
   if (!isLLMProviderConfigured(provider)) {
     return {
@@ -883,7 +887,7 @@ async function enrichAnalysis(base: DocumentAnalysisResult, provider: LLMProvide
     };
   }
   const chunks = providerChunks(base.citations);
-  const outcomes = await analyzeProviderChunks(provider, chunks);
+  const outcomes = await analyzeProviderChunks(provider, chunks, beforeDispatch);
   const valid = outcomes.flatMap((outcome) => outcome.result ? [outcome.result] : []);
   const failures = outcomes.filter((outcome) => !outcome.result);
   if (!valid.length) {
@@ -928,6 +932,7 @@ export async function analyzeDocumentBytes(options: {
   mimeType: string;
   deepAnalysis: boolean;
   provider?: LLMProvider;
+  beforeDispatch?: () => Promise<boolean>;
 }): Promise<DocumentAnalysisResult> {
   const extraction = await extractDocumentText(options.bytes, options.mimeType);
   return analyzeDocumentExtraction({ ...options, extraction });
@@ -937,15 +942,16 @@ export async function analyzeDocumentExtraction(options: {
   extraction: ExtractionResult;
   deepAnalysis: boolean;
   provider?: LLMProvider;
+  beforeDispatch?: () => Promise<boolean>;
 }): Promise<DocumentAnalysisResult> {
   const extraction = options.extraction;
   if (extraction.text.length < 20) {
     throw new Error(
       extraction.method === "ocr_text"
         ? "OCR could not extract enough readable text from this image."
-        : "No readable text was extracted from this document. Scanned PDFs require conversion to an image before OCR.",
+        : "No readable text was extracted from this document. Check whether it contains legible text or a readable scan.",
     );
   }
   const base = deterministicAnalysis(extraction);
-  return options.deepAnalysis ? enrichAnalysis(base, options.provider || "forge") : base;
+  return options.deepAnalysis ? enrichAnalysis(base, options.provider || "forge", options.beforeDispatch) : base;
 }

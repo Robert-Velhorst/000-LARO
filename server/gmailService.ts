@@ -340,7 +340,10 @@ export async function syncGmailForCase(
           }
         );
 
-        const threadData = await threadResponse.json();
+        const threadData = await readBoundedGmailJson<{
+          messages?: GmailMessage[];
+          error?: { message?: string };
+        }>(threadResponse, 'Gmail thread');
         if (threadData.error) {
           progress.errors.push(`Failed to get thread ${thread.id}: ${threadData.error.message}`);
           continue;

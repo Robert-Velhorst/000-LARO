@@ -27,6 +27,17 @@ export function useAuth(options?: UseAuthOptions) {
     refetchOnWindowFocus: false,
   });
 
+  // A stopped local server must not leave the loaded app stuck after it returns.
+  const { isError, refetch } = meQuery;
+  const errorCode = meQuery.error?.data?.code;
+  useEffect(() => {
+    if (!isError || errorCode === 'UNAUTHORIZED' || errorCode === 'FORBIDDEN') return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refetch();
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [isError, errorCode, refetch]);
+
   const logoutMutation = trpc.auth.logout.useMutation({
     onSuccess: () => {
       utils.auth.me.setData(undefined, null);

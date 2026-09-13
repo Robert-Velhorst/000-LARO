@@ -4,7 +4,7 @@ import { getDb } from '../db';
 import { emailAccounts, evidenceSources } from '../schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { ENV } from '../_core/env';
-import { beginOAuthFlow } from '../oauth2';
+import { beginOAuthFlowAsync } from '../oauth2';
 import { revokeStoredGoogleTokens } from '../emailOAuth';
 import { TRPCError } from '@trpc/server';
 import { AUDIT_ACTIONS, createAuditLog, writeAuditLogOrThrow } from '../audit';
@@ -109,7 +109,7 @@ const createEnhancedConnectionRouter = (providerName: string) => {
         return {
           success: true as const,
           available: true as const,
-          authUrl: beginOAuthFlow(avail.connectPath as 'gmail' | 'outlook', ctx.user.id),
+          authUrl: await beginOAuthFlowAsync(avail.connectPath as 'gmail' | 'outlook', ctx.user.id),
         };
       }),
 

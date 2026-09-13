@@ -19,16 +19,24 @@ not hidden or discarded.
 
 ## Contents
 
+Already have a local account but only see a login screen in the preview? The
+development preview has a separate database, not your existing dossiers. See
+[Local workspace access](docs/LOCAL_WORKSPACE_ACCESS.md) for the backed-up,
+loopback-only entry path using your existing account and encryption keys.
+
 - [LARO at a glance](#laro-at-a-glance)
 - [Core principles](#core-principles)
 - [How a case moves through LARO](#how-a-case-moves-through-laro)
 - [Capabilities](#capabilities)
 - [User interface](#user-interface)
+- [Product website preview](#product-website-preview)
 - [Architecture](#architecture)
 - [Installation and quick start](#installation-and-quick-start)
 - [Configuration](#configuration)
 - [Google and outbound email](#google-and-outbound-email)
+- [Measured analysis throughput and quality limits](docs/ANALYSIS_THROUGHPUT_AUDIT.md)
 - [API-only and ngrok deployment](#api-only-and-ngrok-deployment)
+- [Browser and connected desktop deployment](docs/HETZNER_DEPLOYMENT.md)
 - [Security, privacy, and recovery](#security-privacy-and-recovery)
 - [Developer guide](#developer-guide)
 - [Testing and production readiness](#testing-and-production-readiness)
@@ -75,6 +83,41 @@ not hidden or discarded.
 - It does not make every configured connector operational. Microsoft collection
   and Trello OAuth remain unavailable until their complete flows are accepted.
 
+## Product Website Preview
+
+The Dutch product page is available at `/product.html` on the same installation
+as the application (`/`). It explains the audience, workflow, current limitations,
+privacy choices, availability and support route. Public prices are not approved;
+there is no checkout or claim that unattended dossier discovery is accepted.
+The page is marked `noindex` while it remains a development preview.
+
+For an isolated **developer** preview, after installing dependencies with the
+supported Node 22 runtime:
+
+```powershell
+npm.cmd run build:server
+node scripts/preview-local.mjs
+```
+
+Open `http://127.0.0.1:5183/product.html`; the tool is at
+`http://127.0.0.1:5183/`. The launcher requires free ports 5183 and 3022. It uses
+`.cache/product-preview/preview.sqlite`, separate source storage and no inherited
+Google or AI credentials. It refuses dotenv files at the compiled server's
+configuration locations. Stop it with Ctrl+C in its terminal. Existing preview
+records persist; random development session secrets change on every start, so
+sign in again after a restart. Use a separate browser profile when running other
+LARO instances on the same hostname: cookies are not isolated by port.
+
+The product page checks the real API every 15 seconds while visible and refreshes
+on return to the tab. Reachability does not certify connected sources or analysis
+quality. This launcher is not a production service, installer or deployment.
+Do not add real legal records to this synthetic-test environment.
+
+Current software acceptance boundaries are recorded in
+[Product delivery](docs/PRODUCT_DELIVERY_STATUS.md). Business planning and private
+operational records are outside this public build branch. No price, revenue,
+private-source accuracy or production-acceptance claim follows from this preview.
+
 ## Core Principles
 
 1. **Source before summary.** Evidence retains its origin, content hash, and a
@@ -98,19 +141,35 @@ not hidden or discarded.
 
 ## How a Case Moves Through LARO
 
-1. **Create a case.** Describe the situation in ordinary language. LARO stores
-   the draft, creates the case, and classifies relevant legal areas.
-2. **Collect evidence.** Upload files, select a local folder, or connect Gmail and
-   Drive. Imported items retain source metadata and SHA-256 provenance.
-3. **Review and link.** Case-neutral documents can remain in an inbox until a
-   user accepts a deterministic case suggestion. Nothing is silently linked.
+1. **Start with documents or a case.** The Evidence screen opens a neutral
+   document inbox. Upload documents or select a folder without creating a case
+   first. Alternatively, describe a case in ordinary language using case intake.
+2. **Discover and build dossiers.** With automatic analysis and organization
+   enabled, LARO reads uploaded documents and can create a provisional dossier
+   from a unique explicit case reference or through a configured language model
+   that identifies a concrete situation from cited source passages. Related
+   follow-up documents can join that dossier with their original and analysis.
+   All automatic decisions are recorded. See the exact boundaries below.
+3. **Resolve exceptions and connect sources.** Ambiguous or unidentified
+   documents remain in the inbox with explanations, source passages, suggestions
+   and searchable case selection. **Document sources > Add source** starts a
+   case-neutral Gmail or Drive import from an owned connected Google account.
+   In the Windows desktop, **Local folder** uses the native folder picker.
+   Existing case-specific collectors remain available. Do not assume a whole
+   mailbox has been successfully sorted just because an import was started.
 4. **Analyze documents.** Supported evidence is extracted locally and turned
    into versioned, source-linked suggestions. Existing stored documents do not
    need to be uploaded again.
 5. **Understand the history.** Use the timeline, story, Gantt chart, or metro map
    to inspect who said or did what, when, and in which document.
-6. **Identify gaps.** Review missing records, contradictions, deadlines,
-   obligations, and open loops. Completeness is not case strength.
+6. **Identify gaps and track actions.** Review missing records and document
+   findings. The case overview stores open and completed actions, with optional
+   due dates, reopening, and an audit trail. **Suggested actions** derives
+   proposals from cited document obligations automatically. Accept, dismiss,
+   or restore a proposal; inspect its exact supporting passages and original
+   document through the source button. Acceptance creates an open action,
+   not a legally verified obligation or automatically calculated deadline.
+   Completeness is not case strength.
 7. **Find support.** Search lawyers with official filters and match reviewed
    media or organization targets against the case.
 8. **Prepare outreach.** Review the exact recipient, subject, body, disclaimer,
@@ -141,16 +200,265 @@ not hidden or discarded.
 | Standalone folder | Accepts only paths under operator-configured `LOCAL_SCAN_ROOTS` |
 | Gmail | Uses read-only Google OAuth, imports messages/attachments, retains Gmail identity, and supports bounded filtered pulls |
 | Google Drive | Uses read-only OAuth, supports explicit account/folder selection, and exports Google-native documents to PDF before analysis |
-| Inbox | Holds case-neutral evidence until the owner explicitly links it |
+| Document inbox | Maintained desktop/API: case-neutral uploads and durable Gmail/Drive/native-folder imports, source analysis, reference-based or configured-model dossier discovery, incremental filing, explained exceptions and original downloads |
+
+#### Autonomous Inbox Boundaries
+
+The required end state is autonomous content-based dossier discovery, not a
+mandatory manual filing queue. The complete requirement and acceptance boundary
+are recorded in [Autonomous Dossier Discovery](docs/AUTONOMOUS_DOSSIER_REQUIREMENTS.md).
+
+- Open **Evidence > Document inbox**. Multiple files and browser-selected folders
+  are processed sequentially with per-file failures, original preservation, progress
+  and a stop-after-current-document control. Each supported file is limited to 7 MB.
+- **Settings > Workflow** controls automatic import analysis, automatic
+  dossier discovery, the analysis provider and full-source cloud sharing. Local
+  deterministic analysis does not imply a configured local language model.
+- Automatic organization currently recognizes explicit source labels such as
+  `zaaknummer`, `dossiernummer`, `kenmerk` and `case reference`, followed by an
+  identifier containing letters and numbers (at least six characters). Purely
+  numeric references and unrecognized formats cannot use this exact-reference path. Filenames are
+  not evidence of a case relationship.
+- A single source reference matching exactly one owned case is filed there;
+  a new reference can create a **provisional**, unclassified dossier. With a
+  language model selected, unmatched references also use content discovery before
+  creating a new dossier. Multiple
+  source references or matching cases remain unresolved. A shared reference
+  is a grouping signal, not proof of a legal relationship or correctness.
+- Without a shared reference, a configured language model can propose creation
+  or assignment based on the document and the owner's current case summaries.
+  Discovery first compares every supplied dossier independently. Missing,
+  duplicate or foreign dossier IDs, uncertainty, competing matches and multiple
+  independent situations prevent automatic filing. A subsequent call selects exact
+  passage IDs supporting the proposed result; LARO resolves their original text.
+  Automatic acceptance requires a high-confidence response with at least two
+  distinct literal source quotes, including a concrete situation and a participant
+  or continuity signal. Assignment also requires distinct quotes from the chosen
+  case context. The latter is a summary, not independent proof of events.
+  The comparison is preserved with the decision; supporting passages remain
+  available in document details. Existing saved quote-based decisions remain readable.
+- Selected-provider failures, unsupported quotations, incomplete extraction,
+  OCR confidence below 80, ambiguous responses and changed settings/context leave
+  the original in the inbox. No fallback to another provider occurs. Cloud
+  discovery requires full-source sharing; local Ollama must actually be configured.
+  The deterministic `local` option is not a language model.
+- Discovery admits at most 1,000 owned cases, compared in groups of at most 20
+  within a 32,000-character request limit. Every group sees the complete source;
+  no top-match shortlist silently excludes competing dossiers. A source or single
+  dossier context that cannot fit still requires review. The full comparison is
+  saved; passage selection receives the selected context and comparison counts,
+  not a repeated archive of all comparison explanations. Same-owner organization
+  is serialized in this process; changes
+  during a model call are rechecked before the transaction commits. Source,
+  inventory and analysis authorization are also checked immediately before each
+  provider dispatch, including after waiting in the shared request queue.
+- Discovery defaults to one shared 90-second budget for both model stages. Operators can set
+  `LARO_DOSSIER_DISCOVERY_TIMEOUT_SECONDS` to whole seconds from 15 through 600
+  for slower models. The same limit applies through the model transport;
+  elapsed limits are reported separately from invalid answers. More time does
+  not increase the context/token budget or establish matching accuracy.
+  Comparison output allowance scales with each group's size, from 2,500 tokens to
+  5,632 for 20 dossiers; passage selection retains 2,500 tokens. All groups and
+  selection share the same deadline; adding dossiers does not reset the budget.
+  Provider context/output capacity and large-inventory quality still need acceptance.
+- Literal-quote validation is not proof that the model's interpretation or
+  grouping is correct. Provider responses are controlled in automated tests;
+  the separate opt-in [local model evaluation](docs/LOCAL_DOSSIER_MODEL_EVALUATION.md)
+  exercises real inference on synthetic sources. Accuracy on real documents
+  with a real model remains an acceptance requirement.
+  A small diagnostic score does not validate every evidence label or real-source
+  accuracy. Unattended semantic discovery is not accepted; private installation
+  observations are not included in this public build branch.
+  Content-term suggestions are review-only, not calibrated probabilities.
+- Retrying the same trusted source domain/path/content hash returns the original inbox item. Changed
+  bytes are separate records. Filing evidence and its analysis is transactional
+  and audited. An already assigned record cannot silently move to another case.
+- **Document details > Correct dossier** explicitly moves a filed inbox document
+  to another owned dossier. It requires a reason and the current assignment
+  version; a stale screen cannot overwrite a later correction. The original,
+  evidence identity, analysis versions and source-derived chronology are retained.
+  **Correction history** records the old/new dossiers, reason and time. Returning
+  to the original dossier is another recorded correction, not erasure of history.
+- Existing actions, their source snapshots and manually recorded case-specific
+  timeline interpretations stay in the original dossier. An action's source link
+  is unavailable while that document belongs elsewhere and becomes available if
+  it returns. New action proposals are case-scoped; they cannot overwrite a saved
+  decision from the previous dossier. Original case summaries and filing rules
+  are not rewritten by this per-document correction.
+- Inbox originals survive deletion of the derived case. They remain owned data,
+  are included in managed-storage accounting, and are subject to account erasure.
+  Download verifies the stored SHA-256. Reanalysis uses current provider settings.
+  New inbox storage keys use short document identities rather than original
+  filenames, avoiding Windows filename-component limits. Original names remain
+  in metadata and downloads; existing stored paths are not rewritten.
+  Scanned PDF viewport dimensions are conservatively rounded for pixel limits;
+  short embedded headers/page numbers no longer suppress recognized OCR text.
+  OCR confidence below 80 prevents automatic reference-based filing as well as
+  semantic discovery. An owner can still explicitly resolve an assignment.
+- Browser file/folder uploads remain page-driven: closing the screen stops
+  subsequent files; originals already uploaded remain available. The separate
+  **Document sources** workflow is a durable background queue and does not
+  depend on keeping that screen open.
+- Automatic folder watching, continuous Google change synchronization,
+  large-corpus clustering, AI-assisted dossier correction, multi-dossier associations and automatic
+  execution-evidence discovery remain follow-on work, not completed capabilities.
+
+#### Source-Backed Action Proposals
+
+The case overview derives proposals from the latest owned document analyses,
+with ten documents per page and progressively revealed results. This reuses
+existing cited findings; it does not make an additional model request. Missing
+citations or unreadable analyses produce warnings rather than unsupported actions.
+
+Acceptance, dismissal and restoration are recorded. Acceptance is idempotent and
+stores the original source identity, SHA-256, quoted passages and uncertainties.
+The **Action source** disclosure retains that snapshot if later analysis changes;
+if the canonical evidence is deleted, the document link becomes unavailable.
+Mentioned people are not automatically responsible parties, and mentioned dates
+or relative periods are not verified legal deadlines. Accepted actions start
+without a due date unless a user explicitly supplies one. Completing an action
+records a user decision; it does not prove execution from later documents.
+
+**Execution evidence** on each action records supporting or contradicting
+passages from analyzed documents in the same dossier. Select the document,
+passages, relationship and assessment. Source inventories, passages and saved
+links are paginated. A changed analysis invalidates an older selection before
+saving. The link stores the exact quotations and source/analysis fingerprints;
+later reanalysis cannot silently rewrite the assessment.
+
+Links can be withdrawn and restored with an audit trail. Retrying a save cannot
+duplicate the same assessment or revive a withdrawn one. If the document is
+removed, its recorded passages remain but its source button is unavailable.
+These are explicitly **user assessments**, not independently verified facts.
+Adding supporting evidence does not complete an action, and adding contradictory
+evidence does not silently reopen it. Automatic detection of later execution
+evidence and its integration across all timeline views remain unfinished.
+
+#### Durable Document Sources
+
+Choose the source, not a dossier. Source imports save originals to the neutral
+inbox and apply the current automatic-analysis and dossier-discovery preferences.
+Disabling automatic analysis keeps imported originals available for later processing.
+
+- **Gmail:** select an owned connected account. The default includes all messages
+  except spam/trash; optional query and spam/trash controls narrow or expand that
+  scope. Every returned result page is queued durably. Original RFC822 messages
+  and supported attachments are retained separately with account/message/part
+  identity and observed history ID. Draft labels remain part of provenance; a
+  draft is not proof that a message was sent. History changes during a download
+  cause an explicit failure instead of associating bytes with stale metadata.
+- **Drive:** select the connected account and optionally a folder ID. No folder
+  means files accessible through the account's user corpus. A selected folder is
+  traversed recursively. Pagination is persisted; an incomplete provider search
+  is a visible error. Supported native Google documents are exported as PDF;
+  the exported bytes and original Google MIME type are retained, not an editable
+  native-file backup. Before/after version checks reject changed downloads.
+- **Local folders:** available through the trusted Windows desktop folder picker
+  when its API runs locally. Files are discovered without a filename keyword
+  filter. Descendant symlinks/junctions are not followed. Folder/file changes
+  during enumeration or reading fail visibly. A normal browser cannot submit an
+  arbitrary server filesystem path; browser-selected uploads remain available.
+  Broad imports exclude hidden directories, AppData, Windows/program directories,
+  common dependency/cache directories, the Codex workspace directory and common
+  credential filenames. Excluded entries have visible outcomes; their descendants
+  are not traversed. Inaccessible individual entries do not discard the whole page.
+  These exclusions are not a guarantee that every remaining document is legal or
+  non-sensitive; relevance still depends on its contents.
+- **Progress and recovery:** source jobs, page/folder cursors, per-document work,
+  errors and leases are persisted in SQLite. Startup and a 15-second scheduler
+  resume unfinished running jobs; live leases are not stolen. Pause finishes the
+  current unit. Saving an original commits a separate durable analysis work item.
+  Analysis failures retry the stored bytes without redownloading the provider
+  object. Disabled automatic analysis is deferred, not claimed as completed.
+  The interface distinguishes discovered, saved, analyzed, filed, deferred and
+  attention-needed outcomes. **Retry unfinished processing** retries failures and
+  unresolved decisions; **Check source for new or changed files** repeats a granted
+  inventory with content-hash deduplication and separate changed versions.
+  Repeated cursors are reported as incomplete, not silently exhausted inventory.
+  Expired provider cursors or changed directory snapshots may require a new
+  source import. This is an on-demand inventory, not a frozen whole-account
+  snapshot or continuous synchronization service.
+- **Checked exclusions:** source intake records the rule, check time and observed
+  facts before a safety exclusion is marked as skipped. Unknown formats, empty
+  files and files above the size limit need review; these are not findings of
+  legal irrelevance. Format checks use filename or provider metadata, not a
+  content verdict. **Review exclusions** shows the recorded facts and a per-item
+  recheck action. Older skips without a check remain explicitly unverified.
+  Rechecking uses the same access and size protections. It does not unpause a
+  paused source, delete originals, or silently approve an exclusion. Resuming a
+  pause preserves existing review decisions; retrying a completed job is separate.
+- **Failure explanations:** each source shows its three latest failures without
+  expanding its details, with file name, stage, time, cause, recovery guidance
+  and whether import was confirmed. **View all failures** filters the complete
+  paginated list. Known file, parser, resource and provider errors retain a safe
+  cause category; sensitive raw exceptions are not exposed. Older failures whose
+  cause was not recorded are not retrospectively diagnosed or labelled repaired.
+- **Fast local preselection:** queued local files are skimmed in bounded batches
+  of up to 128 with eight readers. Text samples cover at most 24 KiB per file,
+  from the start, middle and end. Legal text signals get priority; uncertain
+  documents and opaque PDFs/images remain candidates for extraction/OCR.
+  Software directory context plus a conventional asset name or sampled code
+  syntax can defer an item for review, never establish irrelevance. **Analyze
+  anyway** explicitly includes a deferred item, with an audit entry. Existing
+  safety boundaries and import limits still apply. Changed versions are checked
+  again. Inventory and import take precedence over heavy analysis in the shared
+  queue; an analysis already in flight is not interrupted. Google sources retain
+  their normal provider workflow; remote byte throughput is not guaranteed.
+  See [Fast Screening and Measurements](docs/FAST_SOURCE_SCREENING.md) for limits
+  and reproducible benchmarks. The UI separates represented file sizes from
+  bytes actually sampled. This is not a full-content relevance classifier.
+- **Connection check:** **Check Google access** makes an authenticated profile
+  request to the selected service and verifies account identity. A stored
+  `connected` label alone is not current access proof. No document is downloaded
+  by this check. See Google's [Gmail profile API](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users/getProfile)
+  and [Drive about API](https://developers.google.com/workspace/drive/api/reference/rest/v3/about/get).
+- **Bounded operator import:** `npx tsx scripts/import-local-source.ts` prints help
+  without starting anything. An explicit run requires an existing database,
+  storage directory, owner ID and granted root or resumable job. It accepts step/
+  elapsed-time limits, import/analysis phase selection and targeted work IDs.
+  Back up first. This path refuses cloud analysis and external evidence storage;
+  limits apply between work items. It does not create a user or connect Google.
+- **Limits:** supported analysis formats and the 7 MB per-document limit still
+  apply. Unsupported/oversized local files and attachments are reported as skipped;
+  oversized responses or incomplete downloads fail visibly. Directory inventory
+  pages inspect at most 250,000 names and queue at most 100 per page. Discovered,
+  imported, skipped, failed and pending counts are separate. No whole-source ETA
+  or final percentage is claimed while discovery remains incomplete.
+- **Privacy:** existing encrypted OAuth tokens are reused; source jobs contain no
+  copied tokens. Owner authorization is enforced for starting/viewing/controlling
+  jobs. Job/work records participate in account export and erasure. Nothing in
+  this workflow sends outreach messages. An import marked completed means its
+  inventory work finished, not that every analysis or dossier decision is correct.
+
+Controlled HTTP tests exercise the Google routes without accessing a private
+mailbox. Real-account consent/scope acceptance, local-model quality, large-corpus
+behavior and a packaged Windows folder-picker run remain release gates.
 
 Keyword pulls are persisted jobs rather than page-bound tasks. Their state can
 survive navigation or reload and includes source phase, reviewed items,
 extracted words and characters, elapsed time, percentage, ETA, result, and
 failure detail.
 
+Gmail keyword searches follow result pages, deduplicate message IDs, and are
+bounded to 1,000 messages and 100 search pages per account per pull. A remaining
+page, repeated cursor, or failed page is reported as partial collection, not
+successfully exhausted mail. Narrow the date range or keywords to collect the
+remainder. Local keyword scans match **filenames**, not document contents; they
+report partial scans at the 500-file / six-level limits. LARO's managed storage
+is excluded from those scans. Repeated pulls compare source path and content
+hash, preserving changed file versions without replacing previously stored bytes.
+
 Managed local files open through owner-checked, short-lived signed URLs. The
 server verifies the stored hash and does not expose a filesystem path. S3-backed
 evidence uses provider-signed URLs.
+
+Document reconstruction does not use import or filesystem modification times as
+historical dates. Undated documents remain undated. Shared Gmail threads and
+subject-only attachment matches are suggestions, not proven replies or causation;
+provider identity matching respects the recorded account.
+
+The current Windows-use assessment and remaining workflow gates are recorded in
+[Windows readiness audit](docs/WINDOWS_READINESS_AUDIT_2026-09-04.md).
 
 Supported desktop analysis inputs:
 
@@ -200,6 +508,25 @@ Users can filter routes, change orientation, zoom, trace a station backward or
 forward, focus on an analyzed participant or topic, inspect source-derived
 actions, and open the document. Natural-language corrections are audited
 overlays; source evidence remains immutable.
+
+Documents > Timeline opens with individual chronological events, showing the
+date, actor when available, event text, source access and a **Correct** action.
+Search and incremental display keep long timelines manageable. The document
+map, vertical map, document list and Gantt remain separate selectable views;
+relationship summaries and interpretation notes are collapsed initially.
+Document-map positions use the earliest recorded event, which may be a
+background date rather than the issue date of a letter. Event dates remain
+separate in the default event view; extracted text is not automatically verified fact.
+
+The event editor accepts an exact date, actor, title, description and mandatory
+reason without needing a language model. Corrections are owner-scoped overlays:
+the stored source and original analysis are not rewritten. History exposes
+before/after values, timestamp and reason. Invalid calendar dates, colliding
+events and stale editing snapshots are rejected. Natural-language editing
+remains under the advanced assistant section and requires a configured provider.
+Regression checks: `tests/backend/manualTimelineCorrection.test.ts` and
+`node tests/browser/workspaceAccess.mjs --timeline` (after building the server
+and renderer; disposable data only).
 
 ### Lawyer Matching
 
@@ -324,6 +651,13 @@ Express/tRPC server
 
 Docker does not include Electron or Flask. The API-only ngrok deployment does
 not publish the Electron interface.
+
+For a persistent server shared by the browser and desktop, use the
+[Hetzner deployment guide](docs/HETZNER_DEPLOYMENT.md). `LARO_SERVE_WEB=true`
+serves the built React interface while retaining standalone owner enrollment.
+Launch the desktop with `--server-url=https://your-laro-domain` to use that
+server's account and data. The original local workspace remains selectable
+with `--local`.
 
 ### Data and Ownership
 
@@ -452,6 +786,44 @@ https://<gateway-domain>/<prefix>/api/oauth/gmail/callback
 After consent, status updates without page reload. Disconnect revokes the Google
 grant before deleting local encrypted credentials. If revocation fails, the
 credential remains for retry and no false success is recorded.
+
+### Multiple Google Accounts
+
+In **Documents > Connections > Google accounts**, choose **Add Google account**
+for each additional email address. Each account has its own encrypted credentials;
+reconnecting an existing address updates only that connection. Google consent
+still has to be completed for each account. The account list refreshes automatically.
+"Connection saved" reports a stored grant, not proof that a current provider call
+will succeed; expired or revoked grants may require reconnection.
+
+For each case, **Auto-Collection Settings > Sources** selects the Gmail accounts
+to search and the Drive folders to search under each Google account. **Browse
+Google Drive** lets you switch accounts; adding folders from a second account
+retains the first selection. **Select all of My Drive** explicitly selects that
+account's My Drive tree, not every shared drive in a Workspace organization.
+Removing the final selected folder disables Drive collection for that selection;
+an empty new-format selection never silently expands to all files.
+
+Drive selections are stored as `metadata.googleDriveSources`, with an account ID
+and folder IDs per entry. Existing single-account settings remain readable.
+Legacy folders without an account identity must be assigned explicitly before
+saving. Ownership is checked before collection, and imported evidence records
+the account used. A failed Drive account is reported without suppressing later
+selected accounts. Disconnect confirmation names the account and covers both
+its Gmail and Drive grant; other accounts and collected evidence remain intact.
+
+Regression checks use disposable databases and controlled Google responses.
+They do not establish live consent, mailbox access, or Drive access for any
+particular user's account.
+
+The local workspace launcher keeps provider configuration off by default. An
+operator can set `"googleConnections": true` in the private `workspace.json` to
+load the existing Windows-protected Google configuration only. SMTP and other
+provider settings are not passed to the server. If the registered callback uses
+a different local port, a loopback-only listener forwards only the Google callback
+path to this workspace; it does not expose a second API or change Google Cloud
+registration. Startup refuses an occupied callback port instead of replacing the
+other process. The callback listener closes when its LARO server exits.
 
 ### Protected Windows Configuration
 

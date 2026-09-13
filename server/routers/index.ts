@@ -1,4 +1,5 @@
-import { COOKIE_NAME, SESSION_MAX_AGE_MS, SESSION_EXPIRES_IN } from "../../shared/const";
+import { SESSION_MAX_AGE_MS, SESSION_EXPIRES_IN } from "../../shared/const";
+import { SESSION_COOKIE_NAME as COOKIE_NAME } from "../sessionCookie";
 import { getSessionCookieOptions } from "../cookies";
 import { systemRouter } from '../_core/systemRouter';
 import { publicProcedure, router, protectedProcedure } from '../_core/trpc';
@@ -12,6 +13,10 @@ import { outreachDirectoryRouter } from "./outreachDirectory";
 import { savedSearchesRouter } from "./savedSearches";
 import { workflowRouter } from "./workflow";
 import { evidenceFilesRouter } from "./evidenceFiles";
+import { documentInboxRouter } from "./documentInbox";
+import { documentSourcesRouter } from "./documentSources";
+import { actionProposalsRouter } from "./actionProposals";
+import { actionEvidenceRouter } from "./actionEvidence";
 import { evidenceExportRouter } from "./evidenceExport";
 import { evidenceTimelineRouter } from "./evidenceTimeline";
 import { documentAnalysisRouter } from "./documentAnalysis";
@@ -47,7 +52,8 @@ import {
 import { adminRouter } from "./admin";
 import { auditRouter } from "./audit";
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
-import { createAuditLog, AUDIT_ACTIONS } from "../audit";
+import { createAuditLog, writeAuditLogOrThrow, AUDIT_ACTIONS } from "../audit";
+import { verifyLocalTestTicket } from "../localTestAccess";
 import {
   gmailEnhancedRouter,
   outlookEnhancedRouter,
@@ -62,8 +68,8 @@ import crypto from "crypto";
 import { ENV } from "../_core/env";
 import { sendPasswordResetEmail } from "../systemEmail";
 import { getUser, getDb } from "../db";
-import { users, cases } from "../schema";
-import { and, count, eq } from "drizzle-orm";
+import { users, cases, systemConfig } from "../schema";
+import { and, count, eq, gte, lt } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { invokeLLM, isLLMProviderConfigured } from "../llm";
 import { answerCaseQuestion } from "../caseAssistant";
@@ -89,6 +95,10 @@ export const appRouter = router({
   savedSearches: savedSearchesRouter,
   workflow: workflowRouter,
   evidenceFiles: evidenceFilesRouter,
+  documentInbox: documentInboxRouter,
+  documentSources: documentSourcesRouter,
+  actionProposals: actionProposalsRouter,
+  actionEvidence: actionEvidenceRouter,
   evidenceTimeline: evidenceTimelineRouter,
   documentAnalysis: documentAnalysisRouter,
   search: searchRouter,
@@ -159,6 +169,43 @@ export const appRouter = router({
   // Auth procedures
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
+    enrollment: publicProcedure.query(async () => {
+      if (!ENV.SERVER_ONLY) return { open: true, requiresSetupCode: false };
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+      const [userCount] = await db.select({ value: count() }).from(users);
+      const tokenLength = ENV.STANDALONE_SIGNUP_TOKEN.trim().length;
+      return {
+        open: Number(userCount?.value || 0) === 0 && tokenLength >= 32 && tokenLength <= 256,
+        requiresSetupCode: true,
+      };
+    }),
+    localTestAccess: publicProcedure.input(z.object({ ticket: z.string().max(2048) })).mutation(async ({ input, ctx }) => {
+      enforceRateLimit(ctx, 'localTestAccess', RATE_LIMITS.auth);
+      let claims;
+      try { claims = verifyLocalTestTicket(ctx.req, input.ticket); }
+      catch { throw new TRPCError({ code: 'FORBIDDEN', message: 'Local test access is unavailable or expired. Open a new local test link.' }); }
+      const db = await getDb();
+      const user = await getUser(claims.userId);
+      if (!user) throw new TRPCError({ code: 'FORBIDDEN' });
+      const key = `local-test-used:${claims.nonce}`;
+      db.transaction(tx => {
+        if (tx.select().from(systemConfig).where(eq(systemConfig.configKey, key)).get()) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'This local test link has already been used.' });
+        }
+        tx.insert(systemConfig).values({ configKey: key, configValue: 'used', updatedAt: new Date() }).run();
+        writeAuditLogOrThrow(tx, { userId: user.id, action: 'auth.local_test_access', entityType: 'user', entityId: user.id,
+          details: { method: 'local_operator_ticket', sessionHours: 1 } });
+      });
+      const token = jwt.sign({ userId: user.id }, ENV.JWT_SECRET, { expiresIn: '1h' });
+      ctx.res.cookie(COOKIE_NAME, token, { ...getSessionCookieOptions(ctx.req), maxAge: 3_600_000 });
+      return { success: true };
+    }),
+    environment: publicProcedure.query(() => ({
+      workspace: process.env.LARO_WORKSPACE_KIND === 'preview' ? 'preview' as const
+        : process.env.LARO_WORKSPACE_KIND === 'local' ? 'local' as const : 'default' as const,
+      backgroundJobsEnabled: process.env.LARO_BACKGROUND_JOBS !== 'false',
+    })),
     
     signup: publicProcedure
       .input(z.object({
@@ -402,11 +449,22 @@ export const appRouter = router({
     pending: protectedProcedure.query(async ({ ctx }) => {
       const db = await getDb();
       if (!db) return [] as Array<{ id: string; caseId: string; question: string; context: string }>;
-      const { getSystemSwitch } = await import("../systemState");
-      const rows = await db
+      const resolutionPrefix = `clarify:${ctx.user.id}:`;
+      const [rows, resolutionRows] = await Promise.all([
+        db
         .select({ id: cases.id, clientName: cases.clientName, clientEmail: cases.clientEmail, legalAreas: cases.legalAreas, status: cases.status })
         .from(cases)
-        .where(eq(cases.userId, ctx.user.id));
+        .where(eq(cases.userId, ctx.user.id)),
+        db
+          .select({ key: systemConfig.configKey })
+          .from(systemConfig)
+          .where(and(
+            gte(systemConfig.configKey, resolutionPrefix),
+            lt(systemConfig.configKey, `${resolutionPrefix}\uffff`),
+            eq(systemConfig.configValue, "true"),
+          )),
+      ]);
+      const resolved = new Set(resolutionRows.map((row) => row.key));
       const out: Array<{ id: string; caseId: string; question: string; context: string }> = [];
       for (const c of rows) {
         let areas: string[] = [];
@@ -414,14 +472,14 @@ export const appRouter = router({
         // Ambiguity 1: multiple legal areas → which should drive matching?
         if (areas.length > 1) {
           const cid = `${c.id}:primary-area`;
-          if (!(await getSystemSwitch(`clarify:${ctx.user.id}:${cid}`))) {
+          if (!resolved.has(`${resolutionPrefix}${cid}`)) {
             out.push({ id: cid, caseId: c.id, question: `This case matches multiple legal areas (${areas.join(", ")}). Which is the primary area for lawyer matching?`, context: "multiple-legal-areas" });
           }
         }
         // Ambiguity 2: no client email → outreach recipient is unresolved.
         if (!c.clientEmail) {
           const cid = `${c.id}:contact`;
-          if (!(await getSystemSwitch(`clarify:${ctx.user.id}:${cid}`))) {
+          if (!resolved.has(`${resolutionPrefix}${cid}`)) {
             out.push({ id: cid, caseId: c.id, question: `This case has no client contact email. Add one before preparing outreach.`, context: "missing-contact" });
           }
         }

@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { createHash } from "node:crypto";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
@@ -15,6 +16,11 @@ import { createAuditLog } from "../audit";
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
 
 const timelineCategorySchema = z.enum(["employment", "termination", "communication", "legal", "financial", "other"]);
+
+function timelineRevision(rows: Array<typeof persistedTimeline.$inferSelect>, analyses: Array<typeof documentAnalyses.$inferSelect>) {
+  const ordered = <T extends { id: string }>(items: T[]) => [...items].sort((a, b) => a.id.localeCompare(b.id));
+  return createHash("sha256").update(JSON.stringify([ordered(rows), ordered(analyses)])).digest("hex");
+}
 
 function timelineEventKey(event: { date: string; title: string; source: { evidenceId: string } }): string {
   return `${event.date}|${event.title.trim().toLowerCase()}|${event.source.evidenceId}`;
@@ -297,7 +303,15 @@ export const documentAnalysisRouter = router({
         provider,
       };
       const id = `TIMECORR-${nanoid(16)}`;
-      await db.insert(persistedTimeline).values({
+      db.transaction((tx) => {
+        const currentRows = tx.select().from(persistedTimeline)
+          .where(and(eq(persistedTimeline.caseId, input.caseId), eq(persistedTimeline.userId, ctx.user.id))).all();
+        const currentAnalyses = tx.select().from(documentAnalyses)
+          .where(and(eq(documentAnalyses.caseId, input.caseId), eq(documentAnalyses.userId, ctx.user.id))).all();
+        if (timelineRevision(currentRows, currentAnalyses) !== timelineRevision(correctionRows, analysisRows.map((item) => item.analysis))) {
+          throw new TRPCError({ code: "CONFLICT", message: "The timeline changed while the assistant was working. Review it before requesting another correction." });
+        }
+        tx.insert(persistedTimeline).values({
         id,
         caseId: input.caseId,
         userId: ctx.user.id,
@@ -307,6 +321,7 @@ export const documentAnalysisRouter = router({
         eventAt: nextEvent?.date ? new Date(`${nextEvent.date}T12:00:00Z`) : new Date(),
         metadata: JSON.stringify({ evidenceId, timelineCorrection: correction }),
         createdAt: new Date(),
+        }).run();
       });
       await createAuditLog({
         userId: ctx.user.id,
@@ -318,22 +333,94 @@ export const documentAnalysisRouter = router({
       return { id, operation: parsed.operation, before: target, after: nextEvent, reason: parsed.reason };
     }),
 
+  updateTimelineEvent: protectedProcedure
+    .input(z.object({
+      caseId: z.string().min(1),
+      eventKey: z.string().min(1).max(4_000),
+      revision: z.string().regex(/^[a-f0-9]{64}$/),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+        const time = Date.parse(value + "T12:00:00Z");
+        return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === value;
+      }, "Enter a valid calendar date."),
+      title: z.string().trim().min(1).max(500),
+      description: z.string().trim().min(1).max(10_000),
+      actor: z.string().trim().max(500),
+      reason: z.string().trim().min(5).max(2_000),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const current = await getCaseTimeline(ctx.user.id, input.caseId);
+      const target = current.events.find((event) => event.eventKey === input.eventKey);
+      if (!target || current.revision !== input.revision) {
+        throw new TRPCError({ code: "CONFLICT", message: "The timeline changed. Close this editor and reopen the event before saving." });
+      }
+      const db = await getDb();
+      const after = {
+        date: input.date, title: input.title, description: input.description,
+        actor: input.actor || null, category: target.category, evidenceId: target.source.evidenceId,
+      };
+      const newKey = `${after.date}|${after.title.toLowerCase()}|${after.evidenceId}`;
+      if (newKey !== input.eventKey && current.events.some((event) => event.eventKey === newKey)) {
+        throw new TRPCError({ code: "CONFLICT", message: "An event with this date, title and source already exists." });
+      }
+      const correction = {
+        sequence: Math.max(0, ...current.corrections.map((item) => Number(item.sequence) || 0)) + 1,
+        operation: "update",
+        targetKey: input.eventKey,
+        before: { ...target, evidenceId: target.source.evidenceId },
+        after,
+        instruction: input.reason,
+        reason: input.reason,
+        provider: "manual",
+      };
+      const id = `TIMECORR-${nanoid(16)}`;
+      db.transaction((tx) => {
+        // Check the snapshot again under the write transaction; never overwrite a newer correction.
+        const rows = tx.select().from(persistedTimeline)
+          .where(and(eq(persistedTimeline.caseId, input.caseId), eq(persistedTimeline.userId, ctx.user.id))).all();
+        const analyses = tx.select().from(documentAnalyses)
+          .where(and(eq(documentAnalyses.caseId, input.caseId), eq(documentAnalyses.userId, ctx.user.id))).all();
+        const revision = timelineRevision(rows, analyses);
+        if (revision !== input.revision) {
+          throw new TRPCError({ code: "CONFLICT", message: "The timeline changed. Reopen the event before saving." });
+        }
+        tx.insert(persistedTimeline).values({
+          id, caseId: input.caseId, userId: ctx.user.id,
+          // Retain the legacy overlay type for replay compatibility; provider and audit distinguish manual edits.
+          eventType: "ai_timeline_correction",
+          title: after.title, description: input.reason,
+          eventAt: new Date(after.date + "T12:00:00Z"),
+          metadata: JSON.stringify({ evidenceId: after.evidenceId, timelineCorrection: correction }),
+          createdAt: new Date(),
+        }).run();
+      });
+      await createAuditLog({
+        userId: ctx.user.id, action: "timeline.manual_correction_applied",
+        entityType: "timeline", entityId: id, details: correction,
+      });
+      return { id };
+    }),
+
   generateCaseTimeline: protectedProcedure
     .input(z.object({ caseId: z.string().min(1) }))
     .query(async ({ ctx, input }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id);
+      return getCaseTimeline(ctx.user.id, input.caseId);
+    }),
+});
+
+async function getCaseTimeline(userId: string, caseId: string) {
+      await assertCaseOwnership(caseId, userId);
       const db = await getDb();
       const [rows, persistedRows, evidenceRows] = await Promise.all([
         db
           .select({ analysis: documentAnalyses, evidenceTitle: evidence.title })
           .from(documentAnalyses)
           .innerJoin(evidence, eq(documentAnalyses.evidenceId, evidence.id))
-          .where(and(eq(documentAnalyses.caseId, input.caseId), eq(documentAnalyses.userId, ctx.user.id)))
+          .where(and(eq(documentAnalyses.caseId, caseId), eq(documentAnalyses.userId, userId)))
           .orderBy(asc(documentAnalyses.createdAt)),
         db
           .select()
           .from(persistedTimeline)
-          .where(and(eq(persistedTimeline.caseId, input.caseId), eq(persistedTimeline.userId, ctx.user.id)))
+          .where(and(eq(persistedTimeline.caseId, caseId), eq(persistedTimeline.userId, userId)))
           .orderBy(asc(persistedTimeline.createdAt), asc(persistedTimeline.id)),
         db
           .select({
@@ -346,7 +433,7 @@ export const documentAnalysisRouter = router({
             createdAt: evidence.createdAt,
           })
           .from(evidence)
-          .where(and(eq(evidence.caseId, input.caseId), eq(evidence.userId, ctx.user.id))),
+          .where(and(eq(evidence.caseId, caseId), eq(evidence.userId, userId))),
       ]);
 
       const analyzedEvents = rows.flatMap(({ analysis, evidenceTitle }) => {
@@ -457,6 +544,7 @@ export const documentAnalysisRouter = router({
       return {
         events: events.map((event) => ({ ...event, eventKey: timelineEventKey(event) })),
         corrections,
+        revision: timelineRevision(persistedRows, rows.map((row) => row.analysis)),
         duration_days: durationDays,
         key_dates: [...new Set(events.map((event) => event.date))],
         summary: events.length
@@ -465,5 +553,4 @@ export const documentAnalysisRouter = router({
         gaps: events.length === 0 ? ["No analyzed or imported source-linked events are available for this case."] : [],
         reconstruction,
       };
-    }),
-});
+}

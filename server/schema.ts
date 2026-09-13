@@ -145,8 +145,64 @@ export const evidence = sqliteTable(
   (table) => ({
     caseIdIdx: index("evidence_caseId_idx").on(table.caseId),
     userIdIdx: index("evidence_userId_idx").on(table.userId),
+    userCaseIdx: index("evidence_userId_caseId_idx").on(table.userId, table.caseId),
   })
 );
+
+export const documentInbox = sqliteTable("document_inbox", {
+  id: text("id").primaryKey(),
+  userId: text("userId").notNull().references(() => users.id),
+  fileName: text("fileName").notNull(),
+  sourcePath: text("sourcePath").notNull(),
+  sourceType: text("sourceType").notNull().default("manual"),
+  provenance: text("provenance"),
+  mimeType: text("mimeType").notNull(),
+  fileSize: integer("fileSize").notNull(),
+  storageKey: text("storageKey").notNull(),
+  contentHash: text("contentHash").notNull(),
+  analysis: text("analysis"),
+  sourceText: text("sourceText"),
+  discovery: text("discovery"),
+  error: text("error"),
+  decision: text("decision").notNull().default("pending"),
+  reason: text("reason"),
+  evidenceId: text("evidenceId").references(() => evidence.id, { onDelete: "set null" }),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+}, (table) => ({
+  sourceHashUnique: uniqueIndex("document_inbox_owner_source_identity_idx").on(table.userId, table.sourceType, table.sourcePath, table.contentHash),
+  ownerCreatedIdx: index("document_inbox_owner_created_idx").on(table.userId, table.createdAt),
+}));
+
+export const documentSourceJobs = sqliteTable("document_source_jobs", {
+  id: text("id").primaryKey(),
+  userId: text("userId").notNull().references(() => users.id),
+  kind: text("kind").notNull(),
+  config: text("config").notNull(),
+  status: text("status").notNull().default("running"),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+}, (table) => ({ ownerStatusIdx: index("document_source_jobs_owner_status_idx").on(table.userId, table.status) }));
+
+export const documentSourceWork = sqliteTable("document_source_work", {
+  id: text("id").primaryKey(),
+  jobId: text("jobId").notNull().references(() => documentSourceJobs.id, { onDelete: "cascade" }),
+  userId: text("userId").notNull().references(() => users.id),
+  kind: text("kind").notNull(),
+  payload: text("payload").notNull(),
+  label: text("label").notNull(),
+  isDocument: integer("isDocument", { mode: "boolean" }).notNull().default(false),
+  status: text("status").notNull().default("queued"),
+  inboxId: text("inboxId").references(() => documentInbox.id, { onDelete: "set null" }),
+  error: text("error"),
+  leaseToken: text("leaseToken"),
+  leaseUntil: integer("leaseUntil"),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+}, (table) => ({
+  jobStatusIdx: index("document_source_work_job_status_idx").on(table.jobId, table.status),
+  leaseIdx: index("document_source_work_lease_idx").on(table.status, table.leaseUntil),
+}));
 
 export const documentAnalyses = sqliteTable(
   "document_analyses",
@@ -314,27 +370,33 @@ export const emailActivity = sqliteTable("email_activity", {
   createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
 });
 
-export const outreachStatus = sqliteTable("outreach_status", {
-  id: text("id").primaryKey(),
-  caseId: text("caseId"),
-  lawyerId: text("lawyerId"),
-  status: text("status"),
-  initialContact: integer("initialContact", { mode: "timestamp" }),
-  lastContact: integer("lastContact", { mode: "timestamp" }),
-  followUpsSent: integer("followUpsSent"),
-  followUp1SentAt: integer("followUp1SentAt", { mode: "timestamp" }),
-  followUp2SentAt: integer("followUp2SentAt", { mode: "timestamp" }),
-  responseTimeHours: text("responseTimeHours"),
-  lawyerCapacityPercentage: text("lawyerCapacityPercentage"),
-  acceptanceStatus: text("acceptanceStatus"),
-  response: text("response"),
-  responseReceived: text("responseReceived").default("No"),
-  notes: text("notes"),
-  distanceKm: integer("distanceKm"),
-  metadata: text("metadata"),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }).default(new Date()),
-  createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
-});
+export const outreachStatus = sqliteTable(
+  "outreach_status",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("caseId"),
+    lawyerId: text("lawyerId"),
+    status: text("status"),
+    initialContact: integer("initialContact", { mode: "timestamp" }),
+    lastContact: integer("lastContact", { mode: "timestamp" }),
+    followUpsSent: integer("followUpsSent"),
+    followUp1SentAt: integer("followUp1SentAt", { mode: "timestamp" }),
+    followUp2SentAt: integer("followUp2SentAt", { mode: "timestamp" }),
+    responseTimeHours: text("responseTimeHours"),
+    lawyerCapacityPercentage: text("lawyerCapacityPercentage"),
+    acceptanceStatus: text("acceptanceStatus"),
+    response: text("response"),
+    responseReceived: text("responseReceived").default("No"),
+    notes: text("notes"),
+    distanceKm: integer("distanceKm"),
+    metadata: text("metadata"),
+    updatedAt: integer("updatedAt", { mode: "timestamp" }).default(new Date()),
+    createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
+  },
+  (table) => ({
+    caseStatusIdx: index("outreach_status_caseId_status_idx").on(table.caseId, table.status),
+  }),
+);
 
 export const outreachDirectoryTargets = sqliteTable(
   "outreach_directory_targets",
@@ -808,19 +870,31 @@ export const ratingCalculationLogs = sqliteTable("rating_calculation_logs", {
 
 // ─── Gap analysis & timeline ─────────────────────────────────────────────────
 
-export const communicationGaps = sqliteTable("communication_gaps", {
-  id: text("id").primaryKey(),
-  caseId: text("caseId"),
-  data: text("data"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
-});
+export const communicationGaps = sqliteTable(
+  "communication_gaps",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("caseId"),
+    data: text("data"),
+    createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
+  },
+  (table) => ({
+    caseIdIdx: index("communication_gaps_caseId_idx").on(table.caseId),
+  }),
+);
 
-export const expectedDocuments = sqliteTable("expected_documents", {
-  id: text("id").primaryKey(),
-  caseId: text("caseId"),
-  data: text("data"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
-});
+export const expectedDocuments = sqliteTable(
+  "expected_documents",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("caseId"),
+    data: text("data"),
+    createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
+  },
+  (table) => ({
+    caseIdIdx: index("expected_documents_caseId_idx").on(table.caseId),
+  }),
+);
 
 export const suspiciousPatterns = sqliteTable("suspicious_patterns", {
   id: text("id").primaryKey(),
@@ -1027,3 +1101,32 @@ export const deadlines = sqliteTable("deadlines", {
   createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
   updatedAt: integer("updatedAt", { mode: "timestamp" }).default(new Date()),
 });
+
+export const caseActionEvidence = sqliteTable("case_action_evidence", {
+  id: text("id").primaryKey(),
+  userId: text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  caseId: text("caseId").notNull().references(() => cases.id, { onDelete: "cascade" }),
+  actionId: text("actionId").notNull().references(() => deadlines.id, { onDelete: "cascade" }),
+  evidenceId: text("evidenceId").references(() => evidence.id, { onDelete: "set null" }),
+  relation: text("relation").notNull(),
+  state: text("state").notNull(),
+  note: text("note").notNull(),
+  snapshot: text("snapshot").notNull(),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+}, (table) => ({ ownerAction: index("case_action_evidence_owner_action_idx").on(table.userId, table.actionId) }));
+
+export const caseActionProposals = sqliteTable("case_action_proposals", {
+  id: text("id").primaryKey(),
+  userId: text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  caseId: text("caseId").notNull().references(() => cases.id, { onDelete: "cascade" }),
+  evidenceId: text("evidenceId").references(() => evidence.id, { onDelete: "set null" }),
+  actionId: text("actionId").references(() => deadlines.id, { onDelete: "set null" }),
+  state: text("state").notNull(),
+  snapshot: text("snapshot").notNull(),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+}, (table) => ({
+  ownerCase: index("case_action_proposals_owner_case_idx").on(table.userId, table.caseId),
+  action: uniqueIndex("case_action_proposals_action_idx").on(table.actionId),
+}));

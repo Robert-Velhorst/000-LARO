@@ -42,7 +42,7 @@ import oauth2CallbacksRouter from './oauth2Callbacks';
 import haiIntegrationRoutes from './haiIntegrationRoutes';
 import { closeDatabaseForMaintenance, getDb } from './db';
 import { assertSecurityConfig, ENV } from './_core/env';
-import { closeHttpServer, listenHttpServer } from './listen';
+import { closeSharedHttpServer, listenHttpServer } from './listen';
 import { APP_VERSION } from './_core/version';
 import { EvidenceAccessError, readSignedEvidenceDownload } from './evidenceAccess';
 import { sanitizeFilename } from './storage';
@@ -86,7 +86,8 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-XSS-Protection', '0'); // rely on CSP, not the legacy auditor
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  // The renderer must retain its Google OAuth popup; API resources stay isolated.
+  res.setHeader('Cross-Origin-Opener-Policy', req.path.startsWith('/api/') ? 'same-origin' : 'same-origin-allow-popups');
   res.setHeader(
     'Permissions-Policy',
     'geolocation=(), microphone=(), camera=(), payment=()'
@@ -265,7 +266,7 @@ app.get('/api/case-export/:ticket.zip', async (req, res) => {
 
 // ─── OAuth2 routes ────────────────────────────────────────────────────────────
 
-if (ENV.SERVER_ONLY) {
+if (ENV.SERVER_ONLY && !ENV.SERVE_WEB) {
   app.get('/', (_req, res) => {
     res.status(200).json({
       service: 'LARO API',
@@ -295,7 +296,7 @@ app.use(
 
 // ─── Static files (Production) ────────────────────────────────────────────────
 
-if (!isDev && !ENV.SERVER_ONLY) {
+if (!isDev && (!ENV.SERVER_ONLY || ENV.SERVE_WEB)) {
   // In a packaged Electron app, we need to find the renderer files relative to this file
   // dist/main/server/index.js -> dist/renderer
   const possiblePaths = [
@@ -317,12 +318,14 @@ if (!isDev && !ENV.SERVER_ONLY) {
   if (rendererPath) {
     console.log(`[Server] Serving static files from: ${rendererPath}`);
     app.use(express.static(rendererPath));
-    app.get('*', (req, res) => {
-      if (!req.path.startsWith('/trpc') && !req.path.startsWith('/api')) {
-        res.sendFile(path.join(rendererPath, 'index.html'));
-      }
+    // Express 5 requires named wildcards. Include '/' and let unknown API
+    // routes/assets return 404 instead of hanging or serving HTML as JavaScript.
+    app.get('/{*page}', (req, res, next) => {
+      if (req.path.startsWith('/trpc') || req.path.startsWith('/api') || path.extname(req.path)) return next();
+      res.sendFile(path.join(rendererPath, 'index.html'));
     });
   } else {
+    if (ENV.SERVE_WEB) throw new Error('LARO_SERVE_WEB requires a built dist/renderer/index.html. Run npm run build:renderer.');
     console.error(`[Server] Critical: Could not find renderer path in: ${possiblePaths.join(', ')}`);
   }
 } else if (ENV.SERVER_ONLY) {
@@ -363,8 +366,7 @@ export function stopServer(): Promise<void> {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
     stopCronScheduler();
-    await closeRealtimeServer();
-    await closeHttpServer(httpServer);
+    await closeSharedHttpServer(httpServer, closeRealtimeServer);
     closeDatabaseForMaintenance();
   })().finally(() => {
     shutdownPromise = null;

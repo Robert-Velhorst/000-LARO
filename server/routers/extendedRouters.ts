@@ -27,7 +27,7 @@ import {
 } from "../schema";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { assertCaseOwnership } from "../_core/authz";
-import { AUDIT_ACTIONS } from "../audit";
+import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "../audit";
 import { nanoid } from "nanoid";
 
 const count = sql<number>`count(*)`;
@@ -64,17 +64,13 @@ export const adminAnalyticsRouter = router({
     const db = await getDb();
     if (!db) return [];
     const rows = await db
-      .select({ userId: casesTable.userId, cases: count })
+      .select({ userId: casesTable.userId, email: usersTable.email, cases: count })
       .from(casesTable)
-      .groupBy(casesTable.userId)
+      .leftJoin(usersTable, eq(usersTable.id, casesTable.userId))
+      .groupBy(casesTable.userId, usersTable.email)
       .orderBy(desc(count))
       .limit(10);
-    const out: Array<{ userId: string; email: string; cases: number }> = [];
-    for (const r of rows) {
-      const u = (await db.select({ email: usersTable.email }).from(usersTable).where(eq(usersTable.id, r.userId)).limit(1))[0];
-      out.push({ userId: r.userId, email: u?.email || "", cases: Number(r.cases) });
-    }
-    return out;
+    return rows.map((row) => ({ userId: row.userId, email: row.email || "", cases: Number(row.cases) }));
   }),
   conversionFunnel: adminProcedure.query(async () => {
     const db = await getDb();
@@ -98,9 +94,12 @@ function outreachResponded(row: typeof outreachStatus.$inferSelect): boolean {
 async function ownedOutreach(userId: string) {
   const db = await getDb();
   if (!db) return [] as Array<typeof outreachStatus.$inferSelect>;
-  const caseIds = (await db.select({ id: casesTable.id }).from(casesTable).where(eq(casesTable.userId, userId))).map((row) => row.id);
-  if (caseIds.length === 0) return [] as Array<typeof outreachStatus.$inferSelect>;
-  return db.select().from(outreachStatus).where(inArray(outreachStatus.caseId, caseIds));
+  const rows = await db
+    .select({ outreach: outreachStatus })
+    .from(casesTable)
+    .innerJoin(outreachStatus, eq(outreachStatus.caseId, casesTable.id))
+    .where(eq(casesTable.userId, userId));
+  return rows.map((row) => row.outreach);
 }
 
 export const outreachAnalyticsRouter = router({
@@ -249,32 +248,32 @@ export const bulkFileOperationsRouter = router({
   deleteItems: protectedProcedure.input(z.object({ ids: z.array(z.string()).min(1).max(500) })).mutation(async ({ input, ctx }) => {
     const db = await getDb();
     if (!db) return { deleted: 0 };
-    let deleted = 0;
-    for (const id of input.ids) {
-      const res = await db.delete(evidenceItems).where(and(eq(evidenceItems.id, id), eq(evidenceItems.userId, ctx.user.id)));
-      deleted += (res as any)?.changes ?? 0;
-    }
-    return { deleted };
+    const ids = [...new Set(input.ids)];
+    const result = await db.delete(evidenceItems).where(and(
+      inArray(evidenceItems.id, ids),
+      eq(evidenceItems.userId, ctx.user.id),
+    ));
+    return { deleted: Number((result as any)?.changes ?? 0) };
   }),
   addTags: protectedProcedure.input(z.object({ ids: z.array(z.string()).min(1).max(500), tags: z.array(z.string().min(1).max(80)).max(50) })).mutation(async ({ input, ctx }) => {
     const db = await getDb();
     if (!db) return { updated: 0 };
-    let updated = 0;
-    for (const id of input.ids) {
-      const res = await db.update(evidenceItems).set({ tags: JSON.stringify(input.tags) } as any).where(and(eq(evidenceItems.id, id), eq(evidenceItems.userId, ctx.user.id)));
-      updated += (res as any)?.changes ?? 0;
-    }
-    return { updated };
+    const ids = [...new Set(input.ids)];
+    const result = await db.update(evidenceItems).set({ tags: JSON.stringify(input.tags) } as any).where(and(
+      inArray(evidenceItems.id, ids),
+      eq(evidenceItems.userId, ctx.user.id),
+    ));
+    return { updated: Number((result as any)?.changes ?? 0) };
   }),
   setRelevanceScore: protectedProcedure.input(z.object({ ids: z.array(z.string()).min(1).max(500), score: z.number().int().min(0).max(100) })).mutation(async ({ input, ctx }) => {
     const db = await getDb();
     if (!db) return { updated: 0 };
-    let updated = 0;
-    for (const id of input.ids) {
-      const result = await db.update(evidenceItems).set({ relevanceScore: input.score } as any).where(and(eq(evidenceItems.id, id), eq(evidenceItems.userId, ctx.user.id)));
-      updated += (result as any)?.changes ?? 0;
-    }
-    return { updated };
+    const ids = [...new Set(input.ids)];
+    const result = await db.update(evidenceItems).set({ relevanceScore: input.score } as any).where(and(
+      inArray(evidenceItems.id, ids),
+      eq(evidenceItems.userId, ctx.user.id),
+    ));
+    return { updated: Number((result as any)?.changes ?? 0) };
   }),
 });
 
@@ -311,25 +310,52 @@ export const caseManagementRouter = router({
     const ev = await db.select().from(evidenceRecords).where(eq(evidenceRecords.caseId, input.caseId));
     return { format: "laro-case-export/v1", case: c ?? null, evidence: ev };
   }),
-  getUpcomingDeadlines: protectedProcedure.input(z.object({ caseId: z.string().optional() }).optional()).query(async ({ input, ctx }) => {
+  getUpcomingDeadlines: protectedProcedure.input(z.object({
+    caseId: z.string().optional(), completed: z.boolean().optional(),
+    limit: z.number().int().min(1).max(100).default(50), offset: z.number().int().min(0).default(0),
+  }).optional()).query(async ({ input, ctx }) => {
+    if (input?.caseId) await assertCaseOwnership(input.caseId, ctx.user.id);
     const db = await getDb();
     if (!db) return [] as any[];
-    const where = input?.caseId ? and(eq(deadlinesTable.userId, ctx.user.id), eq(deadlinesTable.caseId, input.caseId)) : eq(deadlinesTable.userId, ctx.user.id);
-    return db.select().from(deadlinesTable).where(where).orderBy(deadlinesTable.dueDate).limit(50);
+    const conditions = [eq(deadlinesTable.userId, ctx.user.id)];
+    if (input?.caseId) conditions.push(eq(deadlinesTable.caseId, input.caseId));
+    if (input?.completed !== undefined) conditions.push(eq(deadlinesTable.completed, input.completed));
+    return db.select().from(deadlinesTable).where(and(...conditions))
+      .orderBy(sql`${deadlinesTable.dueDate} IS NULL`, deadlinesTable.dueDate, deadlinesTable.id)
+      .limit(input?.limit ?? 50).offset(input?.offset ?? 0);
   }),
-  addDeadline: protectedProcedure.input(z.object({ caseId: z.string(), title: z.string(), dueDate: z.string(), description: z.string().optional() })).mutation(async ({ input, ctx }) => {
+  addDeadline: protectedProcedure.input(z.object({
+    caseId: z.string().min(1), title: z.string().trim().min(1).max(500),
+    dueDate: z.union([z.string().date(), z.string().datetime({ offset: true })]).nullable().optional(),
+    description: z.string().trim().max(10000).optional(),
+  })).mutation(async ({ input, ctx }) => {
     await assertCaseOwnership(input.caseId, ctx.user.id);
     const db = await getDb();
     if (!db) throw new Error("Database not available");
     const id = nanoid();
-    await db.insert(deadlinesTable).values({ id, caseId: input.caseId, userId: ctx.user.id, title: input.title, description: input.description ?? null, dueDate: new Date(input.dueDate), completed: false, createdAt: new Date(), updatedAt: new Date() } as any);
+    db.transaction((tx) => {
+      tx.insert(deadlinesTable).values({ id, caseId: input.caseId, userId: ctx.user.id, title: input.title,
+        description: input.description ?? null, dueDate: input.dueDate ? new Date(input.dueDate) : null,
+        completed: false, createdAt: new Date(), updatedAt: new Date() }).run();
+      writeAuditLogOrThrow(tx, { userId: ctx.user.id, action: "case.action_created", entityType: "case_action", entityId: id,
+        details: { caseId: input.caseId, dueDate: input.dueDate ?? null } });
+    });
     return { id, ok: true as const };
   }),
-  completeDeadline: protectedProcedure.input(z.object({ id: z.string() })).mutation(async ({ input, ctx }) => {
+  completeDeadline: protectedProcedure.input(z.object({ id: z.string().min(1), completed: z.boolean().default(true) })).mutation(async ({ input, ctx }) => {
     const db = await getDb();
     if (!db) throw new Error("Database not available");
-    const result = await db.update(deadlinesTable).set({ completed: true, updatedAt: new Date() } as any).where(and(eq(deadlinesTable.id, input.id), eq(deadlinesTable.userId, ctx.user.id)));
-    return { ok: ((result as any)?.changes ?? 0) > 0 };
+    return db.transaction((tx) => {
+      const where = and(eq(deadlinesTable.id, input.id), eq(deadlinesTable.userId, ctx.user.id));
+      const row = tx.select().from(deadlinesTable).where(where).get();
+      if (!row) return { ok: false };
+      if (row.completed === input.completed) return { ok: true };
+      tx.update(deadlinesTable).set({ completed: input.completed, updatedAt: new Date() }).where(where).run();
+      writeAuditLogOrThrow(tx, { userId: ctx.user.id,
+        action: input.completed ? "case.action_completed" : "case.action_reopened", entityType: "case_action", entityId: input.id,
+        details: { caseId: row.caseId, previousCompleted: row.completed, completed: input.completed } });
+      return { ok: true };
+    });
   }),
   getCommunicationHistory: protectedProcedure.input(z.object({ caseId: z.string() })).query(async ({ input, ctx }) => {
     await assertCaseOwnership(input.caseId, ctx.user.id);

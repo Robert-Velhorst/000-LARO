@@ -18,6 +18,7 @@ import { assertCaseOwnership } from "../_core/authz";
 import { getDb } from "../db";
 import { emailAccounts } from "../schema";
 import { and, eq } from "drizzle-orm";
+import { googleDriveSourcesSchema } from "../../shared/googleDriveSources";
 
 const keywordPullInput = z.object({
   caseId: z.string(),
@@ -50,6 +51,7 @@ export const autoCollectionRouter = router({
         dateRangeEnd: z.date().optional(),
         emailAccountIds: z.array(z.string()),
         googleDriveAccountId: z.string().optional(),
+        googleDriveSources: googleDriveSourcesSchema.optional(),
         googleDriveFolderIds: z.array(z.string()).optional(),
         autoDownloadAttachments: z.boolean(),
         autoDownloadGoogleDriveFiles: z.boolean(),
@@ -58,11 +60,16 @@ export const autoCollectionRouter = router({
     .mutation(async ({ input, ctx }) => {
       const userId = ctx.user.id;
       await assertCaseOwnership(input.caseId, userId);
-      if (input.googleDriveAccountId) {
+      const selectedIds = new Set([
+        ...input.emailAccountIds,
+        ...(input.googleDriveSources?.map((source) => source.accountId)
+          ?? (input.googleDriveAccountId ? [input.googleDriveAccountId] : [])),
+      ]);
+      for (const accountId of selectedIds) {
         const db = await getDb();
         const [account] = db
           ? await db.select({ id: emailAccounts.id }).from(emailAccounts).where(and(
-            eq(emailAccounts.id, input.googleDriveAccountId),
+            eq(emailAccounts.id, accountId),
             eq(emailAccounts.userId, userId),
             eq(emailAccounts.provider, "gmail"),
           )).limit(1)

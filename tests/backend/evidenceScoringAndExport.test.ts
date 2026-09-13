@@ -97,6 +97,39 @@ suite("evidence scoring and case export", () => {
     })).rejects.toThrow();
   });
 
+  it("commits relevance updates once per requested batch", async () => {
+    await app.db.insert(app.schema.cases).values(buildCase({
+      id: "CASE_BATCH_SCORE_OWNER",
+      userId: owner.id,
+      caseSummary: "Bezwaar tegen een besluit over een uitkering",
+    }));
+    await app.db.insert(app.schema.evidence).values([
+      buildEvidence({ id: "EVIDENCE_BATCH_SCORE_1", caseId: "CASE_BATCH_SCORE_OWNER", userId: owner.id, title: "Besluit uitkering bezwaar" }),
+      buildEvidence({ id: "EVIDENCE_BATCH_SCORE_2", caseId: "CASE_BATCH_SCORE_OWNER", userId: owner.id, title: "Gemeente besluit" }),
+      buildEvidence({ id: "EVIDENCE_BATCH_SCORE_3", caseId: "CASE_BATCH_SCORE_OWNER", userId: owner.id, title: "Bezwaar termijn" }),
+    ]);
+
+    const sqlite = app.db.$client as any;
+    const originalTransaction = sqlite.transaction.bind(sqlite);
+    let transactionCalls = 0;
+    sqlite.transaction = (...args: unknown[]) => {
+      transactionCalls += 1;
+      return originalTransaction(...args);
+    };
+
+    try {
+      const result = await app.makeCaller(owner).relevanceScoring.batchScore({
+        caseContext: { caseId: "CASE_BATCH_SCORE_OWNER" },
+        batchSize: 2,
+      });
+      expect(result.totalScored).toBe(3);
+    } finally {
+      sqlite.transaction = originalTransaction;
+    }
+
+    expect(transactionCalls).toBe(2);
+  });
+
   it("exports only the selected owner's case and includes available source files", async () => {
     const caller = app.makeCaller(owner);
     await app.db.insert(app.schema.evidence).values(buildEvidence({
@@ -261,5 +294,56 @@ suite("evidence scoring and case export", () => {
       await app.db.delete(app.schema.documentAnalyses).where(eq(app.schema.documentAnalyses.id, analysisId));
       await app.db.delete(app.schema.evidence).where(eq(app.schema.evidence.id, evidenceId));
     }
+  });
+
+  it("writes persisted analyses to a ZIP without per-evidence read amplification", async () => {
+    const caseId = "CASE_EXPORT_QUERY_OWNER";
+    await app.db.insert(app.schema.cases).values(buildCase({ id: caseId, userId: owner.id }));
+    const now = new Date();
+    await app.db.insert(app.schema.evidence).values([0, 1, 2].map((index) => buildEvidence({
+      id: `EXPORT_QUERY_EVIDENCE_${index}`,
+      caseId,
+      userId: owner.id,
+      title: `Export analysis ${index}`,
+    })));
+    await app.db.insert(app.schema.documentAnalyses).values([0, 1, 2].map((index) => ({
+      id: `EXPORT_QUERY_ANALYSIS_${index}`,
+      evidenceId: `EXPORT_QUERY_EVIDENCE_${index}`,
+      caseId,
+      userId: owner.id,
+      analysisVersion: "export-query-test",
+      contentHash: `${index}`.repeat(64),
+      status: "complete",
+      extractionMethod: "plain_text",
+      providerStatus: "complete",
+      documentType: "legal document",
+      confidence: 100,
+      summary: `Export analysis ${index}`,
+      result: JSON.stringify({ summary: `Persisted export analysis ${index}` }),
+      analyzedChars: 1,
+      createdAt: now,
+      updatedAt: now,
+    })));
+
+    const sqlite: any = app.db.$client;
+    const originalPrepare = sqlite.prepare.bind(sqlite);
+    let selects = 0;
+    sqlite.prepare = (statement: string, ...args: unknown[]) => {
+      if (/^\s*select\b/i.test(statement)) selects += 1;
+      return originalPrepare(statement, ...args);
+    };
+
+    try {
+      const { createCaseZipStream } = await import("../../server/evidenceExport");
+      const exported = await createCaseZipStream(owner.id, caseId);
+      for await (const _chunk of exported.stream) {
+        // Draining the stream completes analysis entry generation.
+      }
+      await exported.completion;
+    } finally {
+      sqlite.prepare = originalPrepare;
+    }
+
+    expect(selects).toBe(4);
   });
 });

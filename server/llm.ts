@@ -69,6 +69,8 @@ export type InvokeParams = {
   responseFormat?: ResponseFormat;
   response_format?: ResponseFormat;
   signal?: AbortSignal;
+  requestTimeoutMs?: number;
+  beforeDispatch?: () => Promise<boolean>;
 };
 
 export const EXTERNAL_LLM_PROVIDERS = [
@@ -274,7 +276,7 @@ function providerConfigs(): Record<LLMProvider, ProviderConfig> {
   return {
     ollama: {
       id: "ollama", label: "Local Ollama", apiKey: "", keyName: "LARO_OLLAMA_MODEL",
-      model: ollamaModel || "not configured", url: ollamaUrl || "", configured: Boolean(ollamaModel && ollamaUrl), localOnly: true,
+      model: ollamaModel || "not configured", url: ollamaUrl || "", configured: Boolean(ollamaModel && ollamaUrl), localOnly: true, jsonSchema: true,
     },
     forge: {
       id: "forge", label: "Forge-compatible", apiKey: forgeKey, keyName: "FORGE_API_KEY",
@@ -419,6 +421,8 @@ async function invokeAnthropic(config: ProviderConfig, params: InvokeParams): Pr
     url: config.url,
     label: config.label,
     signal: params.signal,
+    requestTimeoutMs: params.requestTimeoutMs,
+    beforeDispatch: params.beforeDispatch,
     init: {
       method: "POST",
       headers: {
@@ -467,9 +471,10 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     response_format,
   } = params;
 
+  const normalizedMessages = messages.map(normalizeMessage);
   const payload: Record<string, unknown> = {
     model: config.model,
-    messages: messages.map(normalizeMessage),
+    messages: normalizedMessages,
   };
 
   if (tools && tools.length > 0) {
@@ -488,6 +493,16 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   if (provider === "openai") payload.max_completion_tokens = tokenLimit;
   else payload.max_tokens = tokenLimit;
 
+  if (config.localOnly) {
+    const effort = (process.env.LARO_OLLAMA_REASONING_EFFORT || "").trim();
+    if (effort) {
+      if (!["none", "low", "medium", "high", "max"].includes(effort)) {
+        throw new Error("LARO_OLLAMA_REASONING_EFFORT must be none, low, medium, high or max");
+      }
+      payload.reasoning_effort = effort;
+    }
+  }
+
   const normalizedResponseFormat = normalizeResponseFormat({
     responseFormat,
     response_format,
@@ -496,6 +511,11 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   });
 
   if (normalizedResponseFormat) {
+    if (normalizedResponseFormat.type === "json_schema" && (config.localOnly || !config.jsonSchema)) {
+      // JSON mode alone specifies syntax, not the fields required by the caller.
+      normalizedMessages.unshift(normalizeMessage({ role: "system", content: schemaInstruction(normalizedResponseFormat)! }));
+      if (config.localOnly) payload.temperature = 0;
+    }
     payload.response_format = normalizedResponseFormat.type === "json_schema" && !config.jsonSchema
       ? { type: "json_object" }
       : normalizedResponseFormat;
@@ -505,6 +525,8 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     url: config.url,
     label: config.label,
     signal: params.signal,
+    requestTimeoutMs: params.requestTimeoutMs,
+    beforeDispatch: params.beforeDispatch,
     init: {
       method: "POST",
       headers: {

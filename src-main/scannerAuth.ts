@@ -8,19 +8,34 @@ interface CookieStore {
   get(filter: { url: string; name: string }): Promise<Array<{ name: string; value: string }>>;
 }
 
+// Remote selected-file uploads use normal owner-scoped session authorization.
+// Never send the local per-launch scanner credential to a network service.
+export async function getRemoteUploadAuth(options: {
+  cookieUrl: string;
+  cookieStore: CookieStore;
+}): Promise<{ sessionCookie: string; scannerSecret: string }> {
+  const cookies = await options.cookieStore.get({ url: options.cookieUrl, name: COOKIE_NAME });
+  const cookie = cookies.find((value) => value.name === COOKIE_NAME)?.value;
+  if (!cookie) throw new Error('Sign in to LARO before uploading evidence');
+  return { sessionCookie: `${COOKIE_NAME}=${cookie}`, scannerSecret: '' };
+}
+
 export async function getDesktopScannerAuth(options: {
   cookieUrl: string;
+  cookieName?: string;
   scannerSecret: string;
   cookieStore: CookieStore;
 }): Promise<{ sessionCookie: string; scannerSecret: string }> {
   if (options.scannerSecret.length < MIN_DESKTOP_SCANNER_SECRET_LENGTH) {
     throw new Error("Desktop scanner authorization is unavailable");
   }
-  const cookies = await options.cookieStore.get({ url: options.cookieUrl, name: COOKIE_NAME });
-  const sessionCookie = cookies.find((cookie) => cookie.name === COOKIE_NAME)?.value;
+  const cookieName = options.cookieName ?? COOKIE_NAME;
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(cookieName)) throw new Error('Invalid session cookie name');
+  const cookies = await options.cookieStore.get({ url: options.cookieUrl, name: cookieName });
+  const sessionCookie = cookies.find((cookie) => cookie.name === cookieName)?.value;
   if (!sessionCookie) throw new Error("Sign in to LARO before uploading evidence");
   return {
-    sessionCookie: `${COOKIE_NAME}=${sessionCookie}`,
+    sessionCookie: `${cookieName}=${sessionCookie}`,
     scannerSecret: options.scannerSecret,
   };
 }
@@ -32,7 +47,7 @@ export function createDesktopScannerHeaders(
     const auth = await resolveAuth();
     return {
       Cookie: auth.sessionCookie,
-      [DESKTOP_SCANNER_HEADER]: auth.scannerSecret,
+      ...(auth.scannerSecret ? { [DESKTOP_SCANNER_HEADER]: auth.scannerSecret } : {}),
     };
   };
 }

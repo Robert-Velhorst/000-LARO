@@ -1,6 +1,9 @@
 import { createServer, type Server } from 'http';
+import { connect } from 'net';
+import { once } from 'events';
+import { Server as SocketIOServer } from 'socket.io';
 import { afterEach, describe, expect, it } from 'vitest';
-import { closeHttpServer, listenHttpServer } from '../../server/listen';
+import { closeHttpServer, closeSharedHttpServer, listenHttpServer } from '../../server/listen';
 import {
   isDesktopDevelopmentMode,
   resolveDesktopServerPort,
@@ -44,6 +47,37 @@ describe('HTTP server binding', () => {
     await closeHttpServer(server);
     expect(server.listening).toBe(false);
     await expect(closeHttpServer(server)).resolves.toBeUndefined();
+  });
+
+  it.each(['preconnected', 'in-flight'] as const)('bounds Socket.IO shutdown with an open %s HTTP connection', async (kind) => {
+    const server = createServer((_request, response) => response.write('still working'));
+    servers.push(server);
+    const realtime = new SocketIOServer(server, { serveClient: false });
+    const port = await listenHttpServer(server, 0, '127.0.0.1');
+    const connected = once(server, 'connection');
+    const client = connect(port, '127.0.0.1');
+    client.on('error', () => {});
+    client.resume();
+    await connected;
+    if (kind === 'in-flight') {
+      const requested = once(server, 'request');
+      client.write('GET /unfinished HTTP/1.1\r\nHost: localhost\r\n\r\n');
+      await requested;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const closed = closeSharedHttpServer(server, () => new Promise<void>(resolve => { void realtime.close(() => resolve()); }), 25);
+      const completed = await Promise.race([
+        closed.then(() => true),
+        new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 2_000); }),
+      ]);
+      expect(completed, 'Socket.IO waited indefinitely before the HTTP drain deadline was armed').toBe(true);
+      expect(server.listening).toBe(false);
+    } finally {
+      clearTimeout(timer);
+      client.destroy();
+      await realtime.close();
+    }
   });
 });
 

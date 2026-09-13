@@ -16,6 +16,7 @@ out/
 .env.test.local
 .env.production
 .env.production.local
+.env.hetzner
 
 release/
 release-acceptance.draft.json

@@ -62,17 +62,17 @@ export default function Admin() {
   if (!enabled) {
     return (
       <DashboardLayout>
-        <main className="p-6">
+        <section className="p-6">
           <h1 className="text-2xl font-semibold">Administration</h1>
           <p className="mt-2 text-sm text-muted-foreground">Administrator access is required.</p>
-        </main>
+        </section>
       </DashboardLayout>
     );
   }
 
   return (
     <DashboardLayout>
-      <main className="space-y-6 p-4 md:p-6">
+      <section className="space-y-6">
         <header>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-semibold">Administration</h1>
@@ -280,7 +280,7 @@ export default function Admin() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </main>
+      </section>
     </DashboardLayout>
   );
 }

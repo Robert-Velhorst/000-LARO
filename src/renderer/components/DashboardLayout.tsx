@@ -1,373 +1,183 @@
-import { useAuth } from "@/_core/hooks/useAuth";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-  SidebarTrigger,
-  useSidebar,
-} from "@/components/ui/sidebar";
-import { APP_LOGO, APP_TITLE } from "@/const";
-import { ConnectionStatus } from "./ConnectionStatus";
-import { useIsMobile } from "@/hooks/useMobile";
-import { Home, LogOut, PanelLeft, Briefcase, Settings, HelpCircle, Shield, BarChart3, ChevronDown, ChevronRight, Megaphone, FileSearch } from "lucide-react";
-import { CSSProperties, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation } from "wouter";
-import ChatWidget from "./ChatWidget";
-import NotificationCenter from "./NotificationCenter";
-import { LegalAdviceNotice } from "./LegalAdviceNotice";
-import { LanguageSelector } from "./LanguageSelector";
+import { Briefcase, ChevronDown, FileSearch, HelpCircle, Home, LogOut, Megaphone, MessageSquare, PanelLeft, Settings, Shield, StickyNote } from "lucide-react";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { useI18n } from "@/contexts/I18nContext";
+import { APP_LOGO, APP_TITLE } from "@/const";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
+import { LanguageSelector } from "./LanguageSelector";
+import { LegalAdviceNotice } from "./LegalAdviceNotice";
+import { ConnectionStatus } from "./ConnectionStatus";
+import NotificationCenter from "./NotificationCenter";
+import ChatWidget, { useChatSession } from "./ChatWidget";
 import type { TranslationKey } from "../../../shared/i18n";
 
-// Main navigation items (case-centric design)
-const mainMenuItems = [
-  { icon: Home, labelKey: "nav.home", path: "/" },
-  { icon: Briefcase, labelKey: "nav.cases", path: "/cases" },
-  { icon: FileSearch, labelKey: "nav.evidence", path: "/evidence" },
-  { icon: Megaphone, labelKey: "nav.outreach", path: "/outreach" },
-  { icon: HelpCircle, labelKey: "nav.help", path: "/help" },
-] satisfies Array<{ icon: typeof Home; labelKey: TranslationKey; path: string }>;
+const LayoutContext = createContext(false);
+const mainItems = [
+  { icon: Home, label: "nav.home", path: "/" },
+  { icon: Briefcase, label: "nav.cases", path: "/cases" },
+  { icon: FileSearch, label: "nav.evidence", path: "/evidence" },
+  { icon: Megaphone, label: "nav.outreach", path: "/outreach" },
+  { icon: StickyNote, label: "nav.notes", path: "/messages" },
+] satisfies Array<{ icon: typeof Home; label: TranslationKey; path: string }>;
+const secondaryItems = [
+  { icon: Settings, label: "nav.settings", path: "/settings" },
+  { icon: HelpCircle, label: "nav.help", path: "/help" },
+] satisfies Array<{ icon: typeof Home; label: TranslationKey; path: string }>;
 
-
-
-// Admin sub-menu
-const adminMenuItems = [
-  { icon: Shield, labelKey: "nav.adminPanel", path: "/admin" },
-  { icon: BarChart3, labelKey: "nav.analytics", path: "/admin-analytics" },
-] satisfies Array<{ icon: typeof Shield; labelKey: TranslationKey; path: string }>;
-
-const SIDEBAR_WIDTH_KEY = "sidebar-width";
-const DEFAULT_WIDTH = 280;
-const MIN_WIDTH = 200;
-const MAX_WIDTH = 480;
-
-// Collapsible section component for Settings and Admin
-function CollapsibleSection({
-  title,
-  icon: Icon,
-  items,
-  location,
-  setLocation,
-  className = ""
-}: {
-  title: string;
-  icon: any;
-  items: Array<{ icon: any; label: string; path: string }>;
-  location: string;
-  setLocation: (path: string) => void;
-  className?: string;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const hasActiveChild = items.some(item => location === item.path);
-
-  // Auto-expand if a child is active
-  useEffect(() => {
-    if (hasActiveChild) {
-      setIsOpen(true);
-    }
-  }, [hasActiveChild]);
-
-  return (
-    <div className={className}>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          onClick={() => setIsOpen(!isOpen)}
-          tooltip={title}
-          className="h-10 rounded-lg font-normal text-sidebar-foreground/75 transition-colors hover:bg-white/10 hover:text-white"
-        >
-          <Icon className="h-4 w-4 shrink-0" />
-          <span className="flex w-full items-center justify-between">
-            {title}
-            {isOpen ? <ChevronDown className="h-3 w-3 opacity-70" /> : <ChevronRight className="h-3 w-3 opacity-70" />}
-          </span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-
-      {isOpen && (
-        <div className="ml-4 border-l border-border/50 pl-2 space-y-0.5">
-          {items.map(item => {
-            const isActive = location === item.path;
-            return (
-              <SidebarMenuItem key={item.path}>
-                <SidebarMenuButton
-                  isActive={isActive}
-                  onClick={() => setLocation(item.path)}
-                  tooltip={item.label}
-                  className={`h-9 rounded-md text-sm font-normal transition-colors ${isActive
-                    ? "bg-white/15 text-white"
-                    : "text-sidebar-foreground/75 hover:bg-white/10 hover:text-white"
-                    }`}
-                >
-                  <item.icon className="h-3.5 w-3.5 shrink-0" />
-                  <span>{item.label}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
+export function activeWorkspacePath(path: string) {
+  if (path.startsWith("/lawyers") || path === "/analytics") return "/outreach";
+  if (path === "/email") return "/messages";
+  if (["/email-settings", "/email-preferences", "/privacy"].includes(path)) return "/settings";
+  if (path === "/admin-analytics") return "/admin";
+  return path;
 }
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
-    return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
-  });
-  useEffect(() => {
-    localStorage.setItem(SIDEBAR_WIDTH_KEY, sidebarWidth.toString());
-  }, [sidebarWidth]);
+const WIDTH_KEY = "sidebar-width";
+const DEFAULT_WIDTH = 224;
+function readWidth() {
+  try {
+    const value = Number(localStorage.getItem(WIDTH_KEY));
+    return value && Number.isFinite(value) ? Math.min(300, Math.max(200, value)) : DEFAULT_WIDTH;
+  } catch { return DEFAULT_WIDTH; }
+}
 
-  return (
-    <SidebarProvider
-      style={
-        {
-          "--sidebar-width": `${sidebarWidth}px`,
-        } as CSSProperties
-      }
-    >
-      <DashboardLayoutContent setSidebarWidth={setSidebarWidth}>
-        {children}
-      </DashboardLayoutContent>
+// Existing pages can also render independently without nesting the application shell.
+export default function DashboardLayout({ children }: { children: ReactNode }) {
+  const inLayout = useContext(LayoutContext);
+  return inLayout ? <>{children}</> : <DashboardShell>{children}</DashboardShell>;
+}
+
+function DashboardShell({ children }: { children: ReactNode }) {
+  const [width, setWidth] = useState(readWidth);
+  useEffect(() => {
+    try { localStorage.setItem(WIDTH_KEY, String(width)); } catch { /* Storage is optional. */ }
+  }, [width]);
+  return <LayoutContext.Provider value={true}>
+    <SidebarProvider style={{ "--sidebar-width": `${width}px`, "--sidebar-width-icon": "64px" } as CSSProperties}>
+      <WorkspaceFrame width={width} setWidth={setWidth}>{children}</WorkspaceFrame>
     </SidebarProvider>
-  );
+  </LayoutContext.Provider>;
 }
 
-type DashboardLayoutContentProps = {
-  children: React.ReactNode;
-  setSidebarWidth: (width: number) => void;
-};
-
-function DashboardLayoutContent({
-  children,
-  setSidebarWidth,
-}: DashboardLayoutContentProps) {
+function WorkspaceFrame({ children, width, setWidth }: { children: ReactNode; width: number; setWidth: (width: number) => void }) {
   const { user, logout } = useAuth();
   const { t } = useI18n();
   const [location, setLocation] = useLocation();
-  const { state, toggleSidebar } = useSidebar();
-  const isCollapsed = state === "collapsed";
-  const [isResizing, setIsResizing] = useState(false);
+  const { state, toggleSidebar, isMobile, setOpenMobile } = useSidebar();
+  const collapsed = !isMobile && state === "collapsed";
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const chatSession = useChatSession();
+  const [resizing, setResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const localizedMainMenuItems = mainMenuItems.map((item) => ({ ...item, label: t(item.labelKey) }));
-  const localizedAdminMenuItems = adminMenuItems.map((item) => ({ ...item, label: t(item.labelKey) }));
-  const activeMenuItem = localizedMainMenuItems.find(item => item.path === location);
-  const isMobile = useIsMobile();
+  const activePath = activeWorkspacePath(location);
+  const title = [...mainItems, ...secondaryItems, { path: "/admin", label: "nav.admin" as const }].find(item => item.path === activePath)?.label;
 
   useEffect(() => {
-    if (isCollapsed) {
-      setIsResizing(false);
-    }
-  }, [isCollapsed]);
-
+    setOpenMobile(false);
+    document.title = `${title ? t(title) : t("route.notFound")} | LARO`;
+  }, [location, setOpenMobile, t, title]);
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing) return;
-
-      const sidebarLeft = sidebarRef.current?.getBoundingClientRect().left ?? 0;
-      const newWidth = e.clientX - sidebarLeft;
-      if (newWidth >= MIN_WIDTH && newWidth <= MAX_WIDTH) {
-        setSidebarWidth(newWidth);
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsResizing(false);
-    };
-
-    if (isResizing) {
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-    }
-
+    const open = () => setAssistantOpen(true);
+    window.addEventListener("laro:open-assistant", open);
+    return () => window.removeEventListener("laro:open-assistant", open);
+  }, []);
+  useEffect(() => {
+    if (!resizing) return;
+    const move = (event: PointerEvent) => setWidth(Math.min(300, Math.max(200, event.clientX - (sidebarRef.current?.getBoundingClientRect().left ?? 0))));
+    const stop = () => setResizing(false);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
     return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
     };
-  }, [isResizing, setSidebarWidth]);
+  }, [resizing, setWidth]);
 
-  return (
-    <>
-      <div className="relative" ref={sidebarRef}>
-        <Sidebar
-          collapsible="icon"
-          className="border-r border-sidebar-accent/25 bg-sidebar text-sidebar-foreground"
-          disableTransition={isResizing}
-        >
-          <SidebarHeader className="h-16 flex flex-row items-center px-4 border-b border-sidebar-accent/10">
-            <div className="flex items-center gap-3 transition-all w-full overflow-hidden">
-              {isCollapsed ? (
-                <div className="relative h-9 w-9 shrink-0 group mx-auto">
-                  <img
-                    src={APP_LOGO}
-                    className="h-9 w-9 rounded-lg object-cover shadow-sm ring-1 ring-white/10"
-                    alt={APP_TITLE}
-                  />
-                  <button
-                    type="button"
-                    onClick={toggleSidebar}
-                    aria-label={t("nav.expandSidebar")}
-                    className="absolute inset-0 flex items-center justify-center rounded-lg bg-sidebar-accent/80 opacity-0 transition-opacity group-hover:opacity-100 focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
-                  >
-                    <PanelLeft className="h-4 w-4 text-sidebar-foreground" />
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <div className="flex items-center gap-3 min-w-0">
-                    <img
-                      src={APP_LOGO}
-                      className="h-9 w-9 shrink-0 rounded-lg object-cover shadow-md ring-1 ring-white/10"
-                      alt={APP_TITLE}
-                    />
-                    <span className="truncate font-bold text-lg tracking-tight text-sidebar-foreground">
-                      {APP_TITLE}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={toggleSidebar}
-                    aria-label={t("nav.collapseSidebar")}
-                    className="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
-                  >
-                    <PanelLeft className="h-4 w-4" />
-                  </button>
-                </>
-              )}
-            </div>
-          </SidebarHeader>
+  const navigate = (path: string) => { setOpenMobile(false); setLocation(path); };
+  const menuItem = (item: { icon: typeof Home; label: TranslationKey; path: string }) => <SidebarMenuItem key={item.path}>
+    <SidebarMenuButton isActive={activePath === item.path} aria-current={activePath === item.path ? "page" : undefined}
+      aria-label={t(item.label)} tooltip={t(item.label)} onClick={() => navigate(item.path)} className="workspace-nav-item h-11 gap-3 rounded-md px-3">
+      <item.icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+      {!collapsed && <span>{t(item.label)}</span>}
+    </SidebarMenuButton>
+  </SidebarMenuItem>;
 
-          <SidebarContent className="gap-0">
-            <SidebarMenu className="px-2 py-1">
-              {/* Main menu items */}
-              {localizedMainMenuItems.map(item => {
-                const isActive = location === item.path;
-                return (
-                  <SidebarMenuItem key={item.path}>
-                    <SidebarMenuButton
-                      isActive={isActive}
-                      onClick={() => setLocation(item.path)}
-                      tooltip={item.label}
-                      className={`h-10 rounded-lg font-normal transition-colors ${isActive
-                        ? "bg-white/15 text-white"
-                        : "text-sidebar-foreground/75 hover:bg-white/10 hover:text-white"
-                        }`}
-                    >
-                      <item.icon className="h-4 w-4 shrink-0" />
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-
-              {/* Admin section (collapsible, admin-only) */}
-              {user?.role === "admin" && (
-                <CollapsibleSection
-                  title={t("nav.admin")}
-                  icon={Shield}
-                  items={localizedAdminMenuItems}
-                  location={location}
-                  setLocation={setLocation}
-                  className="border-t border-border/50 mt-2 pt-2"
-                />
-              )}
-            </SidebarMenu>
-          </SidebarContent>
-
-          <SidebarFooter className="p-3">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={t("nav.accountMenu")}
-                  className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-accent/50 transition-colors w-full text-left justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <Avatar className="h-9 w-9 border shrink-0">
-                    <AvatarFallback className="text-xs font-medium">
-                      {user?.name?.charAt(0).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <div className="border-b border-border/60 p-2">
-                  <LanguageSelector />
-                </div>
-                <DropdownMenuItem
-                  onClick={() => setLocation("/settings")}
-                  className="cursor-pointer"
-                >
-                  <Settings className="mr-2 h-4 w-4" />
-                  <span>{t("nav.settings")}</span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={logout}
-                  className="cursor-pointer text-destructive focus:text-destructive"
-                >
-                  <LogOut className="mr-2 h-4 w-4" />
-                  <span>{t("nav.signOut")}</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </SidebarFooter>
-        </Sidebar>
-        <div
-          className={`absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/20 transition-colors ${isCollapsed ? "hidden" : ""}`}
-          onMouseDown={() => {
-            if (isCollapsed) return;
-            setIsResizing(true);
-          }}
-          style={{ zIndex: 50 }}
-        />
-      </div>
-
-      <SidebarInset>
-        {isMobile && (
-          <div className="flex border-b h-14 items-center justify-between bg-background/95 px-2 backdrop-blur supports-[backdrop-filter]:backdrop-blur sticky top-0 z-40">
-            <div className="flex items-center gap-2">
-              <SidebarTrigger className="h-9 w-9 rounded-lg bg-background" />
-              <div className="flex items-center gap-3">
-                <div className="flex flex-col gap-1">
-                  <span className="tracking-tight text-foreground">
-                    {activeMenuItem?.label ?? APP_TITLE}
-                  </span>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <ConnectionStatus />
-              <NotificationCenter />
-            </div>
-          </div>
-        )}
-        <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 bg-black p-3 outline-none sm:p-6 md:p-8">
-          {children}
-          <LegalAdviceNotice />
-        </main>
-        {location !== "/" && <ChatWidget />}
-      </SidebarInset>
-    </>
-  );
+  return <>
+    <div ref={sidebarRef} className="relative shrink-0">
+      <Sidebar collapsible="icon" disableTransition={resizing} className="border-border bg-sidebar text-sidebar-foreground">
+        <SidebarHeader className="h-16 flex-row items-center justify-between border-b border-border px-3">
+          {!collapsed && <div className="flex min-w-0 items-center gap-2.5">
+            <img src={APP_LOGO} alt="" className="h-8 w-8 shrink-0 rounded-md" />
+            <span className="text-lg font-semibold">{APP_TITLE}</span>
+          </div>}
+          <Button variant="ghost" size="icon" onClick={toggleSidebar} title={t(collapsed ? "nav.expandSidebar" : "nav.collapseSidebar")}
+            aria-label={t(collapsed ? "nav.expandSidebar" : "nav.collapseSidebar")} className="h-9 w-9 shrink-0">
+            <PanelLeft className="h-4 w-4" />
+          </Button>
+        </SidebarHeader>
+        <SidebarContent className="px-2 py-4">
+          <nav aria-label={t("nav.main")}><SidebarMenu>{mainItems.map(menuItem)}</SidebarMenu></nav>
+          {user?.role === "admin" && <nav aria-label={t("nav.admin")} className="mt-4 border-t border-border pt-4"><SidebarMenu>
+            {menuItem({ icon: Shield, label: "nav.admin", path: "/admin" })}
+          </SidebarMenu></nav>}
+        </SidebarContent>
+        <SidebarFooter className="gap-3 border-t border-border px-2 py-3">
+          <nav aria-label={t("nav.preferences")}><SidebarMenu>{secondaryItems.map(menuItem)}</SidebarMenu></nav>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" aria-label={t("nav.accountMenu")} className="flex min-h-12 w-full min-w-0 items-center gap-3 rounded-md p-2 text-left hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
+                <Avatar className="h-8 w-8 shrink-0"><AvatarFallback>{user?.name?.charAt(0).toUpperCase() || "?"}</AvatarFallback></Avatar>
+                {!collapsed && <><span className="min-w-0 flex-1 truncate text-sm font-medium">{user?.name || t("nav.account")}</span><ChevronDown className="h-4 w-4 shrink-0" /></>}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <div className="border-b border-border p-2"><LanguageSelector /></div>
+              <DropdownMenuItem onClick={() => navigate("/settings")}><Settings className="mr-2 h-4 w-4" />{t("nav.settings")}</DropdownMenuItem>
+              <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive"><LogOut className="mr-2 h-4 w-4" />{t("nav.signOut")}</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </SidebarFooter>
+      </Sidebar>
+      {!collapsed && !isMobile && <div role="separator" tabIndex={0} aria-label={t("nav.resizeSidebar")} aria-orientation="vertical" aria-valuemin={200} aria-valuemax={300} aria-valuenow={width}
+        onPointerDown={(event) => { event.preventDefault(); setResizing(true); }}
+        onKeyDown={(event) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          setWidth(event.key === "Home" ? 200 : event.key === "End" ? 300 : Math.min(300, Math.max(200, width + (event.key === "ArrowRight" ? 10 : -10))));
+        }}
+        className="absolute inset-y-0 right-0 z-40 w-1 cursor-col-resize hover:bg-primary/40 focus-visible:bg-primary focus-visible:outline-none" />}
+    </div>
+    <SidebarInset>
+      <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between gap-2 border-b border-border bg-background px-3 sm:px-6">
+        <div className="flex min-w-0 items-center gap-2">
+          {isMobile && <SidebarTrigger />}
+          <span className="truncate text-sm font-medium text-muted-foreground">{title ? t(title) : APP_TITLE}</span>
+        </div>
+        <div className="flex shrink-0 items-center gap-1 sm:gap-3">
+          <div className="hidden sm:block"><ConnectionStatus /></div>
+          <Button variant="outline" onClick={() => setAssistantOpen(true)} aria-label={t("nav.openAssistant")} title={t("nav.openAssistant")}>
+            <MessageSquare className="h-4 w-4" /><span className="hidden sm:inline">{t("nav.assistant")}</span>
+          </Button>
+          <NotificationCenter />
+        </div>
+      </header>
+      <main id="main-content" tabIndex={-1} className="workspace-main min-w-0 flex-1 p-4 outline-none sm:p-6 lg:px-8">
+        <div className="mx-auto w-full min-w-0 max-w-[1440px]">{children}</div>
+      </main>
+      <footer className="mx-auto w-full max-w-[1504px] px-4 pb-4 sm:px-6 lg:px-8"><LegalAdviceNotice /></footer>
+    </SidebarInset>
+    <Dialog open={assistantOpen} onOpenChange={setAssistantOpen}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-xl overflow-y-auto p-0">
+        <DialogHeader className="sr-only"><DialogTitle>{t("nav.assistant")}</DialogTitle><DialogDescription>{t("nav.assistantContext")}</DialogDescription></DialogHeader>
+        <ChatWidget embedded session={chatSession} />
+      </DialogContent>
+    </Dialog>
+  </>;
 }

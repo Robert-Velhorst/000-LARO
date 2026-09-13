@@ -58,3 +58,13 @@ export function closeHttpServer(server: Server, timeoutMs = 5_000): Promise<void
     server.closeIdleConnections?.();
   });
 }
+
+/** Socket.IO also closes HTTP; arm the HTTP drain deadline before awaiting it. */
+export async function closeSharedHttpServer(
+  server: Server,
+  closeRealtime: () => Promise<void>,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const httpClosed = closeHttpServer(server, timeoutMs);
+  await Promise.all([httpClosed, closeRealtime()]);
+}

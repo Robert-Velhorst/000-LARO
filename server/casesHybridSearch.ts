@@ -75,24 +75,28 @@ export async function hybridCaseSearch(query: string, userId: string): Promise<s
 
   const db = await getDb();
   if (db) {
-    for (const t of terms) {
-      const safe = t.replace(/[%_]/g, "").trim();
-      if (safe.length < 2) continue;
-      const p = `%${safe}%`;
+    const termConditions = terms
+      .map((term) => term.replace(/[%_]/g, "").trim())
+      .filter((term) => term.length >= 2)
+      .map((term) => {
+        const pattern = `%${term}%`;
+        return or(
+          like(cases.clientName, pattern),
+          like(cases.caseType, pattern),
+          like(cases.caseSummary, pattern),
+        );
+      });
+    if (termConditions.length) {
       try {
         const rows = await db
           .select({ id: cases.id })
           .from(cases)
-          .where(
-            and(
-              eq(cases.userId, userId),
-              or(like(cases.clientName, p), like(cases.caseType, p), like(cases.caseSummary, p))
-            )
-          )
-          .limit(40);
-        rows.forEach((r) => ids.add(r.id));
+          .where(and(eq(cases.userId, userId), or(...termConditions)))
+          // Preserve the previous aggregate capacity of up to 40 hits per term.
+          .limit(40 * termConditions.length);
+        rows.forEach((row) => ids.add(row.id));
       } catch {
-        /* ignore term */
+        /* global-search fallback below remains available */
       }
     }
   }

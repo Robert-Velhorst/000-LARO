@@ -16,6 +16,7 @@ import {
   Clock,
   X,
   TrendingUp,
+  SlidersHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
@@ -117,11 +118,6 @@ export default function SmartSearchFilters({
   const activeFilterCount = Object.values(activeFilters).filter(Boolean).length;
 
   const handleSearch = () => {
-    if (!searchQuery.trim() && activeFilterCount === 0) {
-      toast.error("Enter a search query or choose at least one filter");
-      return;
-    }
-
     if (searchQuery.trim()) {
       const newSearch: RecentSearch = {
         id: Date.now().toString(),
@@ -181,8 +177,10 @@ export default function SmartSearchFilters({
   return (
     <div className="space-y-4">
       {/* Inline Filters (shown first per client feedback) */}
-      <Card className={compact ? "border-border/50 bg-card/30" : ""}>
-        <CardContent className={compact ? "p-3 space-y-3" : "p-4 space-y-4"}>
+      <Card className={compact ? "border-0 bg-transparent shadow-none" : ""}>
+        <CardContent className={compact ? "p-0 space-y-3" : "p-4 space-y-4"}>
+          <details open={compact ? undefined : true}>
+            <summary className="mb-3 cursor-pointer py-2 text-sm font-medium"><SlidersHorizontal className="mr-2 inline h-4 w-4" />Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</summary>
           <div className={`grid grid-cols-1 ${searchType === "lawyers" ? "md:grid-cols-3" : "md:grid-cols-4"} ${compact ? "gap-3" : "gap-4"}`}>
             {searchType === "cases" && <div>
               <label className="text-sm font-medium mb-1 block text-muted-foreground">Status</label>
@@ -325,6 +323,7 @@ export default function SmartSearchFilters({
             </div>}
           </div>
 
+          </details>
           {/* Search Bar */}
           <div className="flex gap-3">
             <div className="relative flex-1">
@@ -339,7 +338,7 @@ export default function SmartSearchFilters({
               />
             </div>
 
-            <Button onClick={handleSearch}>Search</Button>
+            <Button onClick={handleSearch} aria-label="Search"><Search className="h-4 w-4" /><span className="hidden sm:inline">Search</span></Button>
             <Button
               variant="outline"
               onClick={handleSaveFilter}
@@ -350,11 +349,6 @@ export default function SmartSearchFilters({
               <span className="hidden sm:inline">Save</span>
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">
-            {searchType === "lawyers"
-              ? "Search checks the full persisted directory by name, firm, contact details, address, and legal areas."
-              : "Keyword match runs on every search. With 2+ characters, LARO can expand natural-language queries using your configured AI provider."}
-          </p>
         </CardContent>
       </Card>
 

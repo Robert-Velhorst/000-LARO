@@ -134,15 +134,28 @@ function scoreEvidence(input: {
 async function loadCaseEvidence(userId: string, caseId: string) {
   const db = await getDb();
   const [caseRow] = await db
-    .select()
+    .select({
+      caseType: cases.caseType,
+      caseSummary: cases.caseSummary,
+      legalAreas: cases.legalAreas,
+    })
     .from(cases)
     .where(and(eq(cases.id, caseId), eq(cases.userId, userId)))
     .limit(1);
   if (!caseRow) throw new Error("Case not found");
 
   const [items, analyses] = await Promise.all([
-    db.select().from(evidence).where(and(eq(evidence.caseId, caseId), eq(evidence.userId, userId))),
-    db.select().from(documentAnalyses).where(and(
+    db.select({
+      id: evidence.id,
+      title: evidence.title,
+      description: evidence.description,
+      tags: evidence.tags,
+      metadata: evidence.metadata,
+    }).from(evidence).where(and(eq(evidence.caseId, caseId), eq(evidence.userId, userId))),
+    db.select({
+      evidenceId: documentAnalyses.evidenceId,
+      result: documentAnalyses.result,
+    }).from(documentAnalyses).where(and(
       eq(documentAnalyses.caseId, caseId),
       eq(documentAnalyses.userId, userId)
     )),
@@ -187,11 +200,8 @@ export async function scoreAllEvidenceForCase(options: {
 }): Promise<EvidenceRelevanceResult[]> {
   const { db, caseText, items, analysisByEvidence } = await loadCaseEvidence(options.userId, options.caseId);
   const batchSize = Math.max(1, Math.min(options.batchSize ?? 10, 50));
-  const results: EvidenceRelevanceResult[] = [];
-
-  for (let offset = 0; offset < items.length; offset += batchSize) {
-    for (const item of items.slice(offset, offset + batchSize)) {
-      const result = scoreEvidence({
+  const updates = items.map((item) => {
+    const result = scoreEvidence({
         id: item.id,
         title: item.title,
         description: item.description,
@@ -200,8 +210,11 @@ export async function scoreAllEvidenceForCase(options: {
         caseText,
         analysisResult: analysisByEvidence.get(item.id),
       });
-      const metadata = parseObject(item.metadata);
-      const nextMetadata = {
+    const metadata = parseObject(item.metadata);
+    return {
+      item,
+      result,
+      metadata: JSON.stringify({
         ...metadata,
         relevanceScore: result.relevanceScore,
         scoringReasoning: result.reasoning,
@@ -209,23 +222,31 @@ export async function scoreAllEvidenceForCase(options: {
         caseRelevance: result.caseRelevance,
         scoringMethod: "case-context-v1",
         lastScoredAt: new Date().toISOString(),
-      };
-      await db
-        .update(evidence)
-        .set({
-          relevant: result.relevanceScore >= 40,
-          metadata: JSON.stringify(nextMetadata),
-          updatedAt: new Date(),
-        })
-        .where(and(
-          eq(evidence.id, item.id),
-          eq(evidence.caseId, options.caseId),
-          eq(evidence.userId, options.userId)
-        ));
-      results.push(result);
-    }
+      }),
+      updatedAt: new Date(),
+    };
+  });
+
+  for (let offset = 0; offset < updates.length; offset += batchSize) {
+    const batch = updates.slice(offset, offset + batchSize);
+    db.transaction((tx) => {
+      for (const update of batch) {
+        tx.update(evidence)
+          .set({
+            relevant: update.result.relevanceScore >= 40,
+            metadata: update.metadata,
+            updatedAt: update.updatedAt,
+          })
+          .where(and(
+            eq(evidence.id, update.item.id),
+            eq(evidence.caseId, options.caseId),
+            eq(evidence.userId, options.userId)
+          ))
+          .run();
+      }
+    });
   }
-  return results;
+  return updates.map((update) => update.result);
 }
 
 export async function getEvidenceRelevanceStatistics(userId: string, caseId: string) {

@@ -17,6 +17,7 @@ export interface UploaderOptions {
   scanId: string;
   apiUrl: string;
   resolveAuth: () => Promise<{ sessionCookie: string; scannerSecret: string }>;
+  remote?: boolean;
   concurrency?: number; // Number of parallel uploads
   maxRetries?: number;
 }
@@ -26,6 +27,7 @@ export class FileUploader extends EventEmitter {
   private apiUrl: string;
   private concurrency: number;
   private maxRetries: number;
+  private remote: boolean;
   
   private isUploading: boolean = false;
   private isPaused: boolean = false;
@@ -44,6 +46,7 @@ export class FileUploader extends EventEmitter {
     this.apiUrl = options.apiUrl;
     this.concurrency = options.concurrency || 3;
     this.maxRetries = options.maxRetries || 3;
+    this.remote = options.remote === true;
     this.client = createTRPCProxyClient<AppRouter>({
       transformer: superjson,
       links: [
@@ -188,7 +191,7 @@ export class FileUploader extends EventEmitter {
         type: evidenceTypeForMime(file.mimeType),
         fileName: file.name,
         mimeType: file.mimeType,
-        source: 'desktop_scanner',
+        source: this.remote ? 'manual' : 'desktop_scanner',
         base64: fileBuffer.toString('base64'),
       });
       

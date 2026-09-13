@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Building2,
   Check,
@@ -18,7 +18,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useSearchParams } from "wouter";
+import { CasePicker, QueryNotice } from "@/components/WorkspaceUi";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -40,29 +41,27 @@ export default function OutreachTargetWorkspace({ targetType }: { targetType: Ta
   const label = targetType === "media" ? "Media" : "Organizations";
   const singular = targetType === "media" ? "media target" : "organization";
   const Icon = targetType === "media" ? Newspaper : Building2;
-  const [caseId, setCaseId] = useState(() => localStorage.getItem("outreach-case-id") || "");
+  const [params, setParams] = useSearchParams();
+  const caseId = params.get("case") || "";
+  const setCaseId = (id: string | null) => setParams(previous => {
+    const next = new URLSearchParams(previous);
+    if (id) next.set("case", id); else next.delete("case");
+    return next;
+  });
   const [showManual, setShowManual] = useState(false);
   const [manualName, setManualName] = useState("");
   const [manualUrl, setManualUrl] = useState("");
   const [manualDescription, setManualDescription] = useState("");
 
-  const caseQuery = trpc.cases.list.useQuery({ page: 1, limit: 100, sortBy: "updatedAt", sortDir: "desc" });
+  const caseQuery = trpc.cases.byId.useQuery(caseId, { enabled: !!caseId });
+  const summary = trpc.outreachDirectory.summary.useQuery();
   const targetsQuery = trpc.outreachDirectory.list.useQuery({ targetType, limit: 200 });
   const workflowPreferences = trpc.userPreferences.workflow.useQuery();
   const matchesQuery = trpc.outreachDirectory.matches.useQuery(
     { caseId, targetType },
     { enabled: Boolean(caseId), refetchOnWindowFocus: false },
   );
-  const cases = caseQuery.data?.cases || [];
-  const selectedCase = cases.find((item) => item.id === caseId);
-
-  useEffect(() => {
-    if (!caseId && cases[0]?.id) setCaseId(cases[0].id);
-  }, [caseId, cases]);
-
-  useEffect(() => {
-    if (caseId) localStorage.setItem("outreach-case-id", caseId);
-  }, [caseId]);
+  const selectedCase = caseQuery.data;
 
   const pending = useMemo(
     () => (targetsQuery.data || []).filter((target) => target.status === "pending"),
@@ -147,9 +146,9 @@ export default function OutreachTargetWorkspace({ targetType }: { targetType: Ta
         <div>
           <h2 className="flex items-center gap-2 text-lg font-semibold"><Icon className="h-5 w-5" />{label}</h2>
           <div className="mt-2 flex flex-wrap gap-2">
-            <Badge variant="secondary">{pending.length} pending review</Badge>
-            <Badge variant="outline">{approved.length} approved</Badge>
-            <Badge variant="outline">{visibleMatches.length} case matches</Badge>
+            <Badge variant="secondary">{summary.data ? summary.data.find(row => row.targetType === targetType && row.status === "pending")?.count ?? 0 : "..."} pending review</Badge>
+            <Badge variant="outline">{summary.data ? summary.data.find(row => row.targetType === targetType && row.status === "approved")?.count ?? 0 : "..."} approved</Badge>
+            {caseId && matchesQuery.data && <Badge variant="outline">{visibleMatches.length} case matches</Badge>}
           </div>
         </div>
         <Button variant="outline" size="sm" onClick={() => setShowManual((value) => !value)}>
@@ -157,22 +156,14 @@ export default function OutreachTargetWorkspace({ targetType }: { targetType: Ta
         </Button>
       </div>
 
-      <Card className="border-border/50">
-        <CardContent className="grid gap-3 p-4 md:grid-cols-[minmax(240px,1fr)_auto_auto] md:items-end">
+      <section className="border-y border-border py-4">
+        <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-2">
-            <Label>Case</Label>
-            <Select value={caseId} onValueChange={setCaseId}>
-              <SelectTrigger aria-label={`${label} case`}><SelectValue placeholder="Select a case" /></SelectTrigger>
-              <SelectContent>
-                {cases.map((item) => (
-                  <SelectItem key={item.id} value={item.id}>{item.clientName || item.caseType || item.id}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <CasePicker value={caseId || null} onChange={setCaseId} requireSelection disabled={isWorking} />
           </div>
           <Button
             onClick={() => caseId && discoverMutation.mutate({ caseId, targetType, maxQueries: 4, maxResults: 30 })}
-            disabled={!caseId || isWorking}
+            disabled={!selectedCase || isWorking}
           >
             {discoverMutation.isPending ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
             Discover
@@ -180,21 +171,22 @@ export default function OutreachTargetWorkspace({ targetType }: { targetType: Ta
           <Button
             variant="outline"
             onClick={() => caseId && matchMutation.mutate({ caseId, targetType, limit: 30 })}
-            disabled={!caseId || isWorking || approved.length === 0}
+            disabled={!selectedCase || isWorking || approved.length === 0}
           >
             {matchMutation.isPending ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
             Refresh matches
           </Button>
-        </CardContent>
-      </Card>
+        </div>
+        {caseQuery.error && <QueryNotice error={caseQuery.error} retry={caseQuery.refetch} />}
+      </section>
 
       {showManual && (
         <Card className="border-border/50">
           <CardHeader><CardTitle className="text-base">Add public source</CardTitle></CardHeader>
           <CardContent className="grid gap-3 md:grid-cols-2">
-            <div className="space-y-2"><Label>Name</Label><Input value={manualName} onChange={(event) => setManualName(event.target.value)} /></div>
-            <div className="space-y-2"><Label>Public URL</Label><Input type="url" value={manualUrl} onChange={(event) => setManualUrl(event.target.value)} /></div>
-            <div className="space-y-2 md:col-span-2"><Label>Description</Label><Textarea value={manualDescription} onChange={(event) => setManualDescription(event.target.value)} rows={3} /></div>
+            <div className="space-y-2"><Label htmlFor="target-name">Name</Label><Input id="target-name" value={manualName} onChange={(event) => setManualName(event.target.value)} /></div>
+            <div className="space-y-2"><Label htmlFor="target-url">Public URL</Label><Input id="target-url" type="url" value={manualUrl} onChange={(event) => setManualUrl(event.target.value)} /></div>
+            <div className="space-y-2 md:col-span-2"><Label htmlFor="target-description">Description</Label><Textarea id="target-description" value={manualDescription} onChange={(event) => setManualDescription(event.target.value)} rows={3} /></div>
             <div className="flex justify-end gap-2 md:col-span-2">
               <Button variant="ghost" onClick={() => setShowManual(false)}>Cancel</Button>
               <Button
@@ -214,6 +206,8 @@ export default function OutreachTargetWorkspace({ targetType }: { targetType: Ta
         </Card>
       )}
 
+      {summary.error && <QueryNotice error={summary.error} retry={summary.refetch} />}
+      {(targetsQuery.data?.length ?? 0) >= 200 && <p role="status" className="text-sm text-muted-foreground">Showing the first 200 directory records. The counts above cover the full directory.</p>}
       <div className="grid min-w-0 gap-5 xl:grid-cols-2">
         <section className="min-w-0 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -229,7 +223,7 @@ export default function OutreachTargetWorkspace({ targetType }: { targetType: Ta
               </div>
             ) : null}
           </div>
-          {targetsQuery.isLoading ? <Skeleton className="h-40 w-full" /> : pending.length ? pending.map((target) => (
+          {targetsQuery.error ? <QueryNotice error={targetsQuery.error} retry={targetsQuery.refetch} /> : targetsQuery.isLoading ? <Skeleton className="h-40 w-full" /> : pending.length ? pending.map((target) => (
             <Card key={target.id} className="border-border/50">
               <CardContent className="space-y-3 p-4">
                 <div className="flex items-start justify-between gap-3">
@@ -259,7 +253,7 @@ export default function OutreachTargetWorkspace({ targetType }: { targetType: Ta
         <section className="min-w-0 space-y-3">
           <div className="flex items-center justify-between"><h3 className="font-medium">Case matches</h3><Badge variant="secondary">{visibleMatches.length}</Badge></div>
           {!caseId ? <div className="rounded-md border border-dashed border-border p-8 text-center text-sm text-muted-foreground">Select a case to view matches.</div>
-            : matchesQuery.isLoading ? <Skeleton className="h-40 w-full" />
+            : matchesQuery.error ? <QueryNotice error={matchesQuery.error} retry={matchesQuery.refetch} /> : matchesQuery.isLoading ? <Skeleton className="h-40 w-full" />
               : visibleMatches.length ? visibleMatches.map((match) => (
                 <Card key={match.id} className="border-border/50">
                   <CardContent className="space-y-3 p-4">

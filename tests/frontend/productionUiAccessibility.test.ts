@@ -8,10 +8,15 @@ const read = (relativePath: string) => readFileSync(join(ROOT, relativePath), 'u
 describe('production renderer usability regressions', () => {
   it('keeps the cases header and primary actions usable on narrow screens', () => {
     const cases = read('src/renderer/components/Cases.tsx');
+    const workspace = read('src/renderer/components/WorkspaceUi.tsx');
+    const styles = read('src/renderer/index.css');
 
-    expect(cases).toContain('flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between');
-    expect(cases).toContain('text-3xl font-bold');
-    expect(cases).toContain('flex w-full gap-2 sm:w-auto');
+    expect(cases).toContain('<PageHeading');
+    expect(workspace).toContain('className="workspace-heading"');
+    expect(workspace).toContain('flex min-w-0 flex-wrap items-center gap-2');
+    expect(styles).toContain('.workspace-heading');
+    expect(cases).toContain('Dossier openen');
+    expect(cases).toContain('Nieuw dossier');
     expect(cases).not.toContain('<div className="p-6 space-y-6">');
   });
 
@@ -49,8 +54,7 @@ describe('production renderer usability regressions', () => {
     const privacy = read('src/renderer/components/Privacy.tsx');
     const notes = read('src/renderer/components/CommunicationHub.tsx');
 
-    expect(layout).toContain('aria-label={t("nav.expandSidebar")}');
-    expect(layout).toContain('aria-label={t("nav.collapseSidebar")}');
+    expect(layout).toContain('aria-label={t(collapsed ? "nav.expandSidebar" : "nav.collapseSidebar")}');
     expect(layout).toContain('aria-label={t("nav.accountMenu")}');
     expect(translations).toContain('"nav.expandSidebar"');
     expect(translations).toContain('"nav.collapseSidebar"');
@@ -59,7 +63,7 @@ describe('production renderer usability regressions', () => {
     expect(filters).toContain('"Search lawyers" : "Search cases"');
     expect(privacy).toContain('aria-label="Allow marketing communication"');
     expect(privacy).toContain('aria-label="Allow usage analytics"');
-    expect(notes).toContain('aria-label="Search case notes"');
+    expect(notes).toContain('className="sr-only">{nl ? "Notities zoeken" : "Search case notes"}');
     expect(notes).toContain('aria-label="Case note message"');
     expect(notes).not.toContain('from "date-fns"');
     expect(notes).not.toContain('All Status');

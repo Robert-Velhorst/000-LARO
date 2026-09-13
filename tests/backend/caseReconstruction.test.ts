@@ -1,8 +1,51 @@
 import { describe, expect, it } from "vitest";
-import { buildCaseReconstruction } from "../../server/caseReconstruction";
+import { buildCaseReconstruction, type ReconstructionDocument } from "../../server/caseReconstruction";
 import { analyzeDocumentBytes } from "../../server/documentIntelligence";
 
 describe("case document reconstruction", () => {
+  const record = (id: string, metadata: Record<string, unknown> = {}): ReconstructionDocument => ({
+    evidenceId: id, title: id, description: null, source: "gmail", type: "document",
+    metadata: JSON.stringify(metadata), createdAt: new Date("2026-09-04T12:00:00Z"), analysis: null,
+  });
+
+  it("does not turn import or filesystem timestamps into dates in the case history", () => {
+    const result = buildCaseReconstruction({
+      documents: [record("unknown", { collectedAt: "2026-09-03", modifiedTime: "2026-09-02" })], events: [],
+    });
+    expect(result.nodes[0].date).toBe("Undated");
+    expect(result.phases).toEqual([]);
+    expect(result.warnings.join(" ")).toMatch(/undated/i);
+  });
+
+  it("rejects impossible calendar dates", () => {
+    const result = buildCaseReconstruction({ documents: [record("bad-date", { date: "2026-02-31" })], events: [] });
+    expect(result.nodes[0].date).toBe("Undated");
+  });
+
+  it("does not present subject-only attachment matches or shared threads as proven replies", () => {
+    const result = buildCaseReconstruction({
+      documents: [
+        record("Decision", { accountId: "account-a", gmailThreadId: "thread", date: "2026-01-01" }),
+        record("Later", { accountId: "account-a", gmailThreadId: "thread", date: "2026-01-02" }),
+        record("Attachment", { parentSubject: "Decision", date: "2026-01-03" }),
+      ], events: [],
+    });
+    expect(result.edges.filter((edge) => edge.evidence === "explicit")).toEqual([]);
+    expect(result.edges).toContainEqual(expect.objectContaining({ relationship: "related", evidence: "inferred" }));
+  });
+
+  it("scopes provider identity to an account and prefers exact identity over a matching title", () => {
+    const result = buildCaseReconstruction({
+      documents: [
+        record("Wrong account", { accountId: "account-b", gmailMessageId: "message", gmailThreadId: "thread" }),
+        record("Right message", { accountId: "account-a", gmailMessageId: "message", gmailThreadId: "thread" }),
+        record("Attachment", { accountId: "account-a", gmailMessageId: "message", attachmentId: "part", parentSubject: "Wrong account" }),
+      ], events: [],
+    });
+    expect(result.edges.filter((edge) => edge.relationship === "attachment_of" && edge.evidence === "explicit"))
+      .toEqual([expect.objectContaining({ from: "Right message", to: "Attachment" })]);
+    expect(result.edges.find((edge) => edge.from === "Wrong account" && edge.to === "Right message" && edge.evidence === "explicit")).toBeUndefined();
+  });
   it("builds deterministic source stations and separates explicit from inferred links", async () => {
     const decision = await analyzeDocumentBytes({
       bytes: Buffer.from([
@@ -56,7 +99,7 @@ describe("case document reconstruction", () => {
           description: "Attachment from email \"Besluit gemeente.txt\"",
           source: "gmail",
           type: "document",
-          metadata: JSON.stringify({ gmailMessageId: "message-1", parentSubject: "Besluit gemeente.txt" }),
+          metadata: JSON.stringify({ gmailMessageId: "message-1", parentSubject: "Besluit gemeente.txt", date: "2026-07-20T10:00:00Z" }),
           createdAt: new Date("2026-07-20T10:00:00Z"),
           analysis: attachment,
         },
@@ -80,7 +123,7 @@ describe("case document reconstruction", () => {
     expect(result.schemaVersion).toBe(2);
     expect(result.nodes.map((node) => node.id)).toEqual(["decision", "objection", "attachment", "unanalyzed"]);
     expect(result.nodes.find((node) => node.id === "unanalyzed")).toMatchObject({
-      date: "2026-07-22",
+      date: "Undated",
       analysisStatus: "missing",
       summary: "Imported image",
     });
@@ -98,8 +141,7 @@ describe("case document reconstruction", () => {
       expect.objectContaining({ from: "decision", to: "objection", relationship: "references", evidence: "explicit" }),
     ]));
     expect(result.phases).toEqual([
-      expect.objectContaining({ label: "Opening record", documentIds: ["decision", "objection"], eventCount: 2 }),
-      expect.objectContaining({ label: "Later record", documentIds: ["attachment", "unanalyzed"] }),
+      expect.objectContaining({ documentIds: ["decision", "objection", "attachment"], eventCount: 2 }),
     ]);
     expect(result.chains[0]).toMatchObject({
       documentIds: expect.arrayContaining(["decision", "objection", "attachment"]),

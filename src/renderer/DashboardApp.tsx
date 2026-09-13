@@ -12,6 +12,8 @@ import { useI18n } from "@/contexts/I18nContext";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import SkipNavigation from "@/components/SkipNavigation";
+import DashboardLayout from "@/components/DashboardLayout";
+import WorkspaceIdentity from "@/components/WorkspaceIdentity";
 
 const Home = lazy(() => import("@/components/Home"));
 const Cases = lazy(() => import("@/components/Cases"));
@@ -30,7 +32,7 @@ const fileProtocol =
 
 export default function DashboardApp() {
   const { user, loading, error, refresh } = useAuth();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
 
   if (loading) {
     return <DashboardSkeleton />;
@@ -43,6 +45,11 @@ export default function DashboardApp() {
           <AlertCircle className="mx-auto h-8 w-8 text-destructive" aria-hidden="true" />
           <h1 className="mt-4 text-lg font-semibold">{t("auth.connectionError")}</h1>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">{t("auth.connectionErrorDetail")}</p>
+          {['127.0.0.1', 'localhost', '[::1]'].includes(window.location.hostname) && (
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">{locale === 'nl'
+              ? 'Controleer of LARO op deze computer draait. Zodra de server weer bereikbaar is, wordt de verbinding automatisch hersteld.'
+              : 'Check that LARO is running on this computer. The connection will recover automatically when the server is reachable again.'}</p>
+          )}
           <Button className="mt-5" onClick={() => void refresh()}>
             <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />
             {t("common.retry")}
@@ -53,15 +60,17 @@ export default function DashboardApp() {
   }
 
   if (!user) {
-    return <AuthPage />;
+    return <><WorkspaceIdentity /><AuthPage /></>;
   }
 
   return (
     <>
+      <WorkspaceIdentity />
       <SkipNavigation />
       <WebSocketProvider>
         <Router {...(fileProtocol ? { hook: useHashLocation } : {})}>
-          <Suspense fallback={<DashboardSkeleton />}>
+          <DashboardLayout>
+          <Suspense fallback={<div role="status" className="py-12 text-center text-muted-foreground">{t("common.loading")}</div>}>
             <Switch>
               <Route path="/" component={Home} />
               <Route path="/cases" component={Cases} />
@@ -87,12 +96,13 @@ export default function DashboardApp() {
 
               <Route>
                 <div className="p-8 text-center text-muted-foreground">
-                  <p className="font-medium text-foreground">{t("route.notFound")}</p>
+                  <h1 className="text-2xl font-semibold text-foreground">{t("route.notFound")}</h1>
                   <p className="mt-2 text-sm">{t("route.notFoundHint")}</p>
                 </div>
               </Route>
             </Switch>
           </Suspense>
+          </DashboardLayout>
         </Router>
       </WebSocketProvider>
     </>

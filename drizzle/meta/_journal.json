@@ -78,6 +78,62 @@
       "when": 1786834800000,
       "tag": "0010_storage_deletion_queue",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1787788800000,
+      "tag": "0011_dashboard_aggregate_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1787875200000,
+      "tag": "0012_gap_analysis_case_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1788566400000,
+      "tag": "0013_document_inbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1788566400001,
+      "tag": "0014_inbox_discovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1788566400002,
+      "tag": "0015_document_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1788566400003,
+      "tag": "0016_inbox_provenance",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1788566400004,
+      "tag": "0017_case_action_proposals",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1788566400005,
+      "tag": "0018_case_action_evidence",
+      "breakpoints": true
     }
   ]
 }

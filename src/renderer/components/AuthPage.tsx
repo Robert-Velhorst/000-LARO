@@ -5,32 +5,64 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Lock, Mail, User, ArrowRight, ShieldCheck, KeyRound } from "lucide-react";
+import { Lock, Mail, User, ArrowRight, Eye, EyeOff, KeyRound } from "lucide-react";
 import { LanguageSelector } from "@/components/LanguageSelector";
 import { useI18n } from "@/contexts/I18nContext";
 import type { TranslationKey } from "../../../shared/i18n";
 
+import { APP_LOGO } from "@/const";
+
 type AuthMode = "signin" | "signup" | "forgot" | "reset";
 
 export default function AuthPage() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const [testTicket] = useState(() => {
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const ticket = params.get('local-test');
+    return ticket;
+  });
   const [mode, setMode] = useState<AuthMode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [setupCode, setSetupCode] = useState("");
   const [code, setCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const changeMode = (value: AuthMode) => {
+    if (loading) return;
+    setMode(value);
+    setFormError("");
+    setShowPassword(false);
+  };
 
   const utils = trpc.useUtils();
   const loginMutation = trpc.auth.login.useMutation();
   const signupMutation = trpc.auth.signup.useMutation();
+  const enrollment = trpc.auth.enrollment.useQuery(undefined, { staleTime: 0 });
   const requestResetMutation = trpc.auth.requestPasswordReset.useMutation();
   const resetPasswordMutation = trpc.auth.resetPassword.useMutation();
+  const localTestMutation = trpc.auth.localTestAccess.useMutation();
+  const openLocalTest = async () => {
+    if (!testTicket || loading) return;
+    setLoading(true);
+    setFormError('');
+    try {
+      await localTestMutation.mutateAsync({ ticket: testTicket });
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      await utils.auth.me.invalidate();
+    } catch (error: any) {
+      setFormError(error.message || t('auth.genericError'));
+    } finally { setLoading(false); }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
     setLoading(true);
+    setFormError("");
 
     try {
       if (mode === "signin") {
@@ -38,7 +70,8 @@ export default function AuthPage() {
         toast.success(t("auth.welcomeBack"));
         await utils.auth.me.invalidate();
       } else if (mode === "signup") {
-        await signupMutation.mutateAsync({ email, password, name });
+        await signupMutation.mutateAsync({ email, password, name, bootstrapToken: setupCode || undefined });
+        setSetupCode("");
         toast.success(t("auth.accountCreated"));
         await utils.auth.me.invalidate();
       } else if (mode === "forgot") {
@@ -54,7 +87,7 @@ export default function AuthPage() {
         setMode("signin");
       }
     } catch (error: any) {
-      toast.error(error.message || t("auth.genericError"));
+      setFormError(error.message || t("auth.genericError"));
     } finally {
       setLoading(false);
     }
@@ -80,27 +113,51 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="relative min-h-screen bg-black flex items-center justify-center p-4">
+    <main className="relative flex min-h-screen items-center justify-center bg-background px-4 py-20">
       <LanguageSelector compact className="absolute right-4 top-4 w-24" />
-      <div className="w-full max-w-md animate-in fade-in zoom-in duration-500">
+      <div className="w-full max-w-md">
         {/* Brand Header */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-4 mb-2">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 shadow-2xl shadow-primary/10">
-              <ShieldCheck className="w-6 h-6 text-primary" />
-            </div>
-            <h1 className="text-4xl font-bold tracking-tight text-white uppercase letter-spacing-widest">LARO</h1>
+            <img src={APP_LOGO} alt="" className="h-12 w-12 rounded-md" />
+            <h1 className="text-3xl font-semibold text-foreground">LARO</h1>
           </div>
           <p className="text-muted-foreground">{t("app.tagline")}</p>
         </div>
 
-        <Card className="border-border/50 bg-card/50 backdrop-blur-xl shadow-2xl">
+        <Card className="border-border bg-card shadow-none">
           <CardHeader className="space-y-1">
-            <CardTitle className="text-2xl font-bold">{t(titleKeys[mode])}</CardTitle>
+            <CardTitle className="text-xl font-semibold">{t(titleKeys[mode])}</CardTitle>
             <CardDescription>{t(descriptionKeys[mode])}</CardDescription>
           </CardHeader>
           <form onSubmit={handleSubmit}>
             <CardContent className="space-y-4">
+              {mode === "signup" && enrollment.data?.requiresSetupCode && (
+                <div className="space-y-2">
+                  <Label htmlFor="setup-code">{t("auth.setupCode")}</Label>
+                  <Input
+                    id="setup-code"
+                    type="password"
+                    autoComplete="off"
+                    value={setupCode}
+                    onChange={(e) => setSetupCode(e.target.value)}
+                    minLength={32}
+                    maxLength={256}
+                    required
+                    aria-describedby="setup-code-help"
+                  />
+                  <p id="setup-code-help" className="text-sm text-muted-foreground">{t("auth.setupCodeHelp")}</p>
+                </div>
+              )}
+              {formError && <p role="alert" className="rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm text-destructive">{formError}</p>}
+              {testTicket && mode === 'signin' && <div className="space-y-2 border-b border-border pb-4">
+                <Button type="button" className="w-full" disabled={loading} onClick={() => void openLocalTest()}>
+                  <KeyRound className="mr-2 h-4 w-4" />{locale === 'nl' ? 'Doorgaan zonder wachtwoord' : 'Continue without password'}
+                </Button>
+                <p className="text-sm text-muted-foreground">{locale === 'nl'
+                  ? 'Lokale testsessie van 1 uur. Je opent je echte dossiers; wijzigingen worden opgeslagen.'
+                  : 'Local test session for 1 hour. You are opening real cases; changes will be saved.'}</p>
+              </div>}
               {mode === "signup" && (
                 <div className="space-y-2">
                   <Label htmlFor="name">{t("auth.fullName")}</Label>
@@ -111,7 +168,7 @@ export default function AuthPage() {
                       placeholder="John Doe"
                       type="text"
                       autoComplete="name"
-                      className="pl-10 h-12 bg-background/50 border-border/50 focus:border-primary/50"
+                      className="h-11 bg-background pl-10 pr-12"
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       required
@@ -131,7 +188,7 @@ export default function AuthPage() {
                     placeholder="name@example.com"
                     type="email"
                     autoComplete="email"
-                    className="pl-10 h-12 bg-background/50 border-border/50 focus:border-primary/50"
+                    className="h-11 bg-background pl-10 pr-12"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
@@ -152,7 +209,7 @@ export default function AuthPage() {
                       inputMode="numeric"
                       autoComplete="one-time-code"
                       maxLength={6}
-                      className="pl-10 h-12 tracking-[0.5em] bg-background/50 border-border/50 focus:border-primary/50"
+                      className="h-11 bg-background pl-10"
                       value={code}
                       onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
                       required
@@ -168,14 +225,20 @@ export default function AuthPage() {
                     <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="password"
+                      minLength={mode === "signup" ? 8 : undefined}
                       placeholder="••••••••"
-                      type="password"
+                      type={showPassword ? "text" : "password"}
                       autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                      className="pl-10 h-12 bg-background/50 border-border/50 focus:border-primary/50"
+                      className="h-11 bg-background pl-10 pr-12"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       required
                     />
+                    <Button type="button" size="icon" variant="ghost" className="absolute right-1 top-1 h-9 w-9"
+                      aria-label={showPassword ? (locale === "nl" ? "Wachtwoord verbergen" : "Hide password") : (locale === "nl" ? "Wachtwoord tonen" : "Show password")}
+                      aria-pressed={showPassword} onClick={() => setShowPassword(value => !value)}>
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </Button>
                   </div>
                 </div>
               )}
@@ -188,14 +251,19 @@ export default function AuthPage() {
                     <Input
                       id="newPassword"
                       placeholder={t("auth.passwordHint")}
-                      type="password"
+                      type={showPassword ? "text" : "password"}
                       autoComplete="new-password"
                       minLength={8}
-                      className="pl-10 h-12 bg-background/50 border-border/50 focus:border-primary/50"
+                      className="h-11 bg-background pl-10 pr-12"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
                       required
                     />
+                    <Button type="button" size="icon" variant="ghost" className="absolute right-1 top-1 h-9 w-9"
+                      aria-label={showPassword ? (locale === "nl" ? "Wachtwoord verbergen" : "Hide password") : (locale === "nl" ? "Wachtwoord tonen" : "Show password")}
+                      aria-pressed={showPassword} onClick={() => setShowPassword(value => !value)}>
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </Button>
                   </div>
                 </div>
               )}
@@ -204,7 +272,8 @@ export default function AuthPage() {
                 <div className="text-right">
                   <button
                     type="button"
-                    onClick={() => setMode("forgot")}
+                    disabled={loading}
+                    onClick={() => changeMode("forgot")}
                     className="text-sm text-muted-foreground hover:text-primary transition-colors underline-offset-4 hover:underline"
                   >
                     {t("auth.forgotPassword")}
@@ -215,7 +284,7 @@ export default function AuthPage() {
             <CardFooter className="flex flex-col space-y-4 pt-4">
               <Button
                 type="submit"
-                className="w-full h-12 text-base font-semibold transition-all hover:scale-[1.02] active:scale-[0.98]"
+                className="h-11 w-full text-base font-semibold"
                 disabled={loading}
               >
                 {loading ? (
@@ -232,10 +301,11 @@ export default function AuthPage() {
               </Button>
 
               <div className="text-center space-y-2">
-                {(mode === "signin" || mode === "signup") && (
+                {(mode === "signup" || (mode === "signin" && enrollment.data?.open)) && (
                   <button
                     type="button"
-                    onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
+                    disabled={loading}
+                    onClick={() => changeMode(mode === "signin" ? "signup" : "signin")}
                     className="text-sm text-muted-foreground hover:text-primary transition-colors underline-offset-4 hover:underline"
                   >
                     {mode === "signin"
@@ -243,11 +313,15 @@ export default function AuthPage() {
                       : t("auth.hasAccount")}
                   </button>
                 )}
+                {mode === "signin" && enrollment.data?.open === false && (
+                  <p className="text-sm text-muted-foreground">{t("auth.enrollmentClosed")}</p>
+                )}
 
                 {mode === "reset" && (
                   <button
                     type="button"
-                    onClick={() => setMode("forgot")}
+                    disabled={loading}
+                    onClick={() => changeMode("forgot")}
                     className="block w-full text-sm text-muted-foreground hover:text-primary transition-colors underline-offset-4 hover:underline"
                   >
                     {t("auth.resendCode")}
@@ -257,7 +331,8 @@ export default function AuthPage() {
                 {(mode === "forgot" || mode === "reset") && (
                   <button
                     type="button"
-                    onClick={() => setMode("signin")}
+                    disabled={loading}
+                    onClick={() => changeMode("signin")}
                     className="block w-full text-sm text-muted-foreground hover:text-primary transition-colors underline-offset-4 hover:underline"
                   >
                     {t("auth.backToSignIn")}
@@ -268,6 +343,6 @@ export default function AuthPage() {
           </form>
         </Card>
       </div>
-    </div>
+    </main>
   );
 }

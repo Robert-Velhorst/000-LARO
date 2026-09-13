@@ -148,8 +148,10 @@ describe("document intelligence units", () => {
     }, citationMap)).toBe(false);
   });
 
-  it("analyzes every source chunk instead of truncating provider input", async () => {
+  it.each([false, true])("checks permission for each source chunk (revoked: %s)", async (revoke) => {
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
+    const beforeDispatch = vi.fn().mockResolvedValue(true);
+    if (revoke) beforeDispatch.mockResolvedValue(false).mockResolvedValueOnce(true);
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
       const source = String(body.messages[1].content);
@@ -182,8 +184,16 @@ describe("document intelligence units", () => {
       mimeType: "text/plain",
       deepAnalysis: true,
       provider: "openai",
+      beforeDispatch,
     });
 
+    expect(beforeDispatch.mock.calls.length).toBeGreaterThan(1);
+    if (revoke) {
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(analysis.providerStatus).toBe("partial");
+      expect(analysis.coverage).toMatchObject({ analyzedChunks: 1, complete: false });
+      return;
+    }
     expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
     expect(analysis.providerStatus).toBe("complete");
     expect(analysis.truncated).toBe(false);
@@ -219,6 +229,41 @@ suite("persisted document analysis and source-linked timeline", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+  });
+
+  it.each([
+    { shareRawDocumentContent: false },
+    { analysisProvider: "local" as const },
+  ])("does not send filed evidence after permission changes: %j", async (change) => {
+    const caller = app.makeCaller(owner);
+    const intelligence = await import("../../server/documentIntelligence");
+    const originalExtract = intelligence.extractDocumentTextInAcquiredSlot;
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: true });
+    vi.stubEnv("OPENAI_API_KEY", "test-not-a-real-key");
+    const fetch = vi.fn(() => Promise.reject(new Error("No transmission after revocation")));
+    vi.stubGlobal("fetch", fetch);
+    const extraction = vi.spyOn(intelligence, "extractDocumentTextInAcquiredSlot").mockImplementation(async (...args) => {
+      const result = await originalExtract(...args);
+      await caller.userPreferences.updateWorkflow(change);
+      return result;
+    });
+    try {
+      const caseId = `CASE_PERMISSION_${Object.keys(change)[0]}`;
+      await app.db.insert(app.schema.cases).values(buildCase({ id: caseId, userId: owner.id }));
+      const uploaded = await caller.evidenceFiles.upload({
+        caseId, title: "Permission regression", type: "document",
+        fileName: `permission-${Object.keys(change)[0]}.txt`, mimeType: "text/plain", source: "manual",
+        base64: Buffer.from("Private correspondence for a source permission regression test.").toString("base64"),
+      });
+      const result = await caller.documentAnalysis.analyzeEvidence({ evidenceId: uploaded.id, deepAnalysis: true });
+      expect(extraction).toHaveBeenCalledOnce();
+      expect(fetch).not.toHaveBeenCalled();
+      expect(result.result.providerStatus).toBe("failed");
+      expect(result.result.coverage.complete).toBe(false);
+    } finally {
+      extraction.mockRestore();
+      await caller.userPreferences.updateWorkflow({ analysisProvider: "local", shareRawDocumentContent: true });
+    }
   });
 
   it("stores source bytes, persists one versioned analysis, caches it, and generates linked events", async () => {

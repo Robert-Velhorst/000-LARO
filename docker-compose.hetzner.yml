@@ -1,0 +1,79 @@
+# One persistent LARO server shared by the browser and connected desktop clients.
+# Initialize with: node scripts/setup-hetzner.mjs https://laro.your-domain.example
+# Run with: docker compose --env-file .env.hetzner -f docker-compose.hetzner.yml up -d --build
+name: laro-hetzner
+
+services:
+  laro:
+    build: .
+    image: laro-shared:${LARO_IMAGE_TAG:-local}
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ${LARO_ENV_FILE:-.env.hetzner}
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      SERVER_ONLY: "true"
+      LARO_SERVE_WEB: "true"
+      # Remote native uploads use the shared server's standard session cookie.
+      LARO_SESSION_COOKIE_NAME: laro_session
+      # Local operator tickets must never enable passwordless hosted access.
+      LARO_LOCAL_TEST_ACCESS: "false"
+      # This single-process installation uses the existing SQLite data layer.
+      # The separate PostgreSQL/public-replica migration is not enabled here.
+      LARO_RUNTIME_MODE: local
+      DATABASE_URL: /data/laro-server.sqlite
+      LOCAL_STORAGE_DIR: /data/uploads
+      LARO_BACKUP_DIRECTORY: /backups
+      LARO_BACKUP_DESTINATION_KIND: local
+      LARO_PUBLIC_DEPLOYMENT_REQUIRED: "true"
+      LARO_PUBLIC_BASE_URL: https://${LARO_DOMAIN:?Set LARO_DOMAIN in .env.hetzner}
+      OAUTH_REDIRECT_BASE_URL: https://${LARO_DOMAIN:?Set LARO_DOMAIN in .env.hetzner}
+      ALLOWED_ORIGINS: https://${LARO_DOMAIN:?Set LARO_DOMAIN in .env.hetzner}
+      PUBLIC_PATH_PREFIX: ""
+    volumes:
+      - data:/data
+      - backups:/backups
+    expose:
+      - "3000"
+    ports:
+      # An existing host proxy can route the LARO domain here.
+      - "127.0.0.1:${LARO_BIND_PORT:-3187}:3000"
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  caddy:
+    # Enable only if the server does not already have a proxy on 80/443.
+    profiles: [standalone-tls]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      LARO_DOMAIN: ${LARO_DOMAIN:?Set LARO_DOMAIN in .env.hetzner}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/hetzner/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      laro:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  data:
+  backups:
+  caddy-data:
+  caddy-config:

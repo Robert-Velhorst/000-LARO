@@ -104,6 +104,14 @@ export async function analyzeStoredEvidence(options: {
     extraction,
     deepAnalysis,
     provider,
+    beforeDispatch: async () => {
+      const current = await getEvidenceFile(options.userId, item.id);
+      if (!current || current.caseId !== item.caseId || current.metadata !== item.metadata) return false;
+      await assertCaseOwnership(current.caseId, options.userId);
+      const currentPreferences = await getWorkflowPreferences(options.userId);
+      return currentPreferences.analysisProvider === preferences.analysisProvider &&
+        Boolean(provider && (isLocalLLMProvider(provider) || currentPreferences.shareRawDocumentContent));
+    },
   });
   const id = cached?.id ?? randomUUID();
   const values = {

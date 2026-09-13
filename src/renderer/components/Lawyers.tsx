@@ -72,19 +72,16 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
   const lastResult = Math.min(pagination.page * pagination.limit, pagination.total);
 
   return (
-      <div className={embedded ? "space-y-6" : "p-8 space-y-8"}>
+      <div className="min-w-0 space-y-6">
         {/* Header */}
         <div>
           {embedded ? (
             <h2 className="text-xl font-semibold">Lawyers Database</h2>
           ) : (
-            <h1 className="text-4xl font-bold tracking-tight bg-gradient-to-r from-purple-400 to-purple-600 bg-clip-text text-transparent">
+            <h1 className="text-2xl font-semibold">
               Lawyers Database
             </h1>
           )}
-          <p className="text-muted-foreground mt-2 text-lg">
-            Browse persisted lawyer profiles and records retrieved from the official NOvA public directory
-          </p>
         </div>
 
         {/* Search and Filter */}
@@ -92,6 +89,7 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
           <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
             <div className="min-w-0 flex-1">
               <SmartSearchFilters
+                compact
                 searchType="lawyers"
                 onSearch={(query, filters) => {
                   setSearchQuery(query);

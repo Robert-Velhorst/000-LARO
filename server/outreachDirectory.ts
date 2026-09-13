@@ -259,37 +259,46 @@ async function persistCandidates(
   if (!db) throw new Error("Database not available");
   let created = 0;
   let existing = 0;
-  for (const candidate of candidates) {
-    const rows = await db.select({
+  const candidateUrls = unique(candidates.map((candidate) => candidate.url));
+  const storedTargets = candidateUrls.length === 0
+    ? []
+    : await db.select({
       id: outreachDirectoryTargets.id,
+      targetType: outreachDirectoryTargets.targetType,
+      url: outreachDirectoryTargets.url,
       topics: outreachDirectoryTargets.topics,
       legalAreas: outreachDirectoryTargets.legalAreas,
     })
       .from(outreachDirectoryTargets)
       .where(and(
         eq(outreachDirectoryTargets.userId, userId),
-        eq(outreachDirectoryTargets.targetType, candidate.targetType),
-        eq(outreachDirectoryTargets.url, candidate.url),
-      ))
-      .limit(1);
+        inArray(outreachDirectoryTargets.url, candidateUrls),
+      ));
+  const storedByTarget = new Map(
+    storedTargets.map((target) => [`${target.targetType}\u0000${target.url}`, target]),
+  );
+  for (const candidate of candidates) {
+    const targetKey = `${candidate.targetType}\u0000${candidate.url}`;
+    const stored = storedByTarget.get(targetKey);
     const now = new Date();
-    if (rows[0]) {
+    if (stored) {
       existing += 1;
       await db.update(outreachDirectoryTargets).set({
         name: candidate.name,
         subtype: candidate.subtype,
         description: candidate.description,
-        topics: JSON.stringify(unique([...parseStringArray(rows[0].topics), ...candidate.topics])),
-        legalAreas: JSON.stringify(unique([...parseStringArray(rows[0].legalAreas), ...candidate.legalAreas])),
+        topics: JSON.stringify(unique([...parseStringArray(stored.topics), ...candidate.topics])),
+        legalAreas: JSON.stringify(unique([...parseStringArray(stored.legalAreas), ...candidate.legalAreas])),
         sourceUrl: candidate.sourceUrl,
         sourceLabel: candidate.sourceLabel,
         sourceRetrievedAt: candidate.sourceRetrievedAt,
         updatedAt: now,
-      }).where(eq(outreachDirectoryTargets.id, rows[0].id));
+      }).where(eq(outreachDirectoryTargets.id, stored.id));
       continue;
     }
+    const id = `TARGET-${nanoid(16)}`;
     await db.insert(outreachDirectoryTargets).values({
-      id: `TARGET-${nanoid(16)}`,
+      id,
       userId,
       targetType: candidate.targetType,
       name: candidate.name,
@@ -309,6 +318,13 @@ async function persistCandidates(
       confidence: candidate.confidence,
       createdAt: now,
       updatedAt: now,
+    });
+    storedByTarget.set(targetKey, {
+      id,
+      targetType: candidate.targetType,
+      url: candidate.url,
+      topics: JSON.stringify(candidate.topics),
+      legalAreas: JSON.stringify(candidate.legalAreas),
     });
     created += 1;
   }

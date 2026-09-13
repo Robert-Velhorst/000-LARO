@@ -1,456 +1,138 @@
-import DashboardLayout from "@/components/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { Slider } from "@/components/ui/slider";
-import {
-  FileText, Cloud, BarChart2, ListChecks,
-  Clock, FolderOpen, AlertTriangle, Link2, Download, Gauge, Sparkles,
-} from "lucide-react";
-import { lazy, Suspense, useState, useEffect, useCallback, useMemo } from "react";
-import EvidenceSummaryDashboard from "@/components/EvidenceSummaryDashboard";
+import { lazy, Suspense, useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "wouter";
+import { AlertTriangle, BarChart2, ChevronDown, ChevronLeft, ChevronRight, Clock, Cloud, Download, FileText, FolderOpen, Gauge, Link2, ListChecks } from "lucide-react";
+import DashboardLayout from "./DashboardLayout";
+import { Button } from "./ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
+import { CasePicker, PageHeading, QueryNotice, SectionNavigation } from "./WorkspaceUi";
+import { useI18n } from "@/contexts/I18nContext";
+import { getElectronAPI } from "@/lib/electronApiShim";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 
-const EvidenceCollection = lazy(() =>
-  import("@/components/EvidenceCollection").then((module) => ({ default: module.EvidenceCollection }))
-);
-const AutoCollectionSettings = lazy(() => import("@/components/AutoCollectionSettings"));
-const EvidenceConnectionsCard = lazy(() => import("@/components/EvidenceConnectionsCard"));
-const EvidenceTimeline = lazy(() => import("@/components/EvidenceTimeline"));
-const EvidenceGapAnalysisDashboard = lazy(() =>
-  import("@/components/EvidenceGapAnalysisDashboard").then((module) => ({ default: module.EvidenceGapAnalysisDashboard }))
-);
-const RelevanceScoringDashboard = lazy(() => import("@/components/RelevanceScoringDashboard"));
-const EvidenceExportUI = lazy(() => import("@/components/EvidenceExportUI"));
+const EvidenceCollection = lazy(() => import("./EvidenceCollection").then(module => ({ default: module.EvidenceCollection })));
+const AutoCollectionSettings = lazy(() => import("./AutoCollectionSettings"));
+const EvidenceConnectionsCard = lazy(() => import("./EvidenceConnectionsCard"));
+const EvidenceSummaryDashboard = lazy(() => import("./EvidenceSummaryDashboard"));
+const CaseReconstruction = lazy(() => import("./CaseReconstruction").then(module => ({ default: module.CaseReconstruction })));
+const EvidenceGapAnalysisDashboard = lazy(() => import("./EvidenceGapAnalysisDashboard").then(module => ({ default: module.EvidenceGapAnalysisDashboard })));
+const RelevanceScoringDashboard = lazy(() => import("./RelevanceScoringDashboard"));
+const EvidenceExportUI = lazy(() => import("./EvidenceExportUI"));
+const DocumentInbox = lazy(() => import("./DocumentInbox"));
 
-function EvidenceViewFallback() {
-  return (
-    <Card>
-      <CardContent className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">
-        Loading evidence view...
-      </CardContent>
-    </Card>
-  );
+const VIEW_IDS = ["inbox", "items", "timeline", "connections", "dashboard", "collect", "gaps", "export", "scoring"];
+const CASE_VIEWS = ["timeline", "collect", "gaps", "export", "scoring"];
+
+function EvidenceFiles({ caseId }: { caseId: string | null }) {
+  const { locale, t, formatDate } = useI18n();
+  const nl = locale === "nl";
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [limit, setLimit] = useState(20);
+  const files = trpc.evidenceFiles.search.useQuery({ caseId: caseId ?? undefined, query: search, limit: limit + 1, offset: page * limit });
+  const source = trpc.evidenceFiles.getDownloadUrl.useMutation();
+  const opened = trpc.evidenceFiles.recordSourceOpened.useMutation();
+  const openFile = async (id: string) => {
+    try {
+      const result = await source.mutateAsync({ id });
+      if (!result.url) throw new Error(result.message || (nl ? "Bronbestand niet beschikbaar" : "Source unavailable"));
+      await getElectronAPI().openExternal(result.url);
+      await opened.mutateAsync({ id });
+    } catch (error) { toast.error(error instanceof Error ? error.message : t("auth.genericError")); }
+  };
+  return <section className="space-y-4" aria-label={nl ? "Bewijsstukken" : "Evidence files"}>
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      <label className="w-full max-w-md text-sm">{nl ? "Bestanden zoeken" : "Search files"}
+        <input value={search} onChange={event => { setSearch(event.target.value); setPage(0); }} className="mt-1 min-h-10 w-full rounded-md border border-input bg-background px-3" />
+      </label>
+      <label className="text-sm">{nl ? "Per pagina" : "Per page"}<select value={limit} onChange={event => { setLimit(Number(event.target.value)); setPage(0); }} className="ml-2 min-h-10 rounded-md border border-input bg-background px-3">{[10,20,50].map(n => <option key={n}>{n}</option>)}</select></label>
+    </div>
+    {files.error ? <QueryNotice error={files.error} retry={files.refetch} /> : files.isLoading ? <p role="status" className="py-8 text-sm">{t("common.loading")}</p> : <>
+      {!files.data?.length && <div className="flex min-h-48 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><FileText className="h-8 w-8" />{nl ? "Geen bestanden gevonden." : "No files found."}</div>}
+      <div className="divide-y divide-border">
+        {files.data?.slice(0, limit).map(item => <article key={item.id} className="flex items-center gap-3 py-4">
+          <FileText className="h-5 w-5 shrink-0 text-muted-foreground" /><div className="min-w-0 flex-1">
+            <h2 className="break-words text-sm font-medium">{item.fileName || item.title || (nl ? "Naamloos document" : "Untitled document")}</h2>
+            <p className="mt-1 break-words text-xs text-muted-foreground">{item.uploadSource}{item.uploadedAt && Number.isFinite(new Date(item.uploadedAt).getTime()) ? ` / ${formatDate(item.uploadedAt)}` : ""}</p>
+          </div>
+          <Button variant="outline" size="icon" title={nl ? "Bron openen" : "Open source"} aria-label={`${nl ? "Bron openen" : "Open source"}: ${item.fileName || item.title || item.id}`} disabled={source.isPending} onClick={() => void openFile(item.id)}><FolderOpen className="h-4 w-4" /></Button>
+        </article>)}
+      </div>
+      {(page > 0 || (files.data?.length ?? 0) > limit) && <div className="flex items-center justify-between border-t border-border pt-4 text-sm">
+        <Button size="icon" variant="outline" disabled={!page || files.isFetching} aria-label={nl ? "Vorige pagina" : "Previous page"} onClick={() => setPage(page - 1)}><ChevronLeft /></Button>
+        <span>{nl ? "Pagina" : "Page"} {page + 1}</span>
+        <Button size="icon" variant="outline" disabled={(files.data?.length ?? 0) <= limit || files.isFetching} aria-label={nl ? "Volgende pagina" : "Next page"} onClick={() => setPage(page + 1)}><ChevronRight /></Button>
+      </div>}
+    </>}
+  </section>;
 }
 
 export default function Evidence() {
-  const [activeView,        setActiveView]        = useState("dashboard");
-  const [selectedCaseId,    setSelectedCaseId]    = useState<string | null>(null);
-  const [refreshKey,        setRefreshKey]        = useState(0);
-  const [itemsBatchSize,    setItemsBatchSize]    = useState(12);
-
-  // ── Real data ──────────────────────────────────────────────────────────────
-  const { data: casesData, isLoading: casesLoading } = trpc.cases.list.useQuery();
-  const cases = casesData?.cases ?? [];
-
-  const { data: filesData, refetch: refetchFiles } = trpc.evidenceFiles.search.useQuery(
-    { caseId: selectedCaseId ?? undefined },
-    { enabled: true }
-  );
-  const evidenceItems = (filesData as any[]) ?? [];
-  const selectedCase = cases.find((c: any) => c.id === selectedCaseId);
-  const caseLabel =
-    selectedCase?.clientName ??
-    selectedCase?.caseType ??
-    "Selected case";
-
-  const stats = useMemo(() => {
-    const total = evidenceItems.length;
-    const relevant = evidenceItems.filter((f: any) => f.relevant !== false).length;
-    const sources = new Set(
-      evidenceItems.map((f: any) => String(f.uploadSource ?? f.source ?? "manual").toLowerCase())
-    );
-    const scanCount = evidenceItems.filter((f: any) => {
-      const src = String(f.uploadSource ?? f.source ?? "").toLowerCase();
-      return src.includes("scan") || src.includes("agent");
-    }).length;
-    const completeness = total === 0 ? 0 : Math.min(100, Math.round((relevant / total) * 70 + Math.min(total, 30)));
-    return { total, relevant, sources: sources.size, scanCount, completeness };
-  }, [evidenceItems]);
-
-  const prioritizedIssues = useMemo(() => {
-    const issues: Array<{ label: string; severity: "high" | "medium" | "low" }> = [];
-    if (stats.total < 5) issues.push({ label: "Low evidence volume for this case", severity: "high" });
-    if (stats.sources < 2) issues.push({ label: "Evidence comes from too few sources", severity: "medium" });
-    if (stats.scanCount === 0) issues.push({ label: "No desktop scan evidence included", severity: "medium" });
-    if (stats.relevant < Math.max(1, Math.floor(stats.total * 0.5))) {
-      issues.push({ label: "Low relevance ratio detected", severity: "high" });
-    }
-    if (issues.length === 0) issues.push({ label: "No critical gaps detected", severity: "low" });
-    return issues;
-  }, [stats]);
-
-  // ── Listen for Electron scanner events ────────────────────────────────────
-  const handleEvidenceUpdated = useCallback((event: Event) => {
-    const detail = (event as CustomEvent).detail;
-    toast.success(`Scanner upload complete — refreshing evidence...`);
-    refetchFiles();
-    setRefreshKey(k => k + 1);
-    // Auto-switch to dashboard so she sees the new files
-    setActiveView("dashboard");
-  }, [refetchFiles]);
-
+  const { locale, t } = useI18n();
+  const nl = locale === "nl";
+  const [params, setParams] = useSearchParams();
+  const activeView = VIEW_IDS.includes(params.get("view") || "") ? params.get("view")! : "inbox";
+  const selectedCaseId = params.get("case") || null;
+  const selected = trpc.cases.byId.useQuery(selectedCaseId || "", { enabled: !!selectedCaseId });
+  const [refreshKey, setRefreshKey] = useState(0);
+  const utils = trpc.useUtils();
+  const selectView = (view: string, caseId = selectedCaseId) => setParams(previous => {
+    const next = new URLSearchParams(previous);
+    next.set("view", view);
+    if (caseId) next.set("case", caseId); else next.delete("case");
+    return next;
+  });
+  const refreshEvidence = useCallback(async () => {
+    await Promise.all([utils.evidenceFiles.invalidate(), utils.documentInbox.invalidate(), utils.cases.invalidate()]);
+    setRefreshKey(key => key + 1);
+  }, [utils]);
   useEffect(() => {
-    window.addEventListener("laro:evidence-updated", handleEvidenceUpdated);
-    return () => window.removeEventListener("laro:evidence-updated", handleEvidenceUpdated);
-  }, [handleEvidenceUpdated]);
+    const uploaded = () => { void refreshEvidence(); toast.success(nl ? "Bewijsstukken bijgewerkt" : "Evidence updated"); };
+    window.addEventListener("laro:evidence-updated", uploaded);
+    return () => window.removeEventListener("laro:evidence-updated", uploaded);
+  }, [nl, refreshEvidence]);
 
-  const handleManualEvidenceUpdated = useCallback(() => {
-    refetchFiles();
-    setRefreshKey((k) => k + 1);
-  }, [refetchFiles]);
-
-  const visibleItems = useMemo(() => {
-    return [...evidenceItems]
-      .sort((a: any, b: any) => {
-        const ad = new Date(a.uploadedAt ?? a.createdAt ?? 0).getTime();
-        const bd = new Date(b.uploadedAt ?? b.createdAt ?? 0).getTime();
-        return bd - ad;
-      })
-      .slice(0, itemsBatchSize);
-  }, [evidenceItems, itemsBatchSize]);
-
-  const navItems = [
-    { id: "dashboard", label: "Dashboard", icon: BarChart2 },
-    { id: "collect", label: "Collect", icon: Cloud },
-    { id: "connections", label: "Connections", icon: Link2 },
-    { id: "items", label: "Items", icon: ListChecks },
-    { id: "timeline", label: "Timeline", icon: Clock },
-    { id: "gaps", label: "Gap Analysis", icon: AlertTriangle },
-    { id: "export", label: "Export", icon: Download },
-    { id: "scoring", label: "Scoring", icon: Gauge },
+  const views = [
+    { id: "inbox", label: nl ? "Postvak" : "Inbox", icon: FileText },
+    { id: "items", label: nl ? "Bestanden" : "Files", icon: ListChecks },
+    { id: "timeline", label: nl ? "Tijdlijn" : "Timeline", icon: Clock },
+    { id: "connections", label: nl ? "Verbindingen" : "Connections", icon: Link2 },
+    { id: "dashboard", label: nl ? "Bewijsoverzicht" : "Evidence summary", icon: BarChart2 },
+    { id: "collect", label: nl ? "Aan dossier toevoegen" : "Upload to case", icon: Cloud },
+    { id: "gaps", label: nl ? "Ontbrekend bewijs" : "Gap analysis", icon: AlertTriangle },
+    { id: "export", label: nl ? "Exporteren" : "Export", icon: Download },
+    { id: "scoring", label: nl ? "Relevantie" : "Relevance", icon: Gauge },
   ];
+  const advanced = views.slice(4);
+  const advancedView = advanced.find(view => view.id === activeView);
+  const needsCase = CASE_VIEWS.includes(activeView) && !selectedCaseId;
 
-  return (
-    <DashboardLayout>
-      <div className="space-y-6">
-
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-4xl font-bold tracking-tight bg-gradient-to-r from-orange-400 to-orange-600 bg-clip-text text-transparent">
-              Evidence & Documents
-            </h1>
-            <p className="text-muted-foreground mt-2 text-lg">
-              Case-focused evidence workspace
-            </p>
-          </div>
-          <div />
-        </div>
-
-        {/* Case Selection */}
-        {casesLoading ? (
-          <Card className="border-border/50">
-            <CardContent className="py-8 text-center text-muted-foreground">
-              Loading cases...
-            </CardContent>
-          </Card>
-        ) : cases.length === 0 ? (
-          <Card className="border-dashed border-2 border-border/50">
-            <CardContent className="py-8 text-center">
-              <AlertTriangle className="w-10 h-10 mx-auto text-orange-400 mb-3" />
-              <p className="font-semibold">No cases available</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Evidence analytics will appear once at least one case exists.
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FolderOpen className="w-5 h-5" />
-                Select a Case
-                {selectedCaseId && (
-                  <Badge variant="outline" className="ml-2 text-orange-500 border-orange-300">
-                    {cases.find((c: any) => c.id === selectedCaseId)?.clientName ?? "Selected"}
-                  </Badge>
-                )}
-              </CardTitle>
-              <CardDescription>
-                Choose which case to view evidence for, or leave unselected to see all
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-3">
-                <Button
-                  variant={selectedCaseId === null ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setSelectedCaseId(null)}
-                  className={selectedCaseId === null ? "bg-orange-500 hover:bg-orange-600" : ""}
-                >
-                  All Cases
-                </Button>
-                {cases.map((c: any) => (
-                  <Button
-                    key={c.id}
-                    variant={selectedCaseId === c.id ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setSelectedCaseId(c.id)}
-                    className={selectedCaseId === c.id ? "bg-orange-500 hover:bg-orange-600" : ""}
-                  >
-                    {c.clientName ?? c.caseType ?? "Case"}
-                    <Badge variant="secondary" className="ml-2 text-xs">
-                      {c.status ?? "active"}
-                    </Badge>
-                  </Button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Sidebar layout: nav + main + persistent context */}
-        <div className="grid grid-cols-1 xl:grid-cols-[280px_minmax(0,1fr)_340px] gap-6">
-          <Card className="border-border/50 bg-card/50 h-fit shadow-sm">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-lg">Evidence Pages</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const active = activeView === item.id;
-                return (
-                  <Button
-                    key={item.id}
-                    variant={active ? "default" : "ghost"}
-                    className={`w-full justify-start ${active ? "bg-orange-500 hover:bg-orange-600" : ""}`}
-                    onClick={() => setActiveView(item.id)}
-                  >
-                    <Icon className="w-4 h-4 mr-2" />
-                    {item.label}
-                  </Button>
-                );
-              })}
-            </CardContent>
-          </Card>
-
-          <Suspense fallback={<EvidenceViewFallback />}>
-          <div className="min-w-0 space-y-4">
-            {activeView === "dashboard" && (
-              <EvidenceSummaryDashboard key={refreshKey} caseId={selectedCaseId ?? undefined} />
-            )}
-
-            {activeView === "collect" && (
-              selectedCaseId ? (
-                <EvidenceCollection
-                  caseId={selectedCaseId}
-                  onEvidenceUpdated={handleManualEvidenceUpdated}
-                />
-              ) : (
-                <Card>
-                  <CardContent className="p-12 text-center">
-                    <Cloud className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-                    <p className="text-lg font-semibold">Select a case above</p>
-                    <p className="text-muted-foreground mt-2">
-                      Choose a specific case to upload and manage evidence.
-                    </p>
-                  </CardContent>
-                </Card>
-              )
-            )}
-
-            {activeView === "connections" && (
-              <>
-                <EvidenceConnectionsCard />
-                {selectedCaseId && <AutoCollectionSettings caseId={selectedCaseId} />}
-              </>
-            )}
-
-            {activeView === "items" && (
-              <Card className="border-border/50 bg-card/50">
-                <CardHeader>
-                  <CardTitle>Evidence Items</CardTitle>
-                  <CardDescription>
-                    Review recent files with adjustable batch size
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Items per batch</span>
-                      <span className="font-medium">{itemsBatchSize}</span>
-                    </div>
-                    <Slider
-                      value={[itemsBatchSize]}
-                      min={5}
-                      max={50}
-                      step={1}
-                      onValueChange={(v: number[]) => setItemsBatchSize(v[0] ?? 12)}
-                    />
-                  </div>
-                  <div className="space-y-2 max-h-[520px] overflow-y-auto">
-                    {visibleItems.map((item: any) => (
-                      <div key={item.id} className="rounded-lg border border-border/50 p-3">
-                        <p className="font-medium text-sm truncate">{item.fileName ?? item.title ?? "Untitled"}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(item.uploadedAt ?? item.createdAt).toLocaleString()} • {item.fileType ?? item.mimeType ?? "file"}
-                        </p>
-                      </div>
-                    ))}
-                    {visibleItems.length === 0 && (
-                      <p className="text-sm text-muted-foreground py-6 text-center">No items for this case.</p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {activeView === "timeline" && (
-              selectedCaseId ? (
-                <EvidenceTimeline key={`timeline-${refreshKey}`} caseId={selectedCaseId} />
-              ) : (
-                <Card>
-                  <CardContent className="p-12 text-center">
-                    <Clock className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-                    <p className="text-lg font-semibold">Select a case above</p>
-                    <p className="text-muted-foreground mt-2">
-                      Choose a case to see its evidence timeline.
-                    </p>
-                  </CardContent>
-                </Card>
-              )
-            )}
-
-            {activeView === "gaps" && (
-              selectedCaseId ? (
-                <EvidenceGapAnalysisDashboard key={`gaps-${refreshKey}`} caseId={selectedCaseId} />
-              ) : (
-                <Card>
-                  <CardContent className="p-12 text-center">
-                    <AlertTriangle className="w-12 h-12 mx-auto mb-4 text-orange-400 opacity-70" />
-                    <p className="text-lg font-semibold">Select a case above</p>
-                    <p className="text-muted-foreground mt-2">
-                      Gap analysis needs a specific case context.
-                    </p>
-                  </CardContent>
-                </Card>
-              )
-            )}
-
-            {activeView === "export" && (
-              selectedCaseId ? (
-                <EvidenceExportUI caseId={selectedCaseId} />
-              ) : (
-                <Card>
-                  <CardContent className="p-12 text-center">
-                    <Download className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-60" />
-                    <p className="text-lg font-semibold">Select a case above</p>
-                    <p className="text-muted-foreground mt-2">Exports are always scoped to one case.</p>
-                  </CardContent>
-                </Card>
-              )
-            )}
-
-            {activeView === "scoring" && (
-              selectedCaseId ? (
-                <RelevanceScoringDashboard
-                  caseId={selectedCaseId}
-                  caseDescription={selectedCase?.caseSummary ?? ""}
-                  legalArea={selectedCase?.caseType ?? selectedCase?.legalAreas ?? ""}
-                  keyIssues={[]}
-                />
-              ) : (
-                <Card>
-                  <CardContent className="p-12 text-center">
-                    <Gauge className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-60" />
-                    <p className="text-lg font-semibold">Select a case above</p>
-                    <p className="text-muted-foreground mt-2">
-                      Scoring needs case-specific evidence.
-                    </p>
-                  </CardContent>
-                </Card>
-              )
-            )}
-          </div>
-          </Suspense>
-
-          <div className="space-y-4">
-            <Card className="border-border/50 bg-card/50 shadow-sm">
-              <CardHeader className="pb-4">
-                <CardTitle className="text-base">Case Context</CardTitle>
-                <CardDescription>{selectedCaseId ? caseLabel : "All cases overview"}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-3">
-                  <Card className="border-border/50 bg-background/40">
-                    <CardContent className="p-4">
-                      <p className="text-xs text-muted-foreground mb-1">Total</p>
-                      <p className="text-2xl font-bold">{stats.total}</p>
-                    </CardContent>
-                  </Card>
-                  <Card className="border-border/50 bg-background/40">
-                    <CardContent className="p-4">
-                      <p className="text-xs text-muted-foreground mb-1">Relevant</p>
-                      <p className="text-2xl font-bold text-green-500">{stats.relevant}</p>
-                    </CardContent>
-                  </Card>
-                  <Card className="border-border/50 bg-background/40">
-                    <CardContent className="p-4">
-                      <p className="text-xs text-muted-foreground mb-1">Sources</p>
-                      <p className="text-2xl font-bold">{stats.sources}</p>
-                    </CardContent>
-                  </Card>
-                  <Card className="border-border/50 bg-background/40">
-                    <CardContent className="p-4">
-                      <p className="text-xs text-muted-foreground mb-1">Scans</p>
-                      <p className="text-2xl font-bold">{stats.scanCount}</p>
-                    </CardContent>
-                  </Card>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/50 bg-card/50 shadow-sm">
-              <CardHeader className="pb-4">
-                <CardTitle className="text-base">Evidence Completeness</CardTitle>
-                <CardDescription>Coverage signal from the current evidence profile, not a legal-outcome score</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">Score</span>
-                  <span className="text-lg font-semibold">{stats.completeness}/100</span>
-                </div>
-                <Progress aria-label="Evidence completeness" value={stats.completeness} />
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/50 bg-card/50 shadow-sm">
-              <CardHeader className="pb-4">
-                <CardTitle className="text-base">Areas To Improve</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {prioritizedIssues.map((issue, idx) => (
-                  <div key={idx} className="rounded-md border border-border/50 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm">{issue.label}</p>
-                      <Badge variant={issue.severity === "high" ? "destructive" : "outline"}>
-                        {issue.severity}
-                      </Badge>
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/50 bg-card/50 shadow-sm">
-              <CardHeader className="pb-4">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Sparkles className="w-4 h-4 text-orange-500" />
-                  Recommended Actions
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <p>1. Add missing source evidence (email + cloud + local).</p>
-                <p>2. Run scoring after major uploads for updated relevance.</p>
-                <p>3. Export a fresh report once gap items are resolved.</p>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      </div>
-    </DashboardLayout>
-  );
+  return <DashboardLayout><div className="space-y-5">
+    <PageHeading title={nl ? "Documenten" : "Documents"} actions={activeView !== "inbox" && <CasePicker value={selectedCaseId} onChange={id => selectView(activeView, id)} />} />
+    <div className="sm:hidden"><SectionNavigation label={nl ? "Documentweergave" : "Evidence view"} items={views} value={activeView} onChange={view => selectView(view)} /></div>
+    <div className="hidden items-end justify-between gap-3 border-b border-border sm:flex">
+      <SectionNavigation label={nl ? "Documentweergave" : "Evidence view"} items={views.slice(0,4)} value={activeView} onChange={view => selectView(view)} />
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild><Button variant="ghost" className={`mb-1 ${advancedView ? "text-primary" : ""}`}>{advancedView?.label || (nl ? "Meer" : "More")}<ChevronDown className="h-4 w-4" /></Button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end">{advanced.map(view => <DropdownMenuItem key={view.id} onClick={() => selectView(view.id)}><view.icon className="mr-2 h-4 w-4" />{view.label}</DropdownMenuItem>)}</DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+    {selected.error && activeView !== "inbox" && <QueryNotice error={selected.error} retry={selected.refetch} />}
+    <Suspense fallback={<p role="status" className="py-12 text-center text-sm text-muted-foreground">{t("common.loading")}</p>}>
+      {needsCase ? <section className="flex min-h-64 flex-col items-center justify-center gap-4 text-center">
+        <FolderOpen className="h-8 w-8 text-muted-foreground" /><h2 className="text-base font-medium">{nl ? "Selecteer een dossier" : "Select a case"}</h2>
+        <CasePicker value={null} onChange={id => selectView(activeView, id)} />
+      </section> : <>
+        {activeView === "inbox" && <DocumentInbox onOpenCase={id => selectView("timeline", id)} />}
+        {activeView === "items" && <EvidenceFiles key={selectedCaseId || "all"} caseId={selectedCaseId} />}
+        {activeView === "dashboard" && <EvidenceSummaryDashboard key={refreshKey} caseId={selectedCaseId ?? undefined} />}
+        {activeView === "collect" && selectedCaseId && <EvidenceCollection caseId={selectedCaseId} onEvidenceUpdated={() => void refreshEvidence()} />}
+        {activeView === "connections" && <div className="space-y-6"><EvidenceConnectionsCard />{selectedCaseId && <AutoCollectionSettings caseId={selectedCaseId} />}</div>}
+        {activeView === "timeline" && selectedCaseId && <section aria-label="Case reconstruction"><h2 className="mb-4 text-base font-semibold">{nl ? "Bewijstijdlijn" : "Evidence Timeline"}</h2><CaseReconstruction key={`${selectedCaseId}-${refreshKey}`} caseId={selectedCaseId} /></section>}
+        {activeView === "gaps" && selectedCaseId && <EvidenceGapAnalysisDashboard key={refreshKey} caseId={selectedCaseId} />}
+        {activeView === "export" && selectedCaseId && <EvidenceExportUI caseId={selectedCaseId} />}
+        {activeView === "scoring" && selectedCaseId && <RelevanceScoringDashboard caseId={selectedCaseId} caseDescription={selected.data?.caseSummary ?? ""} legalArea={selected.data?.caseType ?? ""} keyIssues={[]} />}
+      </>}
+    </Suspense>
+  </div></DashboardLayout>;
 }

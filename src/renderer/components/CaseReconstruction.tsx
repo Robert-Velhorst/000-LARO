@@ -4,6 +4,7 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   CircleHelp,
+  CalendarDays,
   Columns3,
   FileQuestion,
   Focus,
@@ -18,6 +19,7 @@ import {
   RotateCcw,
   Sparkles,
 } from "lucide-react";
+import { TimelineEvents } from "./TimelineEvents";
 import { trpc } from "@/lib/trpc";
 import { getElectronAPI } from "@/lib/electronApiShim";
 import { useWebSocket } from "@/contexts/WebSocketContext";
@@ -146,7 +148,7 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
   const [reconstruction, setReconstruction] = useState<Reconstruction | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [orientation, setOrientation] = useState<"horizontal" | "vertical">("horizontal");
-  const [view, setView] = useState<"map" | "list" | "gantt">("map");
+  const [view, setView] = useState<"events" | "map" | "list" | "gantt">("events");
   const [showInferred, setShowInferred] = useState(true);
   const [minimumConfidence, setMinimumConfidence] = useState(52);
   const [routeFilter, setRouteFilter] = useState<RouteId | "all">("all");
@@ -284,45 +286,17 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
         <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertTitle>Document action failed</AlertTitle><AlertDescription>{errorMessage}</AlertDescription></Alert>
       ) : null}
 
-      <section className="border-y border-border/60 py-4" aria-labelledby="timeline-correction-title">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-64 flex-1">
-            <label id="timeline-correction-title" htmlFor="timeline-correction" className="text-sm font-medium">Correct the timeline with AI</label>
-            <Textarea
-              id="timeline-correction"
-              className="mt-2 min-h-20 resize-y"
-              value={correctionInstruction}
-              onChange={(event) => setCorrectionInstruction(event.target.value)}
-              placeholder="For example: change the dismissal meeting to 14 March 2024 and keep the meeting notes as its source."
-            />
-          </div>
-          <Button
-            type="button"
-            disabled={correctionInstruction.trim().length < 5 || correctionMutation.isPending}
-            onClick={() => {
-              setErrorMessage(null);
-              setCorrectionMessage(null);
-              correctionMutation.mutate({ caseId, instruction: correctionInstruction.trim() });
-            }}
-          >
-            {correctionMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-            Apply correction
-          </Button>
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground" aria-live="polite">
-          <span>{timelineQuery.data?.corrections.length || 0} audited correction{timelineQuery.data?.corrections.length === 1 ? "" : "s"}</span>
-          {correctionMessage ? <span className="text-foreground">{correctionMessage}</span> : null}
-        </div>
-      </section>
 
-      <div className="grid gap-3 border-b border-border/60 pb-4 sm:grid-cols-3">
-        <div><div className="text-xs text-muted-foreground">Documents</div><div className="text-2xl font-semibold">{reconstruction.nodes.length}</div></div>
-        <div><div className="text-xs text-muted-foreground">Verified links</div><div className="text-2xl font-semibold">{reconstruction.edges.filter((edge) => edge.evidence === "explicit").length}</div></div>
-        <div><div className="text-xs text-muted-foreground">Suggested links</div><div className="text-2xl font-semibold">{reconstruction.edges.filter((edge) => edge.evidence === "inferred").length}</div></div>
-      </div>
+
+      {view !== "events" ? <div className="flex flex-wrap gap-x-6 gap-y-2 border-b border-border/60 pb-3">
+        <div><div className="text-xs text-muted-foreground">Documents</div><div className="text-sm font-semibold">{reconstruction.nodes.length}</div></div>
+          <div><div className="text-xs text-muted-foreground">Verified links</div><div className="text-sm font-semibold">{reconstruction.edges.filter((edge) => edge.evidence === "explicit").length}</div></div>
+          <div><div className="text-xs text-muted-foreground">Suggested links</div><div className="text-sm font-semibold">{reconstruction.edges.filter((edge) => edge.evidence === "inferred").length}</div></div>
+      </div> : null}
 
       <div className="flex flex-wrap items-end gap-3 border-b border-border/60 pb-4">
         <div className="inline-flex rounded-md border border-border bg-background p-1" role="group" aria-label="Reconstruction view">
+          <Button type="button" variant={view === "events" ? "secondary" : "ghost"} size="sm" title="Chronological events" aria-label="Show chronological events" aria-pressed={view === "events"} onClick={() => setView("events")}><CalendarDays className="mr-2 h-4 w-4" />Events</Button>
           <Button type="button" variant={view === "map" ? "secondary" : "ghost"} size="icon" className="h-8 w-8" title="Document map" aria-label="Show document map" aria-pressed={view === "map"} onClick={() => setView("map")}><MapIcon className="h-4 w-4" /></Button>
           <Button type="button" variant={view === "list" ? "secondary" : "ghost"} size="icon" className="h-8 w-8" title="Accessible document list" aria-label="Show document list" aria-pressed={view === "list"} onClick={() => setView("list")}><List className="h-4 w-4" /></Button>
           <Button type="button" variant={view === "gantt" ? "secondary" : "ghost"} size="icon" className="h-8 w-8" title="Gantt timeline" aria-label="Show Gantt timeline" aria-pressed={view === "gantt"} onClick={() => setView("gantt")}><GanttChart className="h-4 w-4" /></Button>
@@ -340,6 +314,9 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
             </div>
           </>
         ) : null}
+<details className="order-2 w-full border-t border-border pt-2">
+          <summary className="cursor-pointer py-1 text-sm text-muted-foreground">Filter documents and links</summary>
+          <div className="flex flex-wrap items-end gap-4 py-3">
         <label className="min-w-44 text-xs text-muted-foreground">
           Route
           <select className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" value={routeFilter} onChange={(event) => setRouteFilter(event.target.value as RouteId | "all")}>
@@ -349,7 +326,7 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
         </label>
         <label className="min-w-52 text-xs text-muted-foreground">
           Focus
-          <select className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" value={focusFilter} onChange={(event) => setFocusFilter(event.target.value)}>
+          <select aria-label="Focus" className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" value={focusFilter} onChange={(event) => setFocusFilter(event.target.value)}>
             <option value="all">All participants and topics</option>
             {focusOptions.filter((option) => option.group === "Participant").length ? (
               <optgroup label="Participants">
@@ -365,7 +342,7 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
         </label>
         <label className="min-w-44 text-xs text-muted-foreground">
           Minimum link confidence: {minimumConfidence}%
-          <input className="mt-2 block w-full accent-orange-500" type="range" min="50" max="95" step="1" value={minimumConfidence} onChange={(event) => setMinimumConfidence(Number(event.target.value))} />
+          <input className="mt-2 block w-full accent-primary" type="range" min="50" max="95" step="1" value={minimumConfidence} onChange={(event) => setMinimumConfidence(Number(event.target.value))} />
         </label>
         <label className="flex h-9 items-center gap-2 text-sm">
           <Switch checked={showInferred} onCheckedChange={setShowInferred} aria-label="Show inferred links" /> Suggested links
@@ -373,24 +350,75 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
         <label className="flex h-9 items-center gap-2 text-sm">
           <Switch checked={traceSelected} onCheckedChange={setTraceSelected} aria-label="Trace selected document chain" /> Trace selection
         </label>
-        <span className="ml-auto flex h-9 items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
+          </div>
+        </details>
+        <span className="order-1 ml-auto flex items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
           {timelineQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
           {timelineQuery.isFetching ? "Updating evidence" : "Updates automatically"}
         </span>
       </div>
 
-      <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted-foreground" aria-label="Route legend">
+      {view !== "events" ? <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-muted-foreground" aria-label="Route legend">
+        <span className="w-full">Document positions use the earliest recorded event, not necessarily the date of the document.</span>
         {reconstruction.routes.map((route) => (
-          <button key={route.id} type="button" className="flex items-center gap-2 hover:text-foreground" onClick={() => setRouteFilter((value) => value === route.id ? "all" : route.id)}>
+          <button key={route.id} type="button" aria-pressed={routeFilter === route.id} className={`flex items-center gap-2 rounded-sm px-1 py-1 hover:text-foreground ${routeFilter === route.id ? "bg-muted text-foreground" : ""}`} onClick={() => setRouteFilter((value) => value === route.id ? "all" : route.id)}>
             <span className="h-2.5 w-6 rounded-full" style={{ backgroundColor: ROUTE_COLORS[route.id] }} />
             {route.label} ({route.documentCount})
           </button>
         ))}
         <span className="flex items-center gap-2"><span className="w-6 border-t-2 border-dashed border-slate-500" /> Suggested relationship</span>
-      </div>
+      </div> : null}
 
-      {reconstruction.phases?.length ? (
-        <section className="border-y border-border/60 py-4" aria-labelledby="reconstruction-story-title">
+      {view === "events" && timelineQuery.data ? (
+        <TimelineEvents key={caseId} caseId={caseId} data={timelineQuery.data} documentIds={visibleNodeIds} onOpenSource={(id) => void openSource(id)} onUpdated={() => timelineQuery.refetch()} />
+      ) : !visibleNodes.length ? (
+        <div className="border border-dashed border-border p-8 text-center">
+          <Focus className="mx-auto h-8 w-8 text-muted-foreground" />
+          <h3 className="mt-3 font-medium">No documents match this focus</h3>
+          <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => {
+            setRouteFilter("all");
+            setFocusFilter("all");
+            setPhaseFilter("all");
+            setChainFilter("all");
+          }}>Clear filters</Button>
+        </div>
+      ) : view === "map" ? (
+        <ReconstructionMap
+          nodes={visibleNodes}
+          edges={visibleEdges}
+          routes={reconstruction.routes.filter((route) => routeFilter === "all" || route.id === routeFilter)}
+          orientation={orientation}
+          zoom={zoom}
+          selectedId={selectedId}
+          tracedIds={tracedIds}
+          traceSelected={traceSelected}
+          onSelect={setSelectedId}
+          onOpenSource={(id) => void openSource(id)}
+        />
+      ) : view === "gantt" ? (
+        <ReconstructionGantt
+          nodes={visibleNodes}
+          phases={reconstruction.phases}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onOpenSource={(id) => void openSource(id)}
+        />
+      ) : (
+        <div className="divide-y divide-border border-y border-border">
+          {visibleNodes.map((node) => (
+            <article key={node.id} className={`grid gap-3 py-4 sm:grid-cols-[9rem_1fr_auto] ${selectedId === node.id ? "bg-muted/30" : ""}`}>
+              <div><div className="text-sm font-medium">{formatDate(node.date)}</div><div className="mt-1 text-xs" style={{ color: ROUTE_COLORS[node.route] }}>{reconstruction.routes.find((route) => route.id === node.route)?.label}</div></div>
+              <button type="button" className="min-w-0 text-left" onClick={() => setSelectedId(node.id)}><div className="font-medium">{node.title}</div><p className="mt-1 text-sm leading-6 text-muted-foreground">{node.summary}</p></button>
+              <Button type="button" variant="ghost" size="icon" title="Open source document" aria-label={`Open source document ${node.title}`} onClick={() => void openSource(node.id)}><CircleHelp className="h-4 w-4" /></Button>
+            </article>
+          ))}
+        </div>
+      )}
+
+      {view !== "events" && reconstruction.phases?.length ? (
+        <details className="border-b border-border py-3">
+          <summary className="cursor-pointer text-sm font-medium">Documented story and key moments</summary>
+          <section className="pt-3" aria-labelledby="reconstruction-story-title">
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div>
               <h3 id="reconstruction-story-title" className="text-sm font-semibold">Documented story</h3>
@@ -477,55 +505,47 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
               </div>
             </div>
           ) : null}
-        </section>
+          </section>
+        </details>
       ) : null}
 
-      {!visibleNodes.length ? (
-        <div className="border border-dashed border-border p-8 text-center">
-          <Focus className="mx-auto h-8 w-8 text-muted-foreground" />
-          <h3 className="mt-3 font-medium">No documents match this focus</h3>
-          <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => {
-            setRouteFilter("all");
-            setFocusFilter("all");
-            setPhaseFilter("all");
-            setChainFilter("all");
-          }}>Clear filters</Button>
-        </div>
-      ) : view === "map" ? (
-        <ReconstructionMap
-          nodes={visibleNodes}
-          edges={visibleEdges}
-          routes={reconstruction.routes.filter((route) => routeFilter === "all" || route.id === routeFilter)}
-          orientation={orientation}
-          zoom={zoom}
-          selectedId={selectedId}
-          tracedIds={tracedIds}
-          traceSelected={traceSelected}
-          onSelect={setSelectedId}
-          onOpenSource={(id) => void openSource(id)}
-        />
-      ) : view === "gantt" ? (
-        <ReconstructionGantt
-          nodes={visibleNodes}
-          phases={reconstruction.phases}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          onOpenSource={(id) => void openSource(id)}
-        />
-      ) : (
-        <div className="divide-y divide-border border-y border-border">
-          {visibleNodes.map((node) => (
-            <article key={node.id} className={`grid gap-3 py-4 sm:grid-cols-[9rem_1fr_auto] ${selectedId === node.id ? "bg-muted/30" : ""}`}>
-              <div><div className="text-sm font-medium">{formatDate(node.date)}</div><div className="mt-1 text-xs" style={{ color: ROUTE_COLORS[node.route] }}>{reconstruction.routes.find((route) => route.id === node.route)?.label}</div></div>
-              <button type="button" className="min-w-0 text-left" onClick={() => setSelectedId(node.id)}><div className="font-medium">{node.title}</div><p className="mt-1 text-sm leading-6 text-muted-foreground">{node.summary}</p></button>
-              <Button type="button" variant="ghost" size="icon" title="Open source document" aria-label={`Open source document ${node.title}`} onClick={() => void openSource(node.id)}><CircleHelp className="h-4 w-4" /></Button>
-            </article>
-          ))}
-        </div>
-      )}
 
-      {selectedNode ? (
-        <section className="border-t border-border pt-4" aria-live="polite">
+      <details className="border-b border-border py-3">
+        <summary className="cursor-pointer text-sm font-medium">Advanced: request an assistant correction</summary>
+        <div className="pt-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-64 flex-1">
+            <label id="timeline-correction-title" htmlFor="timeline-correction" className="text-sm font-medium">Correct the timeline with AI</label>
+            <Textarea
+              id="timeline-correction"
+              className="mt-2 min-h-20 resize-y"
+              value={correctionInstruction}
+              onChange={(event) => setCorrectionInstruction(event.target.value)}
+              placeholder="For example: change the dismissal meeting to 14 March 2024 and keep the meeting notes as its source."
+            />
+          </div>
+          <Button
+            type="button"
+            disabled={correctionInstruction.trim().length < 5 || correctionMutation.isPending}
+            onClick={() => {
+              setErrorMessage(null);
+              setCorrectionMessage(null);
+              correctionMutation.mutate({ caseId, instruction: correctionInstruction.trim() });
+            }}
+          >
+            {correctionMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+            Apply correction
+          </Button>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground" aria-live="polite">
+          <span>{timelineQuery.data?.corrections.length || 0} audited correction{timelineQuery.data?.corrections.length === 1 ? "" : "s"}</span>
+          {correctionMessage ? <span className="text-foreground">{correctionMessage}</span> : null}
+        </div>
+        </div>
+      </details>
+
+      {view !== "events" && selectedNode ? (
+        <details className="border-t border-border pt-4"><summary className="cursor-pointer text-sm font-medium">Selected document details</summary><section className="pt-3" aria-live="polite">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
@@ -579,12 +599,12 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
               </div>
             </div>
           ) : null}
-        </section>
+        </section></details>
       ) : null}
 
-      {reconstruction.warnings.map((warning) => (
+      {reconstruction.warnings.length ? <details className="border-b border-border py-3"><summary className="cursor-pointer text-sm text-muted-foreground">Interpretation notes ({reconstruction.warnings.length})</summary><div className="space-y-2 pt-3">{reconstruction.warnings.map((warning) => (
         <Alert key={warning}><GitBranch className="h-4 w-4" /><AlertTitle>Interpretation note</AlertTitle><AlertDescription>{warning}</AlertDescription></Alert>
-      ))}
+      ))}</div></details> : null}
     </div>
   );
 }
@@ -677,11 +697,11 @@ function ReconstructionMap({
   onOpenSource: (id: string) => void;
 }) {
   const routeIndex = new Map(routes.map((route, index) => [route.id, index]));
-  const width = orientation === "horizontal" ? Math.max(940, nodes.length * 230 + 220) : Math.max(760, routes.length * 250 + 230);
-  const height = orientation === "horizontal" ? Math.max(400, routes.length * 155 + 150) : Math.max(560, nodes.length * 150 + 160);
+  const width = orientation === "horizontal" ? Math.max(760, nodes.length * 270 + 220) : Math.max(360, routes.length * 300 + 40);
+  const height = orientation === "horizontal" ? Math.max(300, routes.length * 190 + 100) : Math.max(360, nodes.length * 190 + 110);
   const positions = new Map(nodes.map((node, index) => [node.id, orientation === "horizontal"
-    ? { x: 150 + index * 230, y: 90 + (routeIndex.get(node.route) ?? 0) * 155 }
-    : { x: 145 + (routeIndex.get(node.route) ?? 0) * 250, y: 95 + index * 150 }]));
+    ? { x: 180 + index * 270, y: 90 + (routeIndex.get(node.route) ?? 0) * 190 }
+    : { x: 40 + (routeIndex.get(node.route) ?? 0) * 300, y: 95 + index * 190 }]));
 
   const routeExtents = new Map<RouteId, { min: number; max: number; lane: number }>();
   for (const node of nodes) {
@@ -695,7 +715,7 @@ function ReconstructionMap({
   }
 
   return (
-    <div className="overflow-auto border-y border-border bg-slate-950/40" style={{ maxHeight: "70vh" }} tabIndex={0} aria-label="Scrollable document reconstruction map">
+    <div className="overflow-auto border-y border-border bg-card/40" style={{ maxHeight: "70vh" }} tabIndex={0} aria-label="Scrollable document reconstruction map">
       <svg width={width * zoom} height={height * zoom} viewBox={`0 0 ${width} ${height}`} role="img" aria-labelledby="reconstruction-map-title reconstruction-map-description">
         <title id="reconstruction-map-title">Document history reconstruction</title>
         <desc id="reconstruction-map-description">Documents are stations ordered by date. Colored lines group event categories. Solid connectors come from provider metadata or document references; dashed connectors are inferred similarities.</desc>
@@ -704,9 +724,9 @@ function ReconstructionMap({
           const extent = routeExtents.get(route.id);
           if (!extent) return null;
           return orientation === "horizontal" ? (
-            <g key={route.id}><line x1={extent.min} y1={extent.lane} x2={extent.max} y2={extent.lane} stroke={ROUTE_COLORS[route.id]} strokeWidth="8" strokeLinecap="round" opacity="0.78" /><text x="20" y={extent.lane + 5} fill={ROUTE_COLORS[route.id]} fontSize="12" fontWeight="600">{route.label}</text></g>
+            <g key={route.id}><line x1={extent.min} y1={extent.lane} x2={extent.max} y2={extent.lane} stroke={ROUTE_COLORS[route.id]} strokeWidth="8" strokeLinecap="round" opacity="0.78" /><text x="20" y={extent.lane - 28} fill={ROUTE_COLORS[route.id]} fontSize="12" fontWeight="600">{route.label}</text></g>
           ) : (
-            <g key={route.id}><line x1={extent.lane} y1={extent.min} x2={extent.lane} y2={extent.max} stroke={ROUTE_COLORS[route.id]} strokeWidth="8" strokeLinecap="round" opacity="0.78" /><text x={extent.lane} y="30" fill={ROUTE_COLORS[route.id]} fontSize="12" fontWeight="600" textAnchor="middle">{route.label}</text></g>
+            <g key={route.id}><line x1={extent.lane} y1={extent.min} x2={extent.lane} y2={extent.max} stroke={ROUTE_COLORS[route.id]} strokeWidth="8" strokeLinecap="round" opacity="0.78" /><text x={extent.lane - 20} y="30" fill={ROUTE_COLORS[route.id]} fontSize="12" fontWeight="600">{route.label}</text></g>
           );
         })}
         {edges.map((edge) => {
@@ -725,20 +745,20 @@ function ReconstructionMap({
           const selected = node.id === selectedId;
           const active = !traceSelected || tracedIds.has(node.id);
           const box = orientation === "horizontal"
-            ? { x: point.x - 92, y: point.y + 18 }
+            ? { x: point.x - 112, y: point.y + 18 }
             : { x: point.x + 18, y: point.y - 45 };
           return (
             <g key={node.id} opacity={active ? 1 : 0.2}>
               <circle cx={point.x} cy={point.y} r={selected ? 12 : 9} fill="#0f172a" stroke={ROUTE_COLORS[node.route]} strokeWidth={selected ? 5 : 4} />
-              <foreignObject x={box.x} y={box.y} width="185" height="108">
-                <div className={`h-[100px] border bg-slate-950/95 p-2 text-slate-100 shadow-lg ${selected ? "border-white" : "border-slate-700"}`}>
+              <foreignObject x={box.x} y={box.y} width="225" height="146">
+                <div className={`flex h-[140px] flex-col justify-between rounded-md border bg-card p-3 text-foreground ${selected ? "border-primary" : "border-border"}`}>
                   <button type="button" className="block w-full text-left" onClick={() => onSelect(node.id)} title={`${node.title}. ${node.summary}`}>
-                    <span className="block truncate text-xs font-semibold">{node.title}</span>
-                    <span className="mt-1 block h-9 overflow-hidden text-[10px] leading-[18px] text-slate-400">{truncate(node.summary, 92)}</span>
+                    <span className="block truncate text-sm font-semibold">{node.title}</span>
+                    <span className="mt-1 block h-10 overflow-hidden text-xs leading-5 text-muted-foreground">{truncate(node.summary, 120)}</span>
                   </button>
-                  <span className="mt-1 flex items-center justify-between gap-2 text-[10px] text-slate-400">
+                  <span className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
                     <span>{formatDate(node.date)}</span>
-                    <button type="button" className="grid h-6 w-6 place-items-center text-slate-200 hover:bg-slate-800" title="Open source document" aria-label={`Open source document ${node.title}`} onClick={() => onOpenSource(node.id)}><CircleHelp className="h-4 w-4" /></button>
+                    <button type="button" className="grid h-8 w-8 place-items-center rounded-md text-foreground hover:bg-muted" title="Open source document" aria-label={`Open source document ${node.title}`} onClick={() => onOpenSource(node.id)}><CircleHelp className="h-4 w-4" /></button>
                   </span>
                 </div>
               </foreignObject>
