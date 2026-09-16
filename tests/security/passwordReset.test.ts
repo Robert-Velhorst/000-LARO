@@ -86,7 +86,7 @@ suite("password reset security", () => {
       socket: { remoteAddress: "127.0.0.1" },
       get: () => undefined,
     } as any;
-    const context = await createContext({ req, res: {} as any });
+    const context = await createContext({ req, res: { setHeader() {} } as any });
 
     expect(context.user).toBeNull();
     expect(context.authScope).toBeUndefined();

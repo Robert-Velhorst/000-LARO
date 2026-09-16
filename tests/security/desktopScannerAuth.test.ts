@@ -47,8 +47,10 @@ describe("desktop scanner main-process proof", () => {
     const req = request(undefined);
     req.headers.authorization = `Bearer ${token}`;
     req.cookies = {};
-    const context = await createContext({ req, res: {} as any });
+    const setHeader = vi.fn();
+    const context = await createContext({ req, res: { setHeader } as any });
     expect(context.user).toBeNull();
     expect(context.desktopScanner).toBe(false);
+    expect(setHeader).toHaveBeenCalledWith("X-Correlation-ID", expect.any(String));
   });
 });

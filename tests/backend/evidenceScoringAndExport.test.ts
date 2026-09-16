@@ -208,7 +208,8 @@ suite("evidence scoring and case export", () => {
         entityId: "CASE_SCORE_OWNER",
         action: "evidence.exported",
       });
-      expect(audit[0]?.details).toMatchObject({ completeness: "failed", omissionCount: 1 });
+      const failedAudit = audit.find((entry: any) => entry.details?.completeness === "failed");
+      expect(failedAudit?.details).toMatchObject({ completeness: "failed", omissionCount: 1 });
     } finally {
       await app.db.delete(app.schema.evidence).where(eq(app.schema.evidence.id, evidenceId));
     }
