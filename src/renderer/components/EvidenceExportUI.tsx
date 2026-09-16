@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Archive, CheckCircle2, Download, FileText, Loader2, Table2 } from "lucide-react";
+import { Archive, CheckCircle2, Download, FileText, Loader2, Table2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,27 +33,44 @@ function downloadBase64(payload: DownloadPayload): void {
 }
 
 export default function EvidenceExportUI({ caseId }: EvidenceExportUIProps) {
-  const [lastExport, setLastExport] = useState<{ format: string; bytes?: number } | null>(null);
+  const [lastExport, setLastExport] = useState<{
+    format: string;
+    bytes?: number;
+    completeness: "complete" | "failed";
+    omissionCount?: number;
+  } | null>(null);
   const { data: formats = [], isLoading } = trpc.evidenceExport.getFormats.useQuery();
 
   const csvExport = trpc.evidenceExport.exportCSV.useMutation({
     onSuccess: (payload) => {
       downloadBase64(payload);
-      setLastExport({ format: "CSV", bytes: payload.bytes });
+      setLastExport({ format: "CSV", bytes: payload.bytes, completeness: "complete" });
       toast.success("Evidence CSV downloaded");
     },
     onError: (error) => toast.error(error.message),
   });
   const zipExport = trpc.evidenceExport.exportZIP.useMutation({
     onSuccess: (payload) => {
+      if (payload.completeness === "failed" || !payload.url) {
+        setLastExport({
+          format: "ZIP",
+          completeness: "failed",
+          omissionCount: payload.omissions.length,
+        });
+        const omitted = payload.omissions
+          .map((item) => `${item.evidenceId} (${item.expectedFilename})`)
+          .join(", ");
+        toast.error(`Package not created. Missing source${payload.omissions.length === 1 ? "" : "s"}: ${omitted}`);
+        return;
+      }
       const link = document.createElement("a");
       link.href = `${apiBase()}${payload.url}`;
       link.download = payload.filename;
       document.body.appendChild(link);
       link.click();
       link.remove();
-      setLastExport({ format: "ZIP" });
-      toast.success("Evidence package download started");
+      setLastExport({ format: "ZIP", completeness: "complete" });
+      toast.success("Complete evidence package download started");
     },
     onError: (error) => toast.error(error.message),
   });
@@ -74,7 +91,7 @@ export default function EvidenceExportUI({ caseId }: EvidenceExportUIProps) {
           Export Evidence
         </CardTitle>
         <CardDescription>
-          Create an owner-scoped package for this case. ZIP includes available source files and document analyses.
+          Create an owner-scoped package for this case. ZIP starts only after every managed source is available.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -116,9 +133,14 @@ export default function EvidenceExportUI({ caseId }: EvidenceExportUIProps) {
 
         {lastExport && (
           <div className="flex items-center gap-2 border-t border-border/60 pt-4 text-sm text-muted-foreground">
-            <CheckCircle2 className="h-4 w-4 text-green-500" />
-            Last download: {lastExport.format}
+            {lastExport.completeness === "complete" ? (
+              <CheckCircle2 className="h-4 w-4 text-green-500" />
+            ) : (
+              <XCircle className="h-4 w-4 text-red-500" />
+            )}
+            {lastExport.completeness === "complete" ? "Last download" : "Last export failed"}: {lastExport.format}
             {typeof lastExport.bytes === "number" ? `, ${(lastExport.bytes / 1024).toFixed(1)} KB` : ""}
+            {lastExport.completeness === "failed" ? `, ${lastExport.omissionCount ?? 0} missing source(s)` : ""}
           </div>
         )}
       </CardContent>

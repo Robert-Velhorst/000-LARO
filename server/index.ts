@@ -232,8 +232,8 @@ app.get('/api/case-export/:ticket.zip', async (req, res) => {
       res.status(401).json({ error: 'Authentication required' });
       return;
     }
-    const caseId = consumeCaseZipDownloadTicket(req.params.ticket, ctx.user.id);
-    source = await createCaseZipStream(ctx.user.id, caseId, { signal: abortController.signal });
+    const ticket = consumeCaseZipDownloadTicket(req.params.ticket, ctx.user.id);
+    source = await createCaseZipStream(ticket.ownerId, ticket.caseId, { signal: abortController.signal });
     const fileName = encodeURIComponent(sanitizeFilename(source.filename));
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Content-Type', 'application/zip');
@@ -249,8 +249,14 @@ app.get('/api/case-export/:ticket.zip', async (req, res) => {
       userId: ctx.user.id,
       action: AUDIT_ACTIONS.EVIDENCE_EXPORTED,
       entityType: 'case',
-      entityId: caseId,
-      details: { format: 'zip', bytes: result.bytes, sourceFileCount: result.sourceFileCount },
+      entityId: ticket.caseId,
+      details: {
+        format: 'zip',
+        bytes: result.bytes,
+        sourceFileCount: result.sourceFileCount,
+        completeness: result.completeness,
+        omissionCount: result.omissionCount,
+      },
     });
   } catch (error) {
     source?.stream.destroy();

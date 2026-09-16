@@ -11,7 +11,7 @@
  *  - hashBuffer() provides a sha256 content hash for evidence provenance.
  *  - Local reads/writes are confined to the base directory (defence in depth).
  */
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHash } from 'crypto';
 import path from 'path';
@@ -214,6 +214,34 @@ export async function storageOpenReadStream(
   });
   const completion = pipeline(source, limiter, { signal: options.signal });
   return { stream: limiter, declaredBytes, completion };
+}
+
+/** Metadata-only availability check used before issuing a download ticket. */
+export async function storageInspect(
+  key: string,
+  options: { maxBytes: number; signal?: AbortSignal },
+): Promise<{ bytes: number | null }> {
+  if (options.signal?.aborted) throw new Error("Storage inspection was cancelled");
+  const safeKey = sanitizeStorageKey(key);
+  if (!safeKey) throw new Error('Storage key must contain at least one valid path segment');
+  if (isS3Configured()) {
+    const response = await s3.send(
+      new HeadObjectCommand({ Bucket: BUCKET, Key: safeKey }),
+      { abortSignal: options.signal },
+    );
+    const bytes = typeof response.ContentLength === 'number' ? response.ContentLength : null;
+    if (bytes !== null && bytes > options.maxBytes) {
+      throw new Error(`Storage object exceeds the ${options.maxBytes} byte read limit`);
+    }
+    return { bytes };
+  }
+  const full = resolveLocalPath(safeKey);
+  if (!fs.existsSync(full)) throw new Error(`Local storage object not found: ${safeKey}`);
+  const bytes = fs.statSync(full).size;
+  if (bytes > options.maxBytes) {
+    throw new Error(`Storage object exceeds the ${options.maxBytes} byte read limit`);
+  }
+  return { bytes };
 }
 
 export async function storageDelete(key: string): Promise<void> {

@@ -2,9 +2,10 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { AUDIT_ACTIONS, createAuditLog } from "../audit";
-import { buildCaseCsv, issueCaseZipDownloadTicket } from "../evidenceExport";
+import { buildCaseCsv, inspectCaseZipCompleteness, issueCaseZipDownloadTicket } from "../evidenceExport";
 import { assertCaseAccess } from "../_core/authz";
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
+import { getCaseAuthorization } from "../teams";
 
 function encodedDownload(filename: string, mimeType: string, buffer: Buffer) {
   return {
@@ -25,7 +26,9 @@ export const evidenceExportRouter = router({
   exportCSV: protectedProcedure
     .input(z.object({ caseId: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
-      const buffer = await buildCaseCsv(ctx.user.id, input.caseId);
+      await assertCaseAccess(input.caseId, ctx.user.id);
+      const authorization = await getCaseAuthorization(input.caseId, ctx.user.id);
+      const buffer = await buildCaseCsv(authorization!.ownerId, input.caseId);
       await createAuditLog({
         userId: ctx.user.id,
         action: AUDIT_ACTIONS.EVIDENCE_EXPORTED,
@@ -41,11 +44,34 @@ export const evidenceExportRouter = router({
     .mutation(async ({ input, ctx }) => {
       enforceRateLimit(ctx, "evidence-export", RATE_LIMITS.evidenceExport);
       await assertCaseAccess(input.caseId, ctx.user.id);
-      const ticket = issueCaseZipDownloadTicket(ctx.user.id, input.caseId);
+      const authorization = await getCaseAuthorization(input.caseId, ctx.user.id);
+      const readiness = await inspectCaseZipCompleteness(authorization!.ownerId, input.caseId);
+      if (readiness.completeness === "failed") {
+        await createAuditLog({
+          userId: ctx.user.id,
+          action: AUDIT_ACTIONS.EVIDENCE_EXPORTED,
+          entityType: "case",
+          entityId: input.caseId,
+          details: {
+            format: "zip",
+            completeness: "failed",
+            omissionCount: readiness.omissions.length,
+            omissions: readiness.omissions,
+          },
+        });
+        return {
+          filename: `case-${input.caseId}-evidence.zip`,
+          mimeType: "application/zip" as const,
+          url: null,
+          ...readiness,
+        };
+      }
+      const ticket = issueCaseZipDownloadTicket(ctx.user.id, input.caseId, authorization!.ownerId);
       return {
         filename: `case-${input.caseId}-evidence.zip`,
-        mimeType: "application/zip",
+        mimeType: "application/zip" as const,
         url: `/api/case-export/${ticket}.zip`,
+        ...readiness,
       };
     }),
 

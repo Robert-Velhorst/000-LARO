@@ -5,7 +5,7 @@ import { pipeline } from "stream/promises";
 import { randomBytes } from "crypto";
 import { getDb } from "./db";
 import { cases, documentAnalyses, evidence } from "./schema";
-import { sanitizeFilename, storageOpenReadStream } from "./storage";
+import { sanitizeFilename, storageInspect, storageOpenReadStream } from "./storage";
 import { MAX_EVIDENCE_FILE_BYTES } from "../shared/evidenceFiles";
 import { encodeCsvRows } from "../shared/csv";
 
@@ -28,9 +28,9 @@ type ExportWaiter = {
   onAbort?: () => void;
 };
 const exportWaiters: ExportWaiter[] = [];
-const exportTickets = new Map<string, { userId: string; caseId: string; expiresAt: number }>();
+const exportTickets = new Map<string, { userId: string; ownerId: string; caseId: string; expiresAt: number }>();
 
-export function issueCaseZipDownloadTicket(userId: string, caseId: string): string {
+export function issueCaseZipDownloadTicket(userId: string, caseId: string, ownerId = userId): string {
   const now = Date.now();
   for (const [token, ticket] of exportTickets) {
     if (ticket.expiresAt <= now) exportTickets.delete(token);
@@ -43,17 +43,17 @@ export function issueCaseZipDownloadTicket(userId: string, caseId: string): stri
     throw new Error("Too many pending evidence export links; use or wait for an existing link");
   }
   const token = randomBytes(32).toString("base64url");
-  exportTickets.set(token, { userId, caseId, expiresAt: now + EXPORT_TICKET_TTL_MS });
+  exportTickets.set(token, { userId, ownerId, caseId, expiresAt: now + EXPORT_TICKET_TTL_MS });
   return token;
 }
 
-export function consumeCaseZipDownloadTicket(token: string, userId: string): string {
+export function consumeCaseZipDownloadTicket(token: string, userId: string): { caseId: string; ownerId: string } {
   const ticket = exportTickets.get(token);
   exportTickets.delete(token);
   if (!ticket || ticket.expiresAt <= Date.now() || ticket.userId !== userId) {
     throw new Error("Evidence export link is invalid or expired");
   }
-  return ticket.caseId;
+  return { caseId: ticket.caseId, ownerId: ticket.ownerId };
 }
 
 const SENSITIVE_METADATA_FIELDS = new Set([
@@ -67,21 +67,58 @@ const SENSITIVE_METADATA_FIELDS = new Set([
   "storagekey",
   "token",
 ]);
+const LOCAL_PATH_METADATA_FIELDS = new Set([
+  "absolutepath",
+  "abspath",
+  "directory",
+  "filepath",
+  "folderpath",
+  "localpath",
+  "sourcefolder",
+  "sourcepath",
+]);
+const OMIT_FROM_EXPORT = Symbol("omit-from-export");
 
 function normalizeFieldName(value: string): string {
   return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
 
-function redactMetadata(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(redactMetadata);
+function sanitizeExportText(value: string): string {
+  return value
+    .replace(/file:\/\/\/?(?:[a-z]:)?[^\r\n]+/giu, "[local path removed]")
+    .replace(/[a-z]:[\\/][^\r\n]+/giu, "[local path removed]")
+    .replace(/\\\\[^\\\r\n]+\\[^\r\n]+/gu, "[local path removed]")
+    .replace(/\/(?:home|Users|mnt|media|tmp|var|opt|srv|private|Volumes)\/[^\r\n]+/gu, "[local path removed]");
+}
+
+function exportSafeValue(value: unknown, key?: string): unknown | typeof OMIT_FROM_EXPORT {
+  const normalizedKey = key ? normalizeFieldName(key) : "";
+  if (normalizedKey && (
+    SENSITIVE_METADATA_FIELDS.has(normalizedKey) ||
+    LOCAL_PATH_METADATA_FIELDS.has(normalizedKey) ||
+    normalizedKey.endsWith("absolutepath") ||
+    normalizedKey.endsWith("filepath") ||
+    normalizedKey.endsWith("directorypath")
+  )) return OMIT_FROM_EXPORT;
+  if (Array.isArray(value)) {
+    return value.map((item) => exportSafeValue(item)).filter((item) => item !== OMIT_FROM_EXPORT);
+  }
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
-        .filter(([key]) => !SENSITIVE_METADATA_FIELDS.has(normalizeFieldName(key)))
-        .map(([key, item]) => [key, redactMetadata(item)])
+        .map(([entryKey, item]) => [entryKey, exportSafeValue(item, entryKey)] as const)
+        .filter(([, item]) => item !== OMIT_FROM_EXPORT)
     );
   }
+  if (typeof value === "string") return sanitizeExportText(value);
   return value;
+}
+
+export function projectEvidenceMetadataForExport(value: unknown): Record<string, unknown> {
+  const projected = exportSafeValue(value);
+  return projected && projected !== OMIT_FROM_EXPORT && typeof projected === "object" && !Array.isArray(projected)
+    ? projected as Record<string, unknown>
+    : {};
 }
 
 function parseMetadata(value: string | null): Record<string, unknown> {
@@ -94,6 +131,42 @@ function parseMetadata(value: string | null): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+export function projectEvidenceForExport(item: typeof evidence.$inferSelect) {
+  const metadata = parseMetadata(item.metadata);
+  const sourceFolderLabel = typeof metadata.sourceFolderLabel === "string"
+    ? sanitizeFilename(metadata.sourceFolderLabel)
+    : undefined;
+  return {
+    ...item,
+    title: sanitizeExportText(item.title),
+    description: item.source === "local" && sourceFolderLabel
+      ? `Auto-collected from local folder ${sourceFolderLabel}`
+      : item.description ? sanitizeExportText(item.description) : item.description,
+    fileUrl: null,
+    fileName: item.fileName ? sanitizeFilename(item.fileName) : item.fileName,
+    metadata: projectEvidenceMetadataForExport(metadata),
+  };
+}
+
+export type EvidenceExportOmission = {
+  evidenceId: string;
+  expectedFilename: string;
+  reason: "source object is unavailable" | "source exceeds the per-file export limit";
+};
+
+export type CaseZipCompleteness = {
+  completeness: "complete" | "failed";
+  expectedSourceFileCount: number;
+  expectedSourceBytes: number | null;
+  omissions: EvidenceExportOmission[];
+};
+
+function redactedSourceFailureReason(error: unknown): EvidenceExportOmission["reason"] {
+  return error instanceof Error && /exceeds/i.test(error.message)
+    ? "source exceeds the per-file export limit"
+    : "source object is unavailable";
 }
 
 function throwIfExportAborted(signal?: AbortSignal): void {
@@ -161,6 +234,56 @@ async function loadCaseExportRows(
   return { caseRow, items, analysisRefs };
 }
 
+/**
+ * Verify every managed source before a one-use download ticket is issued.
+ * A failed inspection returns only non-sensitive evidence identifiers and a
+ * coarse reason; storage keys, provider errors, and local paths stay private.
+ */
+export async function inspectCaseZipCompleteness(
+  ownerId: string,
+  caseId: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<CaseZipCompleteness> {
+  const { items } = await loadCaseExportRows(ownerId, caseId, {
+    includeAnalyses: false,
+    signal: options.signal,
+  });
+  const omissions: EvidenceExportOmission[] = [];
+  let expectedSourceFileCount = 0;
+  let expectedSourceBytes = 0;
+  let hasUnknownSize = false;
+  for (const item of items) {
+    throwIfExportAborted(options.signal);
+    const metadata = parseMetadata(item.metadata);
+    if (typeof metadata.storageKey !== "string" || !metadata.storageKey) continue;
+    expectedSourceFileCount += 1;
+    try {
+      const inspected = await storageInspect(metadata.storageKey, {
+        maxBytes: MAX_EVIDENCE_FILE_BYTES,
+        signal: options.signal,
+      });
+      if (inspected.bytes === null) hasUnknownSize = true;
+      else expectedSourceBytes += inspected.bytes;
+    } catch (error) {
+      if (options.signal?.aborted) throwIfExportAborted(options.signal);
+      omissions.push({
+        evidenceId: item.id,
+        expectedFilename: sanitizeFilename(item.fileName || item.title || `${item.id}.bin`),
+        reason: redactedSourceFailureReason(error),
+      });
+    }
+  }
+  if (!hasUnknownSize && expectedSourceBytes > MAX_EXPORT_SOURCE_BYTES) {
+    throw new Error("Evidence ZIP exceeds the 512 MB aggregate source limit");
+  }
+  return {
+    completeness: omissions.length > 0 ? "failed" : "complete",
+    expectedSourceFileCount,
+    expectedSourceBytes: hasUnknownSize ? null : expectedSourceBytes,
+    omissions,
+  };
+}
+
 function renderCaseCsv(items: Array<typeof evidence.$inferSelect>): Buffer {
   const headers = [
     "id",
@@ -175,17 +298,18 @@ function renderCaseCsv(items: Array<typeof evidence.$inferSelect>): Buffer {
     "contentHash",
   ];
   const rows = items.map((item) => {
-    const metadata = parseMetadata(item.metadata);
+    const projected = projectEvidenceForExport(item);
+    const metadata = projected.metadata;
     return [
-      item.id,
-      item.title,
-      item.type,
-      item.source,
-      item.fileName,
-      item.mimeType,
-      item.relevant === false ? "No" : "Yes",
+      projected.id,
+      projected.title,
+      projected.type,
+      projected.source,
+      projected.fileName,
+      projected.mimeType,
+      projected.relevant === false ? "No" : "Yes",
       metadata.relevanceScore,
-      item.createdAt?.toISOString(),
+      projected.createdAt?.toISOString(),
       metadata.contentHash,
     ];
   });
@@ -280,7 +404,12 @@ async function appendGeneratedEntry(
 export type CaseZipStream = {
   filename: string;
   stream: Readable;
-  completion: Promise<{ bytes: number; sourceFileCount: number }>;
+  completion: Promise<{
+    bytes: number;
+    sourceFileCount: number;
+    completeness: "complete";
+    omissionCount: 0;
+  }>;
 };
 
 export async function createCaseZipStream(
@@ -354,7 +483,7 @@ export async function createCaseZipStream(
           await appendGeneratedEntry(
             archive,
             `evidence/${item.id}.json`,
-            JSON.stringify({ ...item, metadata: redactMetadata(parseMetadata(item.metadata)) }, null, 2),
+            JSON.stringify(projectEvidenceForExport(item), null, 2),
             generatedBudget,
           );
           const analysisRef = analysisByEvidence.get(item.id);
@@ -380,7 +509,10 @@ export async function createCaseZipStream(
             throwIfExportAborted(lifecycle.signal);
           } catch (error) {
             if (error instanceof Error && /limit/.test(error.message)) throw error;
-            continue;
+            const expectedFilename = sanitizeFilename(item.fileName || item.title || `${item.id}.bin`);
+            throw new Error(
+              `Evidence source ${item.id} (${expectedFilename}) is unavailable; the package was not created`,
+            );
           }
           currentSource = source.stream;
           if (source.declaredBytes !== null && sourceBytes + source.declaredBytes > MAX_EXPORT_SOURCE_BYTES) {
@@ -415,25 +547,28 @@ export async function createCaseZipStream(
           generatedAt: new Date().toISOString(),
           case: {
             id: caseRow.id,
-            clientName: caseRow.clientName,
-            caseType: caseRow.caseType,
-            caseSummary: caseRow.caseSummary,
+            clientName: caseRow.clientName ? sanitizeExportText(caseRow.clientName) : caseRow.clientName,
+            caseType: caseRow.caseType ? sanitizeExportText(caseRow.caseType) : caseRow.caseType,
+            caseSummary: caseRow.caseSummary ? sanitizeExportText(caseRow.caseSummary) : caseRow.caseSummary,
             legalAreas: caseRow.legalAreas,
             status: caseRow.status,
           },
+          completeness: "complete",
+          omissions: [],
           evidenceCount: items.length,
           analyzedEvidenceCount: analysisRefs.length,
           sourceFileCount,
           evidence: items.map((item) => {
-            const metadata = parseMetadata(item.metadata);
+            const projected = projectEvidenceForExport(item);
+            const metadata = projected.metadata;
             return {
-              id: item.id,
-              title: item.title,
-              type: item.type,
-              source: item.source,
-              fileName: item.fileName,
-              mimeType: item.mimeType,
-              relevant: item.relevant,
+              id: projected.id,
+              title: projected.title,
+              type: projected.type,
+              source: projected.source,
+              fileName: projected.fileName,
+              mimeType: projected.mimeType,
+              relevant: projected.relevant,
               relevanceScore: metadata.relevanceScore ?? null,
               contentHash: metadata.contentHash ?? null,
               analyzed: analysisByEvidence.has(item.id),
@@ -443,7 +578,12 @@ export async function createCaseZipStream(
         await appendGeneratedEntry(archive, "manifest.json", JSON.stringify(manifest, null, 2), generatedBudget);
         await archive.finalize();
         await pipePromise;
-        return { bytes: archiveBytes, sourceFileCount };
+        return {
+          bytes: archiveBytes,
+          sourceFileCount,
+          completeness: "complete" as const,
+          omissionCount: 0 as const,
+        };
       } catch (error) {
         cancel(error as Error);
         await pipePromise.catch(() => undefined);

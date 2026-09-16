@@ -17,6 +17,8 @@ import { collectManagedStorageKeys } from "../managedStorage";
 import { enqueueStorageDeletions, processQueuedStorageDeletions } from "../storageDeletionQueue";
 import { emitRealtimeDataChange } from "../realtime";
 import { encodeCsvRows } from "../../shared/csv";
+import { inspectCaseZipCompleteness, projectEvidenceForExport } from "../evidenceExport";
+import { getCaseAuthorization } from "../teams";
 
 export const casesRouter = router({
   // Phase 022 — search, filters, sorting, pagination. All server-side and
@@ -210,7 +212,7 @@ export const casesRouter = router({
         format: "laro-case-export/v1",
         exportedAt: new Date().toISOString(),
         case: caseRows[0] ?? null,
-        evidence: evidenceRows,
+        evidence: evidenceRows.map(projectEvidenceForExport),
         outreach: outreachRows,
       };
     }),
@@ -221,12 +223,24 @@ export const casesRouter = router({
     .mutation(async ({ input, ctx }) => {
       enforceRateLimit(ctx, "evidence-export", RATE_LIMITS.evidenceExport);
       await assertCaseAccess(input.caseId, ctx.user.id);
+      const authorization = await getCaseAuthorization(input.caseId, ctx.user.id);
+      const readiness = await inspectCaseZipCompleteness(authorization!.ownerId, input.caseId);
+      if (readiness.completeness === "failed") {
+        const details = readiness.omissions
+          .map((omission) => `${omission.evidenceId} (${omission.expectedFilename}): ${omission.reason}`)
+          .join("; ");
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Evidence package is incomplete: ${details}`,
+        });
+      }
       const { issueCaseZipDownloadTicket } = await import("../evidenceExport");
-      const ticket = issueCaseZipDownloadTicket(ctx.user.id, input.caseId);
+      const ticket = issueCaseZipDownloadTicket(ctx.user.id, input.caseId, authorization!.ownerId);
       return {
         format: "laro-case-zip/v2",
         filename: `case-${input.caseId}-evidence.zip`,
         url: `/api/case-export/${ticket}.zip`,
+        completeness: "complete" as const,
       };
     }),
 

@@ -26,9 +26,10 @@ import {
   channelIntegrations,
 } from "../schema";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { assertCaseOwnership } from "../_core/authz";
+import { assertCaseAccess, assertCaseOwnership } from "../_core/authz";
 import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "../audit";
 import { nanoid } from "nanoid";
+import { projectEvidenceForExport } from "../evidenceExport";
 
 const count = sql<number>`count(*)`;
 async function n(q: Promise<Array<{ c: number }>>): Promise<number> {
@@ -303,12 +304,12 @@ export const caseManagementRouter = router({
     return rows.map((r: any) => ({ action: r.action || "", at: r.createdAt }));
   }),
   exportCase: protectedProcedure.input(z.object({ caseId: z.string() })).query(async ({ input, ctx }) => {
-    await assertCaseOwnership(input.caseId, ctx.user.id);
+    await assertCaseAccess(input.caseId, ctx.user.id);
     const db = await getDb();
     if (!db) throw new Error("Database not available");
     const [c] = await db.select().from(casesTable).where(eq(casesTable.id, input.caseId)).limit(1);
     const ev = await db.select().from(evidenceRecords).where(eq(evidenceRecords.caseId, input.caseId));
-    return { format: "laro-case-export/v1", case: c ?? null, evidence: ev };
+    return { format: "laro-case-export/v1", case: c ?? null, evidence: ev.map(projectEvidenceForExport) };
   }),
   getUpcomingDeadlines: protectedProcedure.input(z.object({
     caseId: z.string().optional(), completed: z.boolean().optional(),
