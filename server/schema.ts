@@ -35,6 +35,28 @@ export const users = sqliteTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
+/**
+ * Existing accounts whose trimmed, case-folded addresses collide are
+ * quarantined by migration instead of being silently merged. An operator must
+ * assign each affected account a distinct canonical address.
+ */
+export const accountEmailConflicts = sqliteTable(
+  "account_email_conflicts",
+  {
+    id: text("id").primaryKey(),
+    userId: text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    originalEmail: text("originalEmail").notNull(),
+    normalizedEmail: text("normalizedEmail").notNull(),
+    status: text("status").notNull().default("pending"),
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+    resolvedAt: integer("resolvedAt", { mode: "timestamp" }),
+  },
+  (table) => ({
+    userStatusUnique: uniqueIndex("account_email_conflicts_user_status_unique").on(table.userId, table.status),
+    normalizedStatusIdx: index("account_email_conflicts_normalized_status_idx").on(table.normalizedEmail, table.status),
+  }),
+);
+
 // ─── Lawyers ─────────────────────────────────────────────────────────────────
 
 export const lawyers = sqliteTable(

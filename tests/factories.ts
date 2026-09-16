@@ -13,13 +13,17 @@ const nextId = (prefix: string) => `${prefix}_${(++seq).toString().padStart(4, '
 
 export function buildUser(over: Record<string, any> = {}) {
   const id = over.id ?? nextId('USER');
+  const email = over.email === null
+    ? null
+    : String(over.email ?? `${id.toLowerCase()}@example.com`).normalize('NFKC').trim().toLowerCase();
   return {
     id,
     name: `User ${id}`,
-    email: `${id.toLowerCase()}@example.com`,
+    email,
     role: 'user',
     createdAt: new Date(),
     ...over,
+    email,
   };
 }
 

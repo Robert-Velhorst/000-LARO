@@ -8,6 +8,7 @@ import { InsertUser, users, lawyers, cases, outreachStatus, emailActivity, syste
 import { getTableConfig } from "drizzle-orm/sqlite-core";
 import { ENV } from './_core/env';
 import { createCaseId } from './ids';
+import { normalizeAccountEmail } from './emailIdentity';
 import { ensureRelationshipIntegrityTriggers } from './relationshipIntegrity';
 import { assertDatabaseRuntimeIsSupported } from './persistence/hostedPersistenceGuard';
 
@@ -56,15 +57,17 @@ function applyConnectionPragmas(sqlite: InstanceType<typeof Database>) {
  * crashing boot (the duplicates must then be reconciled — see Phase 054).
  */
 function ensureIndexes(sqlite: InstanceType<typeof Database>) {
-  // Unique email — enforce one account per address. Signup already checks for
-  // an existing email, so this closes the race/duplicate gap at the DB level.
+  // Canonical email identity — migration 0020 quarantines pre-existing
+  // normalized collisions before this expression index is installed.
   try {
-    sqlite.exec(
-      `CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(email) WHERE email IS NOT NULL;`
-    );
+    sqlite.exec(`
+      DROP INDEX IF EXISTS users_email_unique;
+      CREATE UNIQUE INDEX IF NOT EXISTS users_email_canonical_unique
+        ON users(lower(trim(email))) WHERE email IS NOT NULL;
+    `);
   } catch (e) {
     console.warn(
-      "[Database] Could not create unique index users_email_unique (likely pre-existing duplicate emails; reconcile then retry):",
+      "[Database] Could not create canonical user email index (review account_email_conflicts):",
       e
     );
   }
@@ -493,6 +496,7 @@ export async function getDb() {
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0017_case_action_proposals.sql"), "utf8"));
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0018_case_action_evidence.sql"), "utf8"));
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0019_case_shares.sql"), "utf8"));
+        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0020_account_email_identity.sql"), "utf8"));
         const inboxColumns = new Set((sqlite.prepare('PRAGMA table_info("document_inbox")').all() as Array<{ name: string }>).map((column) => column.name));
         if (!inboxColumns.has("sourceType")) sqlite.exec("ALTER TABLE document_inbox ADD COLUMN sourceType text NOT NULL DEFAULT 'manual'");
         if (!inboxColumns.has("provenance")) sqlite.exec("ALTER TABLE document_inbox ADD COLUMN provenance text");
@@ -589,7 +593,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     const values: InsertUser = {
       id: user.id,
       name: user.name ?? null,
-      email: user.email ?? null,
+      email: user.email ? normalizeAccountEmail(user.email) : null,
       loginMethod: user.loginMethod ?? null,
       lastSignedIn: user.lastSignedIn ?? new Date(),
       role: user.role ?? (user.id === ENV.ownerId ? 'admin' : 'user'),

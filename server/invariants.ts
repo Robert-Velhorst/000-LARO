@@ -38,11 +38,11 @@ export async function verifyInvariants(): Promise<{ ok: boolean; invariants: Inv
     try { return (sqlite.prepare(sql).get() as any)?.c ?? 0; } catch { return 0; }
   };
 
-  // 1. No duplicate user emails (unique index should prevent this).
+  // 1. No duplicate canonical user email identities (expression index should prevent this).
   const dupEmails = scalar(
-    "SELECT count(*) AS c FROM (SELECT email FROM users WHERE email IS NOT NULL GROUP BY email HAVING count(*) > 1)"
+    "SELECT count(*) AS c FROM (SELECT lower(trim(email)) FROM users WHERE email IS NOT NULL GROUP BY lower(trim(email)) HAVING count(*) > 1)"
   );
-  add({ name: "users.email unique", severity: "error", ok: dupEmails === 0, count: dupEmails });
+  add({ name: "users.email canonical unique", severity: "error", ok: dupEmails === 0, count: dupEmails });
 
   // 2. Every case has an owner.
   const caseNoOwner = scalar("SELECT count(*) AS c FROM cases WHERE userId IS NULL OR userId = ''");

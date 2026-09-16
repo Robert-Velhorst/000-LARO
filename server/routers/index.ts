@@ -82,6 +82,13 @@ import {
 } from "../../shared/evidenceFiles";
 import { standaloneSignupAllowed } from "../signupPolicy";
 import { hashPasswordResetCode } from "../passwordResetSecurity";
+import { findUserByEmailIdentity, normalizeAccountEmail } from "../emailIdentity";
+import { createUserId, isGeneratedIdCollision } from "../ids";
+
+function isCanonicalEmailCollision(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /users_email_canonical_unique|unique constraint failed: users\.email/i.test(message);
+}
 
 export const appRouter = router({
   system: systemRouter,
@@ -209,7 +216,7 @@ export const appRouter = router({
     
     signup: publicProcedure
       .input(z.object({
-        email: z.string().email(),
+        email: z.string().trim().email(),
         password: z.string().min(8),
         name: z.string().min(2),
         bootstrapToken: z.string().max(256).optional(),
@@ -232,29 +239,37 @@ export const appRouter = router({
           });
         }
 
-        const existing = await db.select().from(users).where(eq(users.email, input.email)).limit(1);
-        if (existing.length > 0) {
+        const normalizedEmail = normalizeAccountEmail(input.email);
+        const existing = await findUserByEmailIdentity(db, normalizedEmail);
+        if (existing) {
           throw new TRPCError({ code: "CONFLICT", message: "A user with this email already exists" });
         }
 
         const hashedPassword = await bcrypt.hash(input.password, 10);
-        const userId = `USER${Date.now()}`;
-
-        const user = {
-          id: userId,
-          email: input.email,
+        const userValues = (id: string) => ({
+          id,
+          email: normalizedEmail,
           password: hashedPassword,
           name: input.name,
           role: ENV.SERVER_ONLY ? "admin" : "user",
           createdAt: new Date(),
-        };
+        });
+        let userId = "";
 
         if (ENV.SERVER_ONLY) {
           const claimed = db.transaction((tx) => {
             const [currentCount] = tx.select({ value: count() }).from(users).all();
             if (Number(currentCount?.value || 0) !== 0) return false;
-            tx.insert(users).values(user).run();
-            return true;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              const candidate = createUserId();
+              try {
+                tx.insert(users).values(userValues(candidate)).run();
+                return candidate;
+              } catch (error) {
+                if (!isGeneratedIdCollision(error, "users") || attempt === 2) throw error;
+              }
+            }
+            return false;
           });
           if (!claimed) {
             throw new TRPCError({
@@ -262,9 +277,23 @@ export const appRouter = router({
               message: "Standalone account enrollment is closed.",
             });
           }
+          userId = claimed;
         } else {
-          await db.insert(users).values(user);
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            const candidate = createUserId();
+            try {
+              await db.insert(users).values(userValues(candidate));
+              userId = candidate;
+              break;
+            } catch (error) {
+              if (isCanonicalEmailCollision(error)) {
+                throw new TRPCError({ code: "CONFLICT", message: "A user with this email already exists" });
+              }
+              if (!isGeneratedIdCollision(error, "users") || attempt === 2) throw error;
+            }
+          }
         }
+        if (!userId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Account could not be created" });
 
         const token = jwt.sign({ userId }, ENV.JWT_SECRET, { expiresIn: SESSION_EXPIRES_IN });
         const cookieOptions = getSessionCookieOptions(ctx.req);
@@ -278,7 +307,7 @@ export const appRouter = router({
 
     login: publicProcedure
       .input(z.object({ 
-        email: z.string().email(),
+        email: z.string().trim().email(),
         password: z.string()
       }))
       .mutation(async ({ input, ctx }) => {
@@ -287,8 +316,7 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
 
-        const userResults = await db.select().from(users).where(eq(users.email, input.email)).limit(1);
-        const user = userResults[0];
+        const user = await findUserByEmailIdentity(db, input.email);
 
         if (!user || !user.password) {
           throw new TRPCError({
@@ -350,16 +378,14 @@ export const appRouter = router({
     // success regardless of whether the email exists, to avoid leaking which
     // addresses have accounts (no user enumeration).
     requestPasswordReset: publicProcedure
-      .input(z.object({ email: z.string().email() }))
+      .input(z.object({ email: z.string().trim().email() }))
       .mutation(async ({ input, ctx }) => {
         enforceRateLimit(ctx, "passwordResetRequest", RATE_LIMITS.passwordResetRequest);
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
 
         const TTL_MINUTES = 15;
-        const user = (
-          await db.select().from(users).where(eq(users.email, input.email)).limit(1)
-        )[0];
+        const user = await findUserByEmailIdentity(db, input.email);
 
         // Only generate + send a code for accounts that have a password set
         // (OAuth-only accounts have nothing to reset).
@@ -389,7 +415,7 @@ export const appRouter = router({
     resetPassword: publicProcedure
       .input(
         z.object({
-          email: z.string().email(),
+          email: z.string().trim().email(),
           code: z.string().regex(/^\d{6}$/, "Enter the 6-digit code"),
           newPassword: z.string().min(8),
         })
@@ -399,9 +425,7 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
 
-        const user = (
-          await db.select().from(users).where(eq(users.email, input.email)).limit(1)
-        )[0];
+        const user = await findUserByEmailIdentity(db, input.email);
 
         const invalid = new TRPCError({
           code: "BAD_REQUEST",

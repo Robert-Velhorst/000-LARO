@@ -3,6 +3,7 @@ import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { lawyers as lawyersTable } from '../schema';
 import { and, asc, eq, sql } from "drizzle-orm";
+import { createLawyerId, isGeneratedIdCollision } from "../ids";
 
 const experienceFilter = z.enum(["0-5", "6-10", "11-20", "20+"]);
 const acceptingFilter = z.enum(["Yes", "Limited", "No", "Unknown"]);
@@ -136,18 +137,28 @@ export const lawyersRouter = router({
     .mutation(async ({ input }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      const id = `LAW${Date.now().toString().slice(-6)}`;
-      await db.insert(lawyersTable).values({
-        id,
-        name: input.name,
-        email: input.email || null,
-        phone: input.phone || null,
-        firm: input.firm || null,
-        city: input.city || null,
-        legalAreas: JSON.stringify(input.legalAreas || []),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      } as any);
+      let id = "";
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const candidate = createLawyerId();
+        try {
+          await db.insert(lawyersTable).values({
+            id: candidate,
+            name: input.name,
+            email: input.email || null,
+            phone: input.phone || null,
+            firm: input.firm || null,
+            city: input.city || null,
+            legalAreas: JSON.stringify(input.legalAreas || []),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          } as any);
+          id = candidate;
+          break;
+        } catch (error) {
+          if (!isGeneratedIdCollision(error, "lawyers") || attempt === 2) throw error;
+        }
+      }
+      if (!id) throw new Error("Lawyer record could not be created");
       return { id, success: true };
     }),
 

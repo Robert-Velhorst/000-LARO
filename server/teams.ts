@@ -1,9 +1,10 @@
 import { TRPCError } from "@trpc/server";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
 import { getDb } from "./db";
 import { caseShares, cases, users } from "./schema";
+import { findUserByEmailIdentity } from "./emailIdentity";
 
 export const CASE_SHARE_ROLES = ["read_only", "collaborator"] as const;
 export type CaseShareRole = (typeof CASE_SHARE_ROLES)[number];
@@ -147,11 +148,7 @@ export async function inviteCaseMember(input: {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await assertOwner(input.caseId, input.ownerId, db);
-  const target = (await db
-    .select({ id: users.id, email: users.email })
-    .from(users)
-    .where(sql`lower(${users.email}) = lower(${input.email.trim()})`)
-    .limit(1))[0];
+  const target = await findUserByEmailIdentity(db, input.email);
   if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "No user with that email." });
   if (target.id === input.ownerId) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "A case owner cannot invite themselves." });

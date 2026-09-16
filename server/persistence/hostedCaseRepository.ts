@@ -1,4 +1,5 @@
 import type { QueryResultRow } from 'pg';
+import { normalizeAccountEmail } from '../emailIdentity';
 
 export type HostedQueryClient = {
   query<Row extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]): Promise<{ rows: Row[] }>;
@@ -120,11 +121,12 @@ export function createHostedCaseRepository(client: HostedQueryClient) {
 export function createHostedUserRepository(client: HostedQueryClient) {
   return {
     async findByEmail(email: string): Promise<HostedUser | null> {
+      const normalizedEmail = normalizeAccountEmail(email);
       const result = await client.query<HostedUser>(`
         SELECT * FROM "users"
-        WHERE lower("email") = lower($1)
+        WHERE lower(btrim("email")) = $1
         LIMIT 1
-      `, [email]);
+      `, [normalizedEmail]);
       return result.rows[0] ?? null;
     },
   };

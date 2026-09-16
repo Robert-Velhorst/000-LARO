@@ -30,7 +30,7 @@ describe('hosted case repository', () => {
 
     await expect(repository.findByEmail('person@example.test')).resolves.toMatchObject({ id: 'user-a' });
     expect(queries[0]).toMatchObject({
-      sql: expect.stringContaining('WHERE lower("email") = lower($1)'),
+      sql: expect.stringContaining('WHERE lower(btrim("email")) = $1'),
       values: ['person@example.test'],
     });
   });
