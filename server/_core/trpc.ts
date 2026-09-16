@@ -1,7 +1,69 @@
 import { initTRPC, TRPCError } from "@trpc/server";
+import { randomUUID } from 'crypto';
 import superjson from 'superjson';
 import { ZodError } from 'zod';
 import type { TrpcContext } from '../context';
+import { logError } from '../errorHandler';
+
+const REVIEWED_DOMAIN_CODES = new Set<TRPCError['code']>([
+  'BAD_REQUEST',
+  'UNAUTHORIZED',
+  'FORBIDDEN',
+  'NOT_FOUND',
+  'METHOD_NOT_SUPPORTED',
+  'CONFLICT',
+  'PRECONDITION_FAILED',
+  'PAYLOAD_TOO_LARGE',
+  'UNPROCESSABLE_CONTENT',
+  'TOO_MANY_REQUESTS',
+  'NOT_IMPLEMENTED',
+]);
+
+const REVIEWED_UNAVAILABLE_MESSAGES = new Set([
+  'Database not available',
+  'Database connection not available. Please try again later.',
+  'Case storage is unavailable',
+]);
+
+type PublicError = {
+  message: string;
+  publicCode: string;
+  unexpected: boolean;
+  validation: ReturnType<ZodError['flatten']> | null;
+};
+
+function publicError(error: TRPCError): PublicError {
+  if (error.cause instanceof ZodError) {
+    return {
+      message: 'The request contains invalid values.',
+      publicCode: 'VALIDATION_ERROR',
+      unexpected: false,
+      validation: error.cause.flatten(),
+    };
+  }
+  if (REVIEWED_DOMAIN_CODES.has(error.code)) {
+    return {
+      message: error.message,
+      publicCode: error.code,
+      unexpected: false,
+      validation: null,
+    };
+  }
+  if (error.code === 'INTERNAL_SERVER_ERROR' && REVIEWED_UNAVAILABLE_MESSAGES.has(error.message)) {
+    return {
+      message: error.message,
+      publicCode: 'SERVICE_UNAVAILABLE',
+      unexpected: false,
+      validation: null,
+    };
+  }
+  return {
+    message: 'The request could not be completed. Please try again.',
+    publicCode: 'UNEXPECTED_FAILURE',
+    unexpected: true,
+    validation: null,
+  };
+}
 
 /**
  * Phase 009 — API contract and error envelope.
@@ -19,13 +81,29 @@ import type { TrpcContext } from '../context';
  */
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
-  errorFormatter({ shape, error }) {
+  errorFormatter({ shape, error, path, ctx }) {
+    const publicResult = publicError(error);
+    const correlationId = ctx?.correlationId || randomUUID();
+    if (publicResult.unexpected) {
+      logError(error.cause || error, {
+        operation: 'trpc.request',
+        correlationId,
+        userId: ctx?.user?.id,
+        metadata: {
+          path: path || 'unknown',
+          code: error.code,
+        },
+      });
+    }
+    const { stack: _stack, ...safeData } = shape.data;
     return {
       ...shape,
+      message: publicResult.message,
       data: {
-        ...shape.data,
-        validation:
-          error.cause instanceof ZodError ? error.cause.flatten() : null,
+        ...safeData,
+        publicCode: publicResult.publicCode,
+        correlationId,
+        validation: publicResult.validation,
       },
     };
   },

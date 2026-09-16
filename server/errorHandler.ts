@@ -162,6 +162,7 @@ export function logError(
   error: unknown,
   context: {
     operation: string;
+    correlationId?: string;
     userId?: string;
     metadata?: Record<string, any>;
   }
@@ -169,9 +170,9 @@ export function logError(
   const sanitized = sanitizeErrorForLogging(error);
   console.error(`[Error] ${context.operation}:`, {
     message: sanitized,
+    correlationId: context.correlationId,
     userId: context.userId,
     metadata: context.metadata,
     timestamp: new Date().toISOString(),
   });
 }
-
