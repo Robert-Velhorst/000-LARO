@@ -333,13 +333,19 @@ suite("persisted document analysis and source-linked timeline", () => {
           content: JSON.stringify({
             operation: "update",
             targetEventId: "E1",
-            sourceDocumentId: null,
+            sourceDocumentId: "D1",
             date: "2026-07-15",
-            title: "Corrected decision date",
-            description: "The decision date was corrected by the owner.",
-            actor: "Gemeente Utrecht",
-            category: "legal",
+            title: null,
+            description: null,
+            actor: null,
+            category: null,
             reason: "The owner requested a corrected decision date.",
+            fieldSupport: [{
+              field: "date",
+              basis: "owner_instruction",
+              citationIds: [],
+              evidenceQuotes: ["15 July 2026"],
+            }],
           }),
         },
         finish_reason: "stop",
@@ -356,13 +362,19 @@ suite("persisted document analysis and source-linked timeline", () => {
             content: JSON.stringify({
               operation: "update",
               targetEventId: "E1",
-              sourceDocumentId: null,
+              sourceDocumentId: "D1",
               date: "2026-07-16",
-              title: "Final corrected decision date",
-              description: "The owner corrected the decision date a second time.",
-              actor: "Gemeente Utrecht",
-              category: "legal",
+              title: null,
+              description: null,
+              actor: null,
+              category: null,
               reason: "The owner supplied a second correction.",
+              fieldSupport: [{
+                field: "date",
+                basis: "owner_instruction",
+                citationIds: [],
+                evidenceQuotes: ["16 July 2026"],
+              }],
             }),
           },
           finish_reason: "stop",
@@ -374,11 +386,20 @@ suite("persisted document analysis and source-linked timeline", () => {
       instruction: "Change the decision date to 15 July 2026 and keep the same source.",
     });
     expect(correction).toMatchObject({ operation: "update", before: { date: "2026-07-14" }, after: { date: "2026-07-15" } });
+    const unchangedTimeline = await caller.documentAnalysis.generateCaseTimeline({ caseId: "CASE_DOC_ANALYSIS" });
+    expect(unchangedTimeline.events).toEqual(timeline.events);
+    expect(unchangedTimeline.corrections).toHaveLength(0);
+    expect(unchangedTimeline.revision).toBe(timeline.revision);
+    const appliedCorrection = await caller.documentAnalysis.reviewTimelineCorrection({
+      caseId: "CASE_DOC_ANALYSIS",
+      proposalId: correction.id,
+      decision: "confirm",
+    });
     const correctedTimeline = await caller.documentAnalysis.generateCaseTimeline({ caseId: "CASE_DOC_ANALYSIS" });
     expect(correctedTimeline.events).toEqual(expect.arrayContaining([
       expect.objectContaining({
         date: "2026-07-15",
-        title: "Corrected decision date",
+        title: timeline.events[0].title,
         source: expect.objectContaining({ evidenceId: uploaded.id }),
       }),
     ]));
@@ -390,20 +411,28 @@ suite("persisted document analysis and source-linked timeline", () => {
     });
     expect(secondCorrection).toMatchObject({
       operation: "update",
-      before: { date: "2026-07-15", title: "Corrected decision date" },
-      after: { date: "2026-07-16", title: "Final corrected decision date" },
+      before: { date: "2026-07-15", title: timeline.events[0].title },
+      after: { date: "2026-07-16", title: timeline.events[0].title },
+    });
+    expect((await caller.documentAnalysis.generateCaseTimeline({ caseId: "CASE_DOC_ANALYSIS" })).events)
+      .toEqual(correctedTimeline.events);
+    await caller.documentAnalysis.reviewTimelineCorrection({
+      caseId: "CASE_DOC_ANALYSIS",
+      proposalId: secondCorrection.id,
+      decision: "confirm",
     });
     const twiceCorrectedTimeline = await caller.documentAnalysis.generateCaseTimeline({ caseId: "CASE_DOC_ANALYSIS" });
     expect(twiceCorrectedTimeline.events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ date: "2026-07-16", title: "Final corrected decision date" }),
+      expect.objectContaining({ date: "2026-07-16", title: timeline.events[0].title }),
     ]));
     expect(twiceCorrectedTimeline.events.some((event) => (
-      event.date === "2026-07-15" && event.title === "Corrected decision date"
+      event.date === "2026-07-15" && event.title === timeline.events[0].title
     ))).toBe(false);
     expect(twiceCorrectedTimeline.corrections).toHaveLength(2);
     const correctionAudit = await caller.audit.list({ limit: 100 });
     expect(correctionAudit).toEqual(expect.arrayContaining([
-      expect.objectContaining({ action: "timeline.ai_correction_applied", entityId: correction.id }),
+      expect.objectContaining({ action: "timeline.ai_correction_proposed", entityId: correction.id }),
+      expect.objectContaining({ action: "timeline.ai_correction_applied", entityId: appliedCorrection.id }),
     ]));
     await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
     vi.unstubAllGlobals();

@@ -781,6 +781,89 @@ test("document reconstruction focuses source-linked participants, topics, and ac
   }
 });
 
+test("assistant timeline proposals stay unapplied until explicit review", async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  const failedRequests: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
+  page.on("requestfailed", (request) => failedRequests.push(`${request.method()} ${request.url()}`));
+  const email = await createAccount(page);
+  const database = new Database(resolve(".laro-a11y.sqlite"));
+  const now = Math.floor(Date.now() / 1_000);
+  const caseId = `A11Y_CORRECTION_${now}`;
+  const evidenceId = `${caseId}_SOURCE`;
+  const proposalId = `TIMEPROP-${randomUUID().replaceAll("-", "").slice(0, 16)}`;
+  try {
+    const user = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    database.prepare(
+      `INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, legalAreas, createdAt, updatedAt)
+       VALUES (?, ?, 'Correction review', 'Administrative dispute', 'Explicit correction review QA', 'Medium', 'active', '["administrative law"]', ?, ?)`,
+    ).run(caseId, user.id, now, now);
+    const text = "Gemeente Utrecht issued the administrative decision on 2026-07-14.";
+    const result = analysisResult({ party: "Gemeente Utrecht", date: "2026-07-14", title: "Municipal decision issued", text });
+    database.prepare(
+      `INSERT INTO evidence (id, caseId, userId, type, source, title, description, mimeType, metadata, relevant, createdAt, updatedAt)
+       VALUES (?, ?, ?, 'document', 'manual', 'Municipal decision.txt', ?, 'text/plain', '{}', 1, ?, ?)`,
+    ).run(evidenceId, caseId, user.id, text, now, now);
+    database.prepare(
+      `INSERT INTO document_analyses
+       (id, evidenceId, caseId, userId, analysisVersion, contentHash, status, extractionMethod, providerStatus,
+        documentType, confidence, summary, result, analyzedChars, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, '2.2.0', ?, 'complete', 'plain_text', 'not_requested',
+        'administrative decision', 88, ?, ?, ?, ?, ?)`,
+    ).run(`${evidenceId}_ANALYSIS`, evidenceId, caseId, user.id, result.contentHash, result.summary, JSON.stringify(result), result.analyzedChars, now, now);
+    const before = {
+      date: "2026-07-14", title: "Municipal decision issued", description: text,
+      actor: "Gemeente Utrecht", category: "legal", evidenceId, evidenceTitle: "Municipal decision.txt",
+    };
+    const after = { ...before, date: "2026-07-15" };
+    delete (after as Partial<typeof before>).evidenceTitle;
+    const proposal = {
+      status: "pending", baseRevision: "a".repeat(64), sequence: 1, operation: "update",
+      targetKey: `2026-07-14|municipal decision issued|${evidenceId}`,
+      before, after, instruction: "Change the decision date to 2026-07-15.",
+      reason: "The owner explicitly supplied a corrected date.", provider: "openai", actorUserId: user.id,
+      sourceBasis: {
+        evidenceId, evidenceTitle: "Municipal decision.txt",
+        fields: [{ field: "date", basis: "owner_instruction", citationIds: [], evidenceQuotes: ["2026-07-15"] }],
+      },
+      proposedAt: new Date().toISOString(), review: null,
+    };
+    database.prepare(
+      `INSERT INTO timeline (id, caseId, userId, eventType, title, description, eventAt, metadata, createdAt)
+       VALUES (?, ?, ?, 'ai_timeline_correction_proposal', ?, ?, ?, ?, ?)`,
+    ).run(proposalId, caseId, user.id, after.title, proposal.reason, now, JSON.stringify({ evidenceId, timelineCorrectionProposal: proposal }), now);
+  } finally {
+    database.close();
+  }
+
+  await page.goto("/cases", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Open case", exact: true }).click();
+  await page.getByRole("button", { name: "Timeline", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Evidence Timeline" })).toBeVisible();
+  await page.getByText("Advanced: request an assistant correction", { exact: true }).click();
+  const review = page.getByRole("region", { name: "Review correction proposal" });
+  await expect(review.getByText("Not applied", { exact: true })).toBeVisible();
+  await expect(review.getByText(/2026-07-14.*Municipal decision issued/)).toBeVisible();
+  await expect(review.getByText(/2026-07-15.*Municipal decision issued/)).toBeVisible();
+  await expect(review.getByText(/owner instruction.*2026-07-15/)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Chronological events" }).getByText("14 juli 2026", { exact: true })).toBeVisible();
+  await expect(review.getByRole("button", { name: "Confirm and apply" })).toBeVisible();
+  await review.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("timeline-correction-review-desktop.png"), fullPage: false });
+  await page.setViewportSize(VIEWPORTS[1]);
+  await review.scrollIntoViewIfNeeded();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("timeline-correction-review-mobile.png"), fullPage: false });
+  const audit = await new AxeBuilder({ page }).include('[aria-labelledby="correction-review-title"]').analyze();
+  expect(audit.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+  await review.getByRole("button", { name: "Reject proposal" }).click();
+  await expect(page.getByText("Proposal rejected. The timeline was not changed.", { exact: true })).toBeVisible();
+  await expect(review).toHaveCount(0);
+  expect(errors).toEqual([]);
+  expect(failedRequests).toEqual([]);
+});
+
 test("workspace preserves navigation, view links and visible settings controls", async ({ page }, testInfo) => {
   await createAccount(page);
   await page.getByRole("button", { name: "Collapse sidebar" }).click();

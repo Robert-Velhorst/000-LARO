@@ -95,6 +95,35 @@ type Reconstruction = {
   warnings: string[];
 };
 
+type CorrectionEvent = {
+  date: string;
+  title: string;
+  description: string;
+  actor: string | null;
+  category: RouteId;
+  evidenceId: string;
+};
+
+type CorrectionProposal = {
+  id: string;
+  status: "pending";
+  operation: "add" | "update" | "remove";
+  before: (CorrectionEvent & { evidenceTitle?: string }) | null;
+  after: CorrectionEvent | null;
+  reason: string;
+  instruction: string;
+  sourceBasis: {
+    evidenceId: string;
+    evidenceTitle: string;
+    fields: Array<{
+      field: "date" | "title" | "description" | "actor" | "category" | "removal";
+      basis: "evidence" | "owner_instruction";
+      citationIds: string[];
+      evidenceQuotes: string[];
+    }>;
+  };
+};
+
 const ROUTE_COLORS: Record<RouteId, string> = {
   communication: "#38bdf8",
   legal: "#f97316",
@@ -160,6 +189,7 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
   const [zoom, setZoom] = useState(1);
   const [correctionInstruction, setCorrectionInstruction] = useState("");
   const [correctionMessage, setCorrectionMessage] = useState<string | null>(null);
+  const [correctionProposal, setCorrectionProposal] = useState<CorrectionProposal | null>(null);
   const timelineQuery = trpc.documentAnalysis.generateCaseTimeline.useQuery(
     { caseId },
     { refetchInterval: isConnected ? false : 60_000, refetchOnWindowFocus: true },
@@ -167,10 +197,26 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
   const sourceMutation = trpc.evidenceFiles.getDownloadUrl.useMutation();
   const sourceOpenedMutation = trpc.evidenceFiles.recordSourceOpened.useMutation();
   const correctionMutation = trpc.documentAnalysis.correctCaseTimeline.useMutation({
+    onSuccess: (result) => {
+      setCorrectionProposal(result);
+      setCorrectionMessage("Proposal ready. Review every field and source quote before confirming.");
+    },
+    onError: (error) => {
+      setCorrectionProposal(null);
+      setCorrectionMessage(null);
+      setErrorMessage(error.message);
+    },
+  });
+  const reviewCorrectionMutation = trpc.documentAnalysis.reviewTimelineCorrection.useMutation({
     onSuccess: async (result) => {
-      setCorrectionInstruction("");
-      setCorrectionMessage(`${result.operation === "remove" ? "Removed" : result.operation === "add" ? "Added" : "Updated"} timeline event. ${result.reason}`);
       await timelineQuery.refetch();
+      setCorrectionProposal(null);
+      if (result.decision === "confirmed") {
+        setCorrectionInstruction("");
+        setCorrectionMessage("Correction confirmed and applied to the timeline.");
+      } else {
+        setCorrectionMessage("Proposal rejected. The timeline was not changed.");
+      }
     },
     onError: (error) => {
       setCorrectionMessage(null);
@@ -182,6 +228,8 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
     const next = timelineQuery.data?.reconstruction as Reconstruction | undefined;
     if (!next) return;
     setReconstruction(next);
+    const pendingProposal = timelineQuery.data?.pendingCorrectionProposals.at(-1);
+    if (pendingProposal) setCorrectionProposal((current) => current ?? pendingProposal);
     setSelectedId((current) => current && next.nodes.some((node) => node.id === current)
       ? current
       : next.nodes[0]?.id ?? null);
@@ -515,7 +563,7 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
         <div className="pt-3">
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-64 flex-1">
-            <label id="timeline-correction-title" htmlFor="timeline-correction" className="text-sm font-medium">Correct the timeline with AI</label>
+            <label id="timeline-correction-title" htmlFor="timeline-correction" className="text-sm font-medium">Propose a source-grounded timeline correction</label>
             <Textarea
               id="timeline-correction"
               className="mt-2 min-h-20 resize-y"
@@ -526,17 +574,85 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
           </div>
           <Button
             type="button"
-            disabled={correctionInstruction.trim().length < 5 || correctionMutation.isPending}
+            disabled={correctionInstruction.trim().length < 5 || correctionMutation.isPending || reviewCorrectionMutation.isPending}
             onClick={() => {
               setErrorMessage(null);
               setCorrectionMessage(null);
+              setCorrectionProposal(null);
               correctionMutation.mutate({ caseId, instruction: correctionInstruction.trim() });
             }}
           >
             {correctionMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-            Apply correction
+            Generate proposal
           </Button>
         </div>
+        <p className="mt-2 text-xs text-muted-foreground">The assistant cannot change the timeline directly. A correction is applied only after you review its before/after values, support, and confirm it here.</p>
+        {correctionProposal ? (
+          <section className="mt-4 border border-amber-500/50 bg-amber-500/5 p-4" aria-labelledby="correction-review-title">
+            <div className="flex flex-wrap items-center gap-2">
+              <h4 id="correction-review-title" className="text-sm font-semibold">Review correction proposal</h4>
+              <Badge variant="outline">Not applied</Badge>
+              <Badge variant="secondary">{correctionProposal.operation}</Badge>
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">{correctionProposal.reason}</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div className="border border-border/70 bg-background/70 p-3">
+                <p className="text-xs font-medium uppercase text-muted-foreground">Before</p>
+                {correctionProposal.before ? (
+                  <>
+                    <p className="mt-1 text-sm font-medium">{correctionProposal.before.date} — {correctionProposal.before.title}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{correctionProposal.before.description}</p>
+                  </>
+                ) : <p className="mt-1 text-sm text-muted-foreground">No existing event</p>}
+              </div>
+              <div className="border border-border/70 bg-background/70 p-3">
+                <p className="text-xs font-medium uppercase text-muted-foreground">After</p>
+                {correctionProposal.after ? (
+                  <>
+                    <p className="mt-1 text-sm font-medium">{correctionProposal.after.date} — {correctionProposal.after.title}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{correctionProposal.after.description}</p>
+                  </>
+                ) : <p className="mt-1 text-sm font-medium text-destructive">Event removed</p>}
+              </div>
+            </div>
+            <div className="mt-3 border border-border/70 bg-background/70 p-3">
+              <p className="text-xs font-medium uppercase text-muted-foreground">Source basis</p>
+              <p className="mt-1 text-sm font-medium">{correctionProposal.sourceBasis.evidenceTitle}</p>
+              <ul className="mt-2 space-y-2 text-xs text-muted-foreground">
+                {correctionProposal.sourceBasis.fields.map((support) => (
+                  <li key={support.field}>
+                    <span className="font-medium text-foreground">{support.field}</span>
+                    {` — ${support.basis === "evidence" ? "owned evidence" : "owner instruction"}: “${support.evidenceQuotes.join("” / “")}”`}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button
+                type="button"
+                disabled={reviewCorrectionMutation.isPending}
+                onClick={() => {
+                  setErrorMessage(null);
+                  reviewCorrectionMutation.mutate({ caseId, proposalId: correctionProposal.id, decision: "confirm" });
+                }}
+              >
+                {reviewCorrectionMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Confirm and apply
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={reviewCorrectionMutation.isPending}
+                onClick={() => {
+                  setErrorMessage(null);
+                  reviewCorrectionMutation.mutate({ caseId, proposalId: correctionProposal.id, decision: "reject" });
+                }}
+              >
+                Reject proposal
+              </Button>
+            </div>
+          </section>
+        ) : null}
         <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground" aria-live="polite">
           <span>{timelineQuery.data?.corrections.length || 0} audited correction{timelineQuery.data?.corrections.length === 1 ? "" : "s"}</span>
           {correctionMessage ? <span className="text-foreground">{correctionMessage}</span> : null}

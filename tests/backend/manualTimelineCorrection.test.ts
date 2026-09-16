@@ -3,6 +3,13 @@ import { eq } from "drizzle-orm";
 import { buildCase, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 
+function providerResponse(content: Record<string, unknown>): Response {
+  return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 (sqliteAvailable ? describe : describe.skip)("owner timeline corrections", () => {
   let app: TestApp;
   const owner = { id: "timeline-owner", email: "timeline@example.test", name: "Owner", role: "user" };
@@ -85,9 +92,129 @@ import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
     const current = await caller.documentAnalysis.generateCaseTimeline({ caseId: "timeline-case" });
     const target = current.events[0];
     await caller.documentAnalysis.updateTimelineEvent({ caseId: "timeline-case", eventKey: target.eventKey, revision: current.revision, date: target.date, title: target.title, description: "Manual correction saved while assistant is busy.", actor: "Owner", reason: "Checked the original source." });
-    release(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ operation: "update", targetEventId: "E1", sourceDocumentId: null, date: "2026-08-03", title: null, description: null, actor: null, category: null, reason: "Owner instruction." }) } }] }), { status: 200, headers: { "content-type": "application/json" } }));
+    release(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+      operation: "update", targetEventId: "E1", sourceDocumentId: "D1", date: "2026-08-03",
+      title: null, description: null, actor: null, category: null, reason: "Owner instruction.",
+      fieldSupport: [{ field: "date", basis: "owner_instruction", citationIds: [], evidenceQuotes: ["2026-08-03"] }],
+    }) } }] }), { status: 200, headers: { "content-type": "application/json" } }));
     await assertion;
     expect((await caller.documentAnalysis.generateCaseTimeline({ caseId: "timeline-case" })).events).toContainEqual(expect.objectContaining({ description: "Manual correction saved while assistant is busy." }));
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
+  });
+
+  it("keeps a grounded proposal out of the timeline until the owner confirms, and records rejection", async () => {
+    const caller = app.makeCaller(owner);
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: true });
+    vi.stubEnv("OPENAI_API_KEY", "fixture-only");
+    const before = await caller.documentAnalysis.generateCaseTimeline({ caseId: "timeline-case" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(providerResponse({
+      operation: "remove",
+      targetEventId: "E1",
+      sourceDocumentId: "D1",
+      date: null,
+      title: null,
+      description: null,
+      actor: null,
+      category: null,
+      reason: "The owner requested review of whether this source event should remain.",
+      fieldSupport: [{
+        field: "removal", basis: "evidence", citationIds: ["src-1"],
+        evidenceQuotes: ["Besluit van 14 juli 2026."],
+      }],
+    })));
+    const proposal = await caller.documentAnalysis.correctCaseTimeline({
+      caseId: "timeline-case",
+      instruction: "Propose removing the first event after reviewing its source.",
+    });
+    const pending = await caller.documentAnalysis.generateCaseTimeline({ caseId: "timeline-case" });
+    expect(pending.events).toEqual(before.events);
+    expect(pending.revision).toBe(before.revision);
+    expect(pending.corrections).toEqual(before.corrections);
+    await expect(app.makeCaller(other).documentAnalysis.reviewTimelineCorrection({
+      caseId: "timeline-case", proposalId: proposal.id, decision: "confirm",
+    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const rejected = await caller.documentAnalysis.reviewTimelineCorrection({
+      caseId: "timeline-case", proposalId: proposal.id, decision: "reject",
+    });
+    expect(rejected).toMatchObject({ proposalId: proposal.id, decision: "rejected" });
+    const after = await caller.documentAnalysis.generateCaseTimeline({ caseId: "timeline-case" });
+    expect(after.events).toEqual(before.events);
+    expect(after.revision).toBe(before.revision);
+    await expect(caller.documentAnalysis.reviewTimelineCorrection({
+      caseId: "timeline-case", proposalId: proposal.id, decision: "confirm",
+    })).rejects.toMatchObject({ code: "CONFLICT" });
+    const audits = await caller.audit.list({ limit: 100 });
+    expect(audits).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: "timeline.ai_correction_rejected",
+        entityId: proposal.id,
+        details: expect.objectContaining({
+          instruction: "Propose removing the first event after reviewing its source.",
+          actorUserId: owner.id,
+          finalDecision: "rejected",
+          reviewedOld: expect.any(Object),
+          reviewedNew: null,
+          sourceBasis: expect.any(Object),
+        }),
+      }),
+    ]));
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
+  });
+
+  it("rejects hallucinated field support and cross-case document references without altering the timeline", async () => {
+    const caller = app.makeCaller(owner);
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: true });
+    vi.stubEnv("OPENAI_API_KEY", "fixture-only");
+    const before = await caller.documentAnalysis.generateCaseTimeline({ caseId: "timeline-case" });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(providerResponse({
+        operation: "update", targetEventId: "E1", sourceDocumentId: "D1", date: "2031-01-02",
+        title: null, description: null, actor: null, category: null, reason: "Unsupported date.",
+        fieldSupport: [{ field: "date", basis: "owner_instruction", citationIds: [], evidenceQuotes: ["2031-01-01"] }],
+      }))
+      .mockResolvedValueOnce(providerResponse({
+        operation: "update", targetEventId: "E1", sourceDocumentId: "D999", date: "2031-01-03",
+        title: null, description: null, actor: null, category: null, reason: "Wrong source.",
+        fieldSupport: [{ field: "date", basis: "owner_instruction", citationIds: [], evidenceQuotes: ["2031-01-03"] }],
+      }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(caller.documentAnalysis.correctCaseTimeline({
+      caseId: "timeline-case",
+      instruction: "Change the first event date to 2031-01-01.",
+    })).rejects.toMatchObject({ code: "BAD_REQUEST", message: expect.stringContaining("not literally supported") });
+    await expect(caller.documentAnalysis.correctCaseTimeline({
+      caseId: "timeline-case",
+      instruction: "Change the first event date to 2031-01-03.",
+    })).rejects.toMatchObject({ code: "BAD_REQUEST", message: expect.stringContaining("does not belong") });
+    const after = await caller.documentAnalysis.generateCaseTimeline({ caseId: "timeline-case" });
+    expect(after.events).toEqual(before.events);
+    expect(after.revision).toBe(before.revision);
+    expect(after.corrections).toEqual(before.corrections);
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
+  });
+
+  it("leaves the timeline unchanged when the provider fails or returns malformed output", async () => {
+    const caller = app.makeCaller(owner);
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: true });
+    vi.stubEnv("OPENAI_API_KEY", "fixture-only");
+    const before = await caller.documentAnalysis.generateCaseTimeline({ caseId: "timeline-case" });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("provider unavailable")));
+    await expect(caller.documentAnalysis.correctCaseTimeline({
+      caseId: "timeline-case", instruction: "Change the first event date to 2032-02-02.",
+    })).rejects.toThrow();
+    const afterFailure = await caller.documentAnalysis.generateCaseTimeline({ caseId: "timeline-case" });
+    expect(afterFailure.events).toEqual(before.events);
+    expect(afterFailure.revision).toBe(before.revision);
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: "not json" } }],
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    await expect(caller.documentAnalysis.correctCaseTimeline({
+      caseId: "timeline-case", instruction: "Change the first event date to 2032-02-02.",
+    })).rejects.toMatchObject({ code: "BAD_REQUEST", message: expect.stringContaining("malformed") });
+    const afterMalformed = await caller.documentAnalysis.generateCaseTimeline({ caseId: "timeline-case" });
+    expect(afterMalformed.events).toEqual(before.events);
+    expect(afterMalformed.revision).toBe(before.revision);
     await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
   });
 });
