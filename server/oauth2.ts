@@ -9,7 +9,8 @@ import { ENV } from "./_core/env";
 import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
 import { readBoundedResponseJson, withBoundedHttpResponse } from "./boundedHttpResponse";
 import { getHostedRedisOAuthStateClient } from "./hostedRedis";
-import { createRedisOAuthStateStore } from "./oauthStateStore";
+import { createRedisOAuthStateStore, type StoredOAuthFlow } from "./oauthStateStore";
+import { createLocalOAuthStateStore } from "./localOAuthStateStore";
 
 export interface OAuth2Config {
   clientId: string;
@@ -43,7 +44,7 @@ export class OAuthStateError extends Error {
 
 
 interface OAuthStatePayload {
-  userId: string;
+  flowId: string;
   provider: OAuthProvider;
   codeVerifier: string;
   nonce: string;
@@ -173,19 +174,11 @@ function generatePkcePair(): { codeVerifier: string; codeChallenge: string } {
   return { codeVerifier, codeChallenge };
 }
 
-/**
- * Build a self-contained, encrypted OAuth state. Everything the callback needs
- * (userId, provider, PKCE codeVerifier) is encrypted into the state itself, so
- * the flow survives server/process restarts without any server-side storage.
- */
-function buildOAuthState(
-  provider: OAuthProvider,
-  userId: string,
-  codeVerifier: string
-): string {
+/** The portable state contains PKCE material and an opaque flow ID, never user authority. */
+function buildOAuthState(provider: OAuthProvider, flowId: string, codeVerifier: string): string {
   const payload: OAuthStatePayload = {
     provider,
-    userId,
+    flowId,
     codeVerifier,
     nonce: nanoid(),
     createdAt: Date.now(),
@@ -193,13 +186,12 @@ function buildOAuthState(
   return toBase64Url(Buffer.from(encryptToken(JSON.stringify(payload)), "utf8"));
 }
 
-/**
- * Start OAuth flow with PKCE and state protection.
- */
-export function beginOAuthFlow(provider: OAuthProvider, userId: string): string {
-  const { codeVerifier, codeChallenge } = generatePkcePair();
-  const state = buildOAuthState(provider, userId, codeVerifier);
-
+function providerAuthorizationUrl(
+  provider: OAuthProvider,
+  state: string,
+  codeVerifier: string,
+): string {
+  const codeChallenge = toBase64Url(crypto.createHash("sha256").update(codeVerifier).digest());
   const config = getOAuth2Config(provider);
   if (!config.clientId) {
     throw new Error(`${provider} OAuth client ID is not configured`);
@@ -233,29 +225,27 @@ export function beginOAuthFlow(provider: OAuthProvider, userId: string): string 
   return `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params.toString()}`;
 }
 
-/** Starts an OAuth flow with a shared one-time state marker when hosted. */
-export async function beginOAuthFlowAsync(provider: OAuthProvider, userId: string): Promise<string> {
-  const authorizationUrl = beginOAuthFlow(provider, userId);
-  if (!ENV.isHosted) return authorizationUrl;
-
-  const state = new URL(authorizationUrl).searchParams.get("state");
-  if (!state) throw new OAuthStateError();
-  try {
-    const store = createRedisOAuthStateStore(await getHostedRedisOAuthStateClient());
-    await store.record(state, OAUTH_STATE_TTL_MS);
-  } catch {
-    throw new Error("OAuth flow could not be started safely because shared state storage is unavailable.");
-  }
-  return authorizationUrl;
+function digestProof(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
 }
 
-/**
- * Consume and validate one-time OAuth state.
- */
-export function consumeOAuthState(
-  state: string,
-  provider: OAuthProvider
-): { userId: string; codeVerifier: string } {
+function callbackUsesLoopback(): boolean {
+  try {
+    const hostname = new URL(getOAuthRedirectBaseUrl()).hostname.toLowerCase();
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
+async function oauthFlowStore() {
+  if (ENV.isHosted) {
+    return createRedisOAuthStateStore(await getHostedRedisOAuthStateClient());
+  }
+  return createLocalOAuthStateStore();
+}
+
+function decodeOAuthState(state: string, provider: OAuthProvider): OAuthStatePayload {
   if (
     !state ||
     state.length > OAUTH_STATE_MAX_LENGTH ||
@@ -281,53 +271,137 @@ export function consumeOAuthState(
 
   if (
     !payload ||
-    typeof payload.userId !== "string" ||
+    typeof payload.flowId !== "string" ||
     typeof payload.codeVerifier !== "string" ||
-    typeof payload.createdAt !== "number"
+    typeof payload.createdAt !== "number" ||
+    typeof payload.nonce !== "string" ||
+    payload.flowId.length < 20 ||
+    payload.codeVerifier.length < 43
   ) {
     throw new OAuthStateError();
   }
-
-  if (Date.now() - payload.createdAt > OAUTH_STATE_TTL_MS) {
+  if (Date.now() - payload.createdAt > OAUTH_STATE_TTL_MS || payload.createdAt > Date.now() + 30_000) {
     throw new OAuthStateError();
   }
-
-  if (payload.provider !== provider) {
-    throw new OAuthStateError();
-  }
-
-  return { userId: payload.userId, codeVerifier: payload.codeVerifier };
-}
-
-/**
- * Validates and consumes the hosted replay marker after local cryptographic
- * validation. A Redis outage or a repeated callback is invalid state.
- */
-export async function consumeOAuthStateAsync(
-  state: string,
-  provider: OAuthProvider
-): Promise<{ userId: string; codeVerifier: string }> {
-  const payload = consumeOAuthState(state, provider);
-  if (!ENV.isHosted) return payload;
-  try {
-    const store = createRedisOAuthStateStore(await getHostedRedisOAuthStateClient());
-    if (!await store.consume(state)) throw new OAuthStateError();
-  } catch (error) {
-    if (error instanceof OAuthStateError) throw error;
-    throw new OAuthStateError();
-  }
+  if (payload.provider !== provider) throw new OAuthStateError();
   return payload;
 }
 
 /**
- * Generate OAuth2 authorization URL
+ * Start with a one-time server-held record. The renderer receives only the
+ * local/public start route; the provider URL is issued after that browser has
+ * received its HttpOnly flow binding.
  */
-export function getAuthorizationUrl(provider: 'gmail' | 'outlook', userId: string): string {
-  return beginOAuthFlow(provider, userId);
+export async function beginOAuthFlowAsync(
+  provider: OAuthProvider,
+  userId: string,
+  initiatingSessionToken = '',
+): Promise<string> {
+  const { codeVerifier } = generatePkcePair();
+  const flowId = toBase64Url(crypto.randomBytes(24));
+  const state = buildOAuthState(provider, flowId, codeVerifier);
+  const startTicket = toBase64Url(crypto.randomBytes(32));
+  // Validate provider configuration before leaving a durable pending record.
+  if (!getOAuth2Config(provider).clientId) {
+    throw new Error(`${provider} OAuth client ID is not configured`);
+  }
+  const allowLoopbackHandoff = !ENV.isHosted && callbackUsesLoopback();
+  if (!initiatingSessionToken && !allowLoopbackHandoff) {
+    throw new Error('OAuth flow requires an authenticated initiating browser session.');
+  }
+  const flow: StoredOAuthFlow = {
+    flowId,
+    userId,
+    provider,
+    initiatingSessionHash: digestProof(initiatingSessionToken),
+    allowLoopbackHandoff,
+    startTicketHash: digestProof(startTicket),
+    bindingHash: null,
+    status: 'pending',
+    expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
+  };
+  try {
+    const store = await oauthFlowStore();
+    await store.record(state, flow, OAUTH_STATE_TTL_MS);
+  } catch {
+    throw new Error("OAuth flow could not be started safely because one-time flow storage is unavailable.");
+  }
+  const startUrl = new URL(`${getOAuthRedirectBaseUrl()}/api/oauth/${provider}/start`);
+  startUrl.searchParams.set('state', state);
+  startUrl.searchParams.set('ticket', startTicket);
+  return startUrl.toString();
 }
 
-export async function getAuthorizationUrlAsync(provider: 'gmail' | 'outlook', userId: string): Promise<string> {
-  return await beginOAuthFlowAsync(provider, userId);
+/**
+ * Redeem the one-time start ticket and bind this flow to the browser that will
+ * return from the provider. A copied provider URL never contains this proof.
+ */
+export async function activateOAuthStateAsync(
+  state: string,
+  provider: OAuthProvider,
+  startTicket: string,
+  initiatingSessionToken = '',
+  loopbackRequest = false,
+): Promise<{ authorizationUrl: string; bindingSecret: string }> {
+  const payload = decodeOAuthState(state, provider);
+  if (!/^[A-Za-z0-9_-]{32,128}$/.test(startTicket)) throw new OAuthStateError();
+  const bindingSecret = toBase64Url(crypto.randomBytes(32));
+  try {
+    const store = await oauthFlowStore();
+    const flow = await store.activate(state, {
+      startTicketHash: digestProof(startTicket),
+      bindingHash: digestProof(bindingSecret),
+      provider,
+      flowId: payload.flowId,
+      now: Date.now(),
+      initiatingSessionHash: digestProof(initiatingSessionToken),
+      loopbackRequest,
+    });
+    if (!flow) throw new OAuthStateError();
+  } catch (error) {
+    if (error instanceof OAuthStateError) throw error;
+    throw new OAuthStateError();
+  }
+  return {
+    authorizationUrl: providerAuthorizationUrl(provider, state, payload.codeVerifier),
+    bindingSecret,
+  };
+}
+
+/**
+ * Validate and atomically consume the browser-bound flow before exchanging the
+ * provider code. Missing proof, another browser/session, expiry, or replay all
+ * fail identically without revealing flow ownership.
+ */
+export async function consumeOAuthStateAsync(
+  state: string,
+  provider: OAuthProvider,
+  bindingSecret: string,
+): Promise<{ userId: string; codeVerifier: string }> {
+  const payload = decodeOAuthState(state, provider);
+  if (!/^[A-Za-z0-9_-]{32,128}$/.test(bindingSecret)) throw new OAuthStateError();
+  try {
+    const store = await oauthFlowStore();
+    const flow = await store.consume(state, {
+      bindingHash: digestProof(bindingSecret),
+      provider,
+      flowId: payload.flowId,
+      now: Date.now(),
+    });
+    if (!flow) throw new OAuthStateError();
+    return { userId: flow.userId, codeVerifier: payload.codeVerifier };
+  } catch (error) {
+    if (error instanceof OAuthStateError) throw error;
+    throw new OAuthStateError();
+  }
+}
+
+export async function getAuthorizationUrlAsync(
+  provider: 'gmail' | 'outlook',
+  userId: string,
+  initiatingSessionToken = '',
+): Promise<string> {
+  return await beginOAuthFlowAsync(provider, userId, initiatingSessionToken);
 }
 
 /**

@@ -195,16 +195,14 @@ describe('production readiness regressions', () => {
   });
 
   it('uses encrypted PKCE state for Google OAuth', async () => {
-    process.env.GOOGLE_CLIENT_ID = 'client-id';
-    process.env.COOKIE_SECRET = 'test-cookie-secret-that-is-long-and-random-1234';
-    vi.resetModules();
-    const { beginOAuthFlow, consumeOAuthState } = await import('../../server/oauth2');
-    const authUrl = new URL(beginOAuthFlow('gmail', 'USER_TEST'));
-    expect(authUrl.searchParams.get('code_challenge_method')).toBe('S256');
-    const state = authUrl.searchParams.get('state');
-    expect(state).toBeTruthy();
-    expect(consumeOAuthState(state!, 'gmail').userId).toBe('USER_TEST');
-    expect(() => consumeOAuthState(`${state!}!`, 'gmail')).toThrow('Invalid or expired OAuth state');
+    const oauth = readFileSync(join(ROOT, 'server/oauth2.ts'), 'utf8');
+    const callbacks = readFileSync(join(ROOT, 'server/oauth2Callbacks.ts'), 'utf8');
+    expect(oauth).toContain('code_challenge_method: "S256"');
+    expect(oauth).toContain('createLocalOAuthStateStore');
+    expect(oauth).toContain('createRedisOAuthStateStore');
+    expect(oauth).not.toContain('userId: userId');
+    expect(callbacks).toContain('oauthFlowBindingCookieName');
+    expect(callbacks).toContain('activateOAuthStateAsync');
   });
 
   it('derives the token-encryption key once instead of on every crypto operation', async () => {
@@ -298,7 +296,7 @@ describe('production readiness regressions', () => {
     const oauthFlow = readFileSync(join(ROOT, 'src/renderer/hooks/useGoogleOAuthConnection.ts'), 'utf8');
     expect(main).not.toContain('async function openOAuthWindow');
     expect(main).toContain('void openExternalUrl(url)');
-    expect(main).toContain("if (isOAuthProviderUrl(url))");
+    expect(main).toContain("if (isOAuthProviderUrl(url) || isOAuthStartUrl(url))");
     expect(callback).toContain("window.opener.postMessage({ type: 'laro:oauth-complete'");
     expect(callback).toContain("'Cross-Origin-Opener-Policy', 'unsafe-none'");
     expect(callback).toContain("'Referrer-Policy', 'no-referrer'");

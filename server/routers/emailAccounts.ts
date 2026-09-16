@@ -6,43 +6,22 @@ import { emailAccounts, emailSyncJobs } from "../schema";
 import { eq, and } from "drizzle-orm";
 import {
   getAuthorizationUrlAsync,
-  exchangeCodeForTokens,
-  getAccountInfo,
   refreshAccessToken,
-  consumeOAuthStateAsync,
-  saveEmailAccount,
 } from "../oauth2";
 import { encryptToken, decryptToken, revokeStoredGoogleTokens } from "../emailOAuth";
 import { AUDIT_ACTIONS, createAuditLog, writeAuditLogOrThrow } from "../audit";
+import { SESSION_COOKIE_NAME } from "../sessionCookie";
 
 export const emailAccountsRouter = router({
   getAuthUrl: protectedProcedure
     .input(z.object({ provider: z.literal("gmail") }))
     .mutation(async ({ input, ctx }) => ({
-      authUrl: await getAuthorizationUrlAsync(input.provider, ctx.user.id),
+      authUrl: await getAuthorizationUrlAsync(
+        input.provider,
+        ctx.user.id,
+        ctx.req.cookies?.[SESSION_COOKIE_NAME] || '',
+      ),
     })),
-
-  connectAccount: protectedProcedure
-    .input(
-      z.object({
-        provider: z.literal("gmail"),
-        code: z.string(),
-        state: z.string(),
-      })
-    )
-    .mutation(async ({ input, ctx }) => {
-      const db = await getDb();
-      if (!db) throw new Error("Database not available");
-
-      const state = await consumeOAuthStateAsync(input.state, input.provider);
-      if (state.userId !== ctx.user.id) throw new Error("OAuth state does not match the current user");
-      const tokens = await exchangeCodeForTokens(input.provider, input.code, state.codeVerifier);
-      const accountInfo = await getAccountInfo(input.provider, tokens.accessToken);
-
-      const id = await saveEmailAccount(ctx.user.id, input.provider, tokens, accountInfo);
-
-      return { success: true as const, accountId: id, email: accountInfo.email };
-    }),
 
   list: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();

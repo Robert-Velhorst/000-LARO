@@ -8,6 +8,7 @@ import { beginOAuthFlowAsync } from '../oauth2';
 import { revokeStoredGoogleTokens } from '../emailOAuth';
 import { TRPCError } from '@trpc/server';
 import { AUDIT_ACTIONS, createAuditLog, writeAuditLogOrThrow } from '../audit';
+import { SESSION_COOKIE_NAME } from '../sessionCookie';
 
 /**
  * Phase 012 — external provider reality review.
@@ -109,7 +110,11 @@ const createEnhancedConnectionRouter = (providerName: string) => {
         return {
           success: true as const,
           available: true as const,
-          authUrl: await beginOAuthFlowAsync(avail.connectPath as 'gmail' | 'outlook', ctx.user.id),
+          authUrl: await beginOAuthFlowAsync(
+            avail.connectPath as 'gmail' | 'outlook',
+            ctx.user.id,
+            ctx.req.cookies?.[SESSION_COOKIE_NAME] || '',
+          ),
         };
       }),
 

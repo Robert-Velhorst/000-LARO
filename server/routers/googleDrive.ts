@@ -11,6 +11,7 @@ import { getDb } from "../db";
 import { emailAccounts, evidence } from "../schema";
 import { eq, and } from "drizzle-orm";
 import { beginOAuthFlowAsync } from "../oauth2";
+import { SESSION_COOKIE_NAME } from "../sessionCookie";
 import { pullEvidenceByKeywords } from "../autoCollectionService";
 import { assertCaseOwnership } from "../_core/authz";
 import { createEvidenceFile } from "../evidence";
@@ -133,7 +134,11 @@ export const googleDriveRouter = router({
    * off the Gmail flow.
    */
   connect: protectedProcedure.mutation(async ({ ctx }) => {
-    const url = await beginOAuthFlowAsync("gmail", ctx.user.id);
+    const url = await beginOAuthFlowAsync(
+      "gmail",
+      ctx.user.id,
+      ctx.req.cookies?.[SESSION_COOKIE_NAME] || '',
+    );
     return { authUrl: url };
   }),
 

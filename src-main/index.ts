@@ -94,6 +94,18 @@ function isOAuthProviderUrl(rawUrl: string): boolean {
   }
 }
 
+function isOAuthStartUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.origin === new URL(laroUrl).origin &&
+      /\/api\/oauth\/(gmail|outlook)\/start$/.test(url.pathname) &&
+      Boolean(url.searchParams.get('state')) &&
+      Boolean(url.searchParams.get('ticket'));
+  } catch {
+    return false;
+  }
+}
+
 function hardenWindowNavigation(window: BrowserWindow): void {
   window.webContents.on('will-navigate', (event, url) => {
     if (url.includes('/api/oauth/') || !isTrustedAppUrl(url)) {
@@ -102,7 +114,7 @@ function hardenWindowNavigation(window: BrowserWindow): void {
     }
   });
   window.webContents.setWindowOpenHandler(({ url }: { url: string }) => {
-    if (isOAuthProviderUrl(url)) {
+    if (isOAuthProviderUrl(url) || isOAuthStartUrl(url)) {
       // Google forbids OAuth inside embedded user agents. Use the operating
       // system browser and let the renderer poll the saved connection state.
       void openExternalUrl(url).catch((error) => console.error('[Electron] OAuth browser failed:', error));

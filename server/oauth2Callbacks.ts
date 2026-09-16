@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto';
 import { Router, type Request, type Response } from 'express';
 import {
+  activateOAuthStateAsync,
   consumeOAuthStateAsync,
   exchangeCodeForTokens,
   getAccountInfo,
@@ -8,9 +9,28 @@ import {
   OAuthStateError,
   saveEmailAccount,
 } from './oauth2';
+import { getSessionCookieOptions } from './cookies';
+import { SESSION_COOKIE_NAME } from './sessionCookie';
 
 const router = Router();
 type OAuthProvider = 'gmail' | 'outlook';
+const OAUTH_BINDING_MAX_AGE_MS = 10 * 60 * 1_000;
+
+export function oauthFlowBindingCookieName(provider: OAuthProvider): string {
+  return `laro_oauth_${provider}_binding`;
+}
+
+function oauthBindingCookieOptions(req: Request) {
+  return {
+    ...getSessionCookieOptions(req),
+    path: '/',
+  };
+}
+
+function isLoopbackPeer(req: Request): boolean {
+  const address = req.socket.remoteAddress || '';
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+}
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>'"]/g, (character) => ({
@@ -98,7 +118,11 @@ function callbackHandler(provider: OAuthProvider) {
         return;
       }
 
-      const oauthState = await consumeOAuthStateAsync(state, provider);
+      const bindingSecret = typeof req.cookies?.[oauthFlowBindingCookieName(provider)] === 'string'
+        ? req.cookies[oauthFlowBindingCookieName(provider)]
+        : '';
+      res.clearCookie(oauthFlowBindingCookieName(provider), oauthBindingCookieOptions(req));
+      const oauthState = await consumeOAuthStateAsync(state, provider, bindingSecret);
       const tokens = await exchangeCodeForTokens(provider, code, oauthState.codeVerifier);
       tokenExchangeCompleted = true;
       const accountInfo = await getAccountInfo(provider, tokens.accessToken);
@@ -123,15 +147,57 @@ function callbackHandler(provider: OAuthProvider) {
         message: invalidState
           ? 'The authorization request is invalid or has expired. Return to LARO and start the connection again.'
           : retryable
-          ? 'The provider could not be reached temporarily. Retry this connection without starting over.'
+          ? 'The provider could not be reached temporarily. Return to LARO and start the connection again.'
           : 'The connection could not be completed. Return to LARO and try again.',
         status: invalidState ? 400 : retryable ? 503 : 500,
-        retry: retryable,
+        retry: false,
       });
     }
   };
 }
 
+function startHandler(provider: OAuthProvider) {
+  return async (req: Request, res: Response) => {
+    try {
+      const state = typeof req.query.state === 'string' ? req.query.state : '';
+      const ticket = typeof req.query.ticket === 'string' ? req.query.ticket : '';
+      if (!state || !ticket) throw new OAuthStateError();
+      const initiatingSessionToken = typeof req.cookies?.[SESSION_COOKIE_NAME] === 'string'
+        ? req.cookies[SESSION_COOKIE_NAME]
+        : '';
+      const activated = await activateOAuthStateAsync(
+        state,
+        provider,
+        ticket,
+        initiatingSessionToken,
+        isLoopbackPeer(req),
+      );
+      res.cookie(
+        oauthFlowBindingCookieName(provider),
+        activated.bindingSecret,
+        { ...oauthBindingCookieOptions(req), maxAge: OAUTH_BINDING_MAX_AGE_MS },
+      );
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      res.redirect(302, activated.authorizationUrl);
+    } catch (error) {
+      if (!(error instanceof OAuthStateError)) {
+        console.error(`[OAuth2] ${provider} start handoff failed`, {
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        });
+      }
+      sendCallbackPage(res, {
+        success: false,
+        title: 'Connection failed',
+        message: 'The connection request is invalid, expired, or has already been opened. Return to LARO and start again.',
+        status: 400,
+      });
+    }
+  };
+}
+
+router.get('/api/oauth/gmail/start', startHandler('gmail'));
+router.get('/api/oauth/outlook/start', startHandler('outlook'));
 router.get('/api/oauth/gmail/callback', callbackHandler('gmail'));
 router.get('/api/oauth/outlook/callback', callbackHandler('outlook'));
 router.get('/api/oauth/trello/callback', (_req, res) => {
