@@ -81,7 +81,13 @@ import {
   MAX_EVIDENCE_FILE_BYTES,
 } from "../../shared/evidenceFiles";
 import { standaloneSignupAllowed } from "../signupPolicy";
-import { hashPasswordResetCode } from "../passwordResetSecurity";
+import {
+  hashPasswordResetCode,
+  PASSWORD_RESET_LOCK_MS,
+  PASSWORD_RESET_MAX_FAILURES,
+  passwordResetHashMatches,
+  passwordResetLockTimestamp,
+} from "../passwordResetSecurity";
 import { findUserByEmailIdentity, normalizeAccountEmail } from "../emailIdentity";
 import { createUserId, isGeneratedIdCollision } from "../ids";
 
@@ -389,14 +395,20 @@ export const appRouter = router({
 
         // Only generate + send a code for accounts that have a password set
         // (OAuth-only accounts have nothing to reset).
-        if (user && user.password) {
+        const lockedUntil = passwordResetLockTimestamp(user?.resetCodeLockedUntil);
+        if (user && user.password && lockedUntil <= Date.now()) {
           const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
           const codeHash = hashPasswordResetCode(code);
           const expiresAt = Date.now() + TTL_MINUTES * 60 * 1000;
 
           await db
             .update(users)
-            .set({ resetCodeHash: codeHash, resetCodeExpiresAt: String(expiresAt) })
+            .set({
+              resetCodeHash: codeHash,
+              resetCodeExpiresAt: String(expiresAt),
+              resetCodeFailures: 0,
+              resetCodeLockedUntil: null,
+            })
             .where(eq(users.id, user.id));
 
           try {
@@ -432,31 +444,63 @@ export const appRouter = router({
           message: "Invalid or expired reset code",
         });
 
+        const now = Date.now();
         if (!user || !user.resetCodeHash || !user.resetCodeExpiresAt) throw invalid;
-        if (Date.now() > Number(user.resetCodeExpiresAt)) throw invalid;
+        if (passwordResetLockTimestamp(user.resetCodeLockedUntil) > now) throw invalid;
+        if (Number(user.resetCodeFailures ?? 0) >= PASSWORD_RESET_MAX_FAILURES) throw invalid;
+        if (now > Number(user.resetCodeExpiresAt)) throw invalid;
 
         const candidateHash = hashPasswordResetCode(input.code);
-        const a = Buffer.from(candidateHash);
-        const b = Buffer.from(user.resetCodeHash);
-        if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw invalid;
+        if (!passwordResetHashMatches(candidateHash, user.resetCodeHash)) {
+          db.transaction((tx) => {
+            const current = tx.select().from(users).where(eq(users.id, user.id)).get();
+            if (!current?.resetCodeHash || current.resetCodeHash !== user.resetCodeHash) return;
+            if (passwordResetLockTimestamp(current.resetCodeLockedUntil) > now) return;
+            const failures = Number(current.resetCodeFailures ?? 0) + 1;
+            const exhausted = failures >= PASSWORD_RESET_MAX_FAILURES;
+            tx.update(users).set({
+              resetCodeFailures: failures,
+              resetCodeHash: exhausted ? null : current.resetCodeHash,
+              resetCodeExpiresAt: exhausted ? null : current.resetCodeExpiresAt,
+              resetCodeLockedUntil: exhausted ? new Date(now + PASSWORD_RESET_LOCK_MS) : null,
+            }).where(eq(users.id, user.id)).run();
+          });
+          throw invalid;
+        }
 
         const hashedPassword = await bcrypt.hash(input.newPassword, 10);
-        await db
-          .update(users)
-          .set({ password: hashedPassword, resetCodeHash: null, resetCodeExpiresAt: null })
-          .where(eq(users.id, user.id));
+        const resetCommitted = db.transaction((tx) => {
+          const current = tx.select().from(users).where(eq(users.id, user.id)).get();
+          if (
+            !current?.resetCodeHash ||
+            current.resetCodeHash !== candidateHash ||
+            !current.resetCodeExpiresAt ||
+            Date.now() > Number(current.resetCodeExpiresAt) ||
+            passwordResetLockTimestamp(current.resetCodeLockedUntil) > Date.now() ||
+            Number(current.resetCodeFailures ?? 0) >= PASSWORD_RESET_MAX_FAILURES
+          ) return false;
+          const result = tx.update(users).set({
+            password: hashedPassword,
+            resetCodeHash: null,
+            resetCodeExpiresAt: null,
+            resetCodeFailures: 0,
+            resetCodeLockedUntil: null,
+          }).where(and(eq(users.id, user.id), eq(users.resetCodeHash, candidateHash))).run();
+          if (Number(result.changes ?? 0) !== 1) return false;
+          writeAuditLogOrThrow(tx, {
+            userId: user.id,
+            action: AUDIT_ACTIONS.USER_PASSWORD_RESET,
+            entityType: "user",
+            entityId: user.id,
+          });
+          return true;
+        });
+        if (!resetCommitted) throw invalid;
 
         const { revokeUserSessions } = await import("../sessionRevocation");
         await revokeUserSessions(user.id);
         const cookieOptions = getSessionCookieOptions(ctx.req);
         ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
-        await createAuditLog({
-          userId: user.id,
-          action: AUDIT_ACTIONS.USER_PASSWORD_RESET,
-          entityType: "user",
-          entityId: user.id,
-        });
-
         return { success: true } as const;
       }),
 

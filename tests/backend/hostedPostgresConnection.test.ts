@@ -35,6 +35,7 @@ suite('hosted PostgreSQL connection', () => {
       '0001_laro_baseline.sql',
       '0002_case_shares.sql',
       '0003_account_email_identity.sql',
+      '0004_password_reset_budget.sql',
     ]);
     await expect(applyHostedMigrations(database)).resolves.toEqual([]);
     const tables = await database.transaction(async (client) => {

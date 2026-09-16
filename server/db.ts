@@ -497,6 +497,9 @@ export async function getDb() {
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0018_case_action_evidence.sql"), "utf8"));
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0019_case_shares.sql"), "utf8"));
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0020_account_email_identity.sql"), "utf8"));
+        const resetColumns = new Set((sqlite.prepare('PRAGMA table_info("users")').all() as Array<{ name: string }>).map((column) => column.name));
+        if (!resetColumns.has("resetCodeFailures")) sqlite.exec("ALTER TABLE users ADD COLUMN resetCodeFailures integer NOT NULL DEFAULT 0");
+        if (!resetColumns.has("resetCodeLockedUntil")) sqlite.exec("ALTER TABLE users ADD COLUMN resetCodeLockedUntil integer");
         const inboxColumns = new Set((sqlite.prepare('PRAGMA table_info("document_inbox")').all() as Array<{ name: string }>).map((column) => column.name));
         if (!inboxColumns.has("sourceType")) sqlite.exec("ALTER TABLE document_inbox ADD COLUMN sourceType text NOT NULL DEFAULT 'manual'");
         if (!inboxColumns.has("provenance")) sqlite.exec("ALTER TABLE document_inbox ADD COLUMN provenance text");

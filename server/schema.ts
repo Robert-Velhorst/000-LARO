@@ -26,6 +26,8 @@ export const users = sqliteTable("users", {
   emailPreferences: text("emailPreferences"),
   resetCodeHash: text("resetCodeHash"),
   resetCodeExpiresAt: text("resetCodeExpiresAt"),
+  resetCodeFailures: integer("resetCodeFailures").notNull().default(0),
+  resetCodeLockedUntil: integer("resetCodeLockedUntil", { mode: "timestamp" }),
   paymentFailedAt: integer("paymentFailedAt", { mode: "timestamp" }),
   gracePeriodEndsAt: integer("gracePeriodEndsAt", { mode: "timestamp" }),
   createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),

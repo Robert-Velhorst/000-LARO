@@ -148,6 +148,13 @@
       "when": 1788566400007,
       "tag": "0020_account_email_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1788566400008,
+      "tag": "0021_password_reset_budget",
+      "breakpoints": true
     }
   ]
 }
