@@ -137,6 +137,7 @@ export const messages = {
   "scanner.selectAll": { nl: "Alles selecteren", en: "Select all" },
   "scanner.clear": { nl: "Wissen", en: "Clear" },
   "scanner.uploadSelected": { nl: "Selectie uploaden", en: "Upload selected" },
+  "scanner.reviewChanged": { nl: "Een of meer bestanden zijn gewijzigd. Controleer en selecteer ze opnieuw voordat u uploadt.", en: "One or more files changed. Review and select them again before uploading." },
   "scanner.noSupportedFiles": { nl: "Geen ondersteunde bewijsbestanden tot 7 MB gevonden.", en: "No supported evidence files up to 7 MB were found." },
   "scanner.noActive": { nl: "Geen actieve scan", en: "No active scan" },
   "scanner.noActiveHint": { nl: "Selecteer een zaak en een of meer mappen voordat u begint.", en: "Select a case and one or more folders before starting." },

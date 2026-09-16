@@ -15,7 +15,7 @@ export type ScanStatus =
   | 'error'
   | 'cancelled';
 
-export type UploadStatus = 'pending' | 'excluded' | 'uploading' | 'done' | 'completed' | 'failed';
+export type UploadStatus = 'pending' | 'review_required' | 'excluded' | 'uploading' | 'done' | 'completed' | 'failed';
 
 export interface AgentConfig {
   apiUrl: string;
@@ -115,7 +115,18 @@ export interface FileItem {
   modifiedAt: Date;
   uploadStatus: UploadStatus;
   uploadProgress: number;
-  errorMessage?: string;
+  errorMessage?: string | null;
+  /** Snapshot recorded when the file was discovered. */
+  contentHash?: string;
+  sourceIdentity?: string;
+  sourceRealPath?: string;
+  /** Immutable snapshot explicitly accepted by the user. */
+  approvedContentHash?: string;
+  approvedIdentity?: string;
+  approvedRealPath?: string;
+  approvedAt?: Date;
+  /** Evidence row created from the approved bytes, when upload succeeds. */
+  evidenceId?: string;
 }
 
 export interface ScanProgress {
@@ -128,5 +139,5 @@ export interface ScanProgress {
   totalSize: number;
   uploadedSize: number;
   currentFile: string | null;
-  errorMessage?: string;
+  errorMessage?: string | null;
 }

@@ -3,15 +3,23 @@
  * Handles uploading files to LARO backend with retry logic
  */
 
-import * as fs from 'fs/promises';
 import { EventEmitter } from 'events';
 import { createTRPCProxyClient, httpBatchLink } from '@trpc/client';
 import superjson from 'superjson';
 import type { AppRouter } from '../server/routers';
 import { FileItem } from '../shared/types';
 import { evidenceTypeForMime, MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
-import { updateFileStatus, updateScanProgress, getPendingFiles, getScanCaseId } from './database';
+import {
+  updateFileStatus,
+  updateScanProgress,
+  getPendingFiles,
+  getScanCaseId,
+  getReviewRequiredFileCount,
+  markFileReviewRequired,
+  markFileUploaded,
+} from './database';
 import { createDesktopScannerHeaders } from './scannerAuth';
+import { FileReviewRequiredError, readApprovedFile } from './fileApproval';
 
 export interface UploaderOptions {
   scanId: string;
@@ -77,6 +85,7 @@ export class FileUploader extends EventEmitter {
       updateScanProgress({
         scanId: this.scanId,
         status: 'uploading',
+        errorMessage: null,
       });
       
       // Upload files in batches
@@ -108,6 +117,22 @@ export class FileUploader extends EventEmitter {
         updateScanProgress({
           scanId: this.scanId,
           status: 'cancelled',
+        });
+      } else if (getReviewRequiredFileCount(this.scanId) > 0) {
+        const reviewRequired = getReviewRequiredFileCount(this.scanId);
+        this.emit('review-required', {
+          reviewRequired,
+          uploadedFiles: this.uploadedFiles,
+          failedFiles: this.failedFiles,
+          uploadedSize: this.uploadedSize,
+        });
+        updateScanProgress({
+          scanId: this.scanId,
+          status: 'review',
+          uploadedFiles: this.uploadedFiles,
+          failedFiles: this.failedFiles,
+          uploadedSize: this.uploadedSize,
+          errorMessage: `${reviewRequired} file${reviewRequired === 1 ? '' : 's'} changed and must be reviewed again.`,
         });
       } else {
         this.emit('completed', {
@@ -176,30 +201,33 @@ export class FileUploader extends EventEmitter {
       console.log(`[Uploader] Uploading file: ${file.name} (${file.size} bytes)`);
       
       // Update status to uploading
-      updateFileStatus(file.id, 'uploading', 0);
-      
-      const fileBuffer = await fs.readFile(file.path);
-      if (!fileBuffer.length || fileBuffer.length > MAX_EVIDENCE_FILE_BYTES) {
-        throw new Error('Evidence files must be between 1 byte and 7 MB');
-      }
+      updateFileStatus(file.id, 'uploading', 0, null);
+
+      // Read through the approved file handle and reject any path, identity, or
+      // byte change that happened after the user's review decision.
+      const approved = await readApprovedFile(file.path, file, MAX_EVIDENCE_FILE_BYTES);
 
       updateFileStatus(file.id, 'uploading', 50);
 
-      await this.client.evidenceFiles.upload.mutate({
+      const uploaded = await this.client.evidenceFiles.upload.mutate({
         caseId: this.getCaseId(),
         title: file.name,
         type: evidenceTypeForMime(file.mimeType),
         fileName: file.name,
         mimeType: file.mimeType,
         source: this.remote ? 'manual' : 'desktop_scanner',
-        base64: fileBuffer.toString('base64'),
+        approvedSha256: approved.sha256,
+        base64: approved.bytes.toString('base64'),
       });
+      if (uploaded.sha256 !== approved.sha256) {
+        throw new Error('Stored evidence digest does not match the approved file digest');
+      }
       
       // Mark as completed
-      updateFileStatus(file.id, 'completed', 100);
+      markFileUploaded(file.id, uploaded.id);
       
       this.uploadedFiles++;
-      this.uploadedSize += file.size;
+      this.uploadedSize += approved.size;
       
       // Emit progress
       this.emit('progress', {
@@ -224,6 +252,15 @@ export class FileUploader extends EventEmitter {
       
       // Retry logic
       const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof FileReviewRequiredError) {
+        markFileReviewRequired(file.id, message, error.snapshot);
+        this.emit('file-review-required', {
+          fileId: file.id,
+          fileName: file.name,
+          error: message,
+        });
+        return;
+      }
       const authorizationLost = /(?:sign in to LARO|authorization is unavailable)/i.test(message);
       if (authorizationLost) {
         updateFileStatus(file.id, 'pending', 0, message);
@@ -231,7 +268,7 @@ export class FileUploader extends EventEmitter {
         this.emit('authorization-lost', { error: message });
         return;
       }
-      const nonRetryable = /(?:unauthorized|forbidden|not authenticated|not found|between 1 byte|file type)/i.test(message);
+      const nonRetryable = /(?:unauthorized|forbidden|not authenticated|not found|between 1 byte|file type|digest does not match)/i.test(message);
       if (retryCount < this.maxRetries && !nonRetryable) {
         console.log(`[Uploader] Retrying upload (${retryCount + 1}/${this.maxRetries}): ${file.name}`);
         

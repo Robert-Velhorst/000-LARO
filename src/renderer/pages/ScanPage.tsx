@@ -47,17 +47,23 @@ export default function ScanPage({ activeScanId, onNavigate }: Props) {
       }
     });
 
-    electronAPI.onUploadProgress((next: { scanId?: string; done?: boolean; failedFiles?: number; fileId?: string; failed?: boolean; errorMessage?: string }) => {
+    electronAPI.onUploadProgress((next: { scanId?: string; done?: boolean; failedFiles?: number; fileId?: string; failed?: boolean; reviewRequired?: boolean; errorMessage?: string }) => {
       if (!activeScanId || next.scanId !== activeScanId) return;
       setProgress((current) => ({ ...current, ...next }));
       if (next.fileId) {
         setFiles((current) => current.map((file) => file.id === next.fileId
-          ? { ...file, uploadStatus: next.failed ? "failed" : "completed", uploadProgress: next.failed ? 0 : 100, errorMessage: next.errorMessage }
+          ? {
+              ...file,
+              uploadStatus: next.reviewRequired ? "review_required" : next.failed ? "failed" : "completed",
+              uploadProgress: next.failed || next.reviewRequired ? 0 : 100,
+              errorMessage: next.errorMessage,
+            }
           : file));
       }
       if (next.done) {
-        setPhase(next.failedFiles ? "failed" : "completed");
+        setPhase(next.reviewRequired ? "review" : next.failedFiles ? "failed" : "completed");
         setBusy(false);
+        if (next.reviewRequired) toast.warning(t("scanner.reviewChanged"));
         void loadFiles();
       }
     });
@@ -87,11 +93,17 @@ export default function ScanPage({ activeScanId, onNavigate }: Props) {
     if (!activeScanId || selectedIds.size === 0) return;
     setBusy(true);
     try {
-      await electronAPI.setScanFileSelection(activeScanId, [...selectedIds]);
-      setFiles((current) => current.map((file) => ({
-        ...file,
-        uploadStatus: selectedIds.has(file.id) ? "pending" : "excluded",
-      })));
+      const selection = await electronAPI.setScanFileSelection(activeScanId, [...selectedIds]);
+      await loadFiles();
+      if (selection.reviewRequired > 0) {
+        setBusy(false);
+        toast.warning(t("scanner.reviewChanged"));
+        return;
+      }
+      if (selection.selected === 0) {
+        setBusy(false);
+        return;
+      }
       await electronAPI.startUpload(activeScanId);
       setPhase("uploading");
     } catch (error) {
@@ -175,7 +187,7 @@ export default function ScanPage({ activeScanId, onNavigate }: Props) {
               </div>
               {phase === "review" ? (
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => setSelectedIds(new Set(files.map((file) => file.id)))} className="border border-slate-700 px-3 py-2 text-sm hover:bg-slate-800">{t("scanner.selectAll")}</button>
+                  <button type="button" onClick={() => setSelectedIds(new Set(files.filter(isReviewable).map((file) => file.id)))} className="border border-slate-700 px-3 py-2 text-sm hover:bg-slate-800">{t("scanner.selectAll")}</button>
                   <button type="button" onClick={() => setSelectedIds(new Set())} className="border border-slate-700 px-3 py-2 text-sm hover:bg-slate-800">{t("scanner.clear")}</button>
                   <button type="button" disabled={busy || selectedIds.size === 0} onClick={startUpload} className="flex items-center gap-2 bg-blue-600 px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
                     <Upload className="h-4 w-4" /> {t("scanner.uploadSelected")}
@@ -193,7 +205,7 @@ export default function ScanPage({ activeScanId, onNavigate }: Props) {
                     <input
                       type="checkbox"
                       checked={selectedIds.has(file.id)}
-                      disabled={phase !== "review"}
+                      disabled={phase !== "review" || !isReviewable(file)}
                       onChange={() => toggleFile(file.id)}
                       className="h-4 w-4 accent-blue-500"
                     />
@@ -201,6 +213,7 @@ export default function ScanPage({ activeScanId, onNavigate }: Props) {
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm text-slate-200">{file.name}</p>
                       <p className="truncate text-xs text-slate-500">{file.path}</p>
+                      {file.errorMessage ? <p className="mt-1 text-xs text-amber-300">{file.errorMessage}</p> : null}
                     </div>
                     <span className="text-xs text-slate-500">{formatBytes(file.size)}</span>
                     <FileState state={file.uploadStatus} />
@@ -237,8 +250,13 @@ function StatusBadge({ phase }: { phase: Phase }) {
 
 function FileState({ state }: { state: FileItem["uploadStatus"] }) {
   if (state === "completed") return <CheckCircle2 className="h-4 w-4 text-emerald-400" />;
+  if (state === "review_required") return <AlertCircle className="h-4 w-4 text-amber-400" />;
   if (state === "failed") return <AlertCircle className="h-4 w-4 text-red-400" />;
   return null;
+}
+
+function isReviewable(file: FileItem): boolean {
+  return file.uploadStatus === "pending" || file.uploadStatus === "review_required" || file.uploadStatus === "excluded";
 }
 
 function IconButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {

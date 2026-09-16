@@ -12,6 +12,7 @@ import { FileItem, Platform, ScanConfig } from '../shared/types';
 import { shouldExcludePath, shouldExcludeFile } from '../shared/exclusions';
 import { isSupportedEvidenceMimeType, MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 import { addFile, updateScanProgress } from './database';
+import { inspectRegularFile } from './fileApproval';
 
 export interface ScannerOptions {
   scanId: string;
@@ -198,33 +199,26 @@ export class FileScanner extends EventEmitter {
         return;
       }
       
-      // Get file stats
-      const stats = await fs.stat(filePath);
-      
-      // Skip empty files
-      if (stats.size === 0) {
-        return;
-      }
-      
-      if (stats.size > MAX_EVIDENCE_FILE_BYTES) {
-        console.log(`[Scanner] Skipping large file (${stats.size} bytes): ${filePath}`);
-        return;
-      }
-      
       // Determine MIME type
       const mimeType = mime.lookup(filePath) || 'application/octet-stream';
       if (!isSupportedEvidenceMimeType(mimeType)) return;
+
+      // Capture the exact bytes and filesystem identity shown for review.
+      const snapshot = await inspectRegularFile(filePath, MAX_EVIDENCE_FILE_BYTES);
       
       // Create file item
       const fileItem: FileItem = {
         id: nanoid(),
         path: filePath,
         name: fileName,
-        size: stats.size,
+        size: snapshot.size,
         mimeType,
-        modifiedAt: stats.mtime,
+        modifiedAt: snapshot.modifiedAt,
         uploadStatus: 'pending',
         uploadProgress: 0,
+        contentHash: snapshot.sha256,
+        sourceIdentity: snapshot.identity,
+        sourceRealPath: snapshot.realPath,
       };
       
       // Add to database
@@ -233,7 +227,7 @@ export class FileScanner extends EventEmitter {
       // Update counters
       this.totalFiles++;
       this.scannedFiles++;
-      this.totalSize += stats.size;
+      this.totalSize += snapshot.size;
       
       // Emit progress event every 10 files
       if (this.totalFiles % 10 === 0) {

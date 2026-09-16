@@ -573,11 +573,10 @@ function setupIPC(): void {
     assertTrustedIpc(event);
     return { files: getScanFiles(String(id).slice(0, 200)) };
   });
-  ipcMain.handle(IPC_CHANNELS.SCAN_FILES_SELECT, (event, id: string, fileIds: string[]) => {
+  ipcMain.handle(IPC_CHANNELS.SCAN_FILES_SELECT, async (event, id: string, fileIds: string[]) => {
     assertTrustedIpc(event);
     const safeIds = Array.isArray(fileIds) ? fileIds.map(String).filter((value) => value.length <= 200) : [];
-    const selected = setScanFileSelection(String(id).slice(0, 200), safeIds);
-    return { selected };
+    return setScanFileSelection(String(id).slice(0, 200), safeIds);
   });
   ipcMain.handle(IPC_CHANNELS.UPLOAD_START, (event, id: string) => {
     assertTrustedIpc(event);
@@ -626,6 +625,23 @@ async function startUpload(scanId: string, cookieUrl: string): Promise<{ success
         failed: true,
         errorMessage: failure.error,
       });
+    });
+    currentUploader.on('file-review-required', (failure) => {
+      scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, {
+        scanId: safeScanId,
+        fileId: failure.fileId,
+        reviewRequired: true,
+        errorMessage: failure.error,
+      });
+    });
+    currentUploader.on('review-required', (result) => {
+      scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, {
+        scanId: safeScanId,
+        done: true,
+        reviewRequired: true,
+        ...result,
+      });
+      currentUploader = null;
     });
     currentUploader.on('cancelled', () => { currentUploader = null; });
     currentUploader.on('error', (error: Error) => {

@@ -118,6 +118,7 @@ export const AUDIT_ACTIONS = {
   EVIDENCE_EXPORTED: "evidence.exported",
   EVIDENCE_SCORED: "evidence.scored",
   EVIDENCE_SOURCE_OPENED: "evidence.source_opened",
+  EVIDENCE_SCANNER_UPLOADED: "evidence.scanner_uploaded",
   
   // Outreach actions
   OUTREACH_INITIATED: "outreach.initiated",

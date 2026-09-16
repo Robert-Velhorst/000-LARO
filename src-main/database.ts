@@ -6,7 +6,9 @@ import Database from 'better-sqlite3';
 import { app } from 'electron';
 import path from 'path';
 import { FileItem, ScanProgress, ScanStatus, UploadStatus } from '../shared/types';
+import { MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 import { remoteScannerDatabaseName } from './remoteConnection';
+import { inspectRegularFile, snapshotMatches, type FileSnapshot } from './fileApproval';
 
 let db: Database.Database | null = null;
 
@@ -54,12 +56,38 @@ export function initDatabase(serverUrl?: string): void {
       uploadStatus TEXT NOT NULL,
       uploadProgress INTEGER DEFAULT 0,
       errorMessage TEXT,
+      contentHash TEXT,
+      sourceIdentity TEXT,
+      sourceRealPath TEXT,
+      approvedContentHash TEXT,
+      approvedIdentity TEXT,
+      approvedRealPath TEXT,
+      approvedAt TEXT,
+      evidenceId TEXT,
       FOREIGN KEY (scanId) REFERENCES scans(id)
     );
     
     CREATE INDEX IF NOT EXISTS idx_files_scanId ON files(scanId);
     CREATE INDEX IF NOT EXISTS idx_files_uploadStatus ON files(uploadStatus);
   `);
+
+  // Existing desktop installations receive additive local-state migrations.
+  const existingFileColumns = new Set(
+    (db.prepare('PRAGMA table_info(files)').all() as Array<{ name: string }>).map((column) => column.name),
+  );
+  const fileColumns: Array<[string, string]> = [
+    ['contentHash', 'TEXT'],
+    ['sourceIdentity', 'TEXT'],
+    ['sourceRealPath', 'TEXT'],
+    ['approvedContentHash', 'TEXT'],
+    ['approvedIdentity', 'TEXT'],
+    ['approvedRealPath', 'TEXT'],
+    ['approvedAt', 'TEXT'],
+    ['evidenceId', 'TEXT'],
+  ];
+  for (const [column, type] of fileColumns) {
+    if (!existingFileColumns.has(column)) db.exec(`ALTER TABLE files ADD COLUMN ${column} ${type}`);
+  }
   
   console.log('[Database] Initialized at', dbPath);
 }
@@ -204,8 +232,11 @@ export function addFile(file: FileItem, scanId: string): void {
   if (!db) throw new Error('Database not initialized');
   
   const stmt = db.prepare(`
-    INSERT INTO files (id, scanId, path, name, size, mimeType, modifiedAt, uploadStatus, uploadProgress)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO files (
+      id, scanId, path, name, size, mimeType, modifiedAt, uploadStatus, uploadProgress,
+      contentHash, sourceIdentity, sourceRealPath
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   stmt.run(
@@ -217,7 +248,10 @@ export function addFile(file: FileItem, scanId: string): void {
     file.mimeType,
     file.modifiedAt.toISOString(),
     file.uploadStatus,
-    file.uploadProgress
+    file.uploadProgress,
+    file.contentHash ?? null,
+    file.sourceIdentity ?? null,
+    file.sourceRealPath ?? null
   );
 }
 
@@ -228,7 +262,7 @@ export function updateFileStatus(
   fileId: string,
   status: UploadStatus,
   progress?: number,
-  errorMessage?: string
+  errorMessage?: string | null
 ): void {
   if (!db) throw new Error('Database not initialized');
   
@@ -254,6 +288,28 @@ export function updateFileStatus(
   stmt.run(...values);
 }
 
+function rowToFileItem(row: any): FileItem {
+  return {
+    id: row.id,
+    path: row.path,
+    name: row.name,
+    size: row.size,
+    mimeType: row.mimeType,
+    modifiedAt: new Date(row.modifiedAt),
+    uploadStatus: row.uploadStatus as UploadStatus,
+    uploadProgress: row.uploadProgress,
+    errorMessage: row.errorMessage ?? undefined,
+    contentHash: row.contentHash ?? undefined,
+    sourceIdentity: row.sourceIdentity ?? undefined,
+    sourceRealPath: row.sourceRealPath ?? undefined,
+    approvedContentHash: row.approvedContentHash ?? undefined,
+    approvedIdentity: row.approvedIdentity ?? undefined,
+    approvedRealPath: row.approvedRealPath ?? undefined,
+    approvedAt: row.approvedAt ? new Date(row.approvedAt) : undefined,
+    evidenceId: row.evidenceId ?? undefined,
+  };
+}
+
 /**
  * Get files for a scan
  */
@@ -263,17 +319,7 @@ export function getScanFiles(scanId: string): FileItem[] {
   const stmt = db.prepare('SELECT * FROM files WHERE scanId = ? ORDER BY name');
   const rows = stmt.all(scanId) as any[];
   
-  return rows.map(row => ({
-    id: row.id,
-    path: row.path,
-    name: row.name,
-    size: row.size,
-    mimeType: row.mimeType,
-    modifiedAt: new Date(row.modifiedAt),
-    uploadStatus: row.uploadStatus as UploadStatus,
-    uploadProgress: row.uploadProgress,
-    errorMessage: row.errorMessage,
-  }));
+  return rows.map(rowToFileItem);
 }
 
 export function getScanCaseId(scanId: string): string | null {
@@ -282,21 +328,168 @@ export function getScanCaseId(scanId: string): string | null {
   return row?.caseId ?? null;
 }
 
-/** Persist the user's review decision before any upload starts. */
-export function setScanFileSelection(scanId: string, selectedFileIds: string[]): number {
+export interface FileSelectionResult {
+  selected: number;
+  reviewRequired: number;
+}
+
+/**
+ * Persist the user's review decision only when the file still matches the
+ * bytes and filesystem identity presented by the scanner.
+ */
+export async function setScanFileSelection(
+  scanId: string,
+  selectedFileIds: string[],
+): Promise<FileSelectionResult> {
   if (!db) throw new Error('Database not initialized');
 
   const selected = new Set(selectedFileIds);
   const rows = db
-    .prepare("SELECT id FROM files WHERE scanId = ? AND uploadStatus IN ('pending', 'excluded')")
-    .all(scanId) as Array<{ id: string }>;
+    .prepare("SELECT * FROM files WHERE scanId = ? AND uploadStatus IN ('pending', 'review_required', 'excluded')")
+    .all(scanId)
+    .map(rowToFileItem);
 
-  const update = db.prepare('UPDATE files SET uploadStatus = ?, uploadProgress = 0, errorMessage = NULL WHERE id = ?');
+  const outcomes: Array<{
+    file: FileItem;
+    kind: 'excluded' | 'approved' | 'review_required';
+    snapshot?: FileSnapshot;
+    errorMessage?: string;
+  }> = [];
+  for (const file of rows) {
+    if (!selected.has(file.id)) {
+      outcomes.push({ file, kind: 'excluded' });
+      continue;
+    }
+    try {
+      const snapshot = await inspectRegularFile(file.path, MAX_EVIDENCE_FILE_BYTES);
+      const matchesDiscovery = snapshotMatches(snapshot, {
+        contentHash: file.contentHash,
+        identity: file.sourceIdentity,
+        realPath: file.sourceRealPath,
+      });
+      outcomes.push({
+        file,
+        kind: matchesDiscovery ? 'approved' : 'review_required',
+        snapshot,
+        errorMessage: matchesDiscovery
+          ? undefined
+          : 'The file changed after scanning. Review the updated file before uploading.',
+      });
+    } catch (error) {
+      outcomes.push({
+        file,
+        kind: 'review_required',
+        errorMessage: error instanceof Error ? error.message : 'The file can no longer be checked safely. Review it again.',
+      });
+    }
+  }
+
+  const exclude = db.prepare(`
+    UPDATE files SET uploadStatus = 'excluded', uploadProgress = 0, errorMessage = NULL,
+      approvedContentHash = NULL, approvedIdentity = NULL, approvedRealPath = NULL, approvedAt = NULL
+    WHERE id = ?
+  `);
+  const approve = db.prepare(`
+    UPDATE files SET size = ?, modifiedAt = ?, contentHash = ?, sourceIdentity = ?, sourceRealPath = ?,
+      approvedContentHash = ?, approvedIdentity = ?, approvedRealPath = ?, approvedAt = ?,
+      uploadStatus = 'pending', uploadProgress = 0, errorMessage = NULL
+    WHERE id = ?
+  `);
+  const requireReviewWithSnapshot = db.prepare(`
+    UPDATE files SET size = ?, modifiedAt = ?, contentHash = ?, sourceIdentity = ?, sourceRealPath = ?,
+      approvedContentHash = NULL, approvedIdentity = NULL, approvedRealPath = NULL, approvedAt = NULL,
+      uploadStatus = 'review_required', uploadProgress = 0, errorMessage = ?
+    WHERE id = ?
+  `);
+  const requireReview = db.prepare(`
+    UPDATE files SET approvedContentHash = NULL, approvedIdentity = NULL, approvedRealPath = NULL, approvedAt = NULL,
+      uploadStatus = 'review_required', uploadProgress = 0, errorMessage = ?
+    WHERE id = ?
+  `);
+  const approvedAt = new Date().toISOString();
   const transaction = db.transaction(() => {
-    for (const row of rows) update.run(selected.has(row.id) ? 'pending' : 'excluded', row.id);
+    for (const outcome of outcomes) {
+      if (outcome.kind === 'excluded') {
+        exclude.run(outcome.file.id);
+      } else if (outcome.kind === 'approved' && outcome.snapshot) {
+        approve.run(
+          outcome.snapshot.size,
+          outcome.snapshot.modifiedAt.toISOString(),
+          outcome.snapshot.sha256,
+          outcome.snapshot.identity,
+          outcome.snapshot.realPath,
+          outcome.snapshot.sha256,
+          outcome.snapshot.identity,
+          outcome.snapshot.realPath,
+          approvedAt,
+          outcome.file.id,
+        );
+      } else if (outcome.snapshot) {
+        requireReviewWithSnapshot.run(
+          outcome.snapshot.size,
+          outcome.snapshot.modifiedAt.toISOString(),
+          outcome.snapshot.sha256,
+          outcome.snapshot.identity,
+          outcome.snapshot.realPath,
+          outcome.errorMessage,
+          outcome.file.id,
+        );
+      } else {
+        requireReview.run(outcome.errorMessage, outcome.file.id);
+      }
+    }
   });
   transaction();
-  return rows.filter((row) => selected.has(row.id)).length;
+  return {
+    selected: outcomes.filter((outcome) => outcome.kind === 'approved').length,
+    reviewRequired: outcomes.filter((outcome) => outcome.kind === 'review_required').length,
+  };
+}
+
+export function markFileReviewRequired(
+  fileId: string,
+  errorMessage: string,
+  snapshot?: FileSnapshot,
+): void {
+  if (!db) throw new Error('Database not initialized');
+  if (snapshot) {
+    db.prepare(`
+      UPDATE files SET size = ?, modifiedAt = ?, contentHash = ?, sourceIdentity = ?, sourceRealPath = ?,
+        approvedContentHash = NULL, approvedIdentity = NULL, approvedRealPath = NULL, approvedAt = NULL,
+        uploadStatus = 'review_required', uploadProgress = 0, errorMessage = ?
+      WHERE id = ?
+    `).run(
+      snapshot.size,
+      snapshot.modifiedAt.toISOString(),
+      snapshot.sha256,
+      snapshot.identity,
+      snapshot.realPath,
+      errorMessage,
+      fileId,
+    );
+    return;
+  }
+  db.prepare(`
+    UPDATE files SET approvedContentHash = NULL, approvedIdentity = NULL, approvedRealPath = NULL, approvedAt = NULL,
+      uploadStatus = 'review_required', uploadProgress = 0, errorMessage = ?
+    WHERE id = ?
+  `).run(errorMessage, fileId);
+}
+
+export function markFileUploaded(fileId: string, evidenceId: string): void {
+  if (!db) throw new Error('Database not initialized');
+  db.prepare(`
+    UPDATE files SET uploadStatus = 'completed', uploadProgress = 100, errorMessage = NULL, evidenceId = ?
+    WHERE id = ?
+  `).run(evidenceId, fileId);
+}
+
+export function getReviewRequiredFileCount(scanId: string): number {
+  if (!db) throw new Error('Database not initialized');
+  const row = db.prepare(`
+    SELECT COUNT(*) AS count FROM files WHERE scanId = ? AND uploadStatus = 'review_required'
+  `).get(scanId) as { count: number };
+  return Number(row.count);
 }
 
 /**
@@ -314,17 +507,7 @@ export function getPendingFiles(scanId: string, limit: number = 10): FileItem[] 
   
   const rows = stmt.all(scanId, limit) as any[];
   
-  return rows.map(row => ({
-    id: row.id,
-    path: row.path,
-    name: row.name,
-    size: row.size,
-    mimeType: row.mimeType,
-    modifiedAt: new Date(row.modifiedAt),
-    uploadStatus: row.uploadStatus as UploadStatus,
-    uploadProgress: row.uploadProgress,
-    errorMessage: row.errorMessage,
-  }));
+  return rows.map(rowToFileItem);
 }
 
 /**

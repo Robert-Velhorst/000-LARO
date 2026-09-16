@@ -13,7 +13,7 @@ import { evidenceFiles } from "../schema";
 import { eq, and, desc } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { assertCaseOwnership } from "../_core/authz";
-import { sanitizeFilename, storageDelete, storagePut } from "../storage";
+import { hashBuffer, sanitizeFilename, storageDelete, storagePut } from "../storage";
 import { managedStorageKeyFromMetadata } from "../managedStorage";
 import { processQueuedStorageDeletions } from "../storageDeletionQueue";
 import {
@@ -23,6 +23,7 @@ import {
 } from "../../shared/evidenceFiles";
 import { TRPCError } from "@trpc/server";
 import { getEvidenceDownloadUrl, recordEvidenceSourceOpened } from "../evidenceAccess";
+import { AUDIT_ACTIONS, createAuditLog } from "../audit";
 
 export const evidenceFilesRouter = router({
 
@@ -87,6 +88,7 @@ export const evidenceFilesRouter = router({
       fileName: z.string().min(1).max(255),
       mimeType: z.string().min(1).max(255),
       source: z.enum(["manual", "desktop_scanner"]).optional().default("manual"),
+      approvedSha256: z.string().regex(/^[a-f0-9]{64}$/, "Invalid approved file digest").optional(),
       base64: z.string().min(1).max(MAX_EVIDENCE_BASE64_CHARS).regex(
         /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/,
         "Invalid base64 evidence payload"
@@ -102,6 +104,12 @@ export const evidenceFilesRouter = router({
             : "Desktop scanner provenance requires a scanner credential",
         });
       }
+      if (input.source === "desktop_scanner" && !input.approvedSha256) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Desktop scanner uploads require an approved file digest",
+        });
+      }
       await assertCaseOwnership(input.caseId, ctx.user.id);
       const bytes = Buffer.from(input.base64, "base64");
       if (!bytes.length || bytes.length > MAX_EVIDENCE_FILE_BYTES) {
@@ -109,6 +117,13 @@ export const evidenceFilesRouter = router({
       }
       if (!isSupportedEvidenceMimeType(input.mimeType)) {
         throw new Error("Evidence file type is not supported");
+      }
+      const calculatedHash = hashBuffer(bytes);
+      if (input.approvedSha256 && calculatedHash !== input.approvedSha256) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Uploaded bytes do not match the approved file digest",
+        });
       }
 
       const fileName = sanitizeFilename(input.fileName);
@@ -125,8 +140,24 @@ export const evidenceFilesRouter = router({
           mimeType: input.mimeType,
           fileUrl: stored.url,
           contentHash: stored.sha256,
-          metadata: JSON.stringify({ storageKey: stored.key }),
+          metadata: JSON.stringify({
+            storageKey: stored.key,
+            ...(input.approvedSha256 ? { approvedContentHash: input.approvedSha256 } : {}),
+          }),
         });
+        if (input.approvedSha256) {
+          await createAuditLog({
+            userId: ctx.user.id,
+            action: AUDIT_ACTIONS.EVIDENCE_SCANNER_UPLOADED,
+            entityType: "evidence",
+            entityId: id,
+            details: {
+              caseId: input.caseId,
+              approvedContentHash: input.approvedSha256,
+              storedContentHash: stored.sha256,
+            },
+          });
+        }
         return { id, sha256: stored.sha256 };
       } catch (error) {
         await storageDelete(stored.key).catch(() => undefined);

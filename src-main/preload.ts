@@ -95,7 +95,7 @@ declare global {
       pauseScan: () => Promise<{ success: boolean }>;
       resumeScan: () => Promise<{ success: boolean }>;
       getScanFiles: (scanId: string) => Promise<{ files: any[] }>;
-      setScanFileSelection: (scanId: string, fileIds: string[]) => Promise<{ selected: number }>;
+      setScanFileSelection: (scanId: string, fileIds: string[]) => Promise<{ selected: number; reviewRequired: number }>;
       startUpload: (scanId: string) => Promise<{ success: boolean }>;
       pauseUpload: () => Promise<{ success: boolean }>;
       resumeUpload: () => Promise<{ success: boolean }>;
