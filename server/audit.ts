@@ -101,6 +101,11 @@ export const AUDIT_ACTIONS = {
   // Email actions
   EMAIL_SENT: "email.sent",
   EMAIL_RESPONSE_RECEIVED: "email.response_received",
+  EMAIL_TEST_ATTEMPTED: "email.test_attempted",
+  EMAIL_TEST_DENIED: "email.test_denied",
+  EMAIL_TEST_RATE_LIMITED: "email.test_rate_limited",
+  EMAIL_TEST_FAILED: "email.test_failed",
+  EMAIL_TEST_DELIVERED: "email.test_delivered",
 
   // Provider connection actions
   PROVIDER_CONNECTED: "provider.connected",

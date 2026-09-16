@@ -128,6 +128,12 @@ export const RATE_LIMITS = {
     message: "Too many evidence export requests. Please use an existing link or wait briefly.",
   },
 
+  transactionalEmailTest: {
+    maxRequests: 3,
+    windowMs: 60 * 60 * 1000,
+    message: "Transactional email tests are limited to three per hour.",
+  },
+
   bulkImport: {
     maxRequests: 5,
     windowMs: 15 * 60 * 1000,

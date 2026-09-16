@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useLocation, useSearchParams } from "wouter";
 import { useI18n } from "@/contexts/I18nContext";
@@ -30,6 +30,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 type SettingsSection = "workflow" | "email" | "sources" | "hai" | "security";
 
@@ -83,6 +84,7 @@ function providerName(provider: string) {
 }
 
 export default function Settings() {
+  const { user } = useAuth();
   const { locale } = useI18n();
   const nl = locale === "nl";
   const [location, setLocation] = useLocation();
@@ -124,6 +126,10 @@ export default function Settings() {
 
   const preferencesUnavailable = !workflowPreferences.data || updateWorkflowMutation.isPending;
   const navItems = NAV_ITEMS.map(item => ({ ...item, label: nl ? ({ workflow: "Analyse en controle", email: "E-mail", sources: "Bronnen", hai: "HAI-koppeling", security: "Gegevens en privacy" }[item.id]) : item.label }));
+
+  useEffect(() => {
+    if (user?.role === "admin" && user.email && !testEmail) setTestEmail(user.email);
+  }, [testEmail, user?.email, user?.role]);
 
   const updateWorkflow = async (updates: Parameters<typeof updateWorkflowMutation.mutateAsync>[0]) => {
     try {
@@ -171,7 +177,6 @@ export default function Settings() {
     try {
       const result = await testEmailMutation.mutateAsync({
         to: testEmail,
-        subject: "LARO Email Service Test",
       });
       result.success ? toast.success(result.message) : toast.error(result.message);
     } catch (error) {
@@ -401,7 +406,7 @@ export default function Settings() {
                 </Alert>
               ) : null}
 
-              <div className="space-y-3 border-t pt-4">
+              {user?.role === "admin" ? <div className="space-y-3 border-t pt-4">
                 <Label htmlFor="test-email">Test recipient</Label>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
@@ -419,7 +424,11 @@ export default function Settings() {
                     {isTesting ? "Sending..." : "Send test"}
                   </Button>
                 </div>
-              </div>
+                <p className="text-xs text-muted-foreground">Tests are limited to your admin account address or an operator-configured allowlist, and respect the emergency stop.</p>
+              </div> : <Alert>
+                <Shield className="h-4 w-4" />
+                <AlertDescription>Transactional delivery tests are available only to an administrator.</AlertDescription>
+              </Alert>}
             </CardContent>
           </Card>
         ) : null}
