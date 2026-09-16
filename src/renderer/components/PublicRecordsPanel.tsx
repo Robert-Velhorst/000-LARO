@@ -126,10 +126,31 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                     <>
                       <Alert>
                         <CheckCircle className="h-4 w-4" />
-                        <AlertDescription>Company found in KvK registry</AlertDescription>
+                        <AlertDescription>Registry record returned by the KvK open dataset</AlertDescription>
                       </Alert>
 
-                      <div className="grid grid-cols-2 gap-4">
+                      {kvkLookup.data.source && (
+                        <Card>
+                          <CardHeader className="pb-3">
+                            <CardTitle className="text-sm">Registry source</CardTitle>
+                            <CardDescription>{kvkLookup.data.source.dataset}</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-2 text-xs text-muted-foreground">
+                            <p>{kvkLookup.data.source.provider}</p>
+                            <p>Retrieved {new Date(kvkLookup.data.source.retrievedAt).toLocaleString()}</p>
+                            <a
+                              href={kvkLookup.data.source.documentationUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+                            >
+                              Open dataset documentation <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                            </a>
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                         <Card>
                           <CardHeader className="pb-3">
                             <CardTitle className="text-sm">KvK Number</CardTitle>
@@ -138,6 +159,7 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                             <p className="text-2xl font-bold">
                               {kvkLookup.data.data?.kvkNumber}
                             </p>
+                            <SourceField sourceField="kvknummer (lookup key)" rawValue={kvkLookup.data.data?.kvkNumber ?? null} />
                           </CardContent>
                         </Card>
 
@@ -145,18 +167,34 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                           <CardHeader className="pb-3">
                             <CardTitle className="text-sm">Status</CardTitle>
                           </CardHeader>
-                          <CardContent>
-                            {kvkLookup.data.data?.isActive ? (
+                          <CardContent className="space-y-2">
+                            {kvkLookup.data.data?.isActive === true ? (
                               <Badge variant="default" className="bg-green-500">
                                 <CheckCircle className="w-3 h-3 mr-1" />
                                 Active
                               </Badge>
-                            ) : (
+                            ) : kvkLookup.data.data?.isActive === false ? (
                               <Badge variant="destructive">
                                 <XCircle className="w-3 h-3 mr-1" />
                                 Inactive
                               </Badge>
+                            ) : (
+                              <Badge variant="secondary">Not returned</Badge>
                             )}
+                            <SourceField {...kvkLookup.data.data!.fieldProvenance.activityStatus} />
+                          </CardContent>
+                        </Card>
+
+                        <Card>
+                          <CardHeader className="pb-3">
+                            <CardTitle className="text-sm">Start Date</CardTitle>
+                          </CardHeader>
+                          <CardContent className="space-y-2">
+                            <p className="text-lg font-semibold">
+                              {kvkLookup.data.data?.startDate
+                                ?? (kvkLookup.data.data?.fieldProvenance.startDate.rawValue ? "Unknown in source" : "Not returned")}
+                            </p>
+                            <SourceField {...kvkLookup.data.data!.fieldProvenance.startDate} />
                           </CardContent>
                         </Card>
 
@@ -164,15 +202,16 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                           <CardHeader className="pb-3">
                             <CardTitle className="text-sm">Legal Form</CardTitle>
                           </CardHeader>
-                          <CardContent>
+                          <CardContent className="space-y-2">
                             <p className="text-lg font-semibold">
-                              {kvkLookup.data.data?.legalForm}
+                              {kvkLookup.data.data?.legalForm ?? "Not returned"}
                             </p>
-                            <p className="text-xs text-muted-foreground">
-                              {kvkLookup.data.data?.legalForm === "BV"
+                            {kvkLookup.data.data?.legalForm && <p className="text-xs text-muted-foreground">
+                              {kvkLookup.data.data.legalForm === "BV"
                                 ? "Private Company"
                                 : "Public Limited Company"}
-                            </p>
+                            </p>}
+                            <SourceField {...kvkLookup.data.data!.fieldProvenance.legalForm} />
                           </CardContent>
                         </Card>
 
@@ -180,11 +219,14 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                           <CardHeader className="pb-3">
                             <CardTitle className="text-sm">Region</CardTitle>
                           </CardHeader>
-                          <CardContent>
+                          <CardContent className="space-y-2">
                             <p className="text-lg font-semibold flex items-center">
                               <MapPin className="w-4 h-4 mr-1" />
-                              {kvkLookup.data.data?.postalCodeRegion}xx
+                              {kvkLookup.data.data?.postalCodeRegion
+                                ? `${kvkLookup.data.data.postalCodeRegion}xx`
+                                : "Not returned"}
                             </p>
+                            <SourceField {...kvkLookup.data.data!.fieldProvenance.postalCodeRegion} />
                           </CardContent>
                         </Card>
                       </div>
@@ -194,16 +236,9 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                         <Alert variant="destructive">
                           <AlertTriangle className="h-4 w-4" />
                           <AlertDescription>
-                            <div className="font-semibold">Insolvency Detected</div>
-                            <div className="mt-1">
-                              Type:{" "}
-                              {kvkLookup.data.data.insolvencyStatus.type === "bankruptcy"
-                                ? "Bankruptcy (Faillissement)"
-                                : kvkLookup.data.data.insolvencyStatus.type ===
-                                    "debt_restructuring"
-                                  ? "Debt Restructuring (WSNP)"
-                                  : "Suspension of Payments (Surseance)"}
-                            </div>
+                            <div className="font-semibold">Registry special legal status</div>
+                            <div className="mt-1">{kvkLookup.data.data.insolvencyStatus.label}</div>
+                            <SourceField {...kvkLookup.data.data.fieldProvenance.insolvencyStatus} />
                           </AlertDescription>
                         </Alert>
                       )}
@@ -231,6 +266,7 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                                     <Badge variant={activity.type === "main" ? "default" : "secondary"}>
                                       {activity.type === "main" ? "Main" : "Secondary"}
                                     </Badge>
+                                    <span className="sr-only">Source field {activity.sourceField}</span>
                                   </div>
                                 ))}
                               </div>
@@ -238,21 +274,47 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                           </Card>
                         )}
 
-                      {/* Legal Significance */}
-                      {kvkLookup.data.legalSignificance && (
+                      {kvkLookup.data.reviewTriage && kvkLookup.data.reviewTriage.length > 0 && (
+                        <Card className="border-amber-500/50">
+                          <CardHeader>
+                            <CardTitle className="text-sm">Review-only triage</CardTitle>
+                            <CardDescription>These prompts are not registry facts or legal findings.</CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-3">
+                            {kvkLookup.data.reviewTriage.map((item) => (
+                              <div key={item.id} className="space-y-1 text-sm">
+                                <p className="font-semibold">{item.label}</p>
+                                <p>{item.description}</p>
+                                <p className="text-xs text-muted-foreground">Based on source field: {item.sourceFields.join(", ")}</p>
+                              </div>
+                            ))}
+                          </CardContent>
+                        </Card>
+                      )}
+
+                      {kvkLookup.data.limitations && kvkLookup.data.limitations.length > 0 && (
                         <Alert>
-                          <AlertDescription className="text-sm">
-                            <div className="font-semibold mb-1">Legal Significance:</div>
-                            {kvkLookup.data.legalSignificance}
+                          <AlertDescription className="space-y-2 text-sm">
+                            <div className="font-semibold">Dataset limitations</div>
+                            <ul className="list-disc space-y-1 pl-5">
+                              {kvkLookup.data.limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}
+                            </ul>
                           </AlertDescription>
                         </Alert>
                       )}
                     </>
                   ) : (
-                    <Alert variant="destructive">
-                      <XCircle className="h-4 w-4" />
-                      <AlertDescription>{kvkLookup.data.error}</AlertDescription>
-                    </Alert>
+                    <div className="space-y-3">
+                      <Alert variant="destructive">
+                        <XCircle className="h-4 w-4" />
+                        <AlertDescription>{kvkLookup.data.error}</AlertDescription>
+                      </Alert>
+                      {kvkLookup.data.source && (
+                        <p className="text-xs text-muted-foreground">
+                          Source: {kvkLookup.data.source.provider} · retrieved {new Date(kvkLookup.data.source.retrievedAt).toLocaleString()}
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
@@ -484,3 +546,10 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
   );
 }
 
+function SourceField({ sourceField, rawValue }: { sourceField: string; rawValue: string | null }) {
+  return (
+    <p className="text-xs text-muted-foreground">
+      Source field: <code>{sourceField}</code>{rawValue === null ? " (not returned)" : ` = ${rawValue}`}
+    </p>
+  );
+}

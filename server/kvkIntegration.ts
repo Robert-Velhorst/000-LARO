@@ -17,38 +17,66 @@
 import { readBoundedResponseJson, withBoundedHttpResponse } from "./boundedHttpResponse";
 
 interface KvKCompanyData {
-  datumAanvang: string; // Start date (YYYYMMDD format, may contain zeros for unknown parts)
-  actief: "J" | "N"; // J = Yes (active), N = No (inactive)
-  insolventieCode?: "FAIL" | "SSAN" | "SURS"; // FAIL = Bankruptcy, SSAN = Debt restructuring, SURS = Suspension of Payments
-  rechtsvormCode: "BV" | "NV"; // BV = Private company, NV = Public limited company
-  postcodeRegio: string | number; // First two digits of postal code
-  activiteiten: Array<{
-    sbiCode: string; // SBI activity code (up to 6 digits)
-    soortActiviteit: "Hoofdactiviteit" | "Nevenactiviteit"; // Main or secondary activity
-  }>;
-  lidstaat: string; // Member state (always "NL" for Netherlands)
+  datumAanvang?: unknown; // Start date (YYYYMMDD format, may contain zeros for unknown parts)
+  actief?: unknown; // J = Yes (active), N = No (inactive)
+  insolventieCode?: unknown; // FAIL = Bankruptcy, SSAN = Debt restructuring, SURS = Suspension of Payments
+  rechtsvormCode?: unknown; // BV = Private company, NV = Public limited company
+  postcodeRegio?: unknown; // First two digits of postal code
+  activiteiten?: unknown;
+  lidstaat?: unknown; // Member state (normally "NL" for Netherlands)
+}
+
+export interface KvKFieldProvenance {
+  sourceField: string;
+  rawValue: string | null;
+}
+
+export interface KvKSourceProvenance {
+  provider: "Kamer van Koophandel (KvK)";
+  dataset: "Business Register Open Dataset - Basic Company Information";
+  recordUrl: string;
+  documentationUrl: string;
+  retrievedAt: string;
+}
+
+export interface KvKReviewTriage {
+  id: "inactive_registration";
+  label: string;
+  description: string;
+  reviewOnly: true;
+  sourceFields: string[];
 }
 
 export interface KvKLookupResult {
   success: boolean;
   data?: {
     kvkNumber: string;
-    startDate: string;
-    isActive: boolean;
+    startDate: string | null;
+    isActive: boolean | null;
     insolvencyStatus?: {
       type: "bankruptcy" | "debt_restructuring" | "suspension_of_payments";
       code: string;
+      label: string;
     };
-    legalForm: "BV" | "NV";
-    postalCodeRegion: string;
+    legalForm: "BV" | "NV" | null;
+    postalCodeRegion: string | null;
     activities: Array<{
       sbiCode: string;
-      description?: string; // Will be enriched from SBI code lookup
       type: "main" | "secondary";
+      sourceField: string;
     }>;
+    fieldProvenance: {
+      startDate: KvKFieldProvenance;
+      activityStatus: KvKFieldProvenance;
+      insolvencyStatus: KvKFieldProvenance;
+      legalForm: KvKFieldProvenance;
+      postalCodeRegion: KvKFieldProvenance;
+    };
   };
   error?: string;
-  legalSignificance?: string; // How this data can be used as evidence
+  source?: KvKSourceProvenance;
+  limitations?: string[];
+  reviewTriage?: KvKReviewTriage[];
 }
 
 type KvKLookupData = NonNullable<KvKLookupResult["data"]>;
@@ -88,6 +116,7 @@ class KvKIntegrationService {
    * Look up company information by KvK number
    */
   async lookupByKvKNumber(kvkNumber: string): Promise<KvKLookupResult> {
+    let source: KvKSourceProvenance | undefined;
     try {
       // Check rate limit
       if (!this.checkRateLimit()) {
@@ -106,51 +135,106 @@ class KvKIntegrationService {
         };
       }
 
+      source = this.buildSourceProvenance(cleanKvK);
+
       const data = await this.fetchCompanyData(cleanKvK);
 
       // Parse insolvency status
       let insolvencyStatus: KvKLookupData["insolvencyStatus"];
-      if (data.insolventieCode) {
+      const insolvencyCode = this.stringValue(data.insolventieCode);
+      if (insolvencyCode === "FAIL" || insolvencyCode === "SSAN" || insolvencyCode === "SURS") {
         const typeMap = {
           FAIL: "bankruptcy" as const,
           SSAN: "debt_restructuring" as const,
           SURS: "suspension_of_payments" as const,
         };
+        const labelMap = {
+          FAIL: "Bankruptcy (Faillissement)",
+          SSAN: "Debt restructuring (Schuldsanering)",
+          SURS: "Suspension of payments (Surseance van betaling)",
+        };
         insolvencyStatus = {
-          type: typeMap[data.insolventieCode],
-          code: data.insolventieCode,
+          type: typeMap[insolvencyCode],
+          code: insolvencyCode,
+          label: labelMap[insolvencyCode],
         };
       }
 
       // Parse activities
-      const activities = data.activiteiten.map((act) => ({
-        sbiCode: act.sbiCode,
-        type: (act.soortActiviteit === "Hoofdactiviteit" ? "main" : "secondary") as
-          | "main"
-          | "secondary",
-      }));
-
-      // Determine legal significance
-      const legalSignificance = this.determineLegalSignificance(data);
+      const activities = Array.isArray(data.activiteiten)
+        ? data.activiteiten.flatMap((value, index) => {
+            if (!value || typeof value !== "object") return [];
+            const activity = value as Record<string, unknown>;
+            const sbiCode = this.stringValue(activity.sbiCode);
+            const activityType = this.stringValue(activity.soortActiviteit);
+            if (!sbiCode || (activityType !== "Hoofdactiviteit" && activityType !== "Nevenactiviteit")) return [];
+            return [{
+              sbiCode,
+              type: activityType === "Hoofdactiviteit" ? "main" as const : "secondary" as const,
+              sourceField: `activiteiten[${index}]`,
+            }];
+          })
+        : [];
+      const startDateRaw = this.stringValue(data.datumAanvang);
+      const activeRaw = this.stringValue(data.actief);
+      const legalFormRaw = this.stringValue(data.rechtsvormCode);
+      const postalCodeRaw = this.stringValue(data.postcodeRegio);
+      const legalForm = legalFormRaw === "BV" || legalFormRaw === "NV" ? legalFormRaw : null;
+      const postalCodeRegion = postalCodeRaw && /^\d{1,2}$/.test(postalCodeRaw)
+        ? postalCodeRaw.padStart(2, "0")
+        : null;
+      const missingFields = [
+        !startDateRaw ? "datumAanvang" : null,
+        activeRaw !== "J" && activeRaw !== "N" ? "actief" : null,
+        !legalForm ? "rechtsvormCode" : null,
+        !postalCodeRegion ? "postcodeRegio" : null,
+        !Array.isArray(data.activiteiten) ? "activiteiten" : null,
+      ].filter((field): field is string => Boolean(field));
+      const limitations = [
+        "This open dataset contains selected basic registry fields only; it is not a complete legal or financial due-diligence report.",
+        ...(!insolvencyStatus
+          ? ["No insolventieCode was returned in this response. This does not verify good standing or prove that no insolvency proceeding exists."]
+          : []),
+        ...(missingFields.length
+          ? [`The source did not return usable values for: ${missingFields.join(", ")}.`]
+          : []),
+      ];
+      const reviewTriage: KvKReviewTriage[] = activeRaw === "N" ? [{
+        id: "inactive_registration",
+        label: "Review the current entity status",
+        description: "The registry returned actief=N. Confirm the current entity and any relevant procedural details in an authoritative record before acting.",
+        reviewOnly: true,
+        sourceFields: ["actief"],
+      }] : [];
 
       return {
         success: true,
         data: {
           kvkNumber: cleanKvK,
-          startDate: this.formatKvKDate(data.datumAanvang),
-          isActive: data.actief === "J",
+          startDate: this.formatKvKDate(startDateRaw),
+          isActive: activeRaw === "J" ? true : activeRaw === "N" ? false : null,
           insolvencyStatus,
-          legalForm: data.rechtsvormCode,
-          postalCodeRegion: String(data.postcodeRegio).padStart(2, "0"),
+          legalForm,
+          postalCodeRegion,
           activities,
+          fieldProvenance: {
+            startDate: { sourceField: "datumAanvang", rawValue: startDateRaw },
+            activityStatus: { sourceField: "actief", rawValue: activeRaw },
+            insolvencyStatus: { sourceField: "insolventieCode", rawValue: insolvencyCode },
+            legalForm: { sourceField: "rechtsvormCode", rawValue: legalFormRaw },
+            postalCodeRegion: { sourceField: "postcodeRegio", rawValue: postalCodeRaw },
+          },
         },
-        legalSignificance,
+        source,
+        limitations,
+        reviewTriage,
       };
     } catch (error) {
       console.error("[KvK Integration] Error:", error);
       return {
         success: false,
         error: error instanceof Error ? error.message : "Unknown error occurred",
+        source,
       };
     }
   }
@@ -158,10 +242,12 @@ class KvKIntegrationService {
   /**
    * Format KvK date (YYYYMMDD with possible zeros) to readable format
    */
-  private formatKvKDate(kvkDate: string): string {
+  private formatKvKDate(kvkDate: string | null): string | null {
     if (!kvkDate || kvkDate === "00000000") {
-      return "Unknown date";
+      return null;
     }
+
+    if (!/^\d{8}$/.test(kvkDate)) return null;
 
     const year = kvkDate.substring(0, 4);
     const month = kvkDate.substring(4, 6);
@@ -177,43 +263,20 @@ class KvKIntegrationService {
     return `${year}-${month}-${day}`;
   }
 
-  /**
-   * Determine legal significance of KvK findings
-   */
-  private determineLegalSignificance(data: KvKCompanyData): string {
-    const findings: string[] = [];
+  private stringValue(value: unknown): string | null {
+    if (typeof value === "string") return value.trim() || null;
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    return null;
+  }
 
-    // Insolvency status
-    if (data.insolventieCode) {
-      const statusMap = {
-        FAIL: "Company is in bankruptcy - may affect ability to pay damages",
-        SSAN: "Company is in debt restructuring - financial difficulties confirmed",
-        SURS: "Company has suspension of payments - financial instability",
-      };
-      findings.push(statusMap[data.insolventieCode]);
-    }
-
-    // Inactive status
-    if (data.actief === "N") {
-      findings.push(
-        "Company is no longer active - may complicate enforcement of judgment"
-      );
-    }
-
-    // Recent establishment
-    const startYear = parseInt(data.datumAanvang.substring(0, 4));
-    const currentYear = new Date().getFullYear();
-    if (currentYear - startYear < 2) {
-      findings.push(
-        "Company recently established - limited track record, potential shell company"
-      );
-    }
-
-    if (findings.length === 0) {
-      return "Company appears to be in good standing with no insolvency proceedings.";
-    }
-
-    return findings.join(". ");
+  private buildSourceProvenance(kvkNumber: string): KvKSourceProvenance {
+    return {
+      provider: "Kamer van Koophandel (KvK)",
+      dataset: "Business Register Open Dataset - Basic Company Information",
+      recordUrl: `${this.BASE_URL}/kvknummer/${kvkNumber}`,
+      documentationUrl: "https://developers.kvk.nl/documentation/open-dataset-basis-bedrijfsgegevens-api",
+      retrievedAt: new Date().toISOString(),
+    };
   }
 
   /**
@@ -266,4 +329,3 @@ class KvKIntegrationService {
 }
 
 export const kvkIntegrationService = new KvKIntegrationService();
-
