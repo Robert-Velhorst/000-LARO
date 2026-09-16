@@ -1,6 +1,7 @@
 import { MAX_BOOTSTRAP_TOKEN_LENGTH } from "../signupPolicy";
 import { resolveOutboundEmailConfiguration } from "../emailConfig";
 import { assertRuntimeModeConfig, RuntimeModeConfigError, resolveRuntimeMode } from './runtimeMode';
+import { validateTrustedProxyCidrs } from '../clientIp';
 
 /**
  * Environment configuration
@@ -146,6 +147,11 @@ export function assertSecurityConfig(): string[] {
 
   if (ENV.isProd) {
     const failures: string[] = [];
+    try {
+      validateTrustedProxyCidrs(process.env.LARO_TRUSTED_PROXY_CIDRS);
+    } catch {
+      failures.push('LARO_TRUSTED_PROXY_CIDRS contains an invalid IP address, CIDR, or proxy-addr range name');
+    }
     if (ENV.isHosted) {
       try {
         assertRuntimeModeConfig(process.env);
@@ -216,6 +222,11 @@ export function assertSecurityConfig(): string[] {
   } else {
     if (jwtInsecure) warnings.push('JWT_SECRET is using an insecure development default — do NOT use in production.');
     if (cookieInsecure) warnings.push('COOKIE_SECRET is using an insecure development default — do NOT use in production.');
+    try {
+      validateTrustedProxyCidrs(process.env.LARO_TRUSTED_PROXY_CIDRS);
+    } catch {
+      warnings.push('LARO_TRUSTED_PROXY_CIDRS is invalid; forwarded addresses will not form a safe client identity.');
+    }
   }
 
   // Truthful startup summary of optional integrations (Phase 006 / Phase 004

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { assertCaseOwnership } from "../_core/authz";
+import { assertCaseAccess, assertCaseOwnership } from "../_core/authz";
 import { buildCaseReconstruction } from "../caseReconstruction";
 import { protectedProcedure, router } from "../_core/trpc";
 import { analyzeStoredEvidence, parseDocumentAnalysisResult } from "../documentAnalysisService";
@@ -103,7 +103,7 @@ export const documentAnalysisRouter = router({
   byCase: protectedProcedure
     .input(z.object({ caseId: z.string().min(1) }))
     .query(async ({ ctx, input }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id);
+      await assertCaseAccess(input.caseId, ctx.user.id);
       const db = await getDb();
       const rows = await db
         .select()
@@ -408,7 +408,7 @@ export const documentAnalysisRouter = router({
 });
 
 async function getCaseTimeline(userId: string, caseId: string) {
-      await assertCaseOwnership(caseId, userId);
+      await assertCaseAccess(caseId, userId);
       const db = await getDb();
       const [rows, persistedRows, evidenceRows] = await Promise.all([
         db

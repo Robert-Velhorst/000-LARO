@@ -19,8 +19,8 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
           cache: npm
@@ -121,14 +121,14 @@ jobs:
           "path=$($matches[0].FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
       - name: Sign in to Azure with GitHub OIDC
         if: startsWith(github.ref, 'refs/tags/') && vars.WINDOWS_SIGNING_PROVIDER == 'azure-artifact-signing'
-        uses: azure/login@v3
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Sign portable application with Azure Artifact Signing
         if: startsWith(github.ref, 'refs/tags/') && vars.WINDOWS_SIGNING_PROVIDER == 'azure-artifact-signing'
-        uses: azure/artifact-signing-action@v2
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
         with:
           endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
@@ -162,7 +162,7 @@ jobs:
           node scripts/verify-packaged-windows.mjs "--app=release/$version/win-unpacked/LARO Desktop.exe"
       - name: Upload packaged Windows verification
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: LARO-Windows-Verification
           path: out/windows-verification/
@@ -188,7 +188,7 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 $published).Hash.ToLowerInvariant()
           "$hash *$(Split-Path $published -Leaf)" | Set-Content "$published.sha256" -Encoding ascii
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: LARO-Desktop-Windows
           path: release-artifacts/*
@@ -203,12 +203,12 @@ jobs:
       contents: write
     steps:
       - name: Download Windows artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: LARO-Desktop-Windows
           path: release/windows
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           name: LARO Desktop ${{ github.ref_name }}
           body: |

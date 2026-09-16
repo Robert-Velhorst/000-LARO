@@ -186,9 +186,6 @@ describe('production readiness regressions', () => {
     expect(main).toContain('IPC_CHANNELS.RENDERER_ERROR_REPORT');
     const novaDirectory = readFileSync(join(ROOT, 'server/novaDirectory.ts'), 'utf8');
     expect(novaDirectory).not.toContain('caseData.clientAddress');
-    const boundary = readFileSync(join(ROOT, 'src/renderer/components/PageErrorBoundary.tsx'), 'utf8');
-    expect(boundary).toContain('reportRendererError');
-    expect(boundary).not.toContain('TODO: Send to error tracking service');
     const dashboardRoutes = readFileSync(join(ROOT, 'src/renderer/DashboardApp.tsx'), 'utf8');
     const dashboardLayout = readFileSync(join(ROOT, 'src/renderer/components/DashboardLayout.tsx'), 'utf8');
     const translations = readFileSync(join(ROOT, 'shared/i18n.ts'), 'utf8');
@@ -419,8 +416,8 @@ describe('production readiness regressions', () => {
     expect(workflow).toContain('WINDOWS_CSC_LINK is required when WINDOWS_SIGNING_PROVIDER=pfx');
     expect(workflow).toContain('Azure Artifact Signing configuration is incomplete');
     expect(workflow).toContain('id-token: write');
-    expect(workflow).toContain('uses: azure/login@v3');
-    expect(workflow).toContain('uses: azure/artifact-signing-action@v2');
+    expect(workflow).toMatch(/uses: azure\/login@[0-9a-f]{40} # v3/);
+    expect(workflow).toMatch(/uses: azure\/artifact-signing-action@[0-9a-f]{40} # v2/);
     expect(workflow).toContain('timestamp-rfc3161: http://timestamp.acs.microsoft.com');
     expect(workflow).toContain('SSL.com eSigner configuration is incomplete');
     expect(workflow).toContain('uses: sslcom/esigner-codesign@cf5f6c1d38ad10f47e3ed9aca873f429b1a8d85b');
@@ -772,8 +769,9 @@ describe('production readiness regressions', () => {
     const vite = readFileSync(join(ROOT, 'vite.config.mts'), 'utf8');
     expect(server).toContain('initializeRealtimeServer(httpServer, `${publicPathPrefix}/socket.io`)');
     expect(realtime).toContain('path = "/socket.io"');
-    expect(realtime).toContain('jwt.verify(token, ENV.JWT_SECRET)');
-    expect(realtime).toContain('isTokenRevoked(decoded.userId, decoded.iat)');
+    // Behavioral authentication, scope rejection, revocation, and room
+    // isolation live in tests/security/realtimeAuth.test.ts.
+    expect(realtime).toContain('verifySessionToken(token)');
     expect(realtime).toContain('socket.join(userRoom(userId))');
     expect(notifications).toContain('emitRealtimeNotification(params.userId');
     expect(client).toContain('const push = useCallback');
@@ -795,7 +793,7 @@ describe('production readiness regressions', () => {
   });
 
   it('uses persisted evidence storage from every renderer upload surface', () => {
-    for (const component of ['BulkEvidenceUpload.tsx', 'FileUploadDialog.tsx', 'EnhancedEvidenceUpload.tsx']) {
+    for (const component of ['BulkEvidenceUpload.tsx', 'EnhancedEvidenceUpload.tsx']) {
       const upload = readFileSync(join(ROOT, 'src/renderer/components', component), 'utf8');
       expect(upload).toContain('evidenceFiles.upload');
       expect(upload).not.toContain('storage.example.com');

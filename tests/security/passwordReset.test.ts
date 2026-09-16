@@ -1,11 +1,16 @@
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { AUDIT_ACTIONS } from "../../server/audit";
 import { hashPasswordResetCode } from "../../server/passwordResetSecurity";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 import { buildUser } from "../factories";
+import { createContext } from "../../server/context";
+import { ENV } from "../../server/_core/env";
+import { SESSION_COOKIE_NAME } from "../../server/sessionCookie";
+import { revokeUserSessions } from "../../server/sessionRevocation";
 
 const suite = sqliteAvailable ? describe : describe.skip;
 
@@ -65,5 +70,24 @@ suite("password reset security", () => {
       .where(eq(app.schema.auditLogs.action, AUDIT_ACTIONS.USER_PASSWORD_RESET));
     expect(auditRows).toHaveLength(1);
     expect(auditRows[0]).toMatchObject({ userId, entityId: userId });
+  });
+
+  it("rejects a revoked session cookie at the live request-context boundary", async () => {
+    const token = jwt.sign({ userId }, ENV.JWT_SECRET, {
+      algorithm: "HS256",
+      expiresIn: "15m",
+    });
+    await revokeUserSessions(userId, new Date());
+
+    const req = {
+      cookies: { [SESSION_COOKIE_NAME]: token },
+      headers: {},
+      socket: { remoteAddress: "127.0.0.1" },
+      get: () => undefined,
+    } as any;
+    const context = await createContext({ req, res: {} as any });
+
+    expect(context.user).toBeNull();
+    expect(context.authScope).toBeUndefined();
   });
 });

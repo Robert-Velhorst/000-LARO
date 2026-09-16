@@ -7,5 +7,5 @@
     "outDir": "dist/renderer",
     "noEmit": false
   },
-  "include": ["src/renderer/main.tsx", "src/renderer/vite-env.d.ts", "shared/**/*"]
+  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "shared/**/*"]
 }

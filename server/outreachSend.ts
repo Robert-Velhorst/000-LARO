@@ -31,7 +31,7 @@ import { getFlag } from "./featureFlags";
 import { assertNotEmergencyStopped } from "./systemState";
 import { assertOutreachTransition } from "./stateMachines";
 import { createAuditLog, AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
-import { assertCaseOwnership } from "./_core/authz";
+import { assertCaseCapability, assertCaseOwnership } from "./_core/authz";
 import { createNotification } from "./notifications";
 import { readApprovedOutreachMessage, readOutreachMetadata } from "./outreachApproval";
 import { compareAndSetCaseStatusInTransaction } from "./caseTransitions";
@@ -325,7 +325,7 @@ export async function sendApprovedOutreach(
   }
 
   // Gate 3 — ownership.
-  await assertCaseOwnership(row.caseId, userId);
+  await assertCaseCapability(row.caseId, userId, "outreach.send");
 
   // Gate 4 — idempotency: already sent? Return without re-sending.
   const guardKey = `${SENT_GUARD_PREFIX}${outreachId}`;

@@ -1,42 +1,48 @@
 import { z } from "zod";
-import { router, protectedProcedure } from "../_core/trpc";
-import { getDb } from "../db";
-import { users } from "../schema";
-import { eq, inArray } from "drizzle-orm";
-import { getTeamMembers, addTeamMember, removeTeamMember } from "../teams";
+import { protectedProcedure, router } from "../_core/trpc";
+import {
+  acceptCaseInvitation,
+  CASE_SHARE_CAPABILITIES,
+  CASE_SHARE_ROLES,
+  inviteCaseMember,
+  listCaseShares,
+  listIncomingInvitations,
+  revokeCaseShare,
+  updateCaseShare,
+} from "../teams";
 
-/**
- * Phase 106 — team management. The caller is the owner of their own team; they can
- * add/remove members by email. Members gain shared access to the owner's cases
- * (enforced in assertCaseOwnership).
- */
+const roleSchema = z.enum(CASE_SHARE_ROLES);
+const capabilitySchema = z.enum(CASE_SHARE_CAPABILITIES);
+const sharePolicySchema = z.object({
+  role: roleSchema.default("read_only"),
+  capabilities: z.array(capabilitySchema).max(CASE_SHARE_CAPABILITIES.length).default([]),
+});
+
+/** Per-case invitations and least-privilege collaboration policies. */
 export const teamsRouter = router({
-  listMembers: protectedProcedure.query(async ({ ctx }) => {
-    const db = await getDb();
-    const ids = await getTeamMembers(ctx.user.id);
-    if (!db || ids.length === 0) return [] as Array<{ id: string; email: string; name: string }>;
-    const rows = await db.select({ id: users.id, email: users.email, name: users.name })
-      .from(users)
-      .where(inArray(users.id, ids));
-    const byId = new Map(rows.map((row) => [row.id, row]));
-    return ids.map((id) => {
-      const user = byId.get(id);
-      return { id, email: user?.email || "", name: user?.name || "" };
-    });
-  }),
-  addMember: protectedProcedure.input(z.object({ email: z.string().email() })).mutation(async ({ ctx, input }) => {
-    const db = await getDb();
-    if (!db) throw new Error("Database not available");
-    const target = (await db.select().from(users).where(eq(users.email, input.email)).limit(1))[0];
-    if (!target) {
-      const { TRPCError } = await import("@trpc/server");
-      throw new TRPCError({ code: "NOT_FOUND", message: "No user with that email." });
-    }
-    const list = await addTeamMember(ctx.user.id, (target as any).id);
-    return { members: list };
-  }),
-  removeMember: protectedProcedure.input(z.object({ userId: z.string() })).mutation(async ({ ctx, input }) => {
-    const list = await removeTeamMember(ctx.user.id, input.userId);
-    return { members: list };
-  }),
+  listShares: protectedProcedure
+    .input(z.object({ caseId: z.string().min(1) }))
+    .query(({ ctx, input }) => listCaseShares(ctx.user.id, input.caseId)),
+
+  listInvitations: protectedProcedure
+    .query(({ ctx }) => listIncomingInvitations(ctx.user.id)),
+
+  invite: protectedProcedure
+    .input(z.object({
+      caseId: z.string().min(1),
+      email: z.string().trim().email(),
+    }).merge(sharePolicySchema))
+    .mutation(({ ctx, input }) => inviteCaseMember({ ownerId: ctx.user.id, ...input })),
+
+  accept: protectedProcedure
+    .input(z.object({ shareId: z.string().min(1) }))
+    .mutation(({ ctx, input }) => acceptCaseInvitation(ctx.user.id, input.shareId)),
+
+  update: protectedProcedure
+    .input(z.object({ shareId: z.string().min(1) }).merge(sharePolicySchema))
+    .mutation(({ ctx, input }) => updateCaseShare({ ownerId: ctx.user.id, ...input })),
+
+  revoke: protectedProcedure
+    .input(z.object({ shareId: z.string().min(1) }))
+    .mutation(({ ctx, input }) => revokeCaseShare(ctx.user.id, input.shareId)),
 });

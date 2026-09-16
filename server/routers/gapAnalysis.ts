@@ -1,5 +1,5 @@
 import { router, protectedProcedure } from "../_core/trpc";
-import { assertCaseOwnership } from "../_core/authz";
+import { assertCaseAccess, assertCaseOwnership } from "../_core/authz";
 import { z } from "zod";
 import { gapDetectionService } from "../gapDetection";
 import { kvkIntegrationService } from "../kvkIntegration";
@@ -57,7 +57,7 @@ export const gapAnalysisRouter = router({
   getGaps: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id);
+      await assertCaseAccess(input.caseId, ctx.user.id);
       const db = await getDb();
       if (!db) return [];
 
@@ -104,7 +104,7 @@ export const gapAnalysisRouter = router({
   getExpectedDocuments: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id);
+      await assertCaseAccess(input.caseId, ctx.user.id);
       const db = await getDb();
       if (!db) return [];
 
@@ -125,7 +125,7 @@ export const gapAnalysisRouter = router({
   getPatterns: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id);
+      await assertCaseAccess(input.caseId, ctx.user.id);
       const db = await getDb();
       if (!db) return [];
 
@@ -159,7 +159,7 @@ export const gapAnalysisRouter = router({
   getInferences: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id);
+      await assertCaseAccess(input.caseId, ctx.user.id);
       const db = await getDb();
       if (!db) return [];
 
@@ -206,7 +206,7 @@ export const gapAnalysisRouter = router({
   getCaseStrength: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id);
+      await assertCaseAccess(input.caseId, ctx.user.id);
       const db = await getDb();
       if (!db) return null;
 
@@ -235,7 +235,7 @@ export const gapAnalysisRouter = router({
   getSummary: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id);
+      await assertCaseAccess(input.caseId, ctx.user.id);
       const db = await getDb();
       if (!db) {
         return {
@@ -604,4 +604,3 @@ export const gapAnalysisRouter = router({
       };
     }),
 });
-

@@ -52,9 +52,15 @@ suite('Phase 044 — acceptance criteria', () => {
   });
 
   it('AC5 — generated legal content carries a disclaimer', async () => {
-    // The disclaimer constant is applied by gapAnalysis.generateDocument.
     const { LEGAL_DISCLAIMER } = await import('../../shared/const');
-    expect(LEGAL_DISCLAIMER.length).toBeGreaterThan(0);
+    const result = await app.makeCaller(U).gapAnalysis.generateDocument({
+      caseId,
+      documentType: 'demand_letter',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.disclaimer).toBe(LEGAL_DISCLAIMER);
+    expect(result.document?.content).toContain(LEGAL_DISCLAIMER);
   });
 
   it('AC6 — a user can export and erase their data (GDPR)', async () => {

@@ -3,15 +3,15 @@ import { TRPCError } from "@trpc/server";
 import { nanoid } from "nanoid";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { assertCaseOwnership } from "../_core/authz";
+import { assertCaseAccess, assertCaseCapability, assertCaseOwnership } from "../_core/authz";
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
 import { createAuditLog, AUDIT_ACTIONS, writeAuditLogOrThrow } from "../audit";
 import { createNotification } from "../notifications";
 import { getFlag } from "../featureFlags";
 import { assertNotEmergencyStopped } from "../systemState";
 import { assertOutreachTransition } from "../stateMachines";
-import { cases as casesTable, outreachStatus, lawyers } from '../schema';
-import { eq, and, inArray, isNull } from "drizzle-orm";
+import { caseShares, cases as casesTable, outreachStatus, lawyers } from '../schema';
+import { eq, and, inArray, isNull, or, sql } from "drizzle-orm";
 import { findCaseLawyersWithOfficialDirectory } from "../matching";
 import { getWorkflowPreferences } from "../workflowPreferences";
 import { approveOutreachMessage, buildOutreachMessage, readApprovedOutreachMessage, readOutreachMetadata } from "../outreachApproval";
@@ -212,7 +212,19 @@ export const workflowRouter = router({
       const ownCases = await db
         .select({ id: casesTable.id, clientName: casesTable.clientName })
         .from(casesTable)
-        .where(eq(casesTable.userId, ctx.user.id));
+        .where(or(
+          eq(casesTable.userId, ctx.user.id),
+          sql`${casesTable.id} IN (
+            SELECT ${caseShares.caseId}
+            FROM ${caseShares}
+            WHERE ${caseShares.memberId} = ${ctx.user.id}
+              AND ${caseShares.status} = 'accepted'
+              AND EXISTS (
+                SELECT 1 FROM json_each(${caseShares.capabilities})
+                WHERE value = 'outreach.approve'
+              )
+          )`,
+        ));
       const allowed = new Set(ownCases.map((c) => c.id));
       const caseIds = input?.caseId
         ? (allowed.has(input.caseId) ? [input.caseId] : [])
@@ -329,7 +341,7 @@ export const workflowRouter = router({
           .limit(1)
       )[0];
       if (!row || !row.caseId) throw new Error("Outreach draft not found");
-      await assertCaseOwnership(row.caseId, ctx.user.id);
+      await assertCaseAccess(row.caseId, ctx.user.id);
 
       const caseRow = (await db.select().from(casesTable).where(eq(casesTable.id, row.caseId)).limit(1))[0];
       const sendEnabled = await getFlag("outreach.send.enabled");
@@ -383,7 +395,7 @@ async function prepareDraftStatus(
   )[0];
   if (!row || !row.caseId) throw new Error("Outreach draft not found");
 
-  await assertCaseOwnership(row.caseId, userId);
+  await assertCaseCapability(row.caseId, userId, "outreach.approve");
   assertOutreachTransition(row.status ?? null, newStatus);
   const updatedAt = new Date();
   let metadata = row.metadata;

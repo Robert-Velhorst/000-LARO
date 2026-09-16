@@ -1,9 +1,8 @@
 import { type Request, type Response } from "express";
-import jwt from "jsonwebtoken";
 import { SESSION_COOKIE_NAME as COOKIE_NAME } from "./sessionCookie";
-import { ENV } from "./_core/env";
 import { getUser } from "./db";
 import { isDesktopScannerRequest } from "./desktopScannerAuth";
+import { verifySessionToken } from "./sessionAuth";
 
 export type AuthScope = "session";
 
@@ -14,8 +13,6 @@ export interface TrpcContext {
   authScope?: AuthScope;
   desktopScanner: boolean;
 }
-
-type TokenClaims = { userId: string; iat?: number };
 
 export const createContext = async ({
   req,
@@ -30,17 +27,10 @@ export const createContext = async ({
   const desktopScanner = isDesktopScannerRequest(req);
 
   if (sessionToken) {
-    try {
-      const decoded = jwt.verify(sessionToken, ENV.JWT_SECRET, {
-        algorithms: ["HS256"],
-      }) as TokenClaims;
-      const { isTokenRevoked } = await import("./sessionRevocation");
-      if (!(await isTokenRevoked(decoded.userId, decoded.iat))) {
-        userId = decoded.userId;
-        authScope = "session";
-      }
-    } catch (error) {
-      console.error("[Auth] Session verification failed:", error);
+    const claims = await verifySessionToken(sessionToken);
+    if (claims) {
+      userId = claims.userId;
+      authScope = "session";
     }
   }
 

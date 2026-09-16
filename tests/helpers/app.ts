@@ -29,6 +29,7 @@ export interface TestApp {
     user: { id: string; name?: string; role?: string; email?: string | null } | null,
     authScope?: "session",
     desktopScanner?: boolean,
+    request?: { headers?: Record<string, string>; remoteAddress?: string },
   ) => any;
   cleanup: () => void;
 }
@@ -64,8 +65,15 @@ export async function bootTestApp(): Promise<TestApp> {
 
   const db = await dbmod.getDb();
 
-  const makeCaller = (user: any, authScope: "session" = "session", desktopScanner = false) => {
+  const makeCaller = (
+    user: any,
+    authScope: "session" = "session",
+    desktopScanner = false,
+    request?: { headers?: Record<string, string>; remoteAddress?: string },
+  ) => {
     const { req, res } = fakeReqRes();
+    if (request?.headers) req.headers = { ...request.headers };
+    if (request?.remoteAddress) req.socket.remoteAddress = request.remoteAddress;
     return appRouter.createCaller({ req, res, user, authScope, desktopScanner });
   };
 

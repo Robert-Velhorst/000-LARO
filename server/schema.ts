@@ -122,6 +122,39 @@ export const cases = sqliteTable(
   })
 );
 
+/**
+ * Per-case collaboration grants.
+ *
+ * Invitations remain inert until the invited account accepts them.  Access is
+ * expressed as a small capability set instead of treating every collaborator
+ * as an owner.  The API validates the role/capability vocabulary on every
+ * write; the migration also adds database-level CHECK constraints.
+ */
+export const caseShares = sqliteTable(
+  "case_shares",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("caseId").notNull().references(() => cases.id, { onDelete: "cascade" }),
+    ownerId: text("ownerId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    memberId: text("memberId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    capabilities: text("capabilities").notNull(),
+    status: text("status").notNull().default("pending"),
+    invitedAt: integer("invitedAt", { mode: "timestamp" }).notNull(),
+    acceptedAt: integer("acceptedAt", { mode: "timestamp" }),
+    revokedAt: integer("revokedAt", { mode: "timestamp" }),
+    updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+  },
+  (table) => ({
+    caseMemberUnique: uniqueIndex("case_shares_case_member_unique").on(table.caseId, table.memberId),
+    ownerStatusIdx: index("case_shares_owner_status_idx").on(table.ownerId, table.status),
+    memberStatusIdx: index("case_shares_member_status_idx").on(table.memberId, table.status),
+    caseStatusIdx: index("case_shares_case_status_idx").on(table.caseId, table.status),
+  }),
+);
+
+export type CaseShare = typeof caseShares.$inferSelect;
+
 export const evidence = sqliteTable(
   "evidence",
   {

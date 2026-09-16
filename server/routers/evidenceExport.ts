@@ -3,7 +3,7 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { AUDIT_ACTIONS, createAuditLog } from "../audit";
 import { buildCaseCsv, issueCaseZipDownloadTicket } from "../evidenceExport";
-import { assertCaseOwnership } from "../_core/authz";
+import { assertCaseAccess } from "../_core/authz";
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
 
 function encodedDownload(filename: string, mimeType: string, buffer: Buffer) {
@@ -40,7 +40,7 @@ export const evidenceExportRouter = router({
     .input(z.object({ caseId: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
       enforceRateLimit(ctx, "evidence-export", RATE_LIMITS.evidenceExport);
-      await assertCaseOwnership(input.caseId, ctx.user.id);
+      await assertCaseAccess(input.caseId, ctx.user.id);
       const ticket = issueCaseZipDownloadTicket(ctx.user.id, input.caseId);
       return {
         filename: `case-${input.caseId}-evidence.zip`,

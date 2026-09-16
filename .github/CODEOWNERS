@@ -1,0 +1,13 @@
+# The repository owner approves changes to maintained product and release paths.
+/server/ @Robert-Velhorst
+/src-main/ @Robert-Velhorst
+/src/renderer/ @Robert-Velhorst
+/shared/ @Robert-Velhorst
+/drizzle/ @Robert-Velhorst
+/scripts/ @Robert-Velhorst
+/.github/workflows/ @Robert-Velhorst
+/Dockerfile @Robert-Velhorst
+/docker-compose.yml @Robert-Velhorst
+/docs/PROCESS_RULES.md @Robert-Velhorst
+/docs/DEFINITION_OF_DONE.md @Robert-Velhorst
+/docs/OPERATOR_RUNBOOK.md @Robert-Velhorst

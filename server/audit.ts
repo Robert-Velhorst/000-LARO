@@ -88,6 +88,10 @@ export const AUDIT_ACTIONS = {
   CASE_UPDATED: "case.updated",
   CASE_DELETED: "case.deleted",
   CASE_STATUS_CHANGED: "case.status_changed",
+  CASE_SHARE_INVITED: "case.share_invited",
+  CASE_SHARE_ACCEPTED: "case.share_accepted",
+  CASE_SHARE_UPDATED: "case.share_updated",
+  CASE_SHARE_REVOKED: "case.share_revoked",
   
   // Lawyer actions
   LAWYER_CREATED: "lawyer.created",
@@ -123,4 +127,3 @@ export const AUDIT_ACTIONS = {
   SETTINGS_CHANGED: "settings.changed",
   SCRAPER_RUN: "scraper.run",
 } as const;
-

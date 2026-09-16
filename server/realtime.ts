@@ -1,11 +1,9 @@
 import type { Server as HttpServer } from "http";
-import jwt from "jsonwebtoken";
 import { Server } from "socket.io";
 
 import { SESSION_COOKIE_NAME as COOKIE_NAME } from "./sessionCookie";
-import { ENV } from "./_core/env";
 import { getUser } from "./db";
-import { isTokenRevoked } from "./sessionRevocation";
+import { verifySessionToken } from "./sessionAuth";
 
 type RealtimeNotification = {
   title: string;
@@ -55,13 +53,11 @@ export function initializeRealtimeServer(
     if (!token) return next(new Error("UNAUTHORIZED"));
 
     try {
-      const decoded = jwt.verify(token, ENV.JWT_SECRET) as { userId: string; iat?: number };
-      if (await isTokenRevoked(decoded.userId, decoded.iat)) {
-        return next(new Error("UNAUTHORIZED"));
-      }
-      const user = await getUser(decoded.userId);
+      const claims = await verifySessionToken(token);
+      if (!claims) return next(new Error("UNAUTHORIZED"));
+      const user = await getUser(claims.userId);
       if (!user) return next(new Error("UNAUTHORIZED"));
-      socket.data.userId = decoded.userId;
+      socket.data.userId = claims.userId;
       next();
     } catch {
       next(new Error("UNAUTHORIZED"));

@@ -4,10 +4,10 @@ import { applyHostedMigrations, readHostedMigrations } from '../../server/persis
 describe('hosted PostgreSQL migrations', () => {
   it('provides a PostgreSQL baseline for every core public-workspace domain', () => {
     const migrations = readHostedMigrations();
-    expect(migrations).toHaveLength(1);
+    expect(migrations).toHaveLength(2);
 
-    const sql = migrations[0].sql;
-    expect(migrations[0].checksum).toMatch(/^[a-f0-9]{64}$/);
+    const sql = migrations.map((migration) => migration.sql).join('\n');
+    expect(migrations.every((migration) => /^[a-f0-9]{64}$/.test(migration.checksum))).toBe(true);
     for (const table of [
       'users',
       'cases',
@@ -17,6 +17,7 @@ describe('hosted PostgreSQL migrations', () => {
       'outreach_status',
       'audit_logs',
       'storage_deletion_queue',
+      'case_shares',
     ]) {
       expect(sql).toContain(`CREATE TABLE IF NOT EXISTS "${table}"`);
     }
@@ -36,12 +37,15 @@ describe('hosted PostgreSQL migrations', () => {
         }),
     };
 
-    await expect(applyHostedMigrations(database)).resolves.toEqual(['0001_laro_baseline.sql']);
+    await expect(applyHostedMigrations(database)).resolves.toEqual([
+      '0001_laro_baseline.sql',
+      '0002_case_shares.sql',
+    ]);
     expect(queries[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS laro_schema_migrations');
     expect(queries.some((query) => query.sql.includes('CREATE TABLE IF NOT EXISTS "users"'))).toBe(true);
     expect(queries.at(-1)).toMatchObject({
       sql: expect.stringContaining('INSERT INTO laro_schema_migrations'),
-      values: ['0001_laro_baseline.sql', expect.stringMatching(/^[a-f0-9]{64}$/)],
+      values: ['0002_case_shares.sql', expect.stringMatching(/^[a-f0-9]{64}$/)],
     });
   });
 

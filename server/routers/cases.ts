@@ -2,10 +2,10 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "../_core/trpc";
 import { getDb } from "../db";
-import { assertCaseOwnership } from "../_core/authz";
+import { assertCaseAccess, assertCaseOwnership } from "../_core/authz";
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
 import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "../audit";
-import { cases as casesTable, outreachStatus, lawyers, evidence, systemConfig } from '../schema';
+import { caseShares, cases as casesTable, outreachStatus, lawyers, evidence, systemConfig } from '../schema';
 import { eq, desc, asc, and, or, inArray, gte, sql, type SQL } from "drizzle-orm";
 import { sanitizeLegalAreas } from "../legalAreasValidator";
 import { classifyLegalAreas } from "../classification";
@@ -45,7 +45,15 @@ export const casesRouter = router({
       const limit = input?.limit || 10;
       const offset = (page - 1) * limit;
 
-      const conditions: SQL[] = [eq(casesTable.userId, userId)];
+      const conditions: SQL[] = [or(
+        eq(casesTable.userId, userId),
+        sql`${casesTable.id} IN (
+          SELECT ${caseShares.caseId}
+          FROM ${caseShares}
+          WHERE ${caseShares.memberId} = ${userId}
+            AND ${caseShares.status} = 'accepted'
+        )`,
+      )!];
       if (input?.status) conditions.push(eq(casesTable.status, input.status));
       if (input?.statusGroup) {
         const groups = {
@@ -121,7 +129,13 @@ export const casesRouter = router({
     .query(async ({ input: caseId, ctx }) => {
       const db = await getDb();
       if (!db) return null;
-      const result = await db.select().from(casesTable).where(and(eq(casesTable.id, caseId), eq(casesTable.userId, ctx.user.id))).limit(1);
+      try {
+        await assertCaseAccess(caseId, ctx.user.id);
+      } catch (error) {
+        if (error instanceof TRPCError && error.code === "FORBIDDEN") return null;
+        throw error;
+      }
+      const result = await db.select().from(casesTable).where(eq(casesTable.id, caseId)).limit(1);
       if (!result.length) return null;
       return result[0];
     }),
@@ -182,7 +196,7 @@ export const casesRouter = router({
   export: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id);
+      await assertCaseAccess(input.caseId, ctx.user.id);
       const db = await getDb();
       if (!db) throw new Error("Database not available");
 
@@ -206,7 +220,7 @@ export const casesRouter = router({
     .input(z.object({ caseId: z.string() }))
     .mutation(async ({ input, ctx }) => {
       enforceRateLimit(ctx, "evidence-export", RATE_LIMITS.evidenceExport);
-      await assertCaseOwnership(input.caseId, ctx.user.id);
+      await assertCaseAccess(input.caseId, ctx.user.id);
       const { issueCaseZipDownloadTicket } = await import("../evidenceExport");
       const ticket = issueCaseZipDownloadTicket(ctx.user.id, input.caseId);
       return {
@@ -444,7 +458,7 @@ export const casesRouter = router({
   outreachProgress: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id); // Phase 008
+      await assertCaseAccess(input.caseId, ctx.user.id); // owner or accepted case share
       const db = await getDb();
       if (!db) return { legalAreas: [], overallStats: {} };
 
@@ -499,7 +513,7 @@ export const casesRouter = router({
   getOutreachByCaseId: protectedProcedure
     .input(z.string())
     .query(async ({ input: caseId, ctx }) => {
-      await assertCaseOwnership(caseId, ctx.user.id); // Phase 008
+      await assertCaseAccess(caseId, ctx.user.id); // owner or accepted case share
       const db = await getDb();
       if (!db) return [];
 
@@ -528,7 +542,7 @@ export const casesRouter = router({
   progress: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id); // Phase 008
+      await assertCaseAccess(input.caseId, ctx.user.id); // owner or accepted case share
       const empty = {
         caseId: input.caseId,
         caseTitle: "",

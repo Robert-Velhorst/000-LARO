@@ -2,18 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { createHostedCaseRepository, createHostedDocumentAnalysisRepository, createHostedEvidenceRepository, createHostedTeamRepository, createHostedUserRepository } from '../../server/persistence/hostedCaseRepository';
 
 describe('hosted case repository', () => {
-  it('checks team membership using only the owner-scoped configuration key', async () => {
+  it('checks an accepted per-case share instead of global team configuration', async () => {
     const queries: Array<{ sql: string; values?: unknown[] }> = [];
     const repository = createHostedTeamRepository({
       query: async (sql, values) => {
         queries.push({ sql, values });
-        return { rows: [{ configValue: '["member-a"]' }] };
+        return { rows: values?.[2] === 'member-a' ? [{ id: 'share-a' }] : [] };
       },
     });
 
-    await expect(repository.hasCaseAccess('owner-a', 'member-a')).resolves.toBe(true);
-    await expect(repository.hasCaseAccess('owner-a', 'stranger')).resolves.toBe(false);
-    expect(queries[0]).toMatchObject({ values: ['team:owner-a:members'] });
+    await expect(repository.hasCaseAccess('case-a', 'owner-a', 'member-a')).resolves.toBe(true);
+    await expect(repository.hasCaseAccess('case-a', 'owner-a', 'stranger')).resolves.toBe(false);
+    expect(queries[0]).toMatchObject({
+      sql: expect.stringContaining('FROM "case_shares"'),
+      values: ['case-a', 'owner-a', 'member-a'],
+    });
   });
 
   it('finds an account by email through a parameterized exact match', async () => {

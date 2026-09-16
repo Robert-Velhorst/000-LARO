@@ -492,6 +492,7 @@ export async function getDb() {
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0015_document_sources.sql"), "utf8"));
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0017_case_action_proposals.sql"), "utf8"));
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0018_case_action_evidence.sql"), "utf8"));
+        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0019_case_shares.sql"), "utf8"));
         const inboxColumns = new Set((sqlite.prepare('PRAGMA table_info("document_inbox")').all() as Array<{ name: string }>).map((column) => column.name));
         if (!inboxColumns.has("sourceType")) sqlite.exec("ALTER TABLE document_inbox ADD COLUMN sourceType text NOT NULL DEFAULT 'manual'");
         if (!inboxColumns.has("provenance")) sqlite.exec("ALTER TABLE document_inbox ADD COLUMN provenance text");
@@ -1136,4 +1137,3 @@ export function passesMandatoryFilters(lawyer: any): boolean {
   
   return true;
 }
-

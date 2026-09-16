@@ -5,11 +5,13 @@
  * to exercise directly. The rest are asserted at source level (a DB harness for
  * routers arrives in Phase 040).
  */
-import { describe, it, expect, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { checkRateLimit, getRateLimitIdentifier, RATE_LIMITS } from '../../server/rateLimit';
+import { checkRateLimit, RATE_LIMITS } from '../../server/rateLimit';
+import { resolveClientIp } from '../../server/clientIp';
 import { runJob, getJobStatus } from '../../server/cronScheduler';
+import { bootTestApp, sqliteAvailable, type TestApp } from '../helpers/app';
 
 const ROOT = join(__dirname, '..', '..');
 const read = (rel: string) => readFileSync(join(ROOT, rel), 'utf8');
@@ -32,13 +34,54 @@ describe('Phase 018 — rate limiter enforces the window', () => {
     expect(RATE_LIMITS.lawyerSearch.maxRequests).toBeGreaterThan(0);
   });
 
-  it('uses the proxy-appended client address instead of a spoofed left edge', () => {
-    expect(getRateLimitIdentifier({
-      req: {
-        headers: { 'x-forwarded-for': '203.0.113.250, 198.51.100.42' },
-        socket: { remoteAddress: '127.0.0.1' },
-      },
-    })).toBe('ip:198.51.100.42');
+  it('ignores forged forwarded addresses from a direct client', () => {
+    expect(resolveClientIp({
+      headers: { 'x-forwarded-for': '203.0.113.250' },
+      socket: { remoteAddress: '198.51.100.10' },
+    }, 'loopback')).toBe('198.51.100.10');
+  });
+
+  it('walks a configured trusted proxy chain to the first untrusted client', () => {
+    expect(resolveClientIp({
+      headers: { 'x-forwarded-for': '203.0.113.250, 198.51.100.42' },
+      socket: { remoteAddress: '127.0.0.1' },
+    }, 'loopback,198.51.100.0/24')).toBe('203.0.113.250');
+  });
+});
+
+const rateLimitSuite = sqliteAvailable ? describe : describe.skip;
+
+rateLimitSuite('Phase 018 — unauthenticated live rate-limit boundary', () => {
+  let app: TestApp;
+  const originalProxySpec = process.env.LARO_TRUSTED_PROXY_CIDRS;
+
+  beforeAll(async () => {
+    delete process.env.LARO_TRUSTED_PROXY_CIDRS;
+    app = await bootTestApp();
+  });
+
+  afterEach(() => {
+    delete process.env.LARO_TRUSTED_PROXY_CIDRS;
+  });
+
+  afterAll(() => {
+    app?.cleanup();
+    if (originalProxySpec === undefined) delete process.env.LARO_TRUSTED_PROXY_CIDRS;
+    else process.env.LARO_TRUSTED_PROXY_CIDRS = originalProxySpec;
+  });
+
+  it('cannot rotate the password-reset bucket with forged forwarded headers', async () => {
+    const attempt = (forgedIp: string) => app.makeCaller(
+      null,
+      'session',
+      false,
+      { headers: { 'x-forwarded-for': forgedIp }, remoteAddress: '203.0.113.9' },
+    ).auth.requestPasswordReset({ email: 'missing-proxy-rate-limit@example.com' });
+
+    for (let i = 0; i < RATE_LIMITS.passwordResetRequest.maxRequests; i += 1) {
+      await expect(attempt(`198.51.100.${i + 1}`)).resolves.toEqual({ success: true });
+    }
+    await expect(attempt('198.51.100.250')).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 });
 
