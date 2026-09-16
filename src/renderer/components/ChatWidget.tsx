@@ -27,6 +27,8 @@ interface Message {
   timestamp: Date;
   citations?: MessageCitation[];
   notice?: string | null;
+  mode?: string;
+  grounded?: boolean;
 }
 
 export function useChatSession() {
@@ -114,6 +116,8 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
           timestamp: new Date(),
           citations: result.citations,
           notice: result.notice,
+          mode: result.mode,
+          grounded: result.grounded,
         };
         setMessages(prev => [...prev, response]);
       } catch {
@@ -189,6 +193,11 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
               </div>
               <div>
                 <CardTitle className="text-base">LARO Assistant</CardTitle>
+                {!isMinimized && (
+                  <p className="text-xs text-muted-foreground">
+                    {caseId ? "Source-grounded case mode" : "Product help mode"}
+                  </p>
+                )}
                 {pendingCount > 0 && !isMinimized && (
                   <p className="text-xs text-muted-foreground">
                     {pendingCount} pending question{pendingCount > 1 ? "s" : ""}
@@ -265,6 +274,11 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
                           : "bg-muted text-foreground"
                       }`}
                     >
+                      {msg.role === "assistant" && msg.mode ? (
+                        <Badge variant="outline" className="mb-2 text-[10px]">
+                          {assistantModeLabel(msg.mode, Boolean(msg.grounded))}
+                        </Badge>
+                      ) : null}
                       <p className="whitespace-pre-wrap break-words text-sm">{msg.content}</p>
                       {msg.notice ? (
                         <p className="mt-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
@@ -308,7 +322,7 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     onKeyPress={handleKeyPress}
-                    placeholder="Type your message..."
+                    placeholder={caseId ? "Ask about the selected case..." : "Ask how to use LARO..."}
                     aria-label="Message LARO assistant"
                     className="flex-1"
                   />
@@ -324,7 +338,9 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">
-                  Case answers use analyzed documents when a case is selected. Verify the linked sources before relying on them.
+                  {caseId
+                    ? "Case answers use analyzed owned documents. Verify the linked sources before relying on them."
+                    : "Product help only. Select a case for source-grounded case questions; uncited legal conclusions are unavailable."}
                 </p>
               </div>
             </>
@@ -335,3 +351,12 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
   );
 }
 
+function assistantModeLabel(mode: string, grounded: boolean): string {
+  if (grounded && mode === "provider") return "Grounded case analysis";
+  if (grounded && mode === "retrieval") return "Grounded source summary";
+  if (mode === "product_help") return "Product help";
+  if (mode === "case_required") return "Case selection required";
+  if (mode === "no_sources") return "Case sources unavailable";
+  if (mode === "no_match") return "No source match";
+  return "Unavailable";
+}

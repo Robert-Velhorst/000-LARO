@@ -71,9 +71,8 @@ import { getUser, getDb } from "../db";
 import { users, cases, systemConfig } from "../schema";
 import { and, count, eq, gte, lt } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { invokeLLM, isLLMProviderConfigured } from "../llm";
 import { answerCaseQuestion } from "../caseAssistant";
-import { getWorkflowPreferences } from "../workflowPreferences";
+import { answerProductQuestion } from "../productAssistant";
 import { extractImageText } from "../ocr";
 import {
   isSupportedImageOcrMimeType,
@@ -582,54 +581,7 @@ export const appRouter = router({
           });
         }
 
-        try {
-          const preferences = await getWorkflowPreferences(ctx.user.id);
-          const provider = preferences.analysisProvider === "local" ? null : preferences.analysisProvider;
-          if (!provider || !isLLMProviderConfigured(provider)) {
-            return {
-              answer: "General AI guidance is disabled while local analysis is selected. Select a configured external provider in Settings to enable it.",
-              citations: [],
-              grounded: false,
-              mode: "local" as const,
-              notice: "No case is selected and no external provider was used.",
-            };
-          }
-          const result = await invokeLLM({
-            provider,
-            messages: [
-              {
-                role: "system",
-                content: "You are LARO, a legal assistant for general product and legal-workflow guidance. If the user asks case-specific questions without a selected case, ask them to open a case first.",
-              },
-              { role: "user", content: input.question },
-            ],
-            maxTokens: 700,
-          });
-          const content = result.choices?.[0]?.message?.content;
-          const text =
-            typeof content === "string"
-              ? content
-              : Array.isArray(content)
-                ? content
-                    .map((part: any) => (part?.type === "text" ? part.text : ""))
-                    .join("\n")
-                : "";
-          return {
-            answer: text || "I could not generate an answer right now. Please try again.",
-            citations: [],
-            grounded: false,
-            mode: "general" as const,
-            notice: "No case is selected, so case evidence was not used.",
-          };
-        } catch {
-          return {
-            answer: "I am currently unable to reach the AI service. Please try again in a moment.",
-            citations: [],
-            grounded: false,
-            mode: "general" as const,
-            notice: "No case is selected, so case evidence was not used.",
-          };
-        }
+        return answerProductQuestion(input.question);
       }),
   }),
   
