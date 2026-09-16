@@ -19,7 +19,6 @@ export function buildUser(over: Record<string, any> = {}) {
   return {
     id,
     name: `User ${id}`,
-    email,
     role: 'user',
     createdAt: new Date(),
     ...over,

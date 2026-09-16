@@ -50,7 +50,9 @@ suite('realtime session authorization', () => {
     await app.db.insert(app.schema.users).values([owner, other]);
     server = createServer();
     initializeRealtimeServer(server);
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve);
+    });
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Test server did not bind');
     origin = `http://127.0.0.1:${address.port}`;
@@ -59,7 +61,9 @@ suite('realtime session authorization', () => {
   afterAll(async () => {
     sockets.forEach((socket) => socket.disconnect());
     await closeRealtimeServer();
-    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (server.listening) await new Promise<void>((resolve) => {
+      server.close(() => { resolve(); });
+    });
     app?.cleanup();
   });
 
@@ -91,13 +95,15 @@ suite('realtime session authorization', () => {
     sockets.push(ownerSocket, otherSocket);
     await Promise.all([connected(ownerSocket), connected(otherSocket)]);
 
-    const ownerEvent = new Promise<unknown>((resolve) => ownerSocket.once('notification', resolve));
+    const ownerEvent = new Promise<unknown>((resolve) => {
+      ownerSocket.once('notification', resolve);
+    });
     let leaked = false;
     otherSocket.once('notification', () => { leaked = true; });
     emitRealtimeNotification(owner.id, { title: 'Owner-only event' });
 
     await expect(ownerEvent).resolves.toMatchObject({ title: 'Owner-only event' });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => { setTimeout(resolve, 50); });
     expect(leaked).toBe(false);
   });
 });

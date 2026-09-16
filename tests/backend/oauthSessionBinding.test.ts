@@ -28,7 +28,9 @@ suite('OAuth initiating-browser binding', () => {
     expressApp.use(cookieParser());
     expressApp.use(oauth2CallbacksRouter);
     server = createServer(expressApp);
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve);
+    });
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('OAuth test server did not bind');
     origin = `http://127.0.0.1:${address.port}`;
@@ -38,7 +40,12 @@ suite('OAuth initiating-browser binding', () => {
   afterAll(async () => {
     vi.unstubAllGlobals();
     app?.cleanup();
-    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
   });
 
   it('rejects another browser, provider mismatch, start replay, and callback replay without linking credentials', async () => {
