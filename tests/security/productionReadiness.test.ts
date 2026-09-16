@@ -361,11 +361,18 @@ describe('production readiness regressions', () => {
 
   it('accepts documented loopback development origins without weakening CSRF', async () => {
     const { isAllowedOrigin } = await import('../../server/_core/csrf');
-    expect(isAllowedOrigin('http://localhost:5173')).toBe(true);
-    expect(isAllowedOrigin('http://127.0.0.1:5173')).toBe(true);
-    expect(isAllowedOrigin('http://localhost:5181')).toBe(true);
-    expect(isAllowedOrigin('http://127.0.0.1:5181')).toBe(true);
-    expect(isAllowedOrigin('https://attacker.example')).toBe(false);
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'development';
+    try {
+      expect(isAllowedOrigin('http://localhost:5173')).toBe(true);
+      expect(isAllowedOrigin('http://127.0.0.1:5173')).toBe(true);
+      expect(isAllowedOrigin('http://localhost:5181')).toBe(true);
+      expect(isAllowedOrigin('http://127.0.0.1:5181')).toBe(true);
+      expect(isAllowedOrigin('https://attacker.example')).toBe(false);
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
   });
 
   it('loads matcher datasets from packaged assets', () => {

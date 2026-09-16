@@ -10,7 +10,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { bootTestApp, sqliteAvailable, type TestApp } from '../helpers/app';
 import { buildUser, buildCase } from '../factories';
 import { encryptSecret, decryptSecret, isCurrentScheme } from '../../server/crypto';
-import { isAllowedOrigin, csrfGuard } from '../../server/_core/csrf';
+import { isAllowedOrigin, corsMiddleware, csrfGuard } from '../../server/_core/csrf';
 
 const suite = sqliteAvailable ? describe : describe.skip;
 
@@ -49,9 +49,51 @@ describe('080 (D5) — CSRF origin guard', () => {
     return { status, body, nexted };
   };
 
-  it('allows allowlisted origins on mutations', () => {
-    expect(isAllowedOrigin('http://localhost:3000')).toBe(true);
-    expect(run('POST', { origin: 'http://localhost:3000' }).nexted).toBe(true);
+  const runCors = (method: string, headers: Record<string, string>) => {
+    let status = 200; let nexted = false;
+    const responseHeaders: Record<string, string> = {};
+    const req: any = {
+      method,
+      headers,
+      protocol: 'http',
+      get: (name: string) => name.toLowerCase() === 'host' ? headers.host : undefined,
+      socket: {},
+    };
+    const res: any = {
+      setHeader: (name: string, value: string) => { responseHeaders[name] = value; },
+      sendStatus: (value: number) => { status = value; return res; },
+    };
+    corsMiddleware(req, res, () => { nexted = true; });
+    return { status, nexted, responseHeaders };
+  };
+
+  const withOriginEnvironment = <T>(
+    values: { nodeEnv: string; allowedOrigins?: string },
+    callback: () => T,
+  ): T => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousAllowedOrigins = process.env.ALLOWED_ORIGINS;
+    process.env.NODE_ENV = values.nodeEnv;
+    if (values.allowedOrigins === undefined) delete process.env.ALLOWED_ORIGINS;
+    else process.env.ALLOWED_ORIGINS = values.allowedOrigins;
+    try {
+      return callback();
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousAllowedOrigins === undefined) delete process.env.ALLOWED_ORIGINS;
+      else process.env.ALLOWED_ORIGINS = previousAllowedOrigins;
+    }
+  };
+
+  it('allows documented development origins only in development', () => {
+    withOriginEnvironment({ nodeEnv: 'development' }, () => {
+      expect(isAllowedOrigin('http://localhost:3000')).toBe(true);
+      expect(run('POST', { origin: 'http://localhost:3000' }).nexted).toBe(true);
+    });
+    withOriginEnvironment({ nodeEnv: 'production' }, () => {
+      expect(isAllowedOrigin('http://localhost:3000')).toBe(false);
+    });
   });
   it('rejects a cross-site origin on mutations', () => {
     const r = run('POST', { origin: 'http://evil.example', host: '127.0.0.1:45678' });
@@ -59,8 +101,39 @@ describe('080 (D5) — CSRF origin guard', () => {
     expect(r.status).toBe(403);
   });
   it('allows the exact same origin on an ephemeral desktop port', () => {
-    const origin = 'http://127.0.0.1:45678';
-    expect(run('POST', { origin, host: '127.0.0.1:45678' }).nexted).toBe(true);
+    withOriginEnvironment({ nodeEnv: 'production' }, () => {
+      const origin = 'http://127.0.0.1:45678';
+      const mutation = run('POST', { origin, host: '127.0.0.1:45678' });
+      const cors = runCors('OPTIONS', { origin, host: '127.0.0.1:45678' });
+      expect(mutation.nexted).toBe(true);
+      expect(cors.status).toBe(200);
+      expect(cors.responseHeaders['Access-Control-Allow-Credentials']).toBe('true');
+    });
+  });
+  it('denies another loopback port credentialed CORS and mutation access in production', () => {
+    withOriginEnvironment({ nodeEnv: 'production' }, () => {
+      const headers = { origin: 'http://localhost:5173', host: '127.0.0.1:45678' };
+      const mutation = run('POST', headers);
+      const cors = runCors('OPTIONS', headers);
+      expect(mutation.nexted).toBe(false);
+      expect(mutation.status).toBe(403);
+      expect(cors.status).toBe(403);
+      expect(cors.responseHeaders['Access-Control-Allow-Origin']).toBeUndefined();
+      expect(cors.responseHeaders['Access-Control-Allow-Credentials']).toBeUndefined();
+    });
+  });
+  it('allows the explicitly configured public reverse-proxy origin', () => {
+    withOriginEnvironment({
+      nodeEnv: 'production',
+      allowedOrigins: 'https://laro.example.test',
+    }, () => {
+      const headers = { origin: 'https://laro.example.test', host: 'laro.internal:3000' };
+      const mutation = run('POST', headers);
+      const cors = runCors('OPTIONS', headers);
+      expect(mutation.nexted).toBe(true);
+      expect(cors.status).toBe(200);
+      expect(cors.responseHeaders['Access-Control-Allow-Origin']).toBe('https://laro.example.test');
+    });
   });
   it('allows same-origin/native requests with no Origin/Referer', () => {
     expect(run('POST', {}).nexted).toBe(true);
