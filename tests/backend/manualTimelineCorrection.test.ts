@@ -149,7 +149,7 @@ function providerResponse(content: Record<string, unknown>): Response {
         action: "timeline.ai_correction_rejected",
         entityId: proposal.id,
         details: expect.objectContaining({
-          instruction: "Propose removing the first event after reviewing its source.",
+          instruction: "[REDACTED_CONTENT]",
           actorUserId: owner.id,
           finalDecision: "rejected",
           reviewedOld: expect.any(Object),

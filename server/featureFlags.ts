@@ -14,6 +14,7 @@
 import { getDb } from "./db";
 import { systemConfig } from "./schema";
 import { eq } from "drizzle-orm";
+import { writeAuditLogOrThrow } from "./audit";
 
 export const FLAG_DEFAULTS = {
   "outreach.send.enabled": false, // real send stays off until explicitly enabled
@@ -59,4 +60,34 @@ export async function setFlag(key: FlagKey, value: boolean): Promise<void> {
     .insert(systemConfig)
     .values({ configKey: `flag:${key}`, configValue: String(value), updatedAt: new Date() } as any)
     .onConflictDoUpdate({ target: systemConfig.configKey, set: { configValue: String(value), updatedAt: new Date() } });
+}
+
+export async function setFlagWithAudit(
+  key: FlagKey,
+  value: boolean,
+  actorUserId: string,
+): Promise<{ changed: boolean }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.transaction((tx) => {
+    const configKey = `flag:${key}`;
+    const current = tx.select().from(systemConfig).where(eq(systemConfig.configKey, configKey)).get();
+    const previous = current?.configValue == null ? FLAG_DEFAULTS[key] : current.configValue === "true";
+    if (previous === value) return { changed: false };
+    const changedAt = new Date();
+    tx.insert(systemConfig)
+      .values({ configKey, configValue: String(value), updatedAt: changedAt } as any)
+      .onConflictDoUpdate({
+        target: systemConfig.configKey,
+        set: { configValue: String(value), updatedAt: changedAt },
+      }).run();
+    writeAuditLogOrThrow(tx, {
+      userId: actorUserId,
+      action: "feature_flag.changed",
+      entityType: "feature_flag",
+      entityId: key,
+      details: { from: previous, to: value },
+    });
+    return { changed: true };
+  });
 }

@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { and, eq } from "drizzle-orm";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 import { buildUser } from "../factories";
-import { encryptToken } from "../../server/emailOAuth";
+import { decryptToken, encryptToken } from "../../server/emailOAuth";
 import { saveEmailAccount } from "../../server/oauth2";
 
 const suite = sqliteAvailable ? describe : describe.skip;
@@ -68,6 +68,55 @@ suite("provider credential audit atomicity", () => {
         eq(app.schema.emailAccounts.email, "atomic-connect@example.com"),
       ));
     expect(rows).toHaveLength(0);
+  });
+
+  it("reports an uncertain provider refresh and rolls back local tokens when its audit fails", async () => {
+    await app.db.insert(app.schema.emailAccounts).values({
+      id: "PROVIDER_ATOMIC_REFRESH",
+      userId: owner.id,
+      provider: "gmail",
+      email: "atomic-refresh@example.com",
+      accessToken: encryptToken("old-access"),
+      refreshToken: encryptToken("old-refresh"),
+      status: "connected",
+    } as any);
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(JSON.stringify({
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+      expires_in: 3600,
+      token_type: "Bearer",
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    const alert = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const releaseFailure = rejectAuditAction("provider.credentials_refreshed", "reject_provider_refresh_audit");
+    try {
+      await expect(app.makeCaller(owner).emailAccounts.refreshToken({
+        accountId: "PROVIDER_ATOMIC_REFRESH",
+      })).rejects.toMatchObject({
+        code: "PRECONDITION_FAILED",
+        message: expect.stringContaining("may have rotated"),
+      });
+    } finally {
+      releaseFailure();
+    }
+    expect(alert).toHaveBeenCalledWith(
+      "[Provider][REFRESH_UNCERTAIN] Credential refresh was not durably saved",
+      expect.objectContaining({ accountId: "PROVIDER_ATOMIC_REFRESH" }),
+    );
+    const [stored] = await app.db.select().from(app.schema.emailAccounts)
+      .where(eq(app.schema.emailAccounts.id, "PROVIDER_ATOMIC_REFRESH"));
+    expect(decryptToken(stored.accessToken)).toBe("old-access");
+    expect(decryptToken(stored.refreshToken)).toBe("old-refresh");
+    expect(await app.db.select().from(app.schema.auditLogs)
+      .where(eq(app.schema.auditLogs.action, "provider.credentials_refreshed"))).toHaveLength(0);
+
+    await expect(app.makeCaller(owner).emailAccounts.refreshToken({
+      accountId: "PROVIDER_ATOMIC_REFRESH",
+    })).resolves.toEqual({ success: true });
+    const rows = await app.db.select().from(app.schema.auditLogs)
+      .where(eq(app.schema.auditLogs.action, "provider.credentials_refreshed"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].details).toContain('"refreshGrantRotated":true');
+    expect(rows[0].details).not.toMatch(/new-access|new-refresh|old-refresh/);
   });
 
   it("rejects unusable provider credentials and normalizes account identity", async () => {

@@ -15,6 +15,8 @@
 import { getDb } from "./db";
 import { collectManagedStorageKeys } from "./managedStorage";
 import { enqueueStorageDeletions, processQueuedStorageDeletions } from "./storageDeletionQueue";
+import { nanoid } from "nanoid";
+import { writeAuditLogOrThrow } from "./audit";
 
 function rawClient(db: any): any {
   return db.$client ?? db.session?.client ?? null;
@@ -133,6 +135,7 @@ export async function deleteUserData(userId: string): Promise<{
   deleted: Record<string, number>;
   storageCleanupPending: number;
   erasureStatus: "completed" | "storage_cleanup_pending";
+  erasureRequestId: string;
 }> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -153,6 +156,7 @@ export async function deleteUserData(userId: string): Promise<{
 
   const userCaseIds = (sqlite.prepare("SELECT id FROM cases WHERE userId = ?").all(userId) as Array<{ id: string }>).map((r) => r.id);
   const storageKeys = collectManagedStorageKeys(sqlite, { userId, caseIds: userCaseIds });
+  const erasureRequestId = `ERASURE-${nanoid(16)}`;
 
   const deleted: Record<string, number> = {};
   const tx = sqlite.transaction(() => {
@@ -175,6 +179,22 @@ export async function deleteUserData(userId: string): Promise<{
     // 3. Delete the user record itself.
     const userInfo = sqlite.prepare(`DELETE FROM "users" WHERE id = ?`).run(userId);
     if (userInfo.changes) deleted.users = userInfo.changes;
+
+    // The durable erasure receipt intentionally has no user identifier. It is
+    // written after user-scoped audit rows are erased, but inside the same
+    // transaction so an audit failure restores the account and every row.
+    writeAuditLogOrThrow(db, {
+      action: "gdpr.delete",
+      entityType: "gdpr_erasure",
+      entityId: erasureRequestId,
+      details: {
+        erasureRequestId,
+        deletedRowsByTable: deleted,
+        storageObjectsQueued: storageKeys.length,
+        actor: "self_service_account_owner",
+      },
+      idempotencyKey: `gdpr-delete:${erasureRequestId}`,
+    });
   });
   tx();
 
@@ -184,5 +204,6 @@ export async function deleteUserData(userId: string): Promise<{
     deleted,
     storageCleanupPending: cleanup.requestedPending,
     erasureStatus: cleanup.requestedPending > 0 ? "storage_cleanup_pending" : "completed",
+    erasureRequestId,
   };
 }

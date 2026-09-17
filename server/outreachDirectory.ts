@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { readBoundedResponseText, withBoundedHttpResponse } from "./boundedHttpResponse";
 import { getDb } from "./db";
+import { writeAuditLogOrThrow } from "./audit";
 import {
   caseOutreachTargetMatches,
   cases,
@@ -489,28 +490,44 @@ export async function reviewOutreachTarget(options: {
   targetType: OutreachTargetType;
   status: OutreachTargetReviewStatus;
   reviewNotes?: string;
+  caseId?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const now = new Date();
-  const result = await db.update(outreachDirectoryTargets).set({
-    status: options.status,
-    reviewNotes: options.reviewNotes?.trim() || null,
-    reviewedAt: now,
-    updatedAt: now,
-  }).where(and(
-    eq(outreachDirectoryTargets.id, options.id),
-    eq(outreachDirectoryTargets.userId, options.userId),
-    eq(outreachDirectoryTargets.targetType, options.targetType),
-  ));
-  if (!result.changes) throw new Error("Outreach target not found");
-  if (options.status !== "approved") {
-    await db.delete(caseOutreachTargetMatches).where(and(
-      eq(caseOutreachTargetMatches.userId, options.userId),
-      eq(caseOutreachTargetMatches.targetId, options.id),
-    ));
-  }
-  return { success: true as const, targetType: options.targetType };
+  return db.transaction((tx) => {
+    const current = tx.select({ status: outreachDirectoryTargets.status }).from(outreachDirectoryTargets)
+      .where(and(
+        eq(outreachDirectoryTargets.id, options.id),
+        eq(outreachDirectoryTargets.userId, options.userId),
+        eq(outreachDirectoryTargets.targetType, options.targetType),
+      )).get();
+    if (!current) throw new Error("Outreach target not found");
+    const now = new Date();
+    tx.update(outreachDirectoryTargets).set({
+      status: options.status,
+      reviewNotes: options.reviewNotes?.trim() || null,
+      reviewedAt: now,
+      updatedAt: now,
+    }).where(and(
+      eq(outreachDirectoryTargets.id, options.id),
+      eq(outreachDirectoryTargets.userId, options.userId),
+      eq(outreachDirectoryTargets.targetType, options.targetType),
+    )).run();
+    if (options.status !== "approved") {
+      tx.delete(caseOutreachTargetMatches).where(and(
+        eq(caseOutreachTargetMatches.userId, options.userId),
+        eq(caseOutreachTargetMatches.targetId, options.id),
+      )).run();
+    }
+    writeAuditLogOrThrow(tx, {
+      userId: options.userId,
+      action: "outreach.directory_reviewed",
+      entityType: "outreach_target",
+      entityId: options.id,
+      details: { from: current.status, to: options.status, targetType: options.targetType, caseId: options.caseId || null },
+    });
+    return { success: true as const, targetType: options.targetType };
+  });
 }
 
 export async function reviewOutreachTargetsBatch(options: {
@@ -519,6 +536,7 @@ export async function reviewOutreachTargetsBatch(options: {
   targetType: OutreachTargetType;
   status: "approved" | "rejected";
   reviewNotes: string;
+  caseId?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -551,6 +569,13 @@ export async function reviewOutreachTargetsBatch(options: {
         inArray(caseOutreachTargetMatches.targetId, ids),
       )).run();
     }
+    writeAuditLogOrThrow(tx, {
+      userId: options.userId,
+      action: "outreach.directory_batch_reviewed",
+      entityType: "outreach_target",
+      entityId: ids[0],
+      details: { ids, count: ids.length, status: options.status, targetType: options.targetType, caseId: options.caseId || null },
+    });
     return { success: true as const, reviewed: ids.length };
   });
 }
@@ -615,29 +640,38 @@ export async function matchApprovedTargetsForCase(options: {
     return scored ? [{ target, ...scored }] : [];
   }).sort((a, b) => b.score - a.score).slice(0, Math.max(1, Math.min(100, options.limit || 30)));
   const now = new Date();
-  for (const item of ranked) {
-    await db.insert(caseOutreachTargetMatches).values({
-      id: `MATCH-${nanoid(16)}`,
-      userId: options.userId,
-      caseId: options.caseId,
-      targetId: item.target.id,
-      targetType: options.targetType,
-      matchScore: item.score,
-      scoreBreakdown: JSON.stringify(item.breakdown),
-      matchReasons: JSON.stringify(item.reasons),
-      status: "suggested",
-      createdAt: now,
-      updatedAt: now,
-    }).onConflictDoUpdate({
-      target: [caseOutreachTargetMatches.caseId, caseOutreachTargetMatches.targetId],
-      set: {
+  db.transaction((tx) => {
+    for (const item of ranked) {
+      tx.insert(caseOutreachTargetMatches).values({
+        id: `MATCH-${nanoid(16)}`,
+        userId: options.userId,
+        caseId: options.caseId,
+        targetId: item.target.id,
+        targetType: options.targetType,
         matchScore: item.score,
         scoreBreakdown: JSON.stringify(item.breakdown),
         matchReasons: JSON.stringify(item.reasons),
+        status: "suggested",
+        createdAt: now,
         updatedAt: now,
-      },
+      }).onConflictDoUpdate({
+        target: [caseOutreachTargetMatches.caseId, caseOutreachTargetMatches.targetId],
+        set: {
+          matchScore: item.score,
+          scoreBreakdown: JSON.stringify(item.breakdown),
+          matchReasons: JSON.stringify(item.reasons),
+          updatedAt: now,
+        },
+      }).run();
+    }
+    writeAuditLogOrThrow(tx, {
+      userId: options.userId,
+      action: "outreach.targets_matched",
+      entityType: "case",
+      entityId: options.caseId,
+      details: { targetType: options.targetType, count: ranked.length, targetIds: ranked.map((item) => item.target.id) },
     });
-  }
+  });
   return getCaseTargetMatches(options);
 }
 
@@ -676,15 +710,30 @@ export async function updateCaseTargetMatchStatus(options: {
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.update(caseOutreachTargetMatches).set({
-    status: options.status,
-    updatedAt: new Date(),
-  }).where(and(
-    eq(caseOutreachTargetMatches.id, options.id),
-    eq(caseOutreachTargetMatches.userId, options.userId),
-  ));
-  if (!result.changes) throw new Error("Case target match not found");
-  return { success: true as const };
+  return db.transaction((tx) => {
+    const current = tx.select({ status: caseOutreachTargetMatches.status })
+      .from(caseOutreachTargetMatches).where(and(
+        eq(caseOutreachTargetMatches.id, options.id),
+        eq(caseOutreachTargetMatches.userId, options.userId),
+      )).get();
+    if (!current) throw new Error("Case target match not found");
+    if (current.status === options.status) return { success: true as const };
+    tx.update(caseOutreachTargetMatches).set({
+      status: options.status,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(caseOutreachTargetMatches.id, options.id),
+      eq(caseOutreachTargetMatches.userId, options.userId),
+    )).run();
+    writeAuditLogOrThrow(tx, {
+      userId: options.userId,
+      action: "outreach.target_match_status_changed",
+      entityType: "outreach_target_match",
+      entityId: options.id,
+      details: { from: current.status, to: options.status },
+    });
+    return { success: true as const };
+  });
 }
 
 export async function getOutreachDirectorySummary(userId: string) {

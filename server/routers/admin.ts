@@ -6,7 +6,7 @@ import { ENV } from "../_core/env";
 import { isEmergencyStopped, setEmergencyStop } from "../systemState";
 import { runRetentionSweep, previewRetentionSweep, RETENTION_POLICY } from "../retention";
 import { getAllFlags } from "../featureFlags";
-import { createAuditLog, writeAuditLogOrThrow } from "../audit";
+import { writeAuditLogOrThrow } from "../audit";
 import { APP_VERSION } from "../_core/version";
 import { resolveOutboundEmailConfiguration } from "../emailConfig";
 import { getLLMProviderDescriptors } from "../llm";
@@ -132,28 +132,14 @@ export const adminRouter = router({
   setEmergencyStop: adminProcedure
     .input(z.object({ engaged: z.boolean() }))
     .mutation(async ({ input, ctx }) => {
-      await setEmergencyStop(input.engaged);
-      await createAuditLog({
-        userId: ctx.user.id,
-        action: input.engaged ? "emergency_stop.engaged" : "emergency_stop.released",
-        entityType: "system",
-        entityId: "emergency_stop",
-      });
-      return { engaged: input.engaged };
+      const result = await setEmergencyStop(input.engaged, ctx.user.id);
+      return { engaged: input.engaged, changed: result.changed };
     }),
 
   // Phase 102 — data retention: preview (dry run) and run the sweep.
   retentionPreview: adminProcedure.query(async () => previewRetentionSweep()),
   retentionRun: adminProcedure.mutation(async ({ ctx }) => {
-    const report = await runRetentionSweep();
-    await createAuditLog({
-      userId: ctx.user.id,
-      action: "retention.sweep",
-      entityType: "system",
-      entityId: "audit_logs",
-      details: report,
-    });
-    return report;
+    return runRetentionSweep(new Date(), ctx.user.id);
   }),
 
   uncertainOutreachDispatches: adminProcedure.query(async () => {

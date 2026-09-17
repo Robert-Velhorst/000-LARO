@@ -55,14 +55,44 @@ export const emailAccountsRouter = router({
       if (!acc?.refreshToken) throw new Error("No refresh token");
       const refresh = decryptToken(acc.refreshToken);
       const next = await refreshAccessToken(acc.provider as "gmail" | "outlook", refresh);
-      await db
-        .update(emailAccounts)
-        .set({
-          accessToken: encryptToken(next.accessToken),
-          refreshToken: next.refreshToken ? encryptToken(next.refreshToken) : acc.refreshToken,
-          tokenExpiry: new Date(Date.now() + next.expiresIn * 1000),
-        })
-        .where(eq(emailAccounts.id, acc.id));
+      const refreshedAt = new Date();
+      const tokenExpiry = new Date(refreshedAt.getTime() + next.expiresIn * 1000);
+      try {
+        db.transaction((tx: any) => {
+          const update = tx.update(emailAccounts).set({
+            accessToken: encryptToken(next.accessToken),
+            refreshToken: next.refreshToken ? encryptToken(next.refreshToken) : acc.refreshToken,
+            tokenExpiry,
+            updatedAt: refreshedAt,
+          }).where(and(eq(emailAccounts.id, acc.id), eq(emailAccounts.userId, ctx.user.id))).run();
+          if (Number(update.changes || 0) !== 1) {
+            throw new TRPCError({ code: "CONFLICT", message: "The provider connection changed while credentials were refreshing." });
+          }
+          writeAuditLogOrThrow(tx, {
+            userId: ctx.user.id,
+            action: AUDIT_ACTIONS.PROVIDER_CREDENTIALS_REFRESHED,
+            entityType: "provider_connection",
+            entityId: acc.id,
+            details: {
+              provider: acc.provider === "gmail" ? "google" : acc.provider,
+              refreshGrantRotated: Boolean(next.refreshToken && next.refreshToken !== refresh),
+              expiresAt: tokenExpiry.toISOString(),
+            },
+          });
+        });
+      } catch (error) {
+        // The local transaction rolled back, but a provider may have rotated
+        // the refresh grant already. Never claim a successful refresh here.
+        console.error("[Provider][REFRESH_UNCERTAIN] Credential refresh was not durably saved", {
+          accountId: acc.id,
+          userId: ctx.user.id,
+        });
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Credential refresh could not be saved and audited. The provider may have rotated the grant; reconnect this account before relying on sync.",
+          cause: error,
+        });
+      }
       return { success: true as const };
     }),
 

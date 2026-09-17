@@ -18,7 +18,6 @@
  */
 import { getDb } from "./db";
 import {
-  auditLogs,
   outreachStatus,
   cases as casesTable,
   lawyers as lawyersTable,
@@ -30,7 +29,7 @@ import { TRPCError } from "@trpc/server";
 import { getFlag } from "./featureFlags";
 import { assertNotEmergencyStopped } from "./systemState";
 import { assertOutreachTransition } from "./stateMachines";
-import { createAuditLog, AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
+import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
 import { assertCaseCapability, assertCaseOwnership } from "./_core/authz";
 import { createNotification } from "./notifications";
 import { readApprovedOutreachMessage, readOutreachMetadata } from "./outreachApproval";
@@ -259,32 +258,30 @@ export async function resolveUncertainOutreachDispatch(options: {
       if (Number(statusMutation.changes || 0) !== 1) {
         throw new Error("Outreach status changed before recovery was finalized");
       }
-      tx.insert(auditLogs).values({
-        id: nanoid(),
+      writeAuditLogOrThrow(tx, {
         userId: options.operatorUserId,
         action: AUDIT_ACTIONS.OUTREACH_STATUS_CHANGED,
         entityType: "outreach",
         entityId: options.outreachId,
-        details: JSON.stringify({ from: "Dispatching", to: recoveredStatus, provider: "operator-verified", recovery: true }),
-        createdAt: resolvedAt,
-      }).run();
+        details: { from: "Dispatching", to: recoveredStatus, provider: "operator-verified", recovery: true },
+        idempotencyKey: `outreach-recovery-status:${options.outreachId}:${guardState}:${options.outcome}`,
+      });
     }
 
-    tx.insert(auditLogs).values({
-      id: nanoid(),
+    writeAuditLogOrThrow(tx, {
       userId: options.operatorUserId,
       action: AUDIT_ACTIONS.OUTREACH_DISPATCH_RESOLVED,
       entityType: "outreach",
       entityId: options.outreachId,
-      details: JSON.stringify({
+      details: {
         outcome: options.outcome,
         providerVerified: true,
         providerReference: options.providerReference?.trim() || null,
         note: options.note.trim(),
         previousDispatchState: guardState,
-      }),
-      createdAt: resolvedAt,
-    }).run();
+      },
+      idempotencyKey: `outreach-dispatch-resolved:${options.outreachId}:${guardState}:${options.outcome}`,
+    });
   });
 
   return {
@@ -426,15 +423,14 @@ export async function sendApprovedOutreach(
         throw new Error("Outreach dispatch status changed before finalization");
       }
 
-      tx.insert(auditLogs).values({
-        id: nanoid(),
+      writeAuditLogOrThrow(tx, {
         userId,
         action: AUDIT_ACTIONS.OUTREACH_STATUS_CHANGED,
         entityType: "outreach",
         entityId: outreachId,
-        details: JSON.stringify({ from: "Dispatching", to: "Sent", provider: result.provider }),
-        createdAt: sentAt,
-      }).run();
+        details: { from: "Dispatching", to: "Sent", provider: result.provider },
+        idempotencyKey: `outreach-sent:${outreachId}:${dispatchState}`,
+      });
     });
   } catch (error) {
     markDispatchUncertain(db, guardKey, dispatchState);

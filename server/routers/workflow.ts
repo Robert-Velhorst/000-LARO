@@ -70,9 +70,19 @@ async function prepareOutreachDraftRows(caseId: string, maxResults: number, user
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const plan = await discoverOutreachDraftRows(caseId, maxResults, userId);
-  const created = plan.matches.length > 0
-    ? db.transaction((tx: any) => insertOutreachDraftRows(tx, caseId, plan.matches))
-    : 0;
+  const created = db.transaction((tx: any) => {
+    const count = plan.matches.length > 0 ? insertOutreachDraftRows(tx, caseId, plan.matches) : 0;
+    // A retry that finds all drafts already present is a no-op. If drafts are
+    // later removed and legitimately recreated, that is a new audited event.
+    if (count > 0) writeAuditLogOrThrow(tx, {
+      userId,
+      action: AUDIT_ACTIONS.OUTREACH_INITIATED,
+      entityType: "case",
+      entityId: caseId,
+      details: { draftsPrepared: count, approvalMode: plan.approvalMode },
+    });
+    return count;
+  });
   return {
     created,
     candidates: plan.matches.length,
@@ -186,15 +196,6 @@ export const workflowRouter = router({
       await assertNotEmergencyStopped(); // Phase 104 — operator kill switch
       enforceRateLimit(ctx, "outreach-prepare", RATE_LIMITS.aiAnalysis);
       const drafts = await prepareOutreachDraftRows(input.caseId, input.maxResults, ctx.user.id);
-
-      await createAuditLog({
-        userId: ctx.user.id,
-        action: AUDIT_ACTIONS.OUTREACH_INITIATED,
-        entityType: "case",
-        entityId: input.caseId,
-        details: { draftsPrepared: drafts.candidates, approvalMode: drafts.approvalMode },
-      });
-
       return { success: true, ...drafts };
     }),
 

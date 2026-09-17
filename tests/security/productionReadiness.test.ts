@@ -840,7 +840,8 @@ describe('production readiness regressions', () => {
     expect(workspace).toContain('status: "shortlisted"');
     expect(directory).toContain('rawCaseTextShared: false');
     expect(directory).toContain('eq(outreachDirectoryTargets.status, "approved")');
-    expect(directory).toContain('db.delete(caseOutreachTargetMatches)');
+    expect(directory).toContain('tx.delete(caseOutreachTargetMatches)');
+    expect(directory).toContain('writeAuditLogOrThrow(tx, {');
     expect(migration).toContain('CREATE TABLE `outreach_directory_targets`');
     expect(migration).toContain('CREATE TABLE `case_outreach_target_matches`');
     expect(migration).not.toContain('__new_');

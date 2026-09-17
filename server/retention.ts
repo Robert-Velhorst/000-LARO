@@ -15,6 +15,8 @@ import { getDb } from "./db";
 import { auditLogs } from "./schema";
 import { lt } from "drizzle-orm";
 import { ENV } from "./_core/env";
+import { writeAuditLogOrThrow } from "./audit";
+import { createHash } from "node:crypto";
 
 export const RETENTION_POLICY = {
   auditLogDays: ENV.AUDIT_RETENTION_DAYS,
@@ -30,24 +32,33 @@ export interface RetentionReport {
  * Run the retention sweep. `now` is injectable so the pure cutoff maths can be
  * tested deterministically (no ambient Date in the hot path).
  */
-export async function runRetentionSweep(now: Date = new Date()): Promise<RetentionReport> {
+export async function runRetentionSweep(now: Date = new Date(), actorUserId?: string): Promise<RetentionReport> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
   const cutoff = new Date(now.getTime() - RETENTION_POLICY.auditLogDays * 24 * 60 * 60 * 1000);
-
-  // Count first (for an honest report), then delete.
-  const stale = await db.select({ id: auditLogs.id }).from(auditLogs).where(lt(auditLogs.createdAt, cutoff));
-  const auditLogsDeleted = stale.length;
-  if (auditLogsDeleted > 0) {
-    await db.delete(auditLogs).where(lt(auditLogs.createdAt, cutoff));
-  }
-
-  return {
-    cutoffISO: cutoff.toISOString(),
-    auditLogsDeleted,
-    policy: RETENTION_POLICY,
-  };
+  return db.transaction((tx) => {
+    // Count, delete and record the mandatory retention event as one transaction.
+    const stale = tx.select({ id: auditLogs.id }).from(auditLogs).where(lt(auditLogs.createdAt, cutoff)).all();
+    const report = {
+      cutoffISO: cutoff.toISOString(),
+      auditLogsDeleted: stale.length,
+      policy: RETENTION_POLICY,
+    };
+    const staleDigest = createHash("sha256")
+      .update(stale.map((item) => item.id).sort().join("\0"))
+      .digest("hex");
+    if (stale.length > 0) tx.delete(auditLogs).where(lt(auditLogs.createdAt, cutoff)).run();
+    writeAuditLogOrThrow(tx, {
+      userId: actorUserId,
+      action: "retention.sweep",
+      entityType: "system",
+      entityId: "audit_logs",
+      details: report,
+      idempotencyKey: `retention:${report.cutoffISO}:${staleDigest}`,
+    });
+    return report;
+  });
 }
 
 /** Report what a sweep WOULD remove, without deleting (dry run). */

@@ -687,7 +687,14 @@ export const appRouter = router({
     exportData: protectedProcedure.mutation(async ({ ctx }) => {
       const { exportUserData } = await import("../gdpr");
       const data = await exportUserData(ctx.user.id);
-      await createAuditLog({ userId: ctx.user.id, action: "gdpr.export", entityType: "user", entityId: ctx.user.id });
+      const db = await getDb();
+      writeAuditLogOrThrow(db, {
+        userId: ctx.user.id,
+        action: "gdpr.export",
+        entityType: "user",
+        entityId: ctx.user.id,
+        details: { tablesIncluded: Object.keys(data).filter((key) => key !== "_meta").sort() },
+      });
       return { success: true, data };
     }),
     // Permanent account + data deletion (right of erasure).
@@ -695,9 +702,6 @@ export const appRouter = router({
       .input(z.object({ confirm: z.literal(true) }))
       .mutation(async ({ ctx }) => {
         const { deleteUserData } = await import("../gdpr");
-        // Audit BEFORE deleting (the audit row for this user is erased too, but
-        // the action is recorded in the same transaction window).
-        await createAuditLog({ userId: ctx.user.id, action: "gdpr.delete", entityType: "user", entityId: ctx.user.id });
         const result = await deleteUserData(ctx.user.id);
         // Clear the session cookie since the account no longer exists.
         try {
@@ -715,14 +719,7 @@ export const appRouter = router({
       )
       .mutation(async ({ ctx, input }) => {
         const { updatePrivacyPreferences } = await import('../privacyPreferences');
-        const preferences = await updatePrivacyPreferences(ctx.user.id, input);
-        await createAuditLog({
-          userId: ctx.user.id,
-          action: "gdpr.consent_updated",
-          entityType: "user",
-          entityId: ctx.user.id,
-          details: preferences,
-        });
+        const preferences = await updatePrivacyPreferences(ctx.user.id, input, { mandatoryAudit: true });
         return { success: true, ...preferences };
       }),
   }),

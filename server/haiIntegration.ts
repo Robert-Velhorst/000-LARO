@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { and, asc, eq, gt, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { createAuditLog } from "./audit";
+import { writeAuditLogOrThrow } from "./audit";
 import { getDb } from "./db";
 import { cases, documentAnalyses, evidence, integrationAccessTokens } from "./schema";
 
@@ -199,13 +199,13 @@ export async function createHaiToken(userId: string, name: string, expiresInDays
       throw new HaiIntegrationError(`At most ${HAI_TOKEN_MAX_ACTIVE} active integration tokens are allowed`, 409);
     }
     tx.insert(integrationAccessTokens).values(row).run();
-  });
-  await createAuditLog({
-    userId,
-    action: "integration.hai_token_created",
-    entityType: "integration_token",
-    entityId: row.id,
-    details: { scope: row.scope, tokenPrefix: row.tokenPrefix, expiresAt: row.expiresAt.toISOString() },
+    writeAuditLogOrThrow(tx, {
+      userId,
+      action: "integration.hai_token_created",
+      entityType: "integration_token",
+      entityId: row.id,
+      details: { scope: row.scope, tokenPrefix: row.tokenPrefix, expiresAt: row.expiresAt.toISOString() },
+    });
   });
   return { token, credential: tokenView({ ...row, lastUsedAt: null, revokedAt: null }) };
 }
@@ -219,14 +219,24 @@ export async function revokeHaiToken(userId: string, tokenId: string) {
   )).limit(1);
   if (!row) throw new HaiIntegrationError("Integration token not found", 404);
   if (row.status !== "revoked") {
-    const revokedAt = new Date();
-    await db.update(integrationAccessTokens).set({ status: "revoked", revokedAt }).where(eq(integrationAccessTokens.id, row.id));
-    await createAuditLog({
-      userId,
-      action: "integration.hai_token_revoked",
-      entityType: "integration_token",
-      entityId: row.id,
-      details: { scope: row.scope, tokenPrefix: row.tokenPrefix },
+    db.transaction((tx) => {
+      const result = tx.update(integrationAccessTokens)
+        .set({ status: "revoked", revokedAt: new Date() })
+        .where(and(
+          eq(integrationAccessTokens.id, row.id),
+          eq(integrationAccessTokens.userId, userId),
+          eq(integrationAccessTokens.status, row.status),
+        )).run();
+      if (Number(result.changes || 0) !== 1) {
+        throw new HaiIntegrationError("Integration token changed before it could be revoked", 409);
+      }
+      writeAuditLogOrThrow(tx, {
+        userId,
+        action: "integration.hai_token_revoked",
+        entityType: "integration_token",
+        entityId: row.id,
+        details: { scope: row.scope, tokenPrefix: row.tokenPrefix },
+      });
     });
   }
   return { success: true as const };

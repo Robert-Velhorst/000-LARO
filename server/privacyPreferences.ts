@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import { getDb } from './db';
 import { userPreferences } from './schema';
+import { writeAuditLogOrThrow } from './audit';
 
 const PRIVACY_PREFERENCE_KEY = 'privacy-consent';
 
@@ -41,7 +42,8 @@ export async function getPrivacyPreferences(userId: string): Promise<PrivacyPref
 
 export async function updatePrivacyPreferences(
   userId: string,
-  updates: Partial<PrivacyPreferences>
+  updates: Partial<PrivacyPreferences>,
+  options?: { mandatoryAudit?: boolean },
 ): Promise<PrivacyPreferences> {
   const db = await getDb();
   if (!db) throw new Error('Database not available');
@@ -57,6 +59,7 @@ export async function updatePrivacyPreferences(
       marketing: updates.marketing ?? current.marketing,
       analytics: updates.analytics ?? current.analytics,
     };
+    if (next.marketing === current.marketing && next.analytics === current.analytics) return next;
     const now = new Date();
     tx.insert(userPreferences).values({
       id: nanoid(),
@@ -68,6 +71,15 @@ export async function updatePrivacyPreferences(
       target: [userPreferences.userId, userPreferences.key],
       set: { value: JSON.stringify(next), updatedAt: now },
     }).run();
+    if (options?.mandatoryAudit) {
+      writeAuditLogOrThrow(tx, {
+        userId,
+        action: 'gdpr.consent_updated',
+        entityType: 'user',
+        entityId: userId,
+        details: { from: current, to: next },
+      });
+    }
     return next;
   });
 }
