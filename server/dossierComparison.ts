@@ -14,7 +14,7 @@ export const comparisonSchema = z.object({
 }).strict();
 
 export async function compareDossierSituations(input: {
-  sourceText: string; cases: DiscoveryCase[]; provider: LLMProvider; signal: AbortSignal; timeoutMs: number;
+  ownerId: string; sourceText: string; cases: DiscoveryCase[]; provider: LLMProvider; signal: AbortSignal; timeoutMs: number;
   beforeDispatch?: () => Promise<boolean>;
 }): Promise<z.infer<typeof comparisonSchema>> {
   if (input.cases.length > MAX_COMPARISON_CASES || new Set(input.cases.map(c => c.id)).size !== input.cases.length) {
@@ -46,10 +46,12 @@ export async function compareDossierSituations(input: {
 }
 
 async function compareBatch(input: {
-  sourceText: string; cases: DiscoveryCase[]; provider: LLMProvider; signal: AbortSignal; timeoutMs: number;
+  ownerId: string; sourceText: string; cases: DiscoveryCase[]; provider: LLMProvider; signal: AbortSignal; timeoutMs: number;
   beforeDispatch?: () => Promise<boolean>;
 }, serialized: string): Promise<z.infer<typeof comparisonSchema>> {
-  const response = await invokeLLM({ provider: input.provider, signal: input.signal, requestTimeoutMs: input.timeoutMs,
+  const response = await invokeLLM({ provider: input.provider,
+    budget: { ownerId: input.ownerId, operation: "dossier_comparison" },
+    signal: input.signal, requestTimeoutMs: input.timeoutMs,
     beforeDispatch: input.beforeDispatch, maxTokens: Math.min(32768, Math.max(2500, 512 + input.cases.length * 256)),
     messages: [
       { role: "system", content: [

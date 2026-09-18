@@ -122,7 +122,10 @@ describe('production readiness regressions', () => {
     delete process.env.FORGE_API_KEY;
     vi.resetModules();
     const { invokeLLM } = await import('../../server/llm');
-    await expect(invokeLLM({ messages: [{ role: 'user', content: 'Analyze this.' }] }))
+    await expect(invokeLLM({
+      budget: { ownerId: 'PRODUCTION_READINESS_TEST', operation: 'case_assistant' },
+      messages: [{ role: 'user', content: 'Analyze this.' }],
+    }))
       .rejects.toThrow('FORGE_API_KEY is not configured');
   });
 

@@ -4,6 +4,7 @@ import { cases } from "./schema";
 import { invokeLLM, isLLMProviderConfigured, isLocalLLMProvider } from "./llm";
 import { globalSearch } from "./globalSearch";
 import { getWorkflowPreferences } from "./workflowPreferences";
+import { isLLMUsageLimitError } from "./llmUsageBudget";
 
 const STOP = new Set([
   "the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "my", "is", "are", "was", "were",
@@ -35,6 +36,7 @@ async function expandCaseSearchTerms(query: string, userId: string): Promise<str
   try {
     const res = await invokeLLM({
       provider: provider!,
+      budget: { ownerId: userId, operation: "hybrid_search" },
       messages: [
         {
           role: "system",
@@ -59,7 +61,8 @@ async function expandCaseSearchTerms(query: string, userId: string): Promise<str
     if (Array.isArray(parsed?.terms) && parsed.terms.length) {
       return [...new Set([trimmed, ...parsed.terms.map((t) => String(t).trim()).filter(Boolean)])].slice(0, 16);
     }
-  } catch {
+  } catch (error) {
+    if (isLLMUsageLimitError(error)) throw error;
     /* heuristic fallback */
   }
   return tokenizeHeuristic(trimmed);

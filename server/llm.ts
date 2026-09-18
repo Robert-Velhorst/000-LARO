@@ -1,5 +1,13 @@
 import { ENV } from "./_core/env";
 import { requestLLMJson } from "./llmTransport";
+import {
+  acquireLLMUsageBudget,
+  assertLLMInputWithinProfile,
+  isLLMUsageLimitError,
+  recordLLMUsageTelemetry,
+  resolveLLMOutputTokens,
+  type LLMOperation,
+} from "./llmUsageBudget";
 
 export type Role = "system" | "user" | "assistant" | "tool" | "function";
 
@@ -57,6 +65,11 @@ export type ToolChoice =
   | ToolChoiceExplicit;
 
 export type InvokeParams = {
+  budget: {
+    ownerId: string;
+    operation: LLMOperation;
+    caseId?: string;
+  };
   messages: Message[];
   provider?: LLMProvider;
   tools?: Tool[];
@@ -455,9 +468,11 @@ async function invokeAnthropic(config: ProviderConfig, params: InvokeParams): Pr
   };
 }
 
-export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
-  const provider = params.provider || "forge";
-  const config = getProviderConfig(provider);
+async function invokeConfiguredLLM(
+  params: InvokeParams,
+  provider: LLMProvider,
+  config: ProviderConfig,
+): Promise<InvokeResult> {
   if (config.nativeAnthropic) return invokeAnthropic(config, params);
 
   const {
@@ -537,4 +552,96 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
       body: JSON.stringify(payload),
     },
   });
+}
+
+function invocationInputCharacters(params: InvokeParams): number {
+  const serialized = JSON.stringify({
+    messages: params.messages,
+    tools: params.tools,
+    toolChoice: params.toolChoice || params.tool_choice,
+    responseFormat: params.responseFormat || params.response_format,
+    outputSchema: params.outputSchema || params.output_schema,
+  });
+  return serialized.length;
+}
+
+/**
+ * Canonical model boundary. No maintained caller can reach a provider without
+ * declaring an owner and operation, passing the operation profile, and
+ * acquiring the shared owner budget first.
+ */
+export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
+  const provider = params.provider || "forge";
+  const providerClass = isLocalLLMProvider(provider) ? "local" as const : "external" as const;
+  const telemetryBase = {
+    ownerId: params.budget.ownerId,
+    caseId: params.budget.caseId,
+    operation: params.budget.operation,
+    providerClass,
+  };
+  let inputCharacters = 0;
+  let outputTokens = params.maxTokens ?? params.max_tokens ?? 0;
+  try {
+    inputCharacters = invocationInputCharacters(params);
+    outputTokens = resolveLLMOutputTokens(params.budget.operation, params.maxTokens ?? params.max_tokens);
+    assertLLMInputWithinProfile(params.budget.operation, inputCharacters);
+  } catch (error) {
+    await recordLLMUsageTelemetry({
+      ...telemetryBase,
+      inputCharacters,
+      outputTokens: Number.isSafeInteger(outputTokens) && outputTokens > 0 ? outputTokens : 0,
+      outcome: "budget_rejected",
+    });
+    throw error;
+  }
+
+  let config: ProviderConfig;
+  try {
+    config = getProviderConfig(provider);
+  } catch (error) {
+    await recordLLMUsageTelemetry({ ...telemetryBase, inputCharacters, outputTokens, outcome: "provider_error" });
+    throw error;
+  }
+
+  let release: () => void;
+  try {
+    release = await acquireLLMUsageBudget({
+      ownerId: params.budget.ownerId,
+      providerClass,
+      inputCharacters,
+      outputTokens,
+    });
+  } catch (error) {
+    await recordLLMUsageTelemetry({
+      ...telemetryBase,
+      inputCharacters,
+      outputTokens,
+      outcome: isLLMUsageLimitError(error) ? "budget_rejected" : "provider_error",
+    });
+    throw error;
+  }
+
+  try {
+    const result = await invokeConfiguredLLM({ ...params, maxTokens: outputTokens }, provider, config);
+    release();
+    await recordLLMUsageTelemetry({
+      ...telemetryBase,
+      inputCharacters,
+      outputTokens,
+      outcome: "success",
+      promptTokens: result.usage?.prompt_tokens,
+      completionTokens: result.usage?.completion_tokens,
+      totalTokens: result.usage?.total_tokens,
+    });
+    return result;
+  } catch (error) {
+    release();
+    await recordLLMUsageTelemetry({
+      ...telemetryBase,
+      inputCharacters,
+      outputTokens,
+      outcome: isLLMUsageLimitError(error) ? "budget_rejected" : "provider_error",
+    });
+    throw error;
+  }
 }

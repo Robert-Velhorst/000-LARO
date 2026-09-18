@@ -94,7 +94,7 @@ async function main() {
       transport = [];
       const start = performance.now();
       const analysis = await analyzeDocumentBytes({ bytes: Buffer.from(sample.source), mimeType: "text/plain", deepAnalysis: false });
-      const decision = await discoverDossier({ analysis, sourceText: sample.source, cases: sample.cases, preferences });
+      const decision = await discoverDossier({ ownerId: "LOCAL-EVALUATION", analysis, sourceText: sample.source, cases: sample.cases, preferences });
       const exact = decision.action === sample.expectedAction && decision.caseId === sample.expectedCaseId;
       if (exact) report.exactMatches++;
       else if (decision.action !== "review") report.nonmatchingAutomaticDecisions++;

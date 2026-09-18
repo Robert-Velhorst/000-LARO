@@ -14,6 +14,7 @@ import { referencesForCase, sourceReferences } from "./documentCaseMatching";
 import { evidenceTypeForMime, MAX_EVIDENCE_FILE_BYTES } from "../shared/evidenceFiles";
 import { discoverDossier, discoveryCaseSnapshot, type DiscoveryCase, type DiscoveryDecision } from "./dossierDiscovery";
 import type { SourceProvenance } from "./documentSourceTypes";
+import { isLLMUsageLimitError } from "./llmUsageBudget";
 
 function discoveryContext(rows: Array<typeof cases.$inferSelect>): DiscoveryCase[] {
   return rows.map((row) => ({ id: row.id, title: row.clientName || row.caseType || row.id,
@@ -95,7 +96,7 @@ async function organizeInboxDocumentUnlocked(userId: string, id: string, explici
     if (exactMatches.length === 0 && (originalReferences.length === 0 || preferences.analysisProvider !== "local")) {
       const candidates = discoveryContext(ownedCases);
       snapshot = discoveryCaseSnapshot(candidates);
-      discovery = await discoverDossier({ analysis: originalAnalysis, sourceText: original.sourceText || "", cases: candidates, preferences,
+      discovery = await discoverDossier({ ownerId: userId, analysis: originalAnalysis, sourceText: original.sourceText || "", cases: candidates, preferences,
         canContinue: async () => {
           const currentPreferences = await getWorkflowPreferences(userId);
           if (!currentPreferences.autoOrganizeDocuments || currentPreferences.analysisProvider !== preferences.analysisProvider ||
@@ -244,6 +245,7 @@ export async function processInboxDocument(userId: string, id: string, force = f
           return extractDocumentTextInAcquiredSlot(bytes, row.mimeType);
         });
         const result = await analyzeDocumentExtraction({ extraction, provider,
+          budget: { ownerId: userId },
           deepAnalysis: Boolean(provider && (isLocalLLMProvider(provider) || preferences.shareRawDocumentContent)),
           // The transport invokes this after queueing, for every source chunk.
           beforeDispatch: async () => {
@@ -268,6 +270,7 @@ export async function processInboxDocument(userId: string, id: string, force = f
             details: { provider: result.analysisProvider, providerStatus: result.providerStatus, contentHash: row.contentHash } });
         });
       } catch (error) {
+        if (isLLMUsageLimitError(error)) throw error;
         const message = `${sourceFailureMessage(error)} The saved original is preserved.`;
         await db.update(documentInbox).set({ error: message, updatedAt: new Date() }).where(and(eq(documentInbox.id, id), eq(documentInbox.userId, userId)));
         throw new TRPCError({ code: "UNPROCESSABLE_CONTENT", message });

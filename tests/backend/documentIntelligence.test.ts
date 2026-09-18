@@ -184,6 +184,7 @@ describe("document intelligence units", () => {
       mimeType: "text/plain",
       deepAnalysis: true,
       provider: "openai",
+      budget: { ownerId: "DOCUMENT_INTELLIGENCE_TEST" },
       beforeDispatch,
     });
 

@@ -104,6 +104,7 @@ export async function analyzeStoredEvidence(options: {
     extraction,
     deepAnalysis,
     provider,
+    budget: { ownerId: options.userId, caseId: item.caseId },
     beforeDispatch: async () => {
       const current = await getEvidenceFile(options.userId, item.id);
       if (!current || current.caseId !== item.caseId || current.metadata !== item.metadata) return false;

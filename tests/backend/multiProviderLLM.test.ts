@@ -5,8 +5,12 @@ import {
   getLLMProviderDescriptors,
   invokeLLM,
 } from "../../server/llm";
+import { resetLLMUsageBudgetForTests } from "../../server/llmUsageBudget";
+
+const TEST_BUDGET = { ownerId: "MULTI_PROVIDER_LLM_TEST", operation: "case_assistant" as const };
 
 afterEach(() => {
+  resetLLMUsageBudgetForTests();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -37,14 +41,14 @@ describe("multi-provider LLM adapter", () => {
     }), { status: 200, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await invokeLLM({ provider: "ollama", messages: [{ role: "user", content: "Analyze locally" }] });
+    await invokeLLM({ provider: "ollama", budget: TEST_BUDGET, messages: [{ role: "user", content: "Analyze locally" }] });
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("http://127.0.0.1:11434/v1/chat/completions");
     expect(init.headers).not.toHaveProperty("authorization");
     expect(init.redirect).toBe("error");
 
     vi.stubEnv("LARO_OLLAMA_BASE_URL", "https://remote.example.com");
-    await expect(invokeLLM({ provider: "ollama", messages: [{ role: "user", content: "Do not send" }] }))
+    await expect(invokeLLM({ provider: "ollama", budget: TEST_BUDGET, messages: [{ role: "user", content: "Do not send" }] }))
       .rejects.toThrow("LARO_OLLAMA_MODEL is not configured");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -62,6 +66,7 @@ describe("multi-provider LLM adapter", () => {
 
     await invokeLLM({
       provider: "groq",
+      budget: TEST_BUDGET,
       messages: [{ role: "user", content: "Analyze" }],
       response_format: { type: "json_object" },
       max_tokens: 123,
@@ -85,7 +90,7 @@ describe("multi-provider LLM adapter", () => {
     vi.stubGlobal("fetch", fetchMock);
     const format = { type: "json_schema" as const, json_schema: { name: "decision", strict: true,
       schema: { type: "object", properties: { action: { type: "string", enum: ["create", "assign", "review"] } }, required: ["action"], additionalProperties: false } } };
-    await invokeLLM({ provider: "ollama", messages: [{ role: "system", content: "Use source evidence." }, { role: "user", content: "Source document" }], response_format: format });
+    await invokeLLM({ provider: "ollama", budget: TEST_BUDGET, messages: [{ role: "system", content: "Use source evidence." }, { role: "user", content: "Source document" }], response_format: format });
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const payload = JSON.parse(String(init.body));
     expect(payload.response_format).toEqual(format);
@@ -99,7 +104,7 @@ describe("multi-provider LLM adapter", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: "{}" } }] })));
     vi.stubGlobal("fetch", fetchMock);
     const schema = { type: "object", properties: { decision: { type: "string" } }, required: ["decision"] };
-    await invokeLLM({ provider: "groq", messages: [{ role: "user", content: "Source document" }], outputSchema: { name: "decision", schema } });
+    await invokeLLM({ provider: "groq", budget: TEST_BUDGET, messages: [{ role: "user", content: "Source document" }], outputSchema: { name: "decision", schema } });
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const payload = JSON.parse(String(init.body));
     expect(payload.response_format).toEqual({ type: "json_object" });
@@ -113,7 +118,7 @@ describe("multi-provider LLM adapter", () => {
     vi.stubEnv("LARO_OLLAMA_REASONING_EFFORT", "");
     const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ choices: [{ message: { content: "{}" } }] })));
     vi.stubGlobal("fetch", fetchMock);
-    const request = { provider: "ollama" as const, messages: [{ role: "user" as const, content: "Source document" }] };
+    const request = { provider: "ollama" as const, budget: TEST_BUDGET, messages: [{ role: "user" as const, content: "Source document" }] };
     await invokeLLM(request);
     expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).not.toHaveProperty("reasoning_effort");
     vi.stubEnv("LARO_OLLAMA_REASONING_EFFORT", "none");
@@ -136,6 +141,7 @@ describe("multi-provider LLM adapter", () => {
 
     await invokeLLM({
       provider: "openai",
+      budget: TEST_BUDGET,
       messages: [{ role: "user", content: "Analyze" }],
       max_tokens: 456,
     });
@@ -159,6 +165,7 @@ describe("multi-provider LLM adapter", () => {
 
     await invokeLLM({
       provider: "together",
+      budget: TEST_BUDGET,
       messages: [{ role: "user", content: "Analyze" }],
       response_format: {
         type: "json_schema",
@@ -184,6 +191,7 @@ describe("multi-provider LLM adapter", () => {
 
     const result = await invokeLLM({
       provider: "anthropic",
+      budget: TEST_BUDGET,
       messages: [
         { role: "system", content: "Use the evidence." },
         { role: "user", content: "Question" },
@@ -205,6 +213,7 @@ describe("multi-provider LLM adapter", () => {
     vi.stubEnv("TOGETHER_API_KEY", "");
     await expect(invokeLLM({
       provider: "together",
+      budget: TEST_BUDGET,
       messages: [{ role: "user", content: "Analyze" }],
     })).rejects.toThrow("TOGETHER_API_KEY is not configured");
   });

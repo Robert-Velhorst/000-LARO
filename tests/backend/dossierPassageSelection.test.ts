@@ -16,7 +16,7 @@ const preferences: WorkflowPreferences = { analysisMode: "local", analysisProvid
   autoOrganizeDocuments: true, shareRawDocumentContent: false, outreachReviewMode: "each", messageApprovalMode: "each" };
 const cases = [{ id: "owned-housing", title: "Lekkage", summary: `${party} ${situation}`, metadata: null },
   { id: "owned-benefits", title: "Bijstand", summary: "Jan heeft bijstand aangevraagd. De gemeente heeft de aanvraag afgewezen.", metadata: null }];
-const run = () => discoverDossier({ analysis, sourceText: source, cases, preferences });
+const run = () => discoverDossier({ ownerId: "DOSSIER_PASSAGE_TEST", analysis, sourceText: source, cases, preferences });
 function reply(packet: any) {
   return { action: "assign", confidence: "high", caseId: cases[0].id, title: "", summary: "", reason: "Dezelfde verhuurder en hetzelfde lekkagegeschil.",
     support: {
@@ -55,7 +55,7 @@ describe("canonical discovery passage selection", () => {
   it("rechecks authorization before the second provider call", async () => {
     model();
     const canContinue = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
-    expect(await discoverDossier({ analysis, sourceText: source, cases, preferences, canContinue }))
+    expect(await discoverDossier({ ownerId: "DOSSIER_PASSAGE_TEST", analysis, sourceText: source, cases, preferences, canContinue }))
       .toMatchObject({ action: "review", reason: expect.stringContaining("changed") });
     expect(gateway).toHaveBeenCalledTimes(1);
     expect(canContinue).toHaveBeenCalledTimes(2);
@@ -64,7 +64,7 @@ describe("canonical discovery passage selection", () => {
   it("forwards current authorization to the transport in both stages", async () => {
     model();
     const canContinue = vi.fn().mockResolvedValue(true);
-    expect(await discoverDossier({ analysis, sourceText: source, cases, preferences, canContinue }))
+    expect(await discoverDossier({ ownerId: "DOSSIER_PASSAGE_TEST", analysis, sourceText: source, cases, preferences, canContinue }))
       .toMatchObject({ action: "assign" });
     expect(gateway).toHaveBeenCalledTimes(2);
     for (const [params] of gateway.mock.calls) expect(params.beforeDispatch).toBe(canContinue);
@@ -83,7 +83,7 @@ describe("canonical discovery passage selection", () => {
       return new Promise<boolean>((resolve) => { release = resolve; });
     });
     let finished = false;
-    const pending = discoverDossier({ analysis, sourceText: source, cases, preferences, canContinue })
+    const pending = discoverDossier({ ownerId: "DOSSIER_PASSAGE_TEST", analysis, sourceText: source, cases, preferences, canContinue })
       .then((result) => { finished = true; return result; });
     try {
       await vi.waitFor(() => expect(finished).toBe(true), { timeout: 500 });
@@ -104,7 +104,7 @@ describe("canonical discovery passage selection", () => {
         : { action: "review", confidence: "low", caseId: null, title: "", summary: "", reason: "Needs more information", support: null };
       return { choices: [{ message: { content: JSON.stringify(result) } }] };
     });
-    const result = await discoverDossier({ analysis, sourceText: source, cases: inventory, preferences });
+    const result = await discoverDossier({ ownerId: "DOSSIER_PASSAGE_TEST", analysis, sourceText: source, cases: inventory, preferences });
     expect(result).toMatchObject({ action: "review", reason: "Needs more information" });
     expect(result.comparison?.relations).toHaveLength(80);
     expect(gateway).toHaveBeenCalledTimes(5);
@@ -115,7 +115,7 @@ describe("canonical discovery passage selection", () => {
 
   it("checks the context ceiling before sentence segmentation", async () => {
     const segment = vi.spyOn(Intl.Segmenter.prototype, "segment");
-    const result = await discoverDossier({ analysis, sourceText: source + "\n".repeat(32_000), cases, preferences });
+    const result = await discoverDossier({ ownerId: "DOSSIER_PASSAGE_TEST", analysis, sourceText: source + "\n".repeat(32_000), cases, preferences });
     expect(result).toMatchObject({ action: "review", reason: expect.stringContaining("context limit") });
     expect(segment).not.toHaveBeenCalled();
     expect(gateway).not.toHaveBeenCalled();
@@ -171,7 +171,7 @@ describe("canonical discovery passage selection", () => {
           situation: { documentPassageId: packet.document.passages[1].id, casePassageId: null },
         } }) } }] };
     });
-    expect(await discoverDossier({ analysis, sourceText: source, cases: [], preferences })).toMatchObject({ action: "create", caseId: null, basis: [
+    expect(await discoverDossier({ ownerId: "DOSSIER_PASSAGE_TEST", analysis, sourceText: source, cases: [], preferences })).toMatchObject({ action: "create", caseId: null, basis: [
       { citationId: "src-1", quote: party, caseCitationId: null, caseQuote: null },
       { citationId: "src-2", quote: situation, caseCitationId: null, caseQuote: null },
     ] });

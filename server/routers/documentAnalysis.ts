@@ -373,6 +373,7 @@ export const documentAnalysisRouter = router({
       }).join("\n");
       const response = await invokeLLM({
         provider,
+        budget: { ownerId: ctx.user.id, operation: "timeline_correction", caseId: input.caseId },
         messages: [
           {
             role: "system",

@@ -17,6 +17,17 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 let _db: ReturnType<typeof drizzle> | null = null;
 let _sqlite: InstanceType<typeof Database> | null = null;
 
+/**
+ * Return the already-open application database without creating one.
+ *
+ * Low-level provider utilities use this to emit best-effort telemetry while
+ * remaining usable in isolated transport tests that deliberately do not boot
+ * the application database.
+ */
+export function getInitializedDb(): ReturnType<typeof drizzle> | null {
+  return _db;
+}
+
 // Determine DB path (using .laro.sqlite in current dir for now, 
 // will be refined in Electron to use app.getPath('userData'))
 function getDbPath() {

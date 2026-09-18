@@ -11,6 +11,7 @@ import { usageTracking } from './schema';
  * records contain quantities and provenance only.
  */
 export const RESOURCE_TYPES = [
+  'ai_model_invocation',
   'ai_email_analysis',
   'ai_document_analysis',
   'ai_legal_inference',

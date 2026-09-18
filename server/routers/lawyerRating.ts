@@ -6,6 +6,7 @@ import { lawyerRatings, lawyerInteractions, ratingCalculationLogs, lawyers, case
 import { nanoid } from 'nanoid';
 import { invokeLLM, isLLMProviderConfigured, isLocalLLMProvider, type LLMProvider } from '../llm';
 import { getWorkflowPreferences } from '../workflowPreferences';
+import { isLLMUsageLimitError } from '../llmUsageBudget';
 
 const responseAnalysisSchema = z.object({
   completenessScore: z.number().finite(),
@@ -84,12 +85,14 @@ export async function recordLawyerInteraction(data: {
   if (data.responseText && data.responseText.length > 50) {
     try {
       const [caseOwner] = await db.select({ userId: cases.userId }).from(cases).where(eq(cases.id, data.caseId)).limit(1);
-      const preferences = caseOwner?.userId ? await getWorkflowPreferences(caseOwner.userId) : null;
+      const ownerId = caseOwner?.userId;
+      const preferences = ownerId ? await getWorkflowPreferences(ownerId) : null;
       const provider = preferences?.analysisProvider === "local" ? null : preferences?.analysisProvider;
-      if (provider && (isLocalLLMProvider(provider) || preferences?.shareRawDocumentContent) && isLLMProviderConfigured(provider)) {
-        aiScores = await analyzeResponseQuality(data.responseText, provider);
+      if (ownerId && provider && (isLocalLLMProvider(provider) || preferences?.shareRawDocumentContent) && isLLMProviderConfigured(provider)) {
+        aiScores = await analyzeResponseQuality(data.responseText, provider, ownerId, data.caseId);
       }
     } catch (error) {
+      if (isLLMUsageLimitError(error)) throw error;
       console.error('[LawyerRating] AI analysis failed:', error);
       // Continue without AI scores
     }
@@ -129,7 +132,7 @@ export async function recordLawyerInteraction(data: {
 /**
  * Analyze response quality using AI
  */
-async function analyzeResponseQuality(responseText: string, provider: LLMProvider): Promise<{
+async function analyzeResponseQuality(responseText: string, provider: LLMProvider, ownerId: string, caseId: string): Promise<{
   completenessScore: number;
   professionalismScore: number;
   helpfulnessScore: number;
@@ -161,6 +164,7 @@ Provide your analysis in JSON format:
 
   const response = await invokeLLM({
     provider,
+    budget: { ownerId, operation: "lawyer_rating", caseId },
     messages: [
       { role: 'system', content: 'You are an expert at analyzing legal professional communications.' },
       { role: 'user', content: prompt }
@@ -185,7 +189,8 @@ Provide your analysis in JSON format:
           additionalProperties: false
         }
       }
-    }
+    },
+    max_tokens: 1_200,
   });
 
   const content = response.choices[0]?.message.content;

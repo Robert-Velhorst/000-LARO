@@ -9,6 +9,7 @@ import {
   findingHasLiteralSourceSupport,
 } from "./documentIntelligence";
 import { invokeLLM, isLLMProviderConfigured, isLocalLLMProvider } from "./llm";
+import { isLLMUsageLimitError } from "./llmUsageBudget";
 import { getWorkflowPreferences } from "./workflowPreferences";
 import { cases, documentAnalyses, evidence } from "./schema";
 
@@ -384,6 +385,7 @@ export async function answerCaseQuestion(options: {
   try {
     const response = await invokeLLM({
       provider,
+      budget: { ownerId: options.userId, operation: "case_assistant", caseId: options.caseId },
       messages: [
         {
           role: "system",
@@ -446,7 +448,8 @@ export async function answerCaseQuestion(options: {
       mode: "provider",
       notice: null,
     };
-  } catch {
+  } catch (error) {
+    if (isLLMUsageLimitError(error)) throw error;
     return buildCaseAssistantRetrievalAnswer(options.question, rankedSources, "provider_failed");
   }
 }
