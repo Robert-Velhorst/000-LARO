@@ -11,6 +11,8 @@ import {
   initDatabase as initAgentDb,
   closeDatabase as closeAgentDb,
   createScan,
+  cancelPausedScanUpload,
+  getScan,
   getScanFiles,
   setScanFileSelection,
 } from './database';
@@ -573,6 +575,10 @@ function setupIPC(): void {
     assertTrustedIpc(event);
     return { files: getScanFiles(String(id).slice(0, 200)) };
   });
+  ipcMain.handle(IPC_CHANNELS.SCAN_PROGRESS_GET, (event, id: string) => {
+    assertTrustedIpc(event);
+    return { progress: getScan(String(id).slice(0, 200)) };
+  });
   ipcMain.handle(IPC_CHANNELS.SCAN_FILES_SELECT, async (event, id: string, fileIds: string[]) => {
     assertTrustedIpc(event);
     const safeIds = Array.isArray(fileIds) ? fileIds.map(String).filter((value) => value.length <= 200) : [];
@@ -584,7 +590,20 @@ function setupIPC(): void {
     return startUpload(id, rendererUrl);
   });
   ipcMain.handle(IPC_CHANNELS.UPLOAD_PAUSE, (event) => { assertTrustedIpc(event); currentUploader?.pause(); return { success: true }; });
-  ipcMain.handle(IPC_CHANNELS.UPLOAD_RESUME, (event) => { assertTrustedIpc(event); currentUploader?.resume(); return { success: true }; });
+  ipcMain.handle(IPC_CHANNELS.UPLOAD_RESUME, (event) => {
+    assertTrustedIpc(event);
+    if (!currentUploader) return { success: false };
+    currentUploader.resume();
+    return { success: true };
+  });
+  ipcMain.handle(IPC_CHANNELS.UPLOAD_STOP, (event, id: string) => {
+    assertTrustedIpc(event);
+    if (currentUploader) {
+      currentUploader.stop();
+      return { success: true };
+    }
+    return { success: cancelPausedScanUpload(String(id).slice(0, 200)) };
+  });
 }
 
 async function startUpload(scanId: string, cookieUrl: string): Promise<{ success: boolean }> {
@@ -609,12 +628,19 @@ async function startUpload(scanId: string, cookieUrl: string): Promise<{ success
       apiUrl: agentConfig.apiUrl,
       resolveAuth,
       remote: !!remoteServerUrl,
-      concurrency: 3,
+      // One raw binary body at a time keeps scanner memory and server request
+      // admission bounded even when several files are at the 7 MB limit.
+      concurrency: 1,
       maxRetries: 3,
     });
     currentUploader.on('progress', (p) => scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, { scanId: safeScanId, ...p }));
     currentUploader.on('completed', (r) => {
-      scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, { scanId: safeScanId, done: true, ...r });
+      scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, {
+        scanId: safeScanId,
+        done: true,
+        status: r.partial ? 'failed' : 'completed',
+        ...r,
+      });
       mainWindow?.webContents.send(IPC_CHANNELS.EVIDENCE_UPDATED, { scanId: safeScanId });
       currentUploader = null;
     });
@@ -623,6 +649,26 @@ async function startUpload(scanId: string, cookieUrl: string): Promise<{ success
         scanId: safeScanId,
         fileId: failure.fileId,
         failed: true,
+        uploadStatus: failure.uploadStatus,
+        errorMessage: failure.error,
+      });
+    });
+    currentUploader.on('file-retryable', (failure) => {
+      scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, {
+        scanId: safeScanId,
+        fileId: failure.fileId,
+        retryable: true,
+        uploadStatus: failure.uploadStatus,
+        authorizationRequired: failure.authorizationRequired,
+        errorMessage: failure.error,
+      });
+    });
+    currentUploader.on('file-cancelled', (failure) => {
+      scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, {
+        scanId: safeScanId,
+        fileId: failure.fileId,
+        cancelled: true,
+        uploadStatus: failure.uploadStatus,
         errorMessage: failure.error,
       });
     });
@@ -631,6 +677,7 @@ async function startUpload(scanId: string, cookieUrl: string): Promise<{ success
         scanId: safeScanId,
         fileId: failure.fileId,
         reviewRequired: true,
+        uploadStatus: failure.uploadStatus,
         errorMessage: failure.error,
       });
     });
@@ -643,7 +690,29 @@ async function startUpload(scanId: string, cookieUrl: string): Promise<{ success
       });
       currentUploader = null;
     });
-    currentUploader.on('cancelled', () => { currentUploader = null; });
+    const pauseForRetry = (result: any) => {
+      scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, {
+        scanId: safeScanId,
+        done: true,
+        retryable: true,
+        status: 'upload-paused',
+        errorMessage: result.error || `${result.retryableFiles || 1} upload(s) can be resumed.`,
+        ...result,
+      });
+      currentUploader = null;
+    };
+    currentUploader.on('retryable-pending', pauseForRetry);
+    currentUploader.on('authorization-required', pauseForRetry);
+    currentUploader.on('cancelled', () => {
+      scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, {
+        scanId: safeScanId,
+        done: true,
+        cancelled: true,
+        status: 'cancelled',
+        errorMessage: 'Upload cancelled. Approved files can be resumed.',
+      });
+      currentUploader = null;
+    });
     currentUploader.on('error', (error: Error) => {
       scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, {
         scanId: safeScanId,

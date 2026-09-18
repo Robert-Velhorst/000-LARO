@@ -1044,3 +1044,141 @@ test("scanner configuration failure offers retry instead of an endless spinner",
   await expect.poll(() => page.evaluate(() => (window as any).__configAttempts)).toBeGreaterThan(attempts);
   await expect(page.getByRole("heading", { name: "Scanner unavailable", exact: true })).toBeVisible();
 });
+
+test("scanner renders persisted retry state and resumes it without rescanning", async ({ page }, testInfo) => {
+  const email = await createAccount(page);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  let ownerId = "";
+  try {
+    ownerId = (database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string }).id;
+  } finally {
+    database.close();
+  }
+  await page.addInitScript(({ userId, scanId }) => {
+    window.localStorage.setItem(`laroScannerActiveScan:${userId}`, scanId);
+    (window as any).__stopUploadCalls = 0;
+    let uploadListener: ((progress: unknown) => void) | null = null;
+    let scanStatus = "upload-paused";
+    let files = [
+      {
+        id: "retry-file",
+        path: "/approved/retry.txt",
+        name: "retry.txt",
+        size: 25,
+        mimeType: "text/plain",
+        modifiedAt: new Date().toISOString(),
+        uploadStatus: "retryable",
+        uploadProgress: 0,
+        errorMessage: "Network connection interrupted",
+      },
+      {
+        id: "complete-file",
+        path: "/approved/complete.txt",
+        name: "complete.txt",
+        size: 30,
+        mimeType: "text/plain",
+        modifiedAt: new Date().toISOString(),
+        uploadStatus: "completed",
+        uploadProgress: 100,
+        evidenceId: "EVIDENCE-COMPLETE",
+      },
+    ];
+    (window as any).electronAPI = {
+      getConfig: async () => ({ apiUrl: location.origin, deviceName: "browser-test", caseId: "CASE-RESUME" }),
+      setConfig: async (value: unknown) => value,
+      getSystemInfo: async () => ({ platform: "windows", hostname: "test", username: "test", homeDir: "/", version: "1.3.0" }),
+      getAppVersion: async () => "1.3.0",
+      openExternal: async () => undefined,
+      reportRendererError: async () => undefined,
+      selectFolder: async () => null,
+      startLocalSource: async () => null,
+      startScan: async () => ({ scanId }),
+      stopScan: async () => ({ success: true }),
+      pauseScan: async () => ({ success: true }),
+      resumeScan: async () => ({ success: true }),
+      getScanFiles: async () => ({ files }),
+      getScanProgress: async () => ({ progress: {
+        scanId,
+        status: scanStatus,
+        totalFiles: 2,
+        scannedFiles: 2,
+        uploadedFiles: 1,
+        failedFiles: 1,
+        totalSize: 55,
+        uploadedSize: 30,
+        currentFile: null,
+        errorMessage: scanStatus === "cancelled" ? "Upload cancelled. Approved files can be resumed." : null,
+      } }),
+      setScanFileSelection: async () => ({ selected: 1, reviewRequired: 0 }),
+      startUpload: async () => {
+        scanStatus = "completed";
+        files = files.map((file) => file.id === "retry-file"
+          ? { ...file, uploadStatus: "completed", uploadProgress: 100, errorMessage: undefined, evidenceId: "EVIDENCE-RETRIED" }
+          : file);
+        queueMicrotask(() => uploadListener?.({
+          scanId,
+          fileId: "retry-file",
+          uploadStatus: "completed",
+          uploadedFiles: 2,
+          failedFiles: 0,
+        }));
+        queueMicrotask(() => uploadListener?.({
+          scanId,
+          done: true,
+          status: "completed",
+          uploadedFiles: 2,
+          failedFiles: 0,
+          uploadedSize: 55,
+        }));
+        return { success: true };
+      },
+      pauseUpload: async () => ({ success: true }),
+      // The desktop process restarted, so there is no paused in-memory worker.
+      resumeUpload: async () => ({ success: false }),
+      stopUpload: async () => {
+        (window as any).__stopUploadCalls++;
+        scanStatus = "cancelled";
+        files = files.map((file) => file.id === "retry-file"
+          ? { ...file, uploadStatus: "cancelled", errorMessage: "Upload cancelled. The approved file can be resumed." }
+          : file);
+        return { success: true };
+      },
+      onScanProgress: () => undefined,
+      onUploadProgress: (callback: (progress: unknown) => void) => { uploadListener = callback; },
+      clearScanProgressListeners: () => undefined,
+      clearUploadProgressListeners: () => { uploadListener = null; },
+      openScanPanel: async () => undefined,
+    };
+  }, { userId: ownerId, scanId: "persisted-resume-scan" });
+
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => requestFailures.push(`${request.method()} ${request.url()}`));
+  const response = await page.goto("/?mode=scanner", { waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  await expect(page.getByText(/Retry available|Kan worden hervat/, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /Resume uploads|Uploads hervatten/ }).click();
+  await expect(page.getByText(/Completed|Voltooid/, { exact: true })).toHaveCount(3);
+  await expect(page.getByText(/Retry available|Kan worden hervat/, { exact: true })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  const audit = await new AxeBuilder({ page }).analyze();
+  expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+  await page.screenshot({ path: testInfo.outputPath("scanner-resumed.png"), fullPage: true });
+
+  // A separate interrupted session can also be cancelled after reopening.
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.getByText(/Retry available|Kan worden hervat/, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /Cancel|Annuleren/ }).click();
+  await expect(page.locator("header").getByText(/Cancelled|Geannuleerd/, { exact: true })).toBeVisible();
+  await expect(page.getByTitle(/Cancelled|Geannuleerd/)).toBeVisible();
+  await expect(page.getByText(/Retry available|Kan worden hervat/, { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => (window as any).__stopUploadCalls)).toBe(1);
+  await page.screenshot({ path: testInfo.outputPath("scanner-cancelled.png"), fullPage: true });
+
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+});

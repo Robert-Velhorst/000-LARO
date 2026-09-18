@@ -88,6 +88,21 @@ export function initDatabase(serverUrl?: string): void {
   for (const [column, type] of fileColumns) {
     if (!existingFileColumns.has(column)) db.exec(`ALTER TABLE files ADD COLUMN ${column} ${type}`);
   }
+
+  // A process exit can leave a file and its parent scan in the transient
+  // `uploading` state. Convert that to an explicit retryable pause so the next
+  // launch can resume the approved bytes without rescanning them.
+  db.exec(`
+    UPDATE files
+    SET uploadStatus = 'retryable', uploadProgress = 0,
+      errorMessage = COALESCE(errorMessage, 'Upload was interrupted and can be resumed.')
+    WHERE uploadStatus = 'uploading';
+
+    UPDATE scans
+    SET status = 'upload-paused', completedAt = NULL,
+      errorMessage = COALESCE(errorMessage, 'Upload was interrupted and can be resumed.')
+    WHERE status = 'uploading';
+  `);
   
   console.log('[Database] Initialized at', dbPath);
 }
@@ -345,7 +360,7 @@ export async function setScanFileSelection(
 
   const selected = new Set(selectedFileIds);
   const rows = db
-    .prepare("SELECT * FROM files WHERE scanId = ? AND uploadStatus IN ('pending', 'review_required', 'excluded')")
+    .prepare("SELECT * FROM files WHERE scanId = ? AND uploadStatus IN ('pending', 'review_required', 'excluded', 'retryable', 'cancelled')")
     .all(scanId)
     .map(rowToFileItem);
 
@@ -482,6 +497,75 @@ export function markFileUploaded(fileId: string, evidenceId: string): void {
     UPDATE files SET uploadStatus = 'completed', uploadProgress = 100, errorMessage = NULL, evidenceId = ?
     WHERE id = ?
   `).run(evidenceId, fileId);
+}
+
+export function prepareScanUploadResume(scanId: string): void {
+  if (!db) throw new Error('Database not initialized');
+  db.transaction(() => {
+    db!.prepare(`
+      UPDATE files SET uploadStatus = 'pending', uploadProgress = 0, errorMessage = NULL
+      WHERE scanId = ? AND uploadStatus IN ('retryable', 'uploading', 'cancelled')
+    `).run(scanId);
+    db!.prepare(`
+      UPDATE scans SET status = 'uploading', errorMessage = NULL, completedAt = NULL
+      WHERE id = ?
+    `).run(scanId);
+  })();
+}
+
+/** Cancel a persisted upload that no longer has an in-memory worker. */
+export function cancelPausedScanUpload(scanId: string): boolean {
+  if (!db) throw new Error('Database not initialized');
+  return db.transaction(() => {
+    const scan = db!.prepare('SELECT status FROM scans WHERE id = ?').get(scanId) as { status: string } | undefined;
+    if (!scan || !['upload-paused', 'uploading'].includes(scan.status)) return false;
+    db!.prepare(`
+      UPDATE files SET uploadStatus = 'cancelled', uploadProgress = 0,
+        errorMessage = 'Upload cancelled. The approved file can be resumed.'
+      WHERE scanId = ? AND uploadStatus IN ('pending', 'retryable', 'uploading')
+    `).run(scanId);
+    const summary = getScanUploadSummary(scanId);
+    updateScanProgress({
+      scanId,
+      status: 'cancelled',
+      uploadedFiles: summary.completedFiles,
+      failedFiles: summary.terminalFiles,
+      uploadedSize: summary.completedBytes,
+      errorMessage: 'Upload cancelled. Approved files can be resumed.',
+    });
+    return true;
+  })();
+}
+
+export interface ScanUploadSummary {
+  completedFiles: number;
+  completedBytes: number;
+  pendingFiles: number;
+  retryableFiles: number;
+  terminalFiles: number;
+  cancelledFiles: number;
+  reviewRequiredFiles: number;
+}
+
+export function getScanUploadSummary(scanId: string): ScanUploadSummary {
+  if (!db) throw new Error('Database not initialized');
+  const rows = db.prepare(`
+    SELECT uploadStatus AS status, COUNT(*) AS count,
+      COALESCE(SUM(CASE WHEN uploadStatus = 'completed' THEN size ELSE 0 END), 0) AS completedBytes
+    FROM files
+    WHERE scanId = ?
+    GROUP BY uploadStatus
+  `).all(scanId) as Array<{ status: UploadStatus; count: number; completedBytes: number }>;
+  const counts = new Map(rows.map((row) => [row.status, Number(row.count)]));
+  return {
+    completedFiles: counts.get('completed') ?? 0,
+    completedBytes: rows.reduce((sum, row) => sum + Number(row.completedBytes || 0), 0),
+    pendingFiles: counts.get('pending') ?? 0,
+    retryableFiles: counts.get('retryable') ?? 0,
+    terminalFiles: (counts.get('terminal') ?? 0) + (counts.get('failed') ?? 0),
+    cancelledFiles: counts.get('cancelled') ?? 0,
+    reviewRequiredFiles: counts.get('review_required') ?? 0,
+  };
 }
 
 export function getReviewRequiredFileCount(scanId: string): number {

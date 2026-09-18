@@ -16,11 +16,13 @@ const IPC_CHANNELS = {
   SCAN_PAUSE: 'scan:pause',
   SCAN_RESUME: 'scan:resume',
   SCAN_PROGRESS: 'scan:progress',
+  SCAN_PROGRESS_GET: 'scan:progress:get',
   SCAN_FILES_GET: 'scan:files:get',
   SCAN_FILES_SELECT: 'scan:files:select',
   UPLOAD_START: 'upload:start',
   UPLOAD_PAUSE: 'upload:pause',
   UPLOAD_RESUME: 'upload:resume',
+  UPLOAD_STOP: 'upload:stop',
   UPLOAD_PROGRESS: 'upload:progress',
   EVIDENCE_UPDATED: 'evidence:updated',
   OPEN_EXTERNAL: 'open:external',
@@ -55,6 +57,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pauseScan: () => ipcRenderer.invoke(IPC_CHANNELS.SCAN_PAUSE),
   resumeScan: () => ipcRenderer.invoke(IPC_CHANNELS.SCAN_RESUME),
   getScanFiles: (scanId: string) => ipcRenderer.invoke(IPC_CHANNELS.SCAN_FILES_GET, scanId),
+  getScanProgress: (scanId: string) => ipcRenderer.invoke(IPC_CHANNELS.SCAN_PROGRESS_GET, scanId),
   setScanFileSelection: (scanId: string, fileIds: string[]) =>
     ipcRenderer.invoke(IPC_CHANNELS.SCAN_FILES_SELECT, scanId, fileIds),
   
@@ -62,6 +65,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startUpload: (scanId: string) => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_START, scanId),
   pauseUpload: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_PAUSE),
   resumeUpload: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_RESUME),
+  stopUpload: (scanId: string) => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_STOP, scanId),
   
   // Event listeners
   onScanProgress(callback: (progress: any) => void) {
@@ -95,10 +99,12 @@ declare global {
       pauseScan: () => Promise<{ success: boolean }>;
       resumeScan: () => Promise<{ success: boolean }>;
       getScanFiles: (scanId: string) => Promise<{ files: any[] }>;
+      getScanProgress: (scanId: string) => Promise<{ progress: any | null }>;
       setScanFileSelection: (scanId: string, fileIds: string[]) => Promise<{ selected: number; reviewRequired: number }>;
       startUpload: (scanId: string) => Promise<{ success: boolean }>;
       pauseUpload: () => Promise<{ success: boolean }>;
       resumeUpload: () => Promise<{ success: boolean }>;
+      stopUpload: (scanId: string) => Promise<{ success: boolean }>;
       onScanProgress: (callback: (progress: any) => void) => void;
       onUploadProgress: (callback: (progress: any) => void) => void;
       clearScanProgressListeners: () => void;

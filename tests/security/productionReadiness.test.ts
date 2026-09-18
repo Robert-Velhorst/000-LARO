@@ -855,6 +855,7 @@ describe('production readiness regressions', () => {
     const scan = readFileSync(join(ROOT, 'src/renderer/pages/ScanPage.tsx'), 'utf8');
     const translations = readFileSync(join(ROOT, 'shared/i18n.ts'), 'utf8');
     const uploader = readFileSync(join(ROOT, 'src-main/uploader.ts'), 'utf8');
+    const scannerUpload = readFileSync(join(ROOT, 'server/scannerUpload.ts'), 'utf8');
     const routers = readFileSync(join(ROOT, 'server/routers/index.ts'), 'utf8');
 
     expect(existsSync(join(ROOT, 'src/renderer/pages/AuthPage.tsx'))).toBe(false);
@@ -874,9 +875,13 @@ describe('production readiness regressions', () => {
     expect(main).toContain("autoUpload: false");
     expect(main).toContain("process.env.HOST = '127.0.0.1'");
     expect(main).not.toContain("ipcMain.handle('agent:token'");
-    expect(uploader).toContain('evidenceFiles.upload.mutate');
+    expect(uploader).toContain('SCANNER_UPLOAD_PATH');
+    expect(uploader).not.toContain('httpBatchLink');
+    expect(uploader).not.toContain("toString('base64')");
     expect(uploader).toContain('createDesktopScannerHeaders(options.resolveAuth)');
-    expect(uploader).toContain("updateFileStatus(file.id, 'pending'");
+    expect(uploader).toContain("updateFileStatus(file.id, 'retryable'");
+    expect(scannerUpload).toContain('express.raw({ type: "application/octet-stream", limit: MAX_EVIDENCE_FILE_BYTES })');
+    expect(scannerUpload).toContain('evidenceIdForUpload');
     expect(uploader).not.toContain('Authorization:');
     expect(uploader).not.toContain('s3.example.com');
     expect(uploader).not.toMatch(/simulat(?:e|ed|ing) S3 upload/i);

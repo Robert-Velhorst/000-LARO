@@ -55,6 +55,7 @@ import {
 } from './publicPathPrefix';
 import { consumeCaseZipDownloadTicket, createCaseZipStream } from './evidenceExport';
 import { AUDIT_ACTIONS, createAuditLog } from './audit';
+import { scannerUploadRouter } from './scannerUpload';
 
 // ─── Environment ──────────────────────────────────────────────────────────────
 
@@ -116,6 +117,9 @@ app.use((req, res, next) => {
 });
 
 app.use(cookieParser());
+// Scanner evidence uses a dedicated bounded binary route. Mount it before the
+// JSON parsers so valid 7 MB files are never Base64-expanded or tRPC-batched.
+app.use(scannerUploadRouter);
 app.use(express.json({ limit: ENV.API_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: ENV.API_BODY_LIMIT }));
 app.use(compressionMiddleware);

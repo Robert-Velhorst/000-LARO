@@ -38,6 +38,22 @@ export default function App() {
       .catch((error: unknown) => console.error("Failed to clear scanner case selection:", error));
   }, [session.isSuccess, session.data, config?.caseId]);
 
+  useEffect(() => {
+    const userId = session.data?.id;
+    if (!userId || activeScanId) return;
+    const storageKey = `laroScannerActiveScan:${userId}`;
+    const storedScanId = window.localStorage.getItem(storageKey);
+    if (!storedScanId) return;
+    void electronAPI.getScanProgress(storedScanId).then(({ progress }: { progress: { status?: string } | null }) => {
+      if (!progress || !["review", "uploading", "upload-paused", "failed", "cancelled"].includes(progress.status || "")) {
+        window.localStorage.removeItem(storageKey);
+        return;
+      }
+      setActiveScanId(storedScanId);
+      setCurrentPage("scan");
+    }).catch(() => window.localStorage.removeItem(storageKey));
+  }, [session.data?.id, activeScanId, electronAPI]);
+
   const saveSettings = async (updates: Partial<AgentConfig>) => {
     const updated = await electronAPI.setConfig({ caseId: updates.caseId ?? null });
     setConfig(updated);
@@ -86,6 +102,7 @@ export default function App() {
           config={config}
           onNavigate={(page) => setCurrentPage(page as Page)}
           onScanStarted={(scanId) => {
+            if (session.data?.id) window.localStorage.setItem(`laroScannerActiveScan:${session.data.id}`, scanId);
             setActiveScanId(scanId);
             setCurrentPage("scan");
           }}

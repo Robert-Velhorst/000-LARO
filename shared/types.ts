@@ -15,7 +15,17 @@ export type ScanStatus =
   | 'error'
   | 'cancelled';
 
-export type UploadStatus = 'pending' | 'review_required' | 'excluded' | 'uploading' | 'done' | 'completed' | 'failed';
+export type UploadStatus =
+  | 'pending'
+  | 'review_required'
+  | 'excluded'
+  | 'uploading'
+  | 'retryable'
+  | 'terminal'
+  | 'cancelled'
+  | 'done'
+  | 'completed'
+  | 'failed';
 
 export interface AgentConfig {
   apiUrl: string;
@@ -83,11 +93,13 @@ export const IPC = {
   SCAN_PAUSE:      'scan:pause',
   SCAN_RESUME:     'scan:resume',
   SCAN_PROGRESS:   'scan:progress',
+  SCAN_PROGRESS_GET: 'scan:progress:get',
   SCAN_FILES_GET:  'scan:files:get',
   SCAN_FILES_SELECT: 'scan:files:select',
   UPLOAD_START:    'upload:start',
   UPLOAD_PAUSE:    'upload:pause',
   UPLOAD_RESUME:   'upload:resume',
+  UPLOAD_STOP:     'upload:stop',
   UPLOAD_PROGRESS: 'upload:progress',
   EVIDENCE_UPDATED: 'evidence:updated',
   OPEN_EXTERNAL:   'open:external',

@@ -11,7 +11,18 @@ interface Props {
   onNavigate: (page: string) => void;
 }
 
-type Phase = "scanning" | "paused" | "review" | "uploading" | "completed" | "failed" | "cancelled";
+type Phase = "scanning" | "paused" | "review" | "uploading" | "upload-paused" | "completed" | "failed" | "cancelled";
+
+type UploadProgressEvent = Partial<ScanProgress> & {
+  done?: boolean;
+  fileId?: string;
+  failed?: boolean;
+  retryable?: boolean;
+  reviewRequired?: boolean;
+  cancelled?: boolean;
+  uploadStatus?: FileItem["uploadStatus"];
+  errorMessage?: string;
+};
 
 export default function ScanPage({ activeScanId, onNavigate }: Props) {
   const { t } = useI18n();
@@ -27,12 +38,23 @@ export default function ScanPage({ activeScanId, onNavigate }: Props) {
     const result = await electronAPI.getScanFiles(activeScanId);
     const next = (result.files ?? []) as FileItem[];
     setFiles(next);
-    setSelectedIds(new Set(next.filter((file) => file.uploadStatus === "pending").map((file) => file.id)));
+    setSelectedIds(new Set(next.filter((file) => ["pending", "retryable", "cancelled"].includes(file.uploadStatus)).map((file) => file.id)));
   };
 
   useEffect(() => {
     electronAPI.clearScanProgressListeners();
     electronAPI.clearUploadProgressListeners();
+
+    if (activeScanId) {
+      void Promise.all([
+        loadFiles(),
+        electronAPI.getScanProgress(activeScanId).then(({ progress: saved }: { progress: ScanProgress | null }) => {
+          if (!saved) return;
+          setProgress(saved);
+          setPhase(phaseForStatus(saved.status));
+        }),
+      ]);
+    }
 
     electronAPI.onScanProgress((next: Partial<ScanProgress>) => {
       if (!activeScanId || next.scanId !== activeScanId) return;
@@ -47,21 +69,33 @@ export default function ScanPage({ activeScanId, onNavigate }: Props) {
       }
     });
 
-    electronAPI.onUploadProgress((next: { scanId?: string; done?: boolean; failedFiles?: number; fileId?: string; failed?: boolean; reviewRequired?: boolean; errorMessage?: string }) => {
+    electronAPI.onUploadProgress((next: UploadProgressEvent) => {
       if (!activeScanId || next.scanId !== activeScanId) return;
-      setProgress((current) => ({ ...current, ...next }));
+      setProgress((current) => ({
+        ...current,
+        ...next,
+        ...(next.done && next.status === "completed" ? { errorMessage: null } : {}),
+      }));
       if (next.fileId) {
         setFiles((current) => current.map((file) => file.id === next.fileId
           ? {
               ...file,
-              uploadStatus: next.reviewRequired ? "review_required" : next.failed ? "failed" : "completed",
-              uploadProgress: next.failed || next.reviewRequired ? 0 : 100,
+              uploadStatus: next.uploadStatus ?? (next.reviewRequired ? "review_required" : next.failed ? "terminal" : "completed"),
+              uploadProgress: next.uploadStatus === "completed" || (!next.uploadStatus && !next.failed && !next.reviewRequired) ? 100 : 0,
               errorMessage: next.errorMessage,
             }
           : file));
       }
       if (next.done) {
-        setPhase(next.reviewRequired ? "review" : next.failedFiles ? "failed" : "completed");
+        setPhase(next.status ? phaseForStatus(next.status) : next.reviewRequired
+          ? "review"
+          : next.cancelled
+            ? "cancelled"
+            : next.retryable
+              ? "upload-paused"
+              : next.failedFiles
+                ? "failed"
+                : "completed");
         setBusy(false);
         if (next.reviewRequired) toast.warning(t("scanner.reviewChanged"));
         void loadFiles();
@@ -104,10 +138,11 @@ export default function ScanPage({ activeScanId, onNavigate }: Props) {
         setBusy(false);
         return;
       }
-      await electronAPI.startUpload(activeScanId);
       setPhase("uploading");
+      await electronAPI.startUpload(activeScanId);
     } catch (error) {
       setBusy(false);
+      setPhase("review");
       toast.error(error instanceof Error ? error.message : t("scanner.uploadStartError"));
     }
   };
@@ -115,6 +150,61 @@ export default function ScanPage({ activeScanId, onNavigate }: Props) {
   const pause = async () => {
     await electronAPI.pauseScan();
     setPhase("paused");
+  };
+
+  const pauseUpload = async () => {
+    await electronAPI.pauseUpload();
+    setBusy(false);
+    setPhase("upload-paused");
+  };
+
+  const resumeUpload = async () => {
+    const previousPhase = phase;
+    setBusy(true);
+    setPhase("uploading");
+    try {
+      const result = await electronAPI.resumeUpload();
+      if (!result.success) await retryApprovedUploads();
+    } catch (error) {
+      setBusy(false);
+      setPhase(previousPhase);
+      toast.error(error instanceof Error ? error.message : t("scanner.uploadStartError"));
+    }
+  };
+
+  const retryApprovedUploads = async () => {
+    if (!activeScanId) return;
+    setBusy(true);
+    const previousPhase = phase;
+    setPhase("uploading");
+    try {
+      await electronAPI.startUpload(activeScanId);
+    } catch (error) {
+      setBusy(false);
+      setPhase(previousPhase);
+      toast.error(error instanceof Error ? error.message : t("scanner.uploadStartError"));
+    }
+  };
+
+  const cancelUpload = async () => {
+    if (!activeScanId) return;
+    try {
+      const result = await electronAPI.stopUpload(activeScanId);
+      if (result.success) {
+        setPhase("cancelled");
+        const saved = await electronAPI.getScanProgress(activeScanId);
+        if (saved.progress) setProgress(saved.progress);
+        await loadFiles();
+      } else {
+        const saved = await electronAPI.getScanProgress(activeScanId);
+        if (saved.progress) {
+          setProgress(saved.progress);
+          setPhase(phaseForStatus(saved.progress.status));
+        }
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("scanner.uploadStartError"));
+    }
   };
 
   const resume = async () => {
@@ -167,9 +257,25 @@ export default function ScanPage({ activeScanId, onNavigate }: Props) {
                 )}
                 <IconButton label={t("scanner.cancel")} onClick={cancel}><Square className="h-4 w-4" /></IconButton>
               </div>
+            ) : phase === "uploading" ? (
+              <div className="flex gap-2">
+                <IconButton label={t("scanner.pause")} onClick={pauseUpload}><Pause className="h-4 w-4" /></IconButton>
+                <IconButton label={t("scanner.cancel")} onClick={cancelUpload}><Square className="h-4 w-4" /></IconButton>
+              </div>
+            ) : phase === "upload-paused" ? (
+              <div className="flex gap-2">
+                <button type="button" disabled={busy} onClick={resumeUpload} className="flex items-center gap-2 bg-blue-600 px-3 py-2 text-sm hover:bg-blue-700 disabled:opacity-50">
+                  <Play className="h-4 w-4" /> {t("scanner.resumeUploads")}
+                </button>
+                <IconButton label={t("scanner.cancel")} onClick={cancelUpload}><Square className="h-4 w-4" /></IconButton>
+              </div>
+            ) : phase === "cancelled" ? (
+              <button type="button" disabled={busy} onClick={retryApprovedUploads} className="bg-blue-600 px-3 py-2 text-sm hover:bg-blue-700 disabled:opacity-50">
+                {t("scanner.resumeUploads")}
+              </button>
             ) : null}
           </div>
-          {(scanning || phase === "uploading") && (
+          {(scanning || phase === "uploading" || phase === "upload-paused") && (
             <div className="mt-4 h-2 overflow-hidden bg-slate-800">
               <div className={`h-full bg-blue-500 ${scanning ? "w-1/3 animate-pulse" : ""}`} style={scanning ? undefined : { width: `${uploadPercent}%` }} />
             </div>
@@ -178,7 +284,7 @@ export default function ScanPage({ activeScanId, onNavigate }: Props) {
           {progress.errorMessage ? <p className="mt-3 text-sm text-red-400">{progress.errorMessage}</p> : null}
         </section>
 
-        {(phase === "review" || phase === "uploading" || phase === "completed" || phase === "failed") && (
+        {(phase === "review" || phase === "uploading" || phase === "upload-paused" || phase === "completed" || phase === "failed" || phase === "cancelled") && (
           <section className="border border-slate-800 bg-slate-900">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-5 py-4">
               <div>
@@ -249,14 +355,34 @@ function StatusBadge({ phase }: { phase: Phase }) {
 }
 
 function FileState({ state }: { state: FileItem["uploadStatus"] }) {
-  if (state === "completed") return <CheckCircle2 className="h-4 w-4 text-emerald-400" />;
-  if (state === "review_required") return <AlertCircle className="h-4 w-4 text-amber-400" />;
-  if (state === "failed") return <AlertCircle className="h-4 w-4 text-red-400" />;
+  const { t } = useI18n();
+  if (state === "completed") return <StateLabel label={t("scanner.file.completed")} tone="text-emerald-300"><CheckCircle2 className="h-4 w-4" /></StateLabel>;
+  if (state === "uploading") return <StateLabel label={t("scanner.file.uploading")} tone="text-blue-300"><Upload className="h-4 w-4" /></StateLabel>;
+  if (state === "review_required") return <StateLabel label={t("scanner.file.reviewRequired")} tone="text-amber-300"><AlertCircle className="h-4 w-4" /></StateLabel>;
+  if (state === "retryable") return <StateLabel label={t("scanner.file.retryable")} tone="text-amber-300"><AlertCircle className="h-4 w-4" /></StateLabel>;
+  if (state === "cancelled") return <StateLabel label={t("scanner.file.cancelled")} tone="text-slate-300"><Square className="h-4 w-4" /></StateLabel>;
+  if (state === "terminal" || state === "failed") return <StateLabel label={t("scanner.file.rejected")} tone="text-red-300"><AlertCircle className="h-4 w-4" /></StateLabel>;
   return null;
 }
 
 function isReviewable(file: FileItem): boolean {
-  return file.uploadStatus === "pending" || file.uploadStatus === "review_required" || file.uploadStatus === "excluded";
+  return file.uploadStatus === "pending" || file.uploadStatus === "review_required" || file.uploadStatus === "excluded" ||
+    file.uploadStatus === "retryable" || file.uploadStatus === "cancelled";
+}
+
+function StateLabel({ label, tone, children }: { label: string; tone: string; children: React.ReactNode }) {
+  return <span className={`flex items-center gap-1 text-xs ${tone}`} title={label}>{children}<span>{label}</span></span>;
+}
+
+function phaseForStatus(status: ScanProgress["status"]): Phase {
+  if (status === "paused") return "paused";
+  if (status === "review") return "review";
+  if (status === "uploading") return "uploading";
+  if (status === "upload-paused") return "upload-paused";
+  if (status === "completed" || status === "complete" || status === "upload-complete") return "completed";
+  if (status === "failed" || status === "error") return "failed";
+  if (status === "cancelled") return "cancelled";
+  return "scanning";
 }
 
 function IconButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
