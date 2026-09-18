@@ -43,6 +43,7 @@ import { onboardingRouter } from "./onboarding";
 import { teamsRouter } from "./teams";
 import { legacyImportsRouter } from "./legacyImports";
 import { haiIntegrationRouter } from "./haiIntegration";
+import { clarificationsRouter } from "./clarifications";
 import {
   adminAnalyticsRouter, outreachAnalyticsRouter,
   evidenceAggregationRouter, enrichmentRouter, evidenceRouter,
@@ -68,8 +69,8 @@ import crypto from "crypto";
 import { ENV } from "../_core/env";
 import { sendPasswordResetEmail } from "../systemEmail";
 import { getUser, getDb } from "../db";
-import { users, cases, systemConfig } from "../schema";
-import { and, count, eq, gte, lt } from "drizzle-orm";
+import { users, systemConfig } from "../schema";
+import { and, count, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { answerCaseQuestion } from "../caseAssistant";
 import { answerProductQuestion } from "../productAssistant";
@@ -505,63 +506,7 @@ export const appRouter = router({
 
   }),
 
-  // Clarifications procedures
-  // Phase 111 — ambiguous external-action resolution. Real logic (was an empty
-  // stub): computes genuine clarifications the user must resolve BEFORE outreach
-  // can proceed — e.g. a case with no recipient-resolvable matches, or a case
-  // classified into multiple legal areas where the user hasn't confirmed intent.
-  // Resolutions are persisted in system_config keyed per user+clarification, so
-  // an answered clarification stops reappearing. Nothing external happens here.
-  clarifications: router({
-    pending: protectedProcedure.query(async ({ ctx }) => {
-      const db = await getDb();
-      if (!db) return [] as Array<{ id: string; caseId: string; question: string; context: string }>;
-      const resolutionPrefix = `clarify:${ctx.user.id}:`;
-      const [rows, resolutionRows] = await Promise.all([
-        db
-        .select({ id: cases.id, clientName: cases.clientName, clientEmail: cases.clientEmail, legalAreas: cases.legalAreas, status: cases.status })
-        .from(cases)
-        .where(eq(cases.userId, ctx.user.id)),
-        db
-          .select({ key: systemConfig.configKey })
-          .from(systemConfig)
-          .where(and(
-            gte(systemConfig.configKey, resolutionPrefix),
-            lt(systemConfig.configKey, `${resolutionPrefix}\uffff`),
-            eq(systemConfig.configValue, "true"),
-          )),
-      ]);
-      const resolved = new Set(resolutionRows.map((row) => row.key));
-      const out: Array<{ id: string; caseId: string; question: string; context: string }> = [];
-      for (const c of rows) {
-        let areas: string[] = [];
-        try { areas = JSON.parse(c.legalAreas || "[]"); } catch { areas = []; }
-        // Ambiguity 1: multiple legal areas → which should drive matching?
-        if (areas.length > 1) {
-          const cid = `${c.id}:primary-area`;
-          if (!resolved.has(`${resolutionPrefix}${cid}`)) {
-            out.push({ id: cid, caseId: c.id, question: `This case matches multiple legal areas (${areas.join(", ")}). Which is the primary area for lawyer matching?`, context: "multiple-legal-areas" });
-          }
-        }
-        // Ambiguity 2: no client email → outreach recipient is unresolved.
-        if (!c.clientEmail) {
-          const cid = `${c.id}:contact`;
-          if (!resolved.has(`${resolutionPrefix}${cid}`)) {
-            out.push({ id: cid, caseId: c.id, question: `This case has no client contact email. Add one before preparing outreach.`, context: "missing-contact" });
-          }
-        }
-      }
-      return out;
-    }),
-    answer: protectedProcedure
-      .input(z.object({ questionId: z.string(), answer: z.string().min(1) }))
-      .mutation(async ({ ctx, input }) => {
-        const { setSystemSwitch } = await import("../systemState");
-        // Mark this clarification resolved for this user so it stops surfacing.
-        await setSystemSwitch(`clarify:${ctx.user.id}:${input.questionId}`, true);
-        return { ok: true as const, resolved: input.questionId };
-      }),
-  }),
+  clarifications: clarificationsRouter,
 
   assistant: router({
     ask: protectedProcedure

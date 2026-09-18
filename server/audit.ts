@@ -17,6 +17,7 @@ export interface AuditLogInput {
 }
 
 const MANDATORY_AUDIT_ACTIONS = new Set([
+  "case.clarification_answered",
   "case.deleted",
   "case.share_invited",
   "case.share_accepted",
@@ -224,6 +225,7 @@ export const AUDIT_ACTIONS = {
   CASE_CREATED: "case.created",
   CASE_UPDATED: "case.updated",
   CASE_DELETED: "case.deleted",
+  CASE_CLARIFICATION_ANSWERED: "case.clarification_answered",
   CASE_STATUS_CHANGED: "case.status_changed",
   CASE_SHARE_INVITED: "case.share_invited",
   CASE_SHARE_ACCEPTED: "case.share_accepted",

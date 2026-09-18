@@ -651,11 +651,23 @@ export const clarificationQuestions = sqliteTable("clarification_questions", {
   id: text("id").primaryKey(),
   caseId: text("caseId"),
   userId: text("userId"),
+  kind: text("kind"),
   question: text("question"),
+  context: text("context"),
   answer: text("answer"),
+  answeredBy: text("answeredBy"),
   status: text("status"),
+  applied: integer("applied", { mode: "boolean" }),
+  outcome: text("outcome"),
+  reviewStatus: text("reviewStatus"),
+  provenance: text("provenance"),
+  answeredAt: integer("answeredAt", { mode: "timestamp" }),
   createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
-});
+  updatedAt: integer("updatedAt", { mode: "timestamp" }),
+}, (table) => ({
+  ownerStatusIdx: index("clarification_questions_owner_status_idx").on(table.userId, table.status),
+  caseKindIdx: index("clarification_questions_case_kind_idx").on(table.caseId, table.kind),
+}));
 
 export const savedSearches = sqliteTable("saved_searches", {
   id: text("id").primaryKey(),

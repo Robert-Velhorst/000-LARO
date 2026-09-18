@@ -215,6 +215,21 @@ function parseJsonStringArray(value: string | null | undefined): string[] {
   }
 }
 
+function caseMatchingPreferences(metadata: string | null | undefined): {
+  requiresFinancedLegalAid?: boolean;
+} {
+  if (!metadata) return {};
+  try {
+    const parsed = JSON.parse(metadata);
+    const preferences = parsed?.matchingPreferences;
+    return typeof preferences?.requiresFinancedLegalAid === "boolean"
+      ? { requiresFinancedLegalAid: preferences.requiresFinancedLegalAid }
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 export interface MatchingOptions {
   maxDistance?: number; // Maximum distance in km
   maxResults?: number; // Maximum number of lawyers to return
@@ -271,7 +286,9 @@ export async function findCaseLawyersWithOfficialDirectory(
 ): Promise<CaseLawyerMatches> {
   const caseData = await getCaseById(caseId);
   if (!caseData) throw new Error(`Case not found: ${caseId}`);
-  const effectiveLocation = options.location?.trim() || undefined;
+  const preferences = caseMatchingPreferences(caseData.metadata);
+  const effectiveLocation = options.location?.trim() || caseData.clientAddress?.trim() || undefined;
+  const requiresFinancedLegalAid = options.requiresFinancedLegalAid ?? preferences.requiresFinancedLegalAid;
   let directory = skippedDirectoryReport(caseData);
   const shouldRefresh = options.refreshOfficialDirectory !== false && process.env.NODE_ENV !== "test";
   if (shouldRefresh) {
@@ -281,7 +298,7 @@ export async function findCaseLawyersWithOfficialDirectory(
         radiusKm: options.maxDistance,
         maxResults: Math.max(options.maxResults || 10, 20),
         requireSpecializationAssociation: options.requireSpecializationAssociation,
-        requiresFinancedLegalAid: options.requiresFinancedLegalAid,
+        requiresFinancedLegalAid,
         enrichProfiles: true,
       });
     } catch (error) {
@@ -297,6 +314,7 @@ export async function findCaseLawyersWithOfficialDirectory(
   const lawyers = await findMatchingLawyers(caseId, {
     ...options,
     location: directory.resolvedLocation || effectiveLocation,
+    requiresFinancedLegalAid,
     refreshOfficialDirectory: false,
   });
   return { lawyers, directory };
@@ -344,6 +362,9 @@ export async function findMatchingLawyers(
   // Parse case requirements
   const caseLat = caseData.latitude ? parseFloat(caseData.latitude) : null;
   const caseLon = caseData.longitude ? parseFloat(caseData.longitude) : null;
+  const effectiveLocation = options.location?.trim() || caseData.clientAddress?.trim() || undefined;
+  const requiresFinancedLegalAid = options.requiresFinancedLegalAid
+    ?? caseMatchingPreferences(caseData.metadata).requiresFinancedLegalAid;
   
   // Parse legalAreas - handle both string[] and object[] formats
   let caseLegalAreas: string[] = [];
@@ -421,6 +442,10 @@ export async function findMatchingLawyers(
       // Filter expired, allow matching but reset flag would happen elsewhere
     }
 
+    if (requiresFinancedLegalAid === true && !/^(?:yes|true|available|ja)$/i.test(lawyer.financedLegalAid?.trim() || "")) {
+      continue;
+    }
+
     // Calculate distance (only if both case and lawyer have coordinates)
     let distance = 0;
     let distanceKnown = false;
@@ -431,9 +456,9 @@ export async function findMatchingLawyers(
       // MANDATORY FILTER 5: Check distance limit (only if coordinates available)
       if (distance > maxDistance) continue;
     } else if (
-      options.location &&
+      effectiveLocation &&
       lawyer.directorySearchLocation &&
-      lawyer.directorySearchLocation.toLowerCase() === options.location.toLowerCase() &&
+      lawyer.directorySearchLocation.toLowerCase() === effectiveLocation.toLowerCase() &&
       lawyer.directoryDistanceKm !== null &&
       Number.isFinite(Number(lawyer.directoryDistanceKm))
     ) {
@@ -699,4 +724,3 @@ export async function getNextLawyerToContact(
 
   return null; // No lawyers found
 }
-

@@ -43,6 +43,7 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
   const [location] = useLocation();
   const [isOpen, setIsOpen] = useState(embedded);
   const [isMinimized, setIsMinimized] = useState(false);
+  const [activeClarificationId, setActiveClarificationId] = useState<string | null>(null);
   const localSession = useChatSession();
   const { message, setMessage, messages, setMessages, caseId, setCaseId } = session || localSession;
   const utils = trpc.useUtils();
@@ -54,10 +55,6 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
     refetchOnWindowFocus: true,
   });
   const answerMutation = trpc.clarifications.answer.useMutation({
-    onSuccess: () => {
-      toast.success("Answer recorded successfully!");
-      void utils.clarifications.pending.invalidate();
-    },
     onError: (error: { message?: string }) => {
       toast.error(`Failed to record answer: ${error.message ?? "Unknown error"}`);
     },
@@ -88,17 +85,33 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
     setMessages(prev => [...prev, newMessage]);
     setMessage("");
 
-    // Check if this is answering a pending question
-    const lastAssistantMessage = messages.filter(m => m.role === "assistant").slice(-1)[0];
-    const matchingQuestion = pendingQuestions?.find(q => 
-      lastAssistantMessage?.content.includes(q.question)
-    );
+    // A clarification is selected explicitly. Do not infer intent by searching
+    // rendered message text; that can bind an answer to the wrong case/question.
+    const matchingQuestion = pendingQuestions?.find(q => q.id === activeClarificationId);
 
     if (matchingQuestion) {
       // Record answer to clarification question
       try {
-        await answerMutation.mutateAsync({ questionId: matchingQuestion.id, answer: outgoingMessage });
-        setMessages(prev => [...prev, { id: crypto.randomUUID(), role: "assistant", content: "Your answer has been recorded.", timestamp: new Date() }]);
+        const result = await answerMutation.mutateAsync({ questionId: matchingQuestion.id, answer: outgoingMessage });
+        setActiveClarificationId(null);
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: result.message,
+          notice: result.applied
+            ? `Applied outcome: ${result.outcome}`
+            : `Not applied: ${result.outcome}`,
+          timestamp: new Date(),
+        }]);
+        toast[result.applied ? "success" : "warning"](result.message);
+        const invalidations: Array<Promise<unknown>> = [utils.clarifications.pending.invalidate()];
+        if (result.applied) {
+          invalidations.push(utils.cases.invalidate());
+          if (result.affectedDerived === "lawyer_matching") invalidations.push(utils.matching.invalidate());
+          if (result.affectedDerived === "outreach") invalidations.push(utils.outreachDirectory.invalidate());
+          if (result.affectedDerived === "deadlines") invalidations.push(utils.caseManagement.invalidate());
+        }
+        await Promise.all(invalidations);
       } catch {
         setMessage(outgoingMessage);
       }
@@ -240,6 +253,9 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
           {!isMinimized && (
             <>
               <CardContent
+                role="region"
+                aria-label="Assistant conversation and pending questions"
+                tabIndex={0}
                 className={
                   embedded
                     ? "flex-1 overflow-y-auto p-4 space-y-4 min-h-0"
@@ -253,7 +269,26 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
                     {pendingQuestions.map((q) => (
                       <div key={q.id} className="text-sm text-foreground mb-2 last:mb-0">
                         <p className="font-medium">• {q.question}</p>
-                        <Button variant="ghost" size="sm" onClick={() => setMessages(previous => [...previous, { id: crypto.randomUUID(), role: "assistant", content: q.question, timestamp: new Date() }])}>Answer</Button>
+                        <Button
+                          variant={activeClarificationId === q.id ? "secondary" : "ghost"}
+                          size="sm"
+                          aria-pressed={activeClarificationId === q.id}
+                          onClick={() => {
+                            setActiveClarificationId(q.id);
+                            setCaseId(q.caseId);
+                            setMessages(previous => [...previous, {
+                              id: crypto.randomUUID(),
+                              role: "assistant",
+                              content: q.question,
+                              notice: q.affectsMatching
+                                ? "A validated answer will update this case and refresh matching."
+                                : "The answer will be validated and its applied or review outcome will be shown.",
+                              timestamp: new Date(),
+                            }]);
+                          }}
+                        >
+                          {activeClarificationId === q.id ? "Selected" : "Answer"}
+                        </Button>
                         {q.context && (
                           <p className="text-xs text-muted-foreground ml-3 mt-1">{q.context}</p>
                         )}
@@ -322,7 +357,11 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     onKeyPress={handleKeyPress}
-                    placeholder={caseId ? "Ask about the selected case..." : "Ask how to use LARO..."}
+                    placeholder={activeClarificationId
+                      ? "Answer the selected clarification..."
+                      : caseId
+                        ? "Ask about the selected case..."
+                        : "Ask how to use LARO..."}
                     aria-label="Message LARO assistant"
                     className="flex-1"
                   />

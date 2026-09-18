@@ -1182,3 +1182,84 @@ test("scanner renders persisted retry state and resumes it without rescanning", 
   expect(pageErrors).toEqual([]);
   expect(requestFailures).toEqual([]);
 });
+
+test("assistant binds answers to selected clarifications and reports applied versus review outcomes", async ({ page }, testInfo) => {
+  const email = await createAccount(page);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+  const primaryCaseId = `A11Y_CLAR_PRIMARY_${suffix}`;
+  const reviewCaseId = `A11Y_CLAR_REVIEW_${suffix}`;
+  let ownerId = "";
+  try {
+    ownerId = (database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string }).id;
+    const insert = database.prepare(`
+      INSERT INTO cases (id, userId, clientName, clientEmail, caseType, caseSummary, urgency, status, legalAreas, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const now = Math.floor(Date.now() / 1000);
+    insert.run(primaryCaseId, ownerId, "Primary area client", "primary@example.test", "Employment Law",
+      "Clarification browser verification", "Normal", "Matching", JSON.stringify(["Employment Law", "Administrative Law"]), now, now);
+    insert.run(reviewCaseId, ownerId, "Review note client", null, "Employment Law",
+      "Clarification review verification", "Normal", "Matching", JSON.stringify(["Employment Law"]), now, now);
+  } finally {
+    database.close();
+  }
+
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => {
+    const failure = request.failure()?.errorText ?? "unknown failure";
+    if (!failure.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
+  });
+
+  const response = await page.reload({ waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  await page.getByRole("button", { name: "Open LARO assistant" }).click();
+  const assistant = page.getByRole("dialog");
+  await expect(assistant.getByText(/Which is the primary area for lawyer matching\?/)).toBeVisible();
+  await expect(assistant.getByText(/Which verified email address should be used for this case\?/)).toBeVisible();
+
+  const primaryQuestion = assistant.getByText(/Which is the primary area for lawyer matching\?/).locator("..");
+  await primaryQuestion.getByRole("button", { name: "Answer" }).click();
+  await expect(primaryQuestion.getByRole("button", { name: "Selected" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByLabel("Message LARO assistant").fill("Administrative Law");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(assistant.getByText("Case field updated and lawyer matching refreshed.", { exact: true })).toBeVisible();
+  await expect(assistant.getByText("Applied outcome: primary_legal_area_applied", { exact: true })).toBeVisible();
+
+  const reviewQuestion = assistant.getByText(/Which verified email address should be used for this case\?/).locator("..");
+  await reviewQuestion.getByRole("button", { name: "Answer" }).click();
+  await page.getByLabel("Message LARO assistant").fill("resolved");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(assistant.getByText("Answer saved as a case note for review; case and matching fields were not changed.", { exact: true })).toBeVisible();
+  await expect(assistant.getByText("Not applied: contact_email_requires_review", { exact: true })).toBeVisible();
+
+  const verified = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const primary = verified.prepare("SELECT legalAreas, caseType FROM cases WHERE id = ?").get(primaryCaseId) as { legalAreas: string; caseType: string };
+    expect(JSON.parse(primary.legalAreas)).toEqual(["Administrative Law"]);
+    expect(primary.caseType).toBe("Administrative Law");
+    const review = verified.prepare("SELECT clientEmail FROM cases WHERE id = ?").get(reviewCaseId) as { clientEmail: string | null };
+    expect(review.clientEmail).toBeNull();
+    const answers = verified.prepare(`
+      SELECT kind, answer, applied, reviewStatus FROM clarification_questions
+      WHERE userId = ? AND caseId IN (?, ?) ORDER BY caseId
+    `).all(ownerId, primaryCaseId, reviewCaseId) as Array<{ kind: string; answer: string; applied: number; reviewStatus: string }>;
+    expect(answers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "primary_legal_area", answer: "Administrative Law", applied: 1, reviewStatus: "applied" }),
+      expect.objectContaining({ kind: "contact_email", answer: "resolved", applied: 0, reviewStatus: "needs_review" }),
+    ]));
+  } finally {
+    verified.close();
+  }
+
+  const audit = await new AxeBuilder({ page }).analyze();
+  expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+  await page.screenshot({ path: testInfo.outputPath("clarification-outcomes.png"), fullPage: true });
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+});

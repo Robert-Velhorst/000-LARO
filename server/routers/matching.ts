@@ -29,7 +29,7 @@ export const matchingRouter = router({
       maxResults: z.number().min(1).max(50).optional().default(10),
       location: z.string().trim().max(160).optional(),
       requireSpecializationAssociation: z.boolean().optional().default(false),
-      requiresFinancedLegalAid: z.boolean().optional().default(false),
+      requiresFinancedLegalAid: z.boolean().optional(),
       refreshOfficialDirectory: z.boolean().optional().default(true),
     }))
     .query(async ({ input, ctx }) => {
