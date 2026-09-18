@@ -2,6 +2,7 @@
 import { getAllLawyers, getCaseById } from "./db";
 import { getLawyerRating } from "./routers/lawyerRating";
 import { syncNovaLawyersForCase, type NovaDirectoryReport } from "./novaDirectory";
+import { parseLegacyStringArray, parseStoredNumber } from "./lawyerData";
 
 import * as fs from "fs";
 import * as path from "path";
@@ -239,6 +240,7 @@ export interface MatchingOptions {
   requireSpecializationAssociation?: boolean;
   requiresFinancedLegalAid?: boolean;
   refreshOfficialDirectory?: boolean;
+  lawyerIds?: string[];
 }
 
 export interface CaseLawyerMatches {
@@ -367,19 +369,9 @@ export async function findMatchingLawyers(
     ?? caseMatchingPreferences(caseData.metadata).requiresFinancedLegalAid;
   
   // Parse legalAreas - handle both string[] and object[] formats
-  let caseLegalAreas: string[] = [];
-  if (caseData.legalAreas) {
-    const parsed = JSON.parse(caseData.legalAreas);
-    if (Array.isArray(parsed)) {
-      // Handle both ["Arbeidsrecht"] and [{area: "Arbeidsrecht", ...}] formats
-      caseLegalAreas = parsed.map(item => 
-        typeof item === 'string' ? item : (item.area || item.areaEn || item)
-      );
-    }
-  }
-  const caseLanguages = caseData.preferredLanguages
-    ? JSON.parse(caseData.preferredLanguages)
-    : requireLanguages;
+  const caseLegalAreas = parseLegacyStringArray(caseData.legalAreas);
+  const storedCaseLanguages = parseLegacyStringArray(caseData.preferredLanguages);
+  const caseLanguages = storedCaseLanguages.length > 0 ? storedCaseLanguages : requireLanguages;
 
   // Coordinates are optional - if not provided, distance-based filtering will be skipped
   // if (!caseLat || !caseLon) {
@@ -392,11 +384,13 @@ export async function findMatchingLawyers(
 
   // Get all lawyers
   const allLawyers = await getAllLawyers();
+  const requestedLawyerIds = options.lawyerIds ? new Set(options.lawyerIds) : null;
 
   // Filter and score lawyers
   const matchedLawyers: MatchedLawyer[] = [];
 
   for (const lawyer of allLawyers) {
+    if (requestedLawyerIds && !requestedLawyerIds.has(lawyer.id)) continue;
     if (!lawyer.name?.trim()) {
       continue;
     }
@@ -406,16 +400,8 @@ export async function findMatchingLawyers(
     // Coordinates are optional - if not available, distance scoring will be skipped
 
     // Parse lawyer data - handle both string[] and object[] formats
-    let lawyerAreas: string[] = [];
-    if (lawyer.legalAreas) {
-      const parsed = JSON.parse(lawyer.legalAreas);
-      if (Array.isArray(parsed)) {
-        lawyerAreas = parsed.map(item =>
-          typeof item === 'string' ? item : (item.area || item.areaEn || item)
-        );
-      }
-    }
-    const lawyerLanguages = lawyer.languages ? JSON.parse(lawyer.languages) : [];
+    const lawyerAreas = parseLegacyStringArray(lawyer.legalAreas);
+    const lawyerLanguages = parseLegacyStringArray(lawyer.languages);
 
     // MANDATORY FILTER 1: Check expertise match
     if (!hasMatchingExpertise(lawyerAreas, caseLegalAreas)) {
@@ -478,7 +464,7 @@ export async function findMatchingLawyers(
 
     // PRIMARY METRIC 1: Case-load (0-50 points)
     let caseLoadScore = 0;
-    const caseLoad = lawyer.caseLoad ? parseInt(lawyer.caseLoad) : null;
+    const caseLoad = parseStoredNumber(lawyer.caseLoad, { minimum: 0, integer: true });
     
     if (caseLoad === null) {
       matchReasons.push("Case-load not available");
@@ -499,9 +485,7 @@ export async function findMatchingLawyers(
 
     // PRIMARY METRIC 2: Response Time (0-50 points)
     let responseTimeScore = 0;
-    const avgResponseTime = lawyer.averageResponseTimeHours
-      ? parseFloat(lawyer.averageResponseTimeHours)
-      : null;
+    const avgResponseTime = parseStoredNumber(lawyer.averageResponseTimeHours, { minimum: 0 });
 
     if (avgResponseTime === null) {
       matchReasons.push("Response history not available");
@@ -522,11 +506,11 @@ export async function findMatchingLawyers(
 
     // PRIMARY METRIC 2: Acceptance Rate (0-50 points)
     let acceptanceRateScore = 0;
-    const totalOutreaches = parseInt(lawyer.totalOutreaches || "0");
-    const totalResponses = parseInt(lawyer.totalResponses || "0");
-    const totalAcceptances = parseInt(lawyer.totalAcceptances || "0");
+    const totalOutreaches = parseStoredNumber(lawyer.totalOutreaches, { minimum: 0, integer: true });
+    const totalResponses = parseStoredNumber(lawyer.totalResponses, { minimum: 0, integer: true });
+    const totalAcceptances = parseStoredNumber(lawyer.totalAcceptances, { minimum: 0, integer: true });
 
-    if (totalResponses > 0) {
+    if (totalResponses !== null && totalResponses > 0 && totalAcceptances !== null && totalAcceptances <= totalResponses) {
       const acceptanceRate = (totalAcceptances / totalResponses) * 100;
       if (acceptanceRate >= 80) {
         acceptanceRateScore = 50;
@@ -541,6 +525,8 @@ export async function findMatchingLawyers(
         acceptanceRateScore = 0;
         matchReasons.push(`Low acceptance rate (${Math.round(acceptanceRate)}%)`);
       }
+    } else if (totalOutreaches === null || totalResponses === null || totalResponses === 0 || totalAcceptances === null || totalAcceptances > totalResponses) {
+      matchReasons.push("Acceptance history not available");
     }
     matchScore += acceptanceRateScore;
 
@@ -557,10 +543,8 @@ export async function findMatchingLawyers(
 
     // TERTIARY METRIC: Capacity Percentage (0-20 points)
     let capacityScore = 0;
-    const capacityFilled = lawyer.capacityPercentage === null || lawyer.capacityPercentage === undefined
-      ? null
-      : parseInt(lawyer.capacityPercentage);
-    if (capacityFilled === null || !Number.isFinite(capacityFilled)) {
+    const capacityFilled = parseStoredNumber(lawyer.capacityPercentage, { minimum: 0, maximum: 100 });
+    if (capacityFilled === null) {
       matchReasons.push("Capacity not available");
     } else if (capacityFilled <= 25) {
       capacityScore = 20;
@@ -596,9 +580,7 @@ export async function findMatchingLawyers(
 
     // LOW WEIGHT: Experience (0-10 points)
     let experienceScore = 0;
-    const experience = lawyer.experienceYears
-      ? parseInt(lawyer.experienceYears)
-      : 0;
+    const experience = parseStoredNumber(lawyer.experienceYears, { minimum: 0, maximum: 100, integer: true }) ?? 0;
     if (experience >= 10) {
       experienceScore = 10;
       matchReasons.push(`Highly experienced (${experience}+ years)`);

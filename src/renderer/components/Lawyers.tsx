@@ -10,6 +10,7 @@ import { useState } from "react";
 import LawyerComparisonView from "@/components/LawyerComparison";
 import SmartSearchFilters from "@/components/SmartSearchFilters";
 import { useLocation } from "wouter";
+import { CasePicker } from "@/components/WorkspaceUi";
 
 export function LawyersDirectoryContent({ embedded = false }: { embedded?: boolean }) {
   const [, setLocation] = useLocation();
@@ -20,7 +21,8 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
   const [officialOnly, setOfficialOnly] = useState(false);
   const [page, setPage] = useState(1);
   const [comparisonMode, setComparisonMode] = useState(false);
-  const [selectedLawyers, setSelectedLawyers] = useState<any[]>([]);
+  const [selectedLawyerIds, setSelectedLawyerIds] = useState<string[]>([]);
+  const [comparisonCaseId, setComparisonCaseId] = useState<string | null>(null);
   const pageSize = 24;
 
   const { data, isLoading, isFetching, error } = trpc.lawyers.list.useQuery({
@@ -58,11 +60,11 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
     return [];
   };
 
-  const toggleLawyerSelection = (lawyer: any) => {
-    if (selectedLawyers.find(l => l.id === lawyer.id)) {
-      setSelectedLawyers(selectedLawyers.filter(l => l.id !== lawyer.id));
-    } else if (selectedLawyers.length < 3) {
-      setSelectedLawyers([...selectedLawyers, lawyer]);
+  const toggleLawyerSelection = (lawyerId: string) => {
+    if (selectedLawyerIds.includes(lawyerId)) {
+      setSelectedLawyerIds(selectedLawyerIds.filter(id => id !== lawyerId));
+    } else if (selectedLawyerIds.length < 3) {
+      setSelectedLawyerIds([...selectedLawyerIds, lawyerId]);
     }
   };
 
@@ -118,13 +120,18 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
                 variant={comparisonMode ? "default" : "outline"}
                 className={comparisonMode ? "bg-purple-600 hover:bg-purple-700" : "border-purple-500/30 hover:bg-purple-500/10 hover:border-purple-500/50"}
                 onClick={() => {
-                  setComparisonMode(!comparisonMode);
-                  if (comparisonMode) setSelectedLawyers([]);
+                  const next = !comparisonMode;
+                  setComparisonMode(next);
+                  if (!next) {
+                    setSelectedLawyerIds([]);
+                    setComparisonCaseId(null);
+                  }
                 }}
               >
                 <GitCompare className="w-4 h-4 mr-2" />
-                {comparisonMode ? `Compare (${selectedLawyers.length}/3)` : "Compare Mode"}
+                {comparisonMode ? `Compare (${selectedLawyerIds.length}/3)` : "Compare Mode"}
               </Button>
+              {comparisonMode && <CasePicker value={comparisonCaseId} onChange={setComparisonCaseId} emptyLabel="No case selected" />}
             </div>
           </div>
 
@@ -139,8 +146,12 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
         </div>
 
         {/* Comparison View */}
-        {comparisonMode && selectedLawyers.length >= 2 && (
-          <LawyerComparisonView lawyers={selectedLawyers} />
+        {comparisonMode && selectedLawyerIds.length >= 2 && (
+          <LawyerComparisonView lawyerIds={selectedLawyerIds} caseId={comparisonCaseId} onClose={() => {
+            setComparisonMode(false);
+            setSelectedLawyerIds([]);
+            setComparisonCaseId(null);
+          }} />
         )}
 
         {/* Lawyers Grid */}
@@ -164,11 +175,11 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
                 <Card 
                   key={lawyer.id} 
                   className={`border-border/50 bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-all duration-300 hover:scale-105 hover:shadow-xl hover:shadow-purple-500/10 group ${
-                    comparisonMode && selectedLawyers.find(l => l.id === lawyer.id) 
+                    comparisonMode && selectedLawyerIds.includes(lawyer.id)
                       ? 'ring-2 ring-purple-500' 
                       : ''
                   }`}
-                  onClick={() => comparisonMode && toggleLawyerSelection(lawyer)}
+                  onClick={() => comparisonMode && toggleLawyerSelection(lawyer.id)}
                   style={{ cursor: comparisonMode ? 'pointer' : 'default' }}
                 >
                   <CardHeader>
@@ -271,19 +282,19 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
 
                     {comparisonMode ? (
                       <Button 
-                        variant={selectedLawyers.find(l => l.id === lawyer.id) ? "default" : "outline"}
+                        variant={selectedLawyerIds.includes(lawyer.id) ? "default" : "outline"}
                         className={`w-full mt-4 transition-all ${
-                          selectedLawyers.find(l => l.id === lawyer.id)
+                          selectedLawyerIds.includes(lawyer.id)
                             ? 'bg-purple-600 hover:bg-purple-700'
                             : 'border-purple-500/30 hover:bg-purple-500/10 hover:border-purple-500/50'
                         }`}
                         onClick={(e) => {
                           e.stopPropagation();
-                          toggleLawyerSelection(lawyer);
+                          toggleLawyerSelection(lawyer.id);
                         }}
-                        disabled={!selectedLawyers.find(l => l.id === lawyer.id) && selectedLawyers.length >= 3}
+                        disabled={!selectedLawyerIds.includes(lawyer.id) && selectedLawyerIds.length >= 3}
                       >
-                        {selectedLawyers.find(l => l.id === lawyer.id) ? 'Selected' : 'Select to Compare'}
+                        {selectedLawyerIds.includes(lawyer.id) ? 'Selected' : 'Select to Compare'}
                       </Button>
                     ) : (
                       <Button 
@@ -346,4 +357,3 @@ export default function Lawyers() {
     </DashboardLayout>
   );
 }
-

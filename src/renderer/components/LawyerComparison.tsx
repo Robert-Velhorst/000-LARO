@@ -1,321 +1,111 @@
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Award, Briefcase, ExternalLink, Languages, MapPin, Scale, X } from "lucide-react";
+import { useLocation } from "wouter";
+import { trpc } from "@/lib/trpc";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { Separator } from "@/components/ui/separator";
-import {
-  CheckCircle2,
-  X,
-  Star,
-  MapPin,
-  Briefcase,
-  TrendingUp,
-  Clock,
-  Euro,
-  Award,
-  Sparkles,
-  Calendar,
-} from "lucide-react";
-import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { QueryNotice } from "@/components/WorkspaceUi";
 
-interface Lawyer {
-  id: string;
-  name: string;
-  firm: string;
-  city: string;
-  legalAreas: string[];
-  yearsExperience?: number;
-  responseRate?: number;
-  successRate?: number;
-  averageResponseTime?: string;
-  estimatedCost?: string;
-  availability?: string;
-  rating?: number;
-  casesHandled?: number;
+function rateLabel(rate: { percent: number; numerator: number; denominator: number } | null): string {
+  return rate ? `${rate.percent.toFixed(1)}% (${rate.numerator}/${rate.denominator})` : "Not recorded";
 }
 
-interface ComparisonProps {
-  lawyers: Lawyer[];
-  caseType?: string;
-  onSelect?: (lawyerId: string) => void;
+function durationLabel(hours: number | null): string {
+  if (hours === null) return "Not recorded";
+  if (hours < 24) return `${hours} hours`;
+  return `${Math.round((hours / 24) * 10) / 10} days`;
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return <div className="min-w-0 border-t border-border/50 pt-3">
+    <dt className="text-xs text-muted-foreground">{label}</dt>
+    <dd className="mt-1 break-words text-sm font-medium">{value}</dd>
+  </div>;
+}
+
+export default function LawyerComparison({ lawyerIds, caseId, onClose }: {
+  lawyerIds: string[];
+  caseId?: string | null;
   onClose?: () => void;
-}
+}) {
+  const [, setLocation] = useLocation();
+  const query = trpc.lawyers.compare.useQuery({ lawyerIds, caseId: caseId || undefined }, {
+    enabled: lawyerIds.length >= 2,
+    retry: false,
+  });
 
-export default function LawyerComparison({ lawyers, caseType, onSelect, onClose }: ComparisonProps) {
-  const [shortlist, setShortlist] = useState<Set<string>>(new Set());
-
-  const toggleShortlist = (lawyerId: string) => {
-    setShortlist(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(lawyerId)) {
-        newSet.delete(lawyerId);
-        toast.info("Removed from shortlist");
-      } else {
-        newSet.add(lawyerId);
-        toast.success("Added to shortlist");
-      }
-      return newSet;
-    });
-  };
-
-  const generateWhyThisLawyer = (lawyer: Lawyer): string[] => {
-    const reasons: string[] = [];
-
-    if (lawyer.successRate && lawyer.successRate > 85) {
-      reasons.push(`High success rate of ${lawyer.successRate}% in similar cases`);
-    }
-
-    if (lawyer.yearsExperience && lawyer.yearsExperience > 10) {
-      reasons.push(`${lawyer.yearsExperience}+ years of specialized experience`);
-    }
-
-    if (lawyer.responseRate && lawyer.responseRate > 90) {
-      reasons.push(`Excellent communication (${lawyer.responseRate}% response rate)`);
-    }
-
-    if (lawyer.averageResponseTime === "< 24 hours") {
-      reasons.push("Quick to respond - typically within 24 hours");
-    }
-
-    if (caseType && lawyer.legalAreas.some(area => area.toLowerCase().includes(caseType.toLowerCase()))) {
-      reasons.push(`Specializes in ${caseType} cases`);
-    }
-
-    if (lawyer.casesHandled && lawyer.casesHandled > 100) {
-      reasons.push(`Extensive track record with ${lawyer.casesHandled}+ cases handled`);
-    }
-
-    return reasons.length > 0 ? reasons : ["Qualified professional with relevant experience"];
-  };
-
-  const getMatchScore = (lawyer: Lawyer): number => {
-    let score = 0;
-    
-    if (lawyer.successRate) score += (lawyer.successRate / 100) * 30;
-    if (lawyer.responseRate) score += (lawyer.responseRate / 100) * 20;
-    if (lawyer.yearsExperience) score += Math.min(lawyer.yearsExperience / 20, 1) * 25;
-    if (caseType && lawyer.legalAreas.some(area => area.toLowerCase().includes(caseType.toLowerCase()))) {
-      score += 25;
-    }
-    
-    return Math.round(score);
-  };
-
-  return (
-    <div className="max-w-7xl mx-auto p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-2xl font-bold">Compare Lawyers</h2>
-          <p className="text-muted-foreground">Side-by-side comparison of {lawyers.length} recommended lawyers</p>
-        </div>
-        {onClose && (
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close lawyer comparison">
-            <X className="w-5 h-5" />
-          </Button>
-        )}
+  return <section className="scroll-mt-20 space-y-5 border-y border-border py-5" aria-label="Lawyer comparison">
+    <header className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h2 className="text-xl font-semibold">Compare lawyers</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {caseId ? "Directory facts and canonical case-match results." : "Directory facts only. Select a case to calculate canonical match results."}
+        </p>
       </div>
+      {onClose && <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="Close lawyer comparison" title="Close lawyer comparison"><X className="h-4 w-4" /></Button>}
+    </header>
 
-      {/* Comparison Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {lawyers.map((lawyer) => {
-          const matchScore = getMatchScore(lawyer);
-          const reasons = generateWhyThisLawyer(lawyer);
-          const isShortlisted = shortlist.has(lawyer.id);
-
-          return (
-            <Card key={lawyer.id} className={`relative ${isShortlisted ? "ring-2 ring-primary" : ""}`}>
-              {/* Match Score Badge */}
-              <div className="absolute top-4 right-4">
-                <Badge variant={matchScore > 80 ? "default" : matchScore > 60 ? "secondary" : "outline"}>
-                  {matchScore}% Match
-                </Badge>
+    {query.error ? <QueryNotice error={query.error} retry={query.refetch} /> : query.isLoading ? (
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{lawyerIds.map(id => <Skeleton key={id} className="h-96 w-full" />)}</div>
+    ) : <>
+      {query.data?.missingCount ? <p role="status" className="text-sm text-muted-foreground">{query.data.missingCount} selected lawyer record is no longer available.</p> : null}
+      {caseId && query.data?.matchStatus === "unavailable" && <p role="status" className="border-l-2 border-amber-500 bg-amber-500/5 p-3 text-sm">Canonical matching is unavailable for this case. No match percentages are shown.</p>}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {query.data?.lawyers.map(lawyer => <Card key={lawyer.id} data-comparison-lawyer={lawyer.id} className="flex min-w-0 flex-col border-border/60">
+          <CardHeader className="space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 flex-1 basis-48">
+                <CardTitle className="break-words text-lg">{lawyer.name}</CardTitle>
+                <p className="mt-1 break-words text-sm text-muted-foreground">{lawyer.firm || "Practice not recorded"}</p>
               </div>
+              {lawyer.caseMatch && <Badge className="shrink-0 whitespace-nowrap" title={`${lawyer.caseMatch.score} of ${lawyer.caseMatch.maxScore} canonical points`}>
+                {lawyer.caseMatch.percent}% case match
+              </Badge>}
+              {caseId && query.data?.matchStatus === "available" && !lawyer.caseMatch && <Badge className="shrink-0 whitespace-nowrap" variant="outline">Not a current match</Badge>}
+            </div>
+            {lawyer.city && <p className="flex items-center gap-2 text-sm text-muted-foreground"><MapPin className="h-4 w-4" />{lawyer.city}</p>}
+          </CardHeader>
+          <CardContent className="flex-1 space-y-4">
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <Metric label="Experience" value={lawyer.experienceYears === null ? "Not recorded" : `${lawyer.experienceYears} years`} />
+              <Metric label="Availability" value={lawyer.availabilityLabel} />
+              <Metric label="Response rate" value={rateLabel(lawyer.responseRate)} />
+              <Metric label="Acceptance rate" value={rateLabel(lawyer.acceptanceRate)} />
+              <Metric label="Average response" value={durationLabel(lawyer.averageResponseHours)} />
+              <Metric label="Active case load" value={lawyer.caseLoad === null ? "Not recorded" : String(lawyer.caseLoad)} />
+              <Metric label="Capacity filled" value={lawyer.capacityPercent === null ? "Not recorded" : `${lawyer.capacityPercent}%`} />
+            </dl>
 
-              <CardHeader>
-                <div className="flex items-start gap-3">
-                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                    <Briefcase className="w-6 h-6 text-primary" />
-                  </div>
-                  <div className="flex-1">
-                    <CardTitle className="text-lg">{lawyer.name}</CardTitle>
-                    <CardDescription>{lawyer.firm}</CardDescription>
-                    <div className="flex items-center gap-1 mt-1 text-sm text-muted-foreground">
-                      <MapPin className="w-3 h-3" />
-                      {lawyer.city}
-                    </div>
-                  </div>
-                </div>
-              </CardHeader>
-
-              <CardContent className="space-y-4">
-                {/* Why This Lawyer */}
-                <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Sparkles className="w-4 h-4 text-primary" />
-                    <span className="text-sm font-medium">Why this lawyer?</span>
-                  </div>
-                  <ul className="space-y-1">
-                    {reasons.slice(0, 3).map((reason, idx) => (
-                      <li key={idx} className="text-xs flex items-start gap-2">
-                        <CheckCircle2 className="w-3 h-3 text-primary mt-0.5 flex-shrink-0" />
-                        <span>{reason}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                {/* Key Metrics */}
-                <div className="grid grid-cols-2 gap-3">
-                  {lawyer.successRate !== undefined && (
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <TrendingUp className="w-3 h-3" />
-                        Success Rate
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Progress aria-label="Lawyer success rate" value={lawyer.successRate} className="h-1.5 flex-1" />
-                        <span className="text-sm font-medium">{lawyer.successRate}%</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {lawyer.responseRate !== undefined && (
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <Clock className="w-3 h-3" />
-                        Response Rate
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Progress aria-label="Lawyer response rate" value={lawyer.responseRate} className="h-1.5 flex-1" />
-                        <span className="text-sm font-medium">{lawyer.responseRate}%</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {lawyer.yearsExperience && (
-                    <div>
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-                        <Award className="w-3 h-3" />
-                        Experience
-                      </div>
-                      <p className="text-sm font-medium">{lawyer.yearsExperience} years</p>
-                    </div>
-                  )}
-
-                  {lawyer.casesHandled && (
-                    <div>
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-                        <Briefcase className="w-3 h-3" />
-                        Cases
-                      </div>
-                      <p className="text-sm font-medium">{lawyer.casesHandled}+</p>
-                    </div>
-                  )}
-                </div>
-
-                <Separator />
-
-                {/* Additional Info */}
-                <div className="space-y-2 text-sm">
-                  {lawyer.averageResponseTime && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Response Time</span>
-                      <span className="font-medium">{lawyer.averageResponseTime}</span>
-                    </div>
-                  )}
-
-                  {lawyer.estimatedCost && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground flex items-center gap-1">
-                        <Euro className="w-3 h-3" />
-                        Est. Cost
-                      </span>
-                      <span className="font-medium">{lawyer.estimatedCost}</span>
-                    </div>
-                  )}
-
-                  {lawyer.availability && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        Availability
-                      </span>
-                      <Badge variant="secondary">{lawyer.availability}</Badge>
-                    </div>
-                  )}
-                </div>
-
-                {/* Legal Areas */}
-                <div>
-                  <p className="text-xs text-muted-foreground mb-2">Specializations</p>
-                  <div className="flex flex-wrap gap-1">
-                    {lawyer.legalAreas.slice(0, 3).map((area, idx) => (
-                      <Badge key={idx} variant="outline" className="text-xs">
-                        {area}
-                      </Badge>
-                    ))}
-                    {lawyer.legalAreas.length > 3 && (
-                      <Badge variant="outline" className="text-xs">
-                        +{lawyer.legalAreas.length - 3} more
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-
-              <CardFooter className="flex gap-2">
-                <Button
-                  variant={isShortlisted ? "secondary" : "outline"}
-                  className="flex-1"
-                  onClick={() => toggleShortlist(lawyer.id)}
-                >
-                  {isShortlisted ? (
-                    <>
-                      <CheckCircle2 className="w-4 h-4 mr-2" />
-                      Shortlisted
-                    </>
-                  ) : (
-                    "Add to Shortlist"
-                  )}
-                </Button>
-                
-                {onSelect && (
-                  <Button
-                    className="flex-1"
-                    onClick={() => onSelect(lawyer.id)}
-                  >
-                    Select
-                  </Button>
-                )}
-              </CardFooter>
-            </Card>
-          );
-        })}
-      </div>
-
-      {/* Shortlist Summary */}
-      {shortlist.size > 0 && (
-        <div className="mt-6 p-4 bg-primary/5 border border-primary/20 rounded-lg">
-          <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium">Shortlist ({shortlist.size})</p>
-              <p className="text-sm text-muted-foreground">
-                You can contact these lawyers or compare them further
-              </p>
+              <p className="mb-2 flex items-center gap-2 text-xs text-muted-foreground"><Scale className="h-4 w-4" />Legal areas</p>
+              <div className="flex flex-wrap gap-1">
+                {lawyer.legalAreas.length ? lawyer.legalAreas.map(area => <Badge key={area} variant="secondary">{area}</Badge>) : <span className="text-sm text-muted-foreground">Not recorded</span>}
+              </div>
             </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setShortlist(new Set())}>
-                Clear All
-              </Button>
-              <Button>
-                Contact Shortlisted ({shortlist.size})
-              </Button>
+            <div>
+              <p className="mb-2 flex items-center gap-2 text-xs text-muted-foreground"><Languages className="h-4 w-4" />Languages</p>
+              <p className="text-sm">{lawyer.languages.length ? lawyer.languages.join(", ") : "Not recorded"}</p>
             </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
+            {lawyer.caseMatch && <div className="border-l-2 border-primary bg-primary/5 p-3">
+              <p className="flex items-center gap-2 text-sm font-medium"><Award className="h-4 w-4" />Canonical match basis</p>
+              <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                {lawyer.caseMatch.reasons.slice(0, 4).map(reason => <li key={reason}>{reason}</li>)}
+              </ul>
+            </div>}
+          </CardContent>
+          <CardFooter className="flex flex-wrap gap-2 border-t border-border/50 pt-4">
+            <Button type="button" variant="outline" className="flex-1" onClick={() => setLocation(`/lawyers/${encodeURIComponent(lawyer.id)}`)}>
+              <Briefcase className="h-4 w-4" />View profile
+            </Button>
+            {lawyer.officialProfileUrl && <Button asChild variant="ghost" size="icon" title="Open official profile">
+              <a href={lawyer.officialProfileUrl} target="_blank" rel="noreferrer" aria-label={`Open official profile for ${lawyer.name}`}><ExternalLink className="h-4 w-4" /></a>
+            </Button>}
+          </CardFooter>
+        </Card>)}
+      </div>
+      {!query.data?.lawyers.length && <p className="py-8 text-center text-sm text-muted-foreground">The selected lawyer records are no longer available.</p>}
+    </>}
+  </section>;
+}

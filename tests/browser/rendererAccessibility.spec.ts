@@ -1183,6 +1183,104 @@ test("scanner renders persisted retry state and resumes it without rescanning", 
   expect(requestFailures).toEqual([]);
 });
 
+test("lawyer comparison normalizes legacy rows and only shows a canonical match with a case", async ({ page }, testInfo) => {
+  const email = await createAccount(page);
+  const marker = `CompareBeacon${randomUUID().replaceAll("-", "").slice(0, 10)}`;
+  const caseId = randomUUID();
+  const currentLawyerId = randomUUID();
+  const legacyLawyerId = randomUUID();
+  const caseName = `${marker} Client`;
+  const currentName = `${marker} Current Lawyer`;
+  const legacyName = `${marker} Legacy Lawyer`;
+  const now = Math.floor(Date.now() / 1_000);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  let ownerId = "";
+  try {
+    ownerId = (database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string }).id;
+    database.prepare("INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, legalAreas, preferredLanguages, createdAt, updatedAt) VALUES (?, ?, ?, 'Employment', 'Comparison browser case', 'Low', 'Matching', '[\"Employment Law\"]', '[\"Dutch\"]', ?, ?)")
+      .run(caseId, ownerId, caseName, now, now);
+    database.prepare(`
+      INSERT INTO lawyers (
+        id, name, firmName, city, legalAreas, languages, experienceYears,
+        currentlyAccepting, caseStop, permanentlyFiltered, barAssociationStatus,
+        caseLoad, capacityPercentage, averageResponseTimeHours,
+        totalOutreaches, totalResponses, totalAcceptances, createdAt, updatedAt
+      ) VALUES (?, ?, 'Current Comparison Firm', 'Amsterdam', ?, '["Dutch","English"]', '12',
+        'Yes', 'No', 'No', 'Good Standing', '6', '25', '36', '10', '8', '4', ?, ?)
+    `).run(currentLawyerId, currentName, JSON.stringify([{ area: "Employment Law" }, "Civil Law"]), now, now);
+    database.prepare(`
+      INSERT INTO lawyers (
+        id, name, firm, city, legalAreas, languages, experienceYears,
+        currentlyAccepting, caseStop, permanentlyFiltered, barAssociationStatus,
+        caseLoad, capacityPercentage, averageResponseTimeHours,
+        totalOutreaches, totalResponses, totalAcceptances, createdAt, updatedAt
+      ) VALUES (?, ?, 'Legacy Comparison Firm', 'Utrecht', 'Employment Law; Social Security Law', 'Dutch | English', 'unknown',
+        'Limited', 'No', 'No', 'Good Standing', 'not-recorded', '140', '', 'broken', '4', '9', ?, ?)
+    `).run(legacyLawyerId, legacyName, now, now);
+  } finally {
+    database.close();
+  }
+
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badResponses: Array<{ status: number; url: string }> = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => {
+    const failure = request.failure()?.errorText ?? "unknown failure";
+    if (!failure.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
+  });
+  page.on("response", response => {
+    if (response.status() >= 400) badResponses.push({ status: response.status(), url: response.url() });
+  });
+
+  const response = await page.goto("/lawyers", { waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  await page.getByRole("textbox", { name: "Search lawyers", exact: true }).fill(marker);
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(page.getByText(currentName, { exact: true })).toBeVisible();
+  await expect(page.getByText(legacyName, { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Compare Mode", exact: true }).click();
+  await page.getByRole("button", { name: "Select to Compare", exact: true }).first().click();
+  await page.getByRole("button", { name: "Select to Compare", exact: true }).first().click();
+  const comparison = page.getByRole("region", { name: "Lawyer comparison", exact: true });
+  await expect(comparison).toBeVisible();
+  await expect(comparison.getByText("80.0% (8/10)", { exact: true })).toBeVisible();
+  await expect(comparison.getByText("50.0% (4/8)", { exact: true })).toBeVisible();
+  await expect(comparison.getByText("Social Security Law", { exact: true })).toBeVisible();
+  await expect(comparison.getByText(/% case match/)).toHaveCount(0);
+  await expect(comparison.getByRole("button", { name: /shortlist|contact/i })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Case: No case selected", exact: true }).click();
+  await page.getByLabel("Find a case", { exact: true }).fill(caseName);
+  await page.getByRole("button", { name: caseName, exact: true }).click();
+  await expect(comparison.getByText(/% case match/)).toHaveCount(2);
+  await expect(comparison.getByText("Canonical match basis", { exact: true })).toHaveCount(2);
+  await expect(page.getByText(/Searching for:/)).toHaveCount(0, { timeout: 15_000 });
+
+  const audit = await new AxeBuilder({ page }).include('[aria-label="Lawyer comparison"]').analyze();
+  expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+  await comparison.screenshot({ path: testInfo.outputPath("canonical-lawyer-comparison.png") });
+
+  const verified = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const count = verified.prepare("SELECT COUNT(*) AS total FROM outreach_status WHERE caseId = ?").get(caseId) as { total: number };
+    expect(count.total).toBe(0);
+  } finally {
+    verified.close();
+  }
+
+  await page.locator(`[data-comparison-lawyer="${currentLawyerId}"]`).getByRole("button", { name: "View profile", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/lawyers/${currentLawyerId}$`));
+  await expect(page.getByRole("heading", { name: currentName, exact: true })).toBeVisible();
+  expect(badResponses).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+});
+
 test("assistant binds answers to selected clarifications and reports applied versus review outcomes", async ({ page }, testInfo) => {
   const email = await createAccount(page);
   const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });

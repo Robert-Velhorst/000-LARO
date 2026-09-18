@@ -4,6 +4,8 @@ import { getDb } from "../db";
 import { lawyers as lawyersTable } from '../schema';
 import { and, asc, eq, sql } from "drizzle-orm";
 import { createLawyerId, isGeneratedIdCollision } from "../ids";
+import { assertCaseAccess } from "../_core/authz";
+import { getLawyerComparison } from "../lawyerComparison";
 
 const experienceFilter = z.enum(["0-5", "6-10", "11-20", "20+"]);
 const acceptingFilter = z.enum(["Yes", "Limited", "No", "Unknown"]);
@@ -123,6 +125,17 @@ export const lawyersRouter = router({
       const { eq } = await import("drizzle-orm");
       const result = await db.select().from(lawyersTable).where(eq(lawyersTable.id, id)).limit(1);
       return result.length > 0 ? result[0] : null;
+    }),
+
+  compare: protectedProcedure
+    .input(z.object({
+      lawyerIds: z.array(z.string().trim().min(1).max(256)).min(2).max(3)
+        .refine((ids) => new Set(ids).size === ids.length, "Choose different lawyers to compare"),
+      caseId: z.string().trim().min(1).max(256).optional(),
+    }))
+    .query(async ({ input, ctx }) => {
+      if (input.caseId) await assertCaseAccess(input.caseId, ctx.user.id);
+      return getLawyerComparison(input);
     }),
 
   create: adminProcedure
