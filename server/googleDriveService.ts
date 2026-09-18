@@ -2,12 +2,16 @@ import { google } from 'googleapis';
 import { getDb } from './db';
 import { emailAccounts, googleDriveFiles } from './schema';
 import { eq, and } from 'drizzle-orm';
-import { storagePut } from './storage';
+import { storagePutStream } from './storage';
 import { v4 as uuidv4 } from 'uuid';
 import { decryptToken, encryptToken, refreshGmailToken } from './emailOAuth';
 import { MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
-import { collectBoundedBytes, withByteReadAdmission } from './boundedBytes';
+import { withByteReadAdmission } from './boundedBytes';
 import { PROVIDER_LIMITS, ProviderBatchBudget } from './providerLimits';
+import {
+  EvidenceIngestionBudget,
+  EvidenceIngestionLimitError,
+} from './evidenceIngestionBudget';
 
 /**
  * Google Drive Service
@@ -92,11 +96,25 @@ export async function getGoogleDriveFileMetadata(folderId: string, userId: strin
 /**
  * Download a file from Google Drive and upload it to local/S3 storage
  */
-export function downloadAndUploadGoogleDriveFile(fileId: string, caseId: string, userId?: string, accountId?: string) {
-  return withByteReadAdmission(() => downloadAndUploadGoogleDriveFileAdmitted(fileId, caseId, userId, accountId));
+export function downloadAndUploadGoogleDriveFile(
+  fileId: string,
+  caseId: string,
+  userId?: string,
+  accountId?: string,
+  options: { budget?: EvidenceIngestionBudget; signal?: AbortSignal } = {},
+) {
+  const budget = options.budget ?? new EvidenceIngestionBudget(options.signal);
+  return downloadAndUploadGoogleDriveFileAdmitted(fileId, caseId, userId, accountId, budget, options.signal);
 }
 
-async function downloadAndUploadGoogleDriveFileAdmitted(fileId: string, caseId: string, userId?: string, accountId?: string) {
+async function downloadAndUploadGoogleDriveFileAdmitted(
+  fileId: string,
+  caseId: string,
+  userId: string | undefined,
+  accountId: string | undefined,
+  budget: EvidenceIngestionBudget,
+  signal?: AbortSignal,
+) {
   const db = await getDb();
   if (!db) throw new Error('Database not available');
 
@@ -115,7 +133,7 @@ async function downloadAndUploadGoogleDriveFileAdmitted(fileId: string, caseId: 
   const fileMetadata = await drive.files.get({
     fileId,
     fields: 'name, mimeType, size, modifiedTime',
-  });
+  }, signal ? { signal } : undefined);
 
   let fileName = fileMetadata.data.name || 'document';
   const sourceMimeType = fileMetadata.data.mimeType || 'application/octet-stream';
@@ -124,44 +142,67 @@ async function downloadAndUploadGoogleDriveFileAdmitted(fileId: string, caseId: 
   const modifiedTime = fileMetadata.data.modifiedTime;
   const declaredSize = Number(fileSize);
   if (Number.isFinite(declaredSize) && declaredSize > MAX_EVIDENCE_FILE_BYTES) {
+    budget.recordSkip('google_drive', 'file_too_large');
     throw new Error('Google Drive file exceeds the 7 MB evidence limit');
   }
 
   // Google-native documents have no media body. Export them to PDF so the
   // same source-grounded text extraction pipeline can analyze them.
   const googleNative = sourceMimeType.startsWith('application/vnd.google-apps.');
-  const response = googleNative
-    ? await drive.files.export(
-        { fileId, mimeType: 'application/pdf' },
-        { responseType: 'stream' }
-      )
-    : await drive.files.get(
-        { fileId, alt: 'media' },
-        { responseType: 'stream' }
-      );
   if (googleNative) {
     mimeType = 'application/pdf';
     if (!fileName.toLowerCase().endsWith('.pdf')) fileName += '.pdf';
   }
+  const preflightBytes = !googleNative && Number.isSafeInteger(declaredSize) && declaredSize > 0
+    ? declaredSize
+    : null;
+  const reservation = await budget.reserve('google_drive', preflightBytes);
+  if (!reservation) {
+    throw new EvidenceIngestionLimitError(
+      'google_drive',
+      Number.isFinite(declaredSize) && declaredSize > MAX_EVIDENCE_FILE_BYTES ? 'file_too_large' : 'job_byte_limit',
+      Number.isFinite(declaredSize) && declaredSize > MAX_EVIDENCE_FILE_BYTES
+        ? 'Google Drive file exceeds the 7 MB evidence limit'
+        : 'Google Drive ingestion reached its item, byte, or storage-headroom limit',
+    );
+  }
 
-  const buffer = await collectBoundedBytes(response.data, {
-    maxBytes: MAX_EVIDENCE_FILE_BYTES,
-    label: 'Google Drive file',
-    limitMessage: 'Google Drive file exceeds the 7 MB evidence limit',
-  });
-
-  // 3. Upload to our storage
   const storagePath = `evidence/${caseId}/gdrive/${uuidv4()}-${fileName}`;
-  const { key, url, sha256 } = await storagePut(storagePath, buffer, mimeType);
+  let completed = false;
+  let stored: Awaited<ReturnType<typeof storagePutStream>>;
+  try {
+    stored = await reservation.run(() => withByteReadAdmission(async () => {
+      budget.throwIfCancelled('google_drive');
+      const response = googleNative
+        ? await drive.files.export(
+            { fileId, mimeType: 'application/pdf' },
+            { responseType: 'stream', signal }
+          )
+        : await drive.files.get(
+            { fileId, alt: 'media' },
+            { responseType: 'stream', signal }
+          );
+      return storagePutStream(storagePath, response.data, mimeType, {
+        maxBytes: reservation.declaredBytes,
+        ...(preflightBytes !== null ? { expectedBytes: preflightBytes } : {}),
+        signal,
+      });
+    }));
+    reservation.complete(stored.bytes);
+    completed = true;
+  } catch (error) {
+    if (!completed) reservation.skip(error instanceof EvidenceIngestionLimitError ? error.code : 'store_failed');
+    throw error;
+  }
 
   return { 
-    key, 
-    url, 
-    sha256,
+    key: stored.key,
+    url: stored.url,
+    sha256: stored.sha256,
     fileName, 
     mimeType, 
     sourceMimeType,
-    size: fileSize || buffer.length.toString(),
+    size: stored.bytes.toString(),
     modifiedTime: modifiedTime ? new Date(modifiedTime) : new Date(),
   };
 }

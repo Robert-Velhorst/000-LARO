@@ -20,9 +20,15 @@ import {
   type ScannerUploadMetadata,
   type ScannerUploadResult,
 } from "../shared/scannerUpload";
+import {
+  acquireEvidenceIngestionRequestOperation,
+  admitEvidenceIngestionRequest,
+  EvidenceIngestionLimitError,
+} from "./evidenceIngestionBudget";
 
 const metadataSchema = z.object({
   uploadId: z.string().min(1).max(200).regex(/^[A-Za-z0-9._:-]+$/),
+  jobId: z.string().min(1).max(200).regex(/^[A-Za-z0-9._:-]+$/).optional(),
   caseId: z.string().min(1).max(200),
   fileName: z.string().min(1).max(255),
   mimeType: z.string().min(1).max(255),
@@ -35,6 +41,8 @@ type PreparedScannerRequest = Request & {
   scannerUpload?: {
     ctx: TrpcContext & { user: NonNullable<TrpcContext["user"]> };
     metadata: ScannerUploadMetadata;
+    ingestion: Awaited<ReturnType<typeof admitEvidenceIngestionRequest>>;
+    releaseIngestion: () => void;
   };
 };
 
@@ -62,6 +70,7 @@ function readMetadata(req: Request): ScannerUploadMetadata {
   }
   const parsed = metadataSchema.safeParse({
     uploadId: header(req, SCANNER_UPLOAD_HEADERS.uploadId),
+    jobId: header(req, SCANNER_UPLOAD_HEADERS.jobId) || undefined,
     caseId: header(req, SCANNER_UPLOAD_HEADERS.caseId),
     fileName,
     mimeType: header(req, SCANNER_UPLOAD_HEADERS.fileMime).toLowerCase(),
@@ -227,17 +236,44 @@ async function prepareRequest(req: PreparedScannerRequest, res: Response, next: 
       );
     }
     const contentLength = req.get("content-length");
-    if (contentLength) {
-      const declaredBytes = Number(contentLength);
-      if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 1) {
-        throw new ScannerUploadError("The scanner upload length is invalid.", 400, "INVALID_CONTENT_LENGTH");
-      }
-      if (declaredBytes > MAX_EVIDENCE_FILE_BYTES) {
-        throw new ScannerUploadError("Evidence uploads must be between 1 byte and 7 MB.", 413, "PAYLOAD_TOO_LARGE");
-      }
+    if (!contentLength) {
+      throw new ScannerUploadError("Scanner uploads require a declared content length.", 411, "CONTENT_LENGTH_REQUIRED");
+    }
+    const declaredBytes = Number(contentLength);
+    if (!Number.isSafeInteger(declaredBytes) || declaredBytes < 1) {
+      throw new ScannerUploadError("The scanner upload length is invalid.", 400, "INVALID_CONTENT_LENGTH");
+    }
+    if (declaredBytes > MAX_EVIDENCE_FILE_BYTES) {
+      throw new ScannerUploadError("Evidence uploads must be between 1 byte and 7 MB.", 413, "PAYLOAD_TOO_LARGE");
     }
     await assertCaseOwnership(metadata.caseId, ctx.user.id);
-    req.scannerUpload = { ctx: { ...ctx, user: ctx.user }, metadata };
+    let ingestion: Awaited<ReturnType<typeof admitEvidenceIngestionRequest>>;
+    let releaseIngestion: () => void;
+    try {
+      ingestion = await admitEvidenceIngestionRequest({
+        ownerId: ctx.user.id,
+        jobId: metadata.jobId ?? metadata.uploadId,
+        itemId: metadata.uploadId,
+        source: metadata.source === "desktop_scanner" ? "desktop_scanner" : "manual",
+        bytes: declaredBytes,
+      });
+      releaseIngestion = acquireEvidenceIngestionRequestOperation({
+        ownerId: ctx.user.id,
+        jobId: metadata.jobId ?? metadata.uploadId,
+        source: metadata.source === "desktop_scanner" ? "desktop_scanner" : "manual",
+      });
+    } catch (error) {
+      if (error instanceof EvidenceIngestionLimitError) {
+        throw new ScannerUploadError(
+          error.message,
+          error.code === "file_empty" || error.code === "file_too_large" ? 413
+            : error.code === "source_changed" ? 409 : 429,
+          error.code === "source_changed" ? "UPLOAD_ID_CONFLICT" : error.code.toUpperCase(),
+        );
+      }
+      throw error;
+    }
+    req.scannerUpload = { ctx: { ...ctx, user: ctx.user }, metadata, ingestion, releaseIngestion };
     next();
   } catch (error) {
     sendUploadError(res, error);
@@ -284,13 +320,23 @@ scannerUploadRouter.post(
         req.body,
       );
       res.setHeader("Cache-Control", "no-store");
-      res.status(result.resumed ? 200 : 201).json(result);
+      res.status(result.resumed ? 200 : 201).json({
+        ...result,
+        ingestion: {
+          outcome: "completed",
+          processedItems: req.scannerUpload.ingestion.items,
+          processedBytes: req.scannerUpload.ingestion.bytes,
+        },
+      });
     } catch (error) {
       sendUploadError(res, error);
+    } finally {
+      req.scannerUpload?.releaseIngestion();
     }
   },
 );
 
-scannerUploadRouter.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+scannerUploadRouter.use((error: unknown, req: PreparedScannerRequest, res: Response, _next: NextFunction) => {
+  req.scannerUpload?.releaseIngestion();
   sendUploadError(res, error);
 });

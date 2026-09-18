@@ -149,6 +149,12 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
       toast.error(`Pull failed: ${currentJob.error || "Unknown error"}`);
       return;
     }
+    if (currentJob.status === "cancelled") {
+      toast.message("Evidence pull cancelled", {
+        description: `${currentJob.processedItems} item${currentJob.processedItems === 1 ? " was" : "s were"} processed before cancellation.`,
+      });
+      return;
+    }
     try {
       const result = JSON.parse(currentJob.result || "{}") as {
         gmailMessages?: number;
@@ -156,16 +162,22 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
         driveFiles?: number;
         localFiles?: number;
         errors?: string[];
+        outcome?: "completed" | "partial" | "cancelled";
       };
       const total = (result.gmailMessages || 0)
         + (result.gmailAttachments || 0)
         + (result.driveFiles || 0)
         + (result.localFiles || 0);
+      const limited = result.outcome === "partial" || Boolean(result.errors?.length);
       if (total === 0) {
-        toast.message("Pull complete - no new matches", {
-          description: result.errors?.length
-            ? `Some sources errored: ${result.errors[0]}`
+        toast.message(limited ? "Pull completed with bounded partial results" : "Pull complete - no new matches", {
+          description: limited
+            ? result.errors?.[0] || "One or more items were deferred by the ingestion limits."
             : "No items matched your keywords. Try different terms or connect a source.",
+        });
+      } else if (limited) {
+        toast.warning(`Pulled ${total} item${total === 1 ? "" : "s"} with bounded partial results`, {
+          description: result.errors?.[0] || "One or more items were deferred by the ingestion limits.",
         });
       } else {
         toast.success(`Pulled ${total} item${total === 1 ? "" : "s"} into the case`, {
@@ -189,6 +201,13 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
     onError: (err) => {
       toast.error(`Pull failed: ${err.message}`);
     },
+  });
+  const cancelPullMutation = trpc.autoCollection.cancelPullJob.useMutation({
+    onSuccess: () => {
+      void pullJob.refetch();
+      void activePullJob.refetch();
+    },
+    onError: (error) => toast.error(`Could not cancel pull: ${error.message}`),
   });
 
   const addFolderMutation = trpc.autoCollection.setLocalFolders.useMutation({
@@ -346,7 +365,19 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
           <div className="space-y-2 rounded-md border border-border/50 bg-background/60 p-3" aria-live="polite">
             <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
               <span className="font-medium">{currentJob.message}</span>
-              <span className="tabular-nums text-muted-foreground">{progressValue}%</span>
+              <div className="flex items-center gap-2">
+                <span className="tabular-nums text-muted-foreground">{progressValue}%</span>
+                {pullActive && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={cancelPullMutation.isLoading}
+                    onClick={() => cancelPullMutation.mutate({ jobId: currentJob.id })}
+                  >
+                    <X className="mr-1 h-3.5 w-3.5" /> Cancel
+                  </Button>
+                )}
+              </div>
             </div>
             <Progress aria-label="Document analysis progress" value={progressValue} className="h-2" />
             <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -363,6 +394,8 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
                     : `${currentJob.estimatedSecondsRemaining}s remaining`
                   : currentJob.status === "failed"
                     ? "Stopped"
+                    : currentJob.status === "cancelled"
+                      ? "Cancelled"
                     : "Complete"}
               </span>
             </div>

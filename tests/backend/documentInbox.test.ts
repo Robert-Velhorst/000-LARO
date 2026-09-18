@@ -32,6 +32,30 @@ import { buildUser } from "../factories";
     expect((await upload(text + " Revised.")).id).not.toBe(item.id);
   });
 
+  it("stores originals but reports bounded partial work after the per-job analysis cap", async () => {
+    const caller = app.makeCaller(owner);
+    const ingestionJobId = `inbox-analysis-budget-${Date.now()}`;
+    let last: Awaited<ReturnType<typeof caller.documentInbox.upload>> | undefined;
+    for (let index = 0; index <= 20; index += 1) {
+      last = await caller.documentInbox.upload({
+        fileName: `analysis-budget-${index}.txt`,
+        mimeType: "text/plain",
+        base64: Buffer.from(`Analysis budget document ${index}.`).toString("base64"),
+        ingestionJobId,
+        ingestionItemId: `analysis-budget-${index}`,
+      });
+    }
+
+    expect(last).toMatchObject({
+      analysisEligible: false,
+      ingestion: {
+        outcome: "partial",
+        processedItems: 21,
+        reasons: [{ source: "document_inbox", code: "analysis_limit", count: 1 }],
+      },
+    });
+  });
+
   it("stores long original names without making Windows storage paths too long", async () => {
     const name = `${"document-".repeat(27)}.txt`;
     const item = await upload("Preserve these original bytes.", name);

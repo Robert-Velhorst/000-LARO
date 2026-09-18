@@ -12,7 +12,7 @@ import { emailAccounts, evidence } from "../schema";
 import { eq, and } from "drizzle-orm";
 import { beginOAuthFlowAsync } from "../oauth2";
 import { SESSION_COOKIE_NAME } from "../sessionCookie";
-import { pullEvidenceByKeywords } from "../autoCollectionService";
+import { startKeywordPullJob } from "../autoCollectionService";
 import { assertCaseOwnership } from "../_core/authz";
 import { createEvidenceFile } from "../evidence";
 import { analyzeStoredEvidence } from "../documentAnalysisService";
@@ -21,6 +21,9 @@ import { revokeStoredGoogleTokens } from "../emailOAuth";
 import { AUDIT_ACTIONS, createAuditLog, writeAuditLogOrThrow } from "../audit";
 import { PROVIDER_LIMITS } from "../providerLimits";
 import { enforcePersistentRateLimit, RATE_LIMITS } from "../rateLimit";
+import { EvidenceIngestionBudget } from "../evidenceIngestionBudget";
+import { storageDelete } from "../storage";
+import { EVIDENCE_INGESTION_LIMITS } from "../../shared/evidenceIngestion";
 
 const driveId = z.string().trim().min(1).max(256);
 const driveName = z.string().trim().min(1).max(500);
@@ -33,6 +36,7 @@ async function ingestDriveEvidence(options: {
   title: string;
   description: string;
   metadata?: Record<string, unknown>;
+  budget: EvidenceIngestionBudget;
 }) {
   await assertCaseOwnership(options.caseId, options.userId);
   const fileData = await downloadAndUploadGoogleDriveFile(
@@ -40,38 +44,52 @@ async function ingestDriveEvidence(options: {
     options.caseId,
     options.userId,
     options.accountId,
+    { budget: options.budget, signal: options.budget.signal },
   );
-  const evidenceId = await createEvidenceFile(options.userId, {
-    caseId: options.caseId,
-    type: determineEvidenceType(fileData.mimeType),
-    source: "google_drive",
-    title: options.title,
-    description: options.description,
-    fileUrl: fileData.url,
-    fileName: fileData.fileName,
-    fileSize: fileData.size,
-    mimeType: fileData.mimeType,
-    metadata: JSON.stringify({
-      ...options.metadata,
-      storageKey: fileData.key,
-      driveFileId: options.fileId,
-      driveAccountId: options.accountId,
-      sourceMimeType: fileData.sourceMimeType,
-      importedAt: new Date().toISOString(),
-      modifiedTime: fileData.modifiedTime,
-    }),
-    contentHash: fileData.sha256,
-    relevant: true,
-  });
-  let analysisError: string | null = null;
-  if (supportsDocumentAnalysisMime(fileData.mimeType)) {
+  return options.budget.run(async () => {
+    let evidenceId: string;
     try {
-      await analyzeStoredEvidence({ userId: options.userId, evidenceId, deepAnalysis: false });
+      evidenceId = await createEvidenceFile(options.userId, {
+      caseId: options.caseId,
+      type: determineEvidenceType(fileData.mimeType),
+      source: "google_drive",
+      title: options.title,
+      description: options.description,
+      fileUrl: fileData.url,
+      fileName: fileData.fileName,
+      fileSize: fileData.size,
+      mimeType: fileData.mimeType,
+      metadata: JSON.stringify({
+        ...options.metadata,
+        storageKey: fileData.key,
+        driveFileId: options.fileId,
+        driveAccountId: options.accountId,
+        sourceMimeType: fileData.sourceMimeType,
+        importedAt: new Date().toISOString(),
+        modifiedTime: fileData.modifiedTime,
+      }),
+      contentHash: fileData.sha256,
+      relevant: true,
+      });
     } catch (error) {
-      analysisError = error instanceof Error ? error.message : "Automatic document analysis failed";
+      options.budget.recordSkip("google_drive", "store_failed");
+      await storageDelete(fileData.key).catch(() => undefined);
+      throw error;
     }
-  }
-  return { evidenceId, analysisError };
+    let analysisError: string | null = null;
+    if (supportsDocumentAnalysisMime(fileData.mimeType)) {
+      if (!options.budget.claimAnalysis("google_drive")) {
+        analysisError = "Automatic analysis was deferred because the ingestion analysis limit was reached";
+      } else {
+        try {
+          await analyzeStoredEvidence({ userId: options.userId, evidenceId, deepAnalysis: false });
+        } catch (error) {
+          analysisError = error instanceof Error ? error.message : "Automatic document analysis failed";
+        }
+      }
+    }
+    return { evidenceId, analysisError };
+  });
 }
 
 /**
@@ -241,10 +259,11 @@ export const googleDriveRouter = router({
         };
       }
 
-      const result = await pullEvidenceByKeywords({
+      const job = await startKeywordPullJob({
         caseId: input.caseId,
         userId: ctx.user.id,
         keywords,
+        driveAccountId: input.sourceId,
         includeGmail: false,
         includeDrive: true,
         includeLocal: false,
@@ -252,11 +271,12 @@ export const googleDriveRouter = router({
 
       return {
         success: true,
+        job,
         progress: {
-          totalFiles: result.driveFiles + result.gmailAttachments,
-          processedFiles: result.driveFiles + result.gmailAttachments,
-          extractedContent: result.gmailMessages,
-          errors: result.errors,
+          totalFiles: 0,
+          processedFiles: 0,
+          extractedContent: 0,
+          errors: [],
         },
       };
     }),
@@ -364,8 +384,8 @@ export const googleDriveRouter = router({
       z.object({
         caseId: z.string().min(1).max(128),
         accountId: driveId.optional(),
-        fileIds: z.array(driveId).min(1).max(PROVIDER_LIMITS.googleDrive.maxImportFiles),
-        fileNames: z.array(driveName).min(1).max(PROVIDER_LIMITS.googleDrive.maxImportFiles),
+        fileIds: z.array(driveId).min(1).max(EVIDENCE_INGESTION_LIMITS.maxJobItems),
+        fileNames: z.array(driveName).min(1).max(EVIDENCE_INGESTION_LIMITS.maxJobItems),
       }).superRefine((value, ctx) => {
         if (value.fileIds.length !== value.fileNames.length) {
           ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Every Drive file ID needs one filename." });
@@ -378,10 +398,16 @@ export const googleDriveRouter = router({
 
       const imported: string[] = [];
       const errors: string[] = [];
+      const budget = new EvidenceIngestionBudget();
 
       for (let i = 0; i < input.fileIds.length; i++) {
         const fileId = input.fileIds[i];
         const fileName = input.fileNames[i];
+
+        if (i >= PROVIDER_LIMITS.googleDrive.maxImportFiles) {
+          budget.recordSkip("google_drive", "job_item_limit");
+          continue;
+        }
 
         try {
           const result = await ingestDriveEvidence({
@@ -391,6 +417,7 @@ export const googleDriveRouter = router({
             fileId,
             title: fileName,
             description: "Imported from Google Drive",
+            budget,
           });
 
           imported.push(fileName);
@@ -400,10 +427,14 @@ export const googleDriveRouter = router({
         }
       }
 
+      const ingestion = budget.summary();
+
       return {
-        success: true,
+        success: errors.length === 0 && ingestion.outcome === "completed",
+        outcome: ingestion.outcome,
         imported: imported.length,
         errors,
+        ingestion,
       };
     }),
 
@@ -428,6 +459,7 @@ export const googleDriveRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
 
       try {
+        const budget = new EvidenceIngestionBudget();
         // Get all files in folder
         const files = await getAllFilesInFolder(ctx.user.id, input.folderId, input.recursive, input.accountId);
 
@@ -461,17 +493,19 @@ export const googleDriveRouter = router({
           }
         }));
         const newFiles = filesToImport.filter((file) => !file.id || !importedDriveIds.has(file.id));
-        if (newFiles.length > PROVIDER_LIMITS.googleDrive.maxImportFiles) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: `Drive folder imports are limited to ${PROVIDER_LIMITS.googleDrive.maxImportFiles} new files at a time. Narrow the folder or add keywords.`,
-          });
-        }
+        const admittedNewIds = new Set(newFiles.slice(0, PROVIDER_LIMITS.googleDrive.maxImportFiles)
+          .map((file) => file.id).filter((id): id is string => Boolean(id)));
 
         for (const file of filesToImport) {
           try {
             if (file.id && importedDriveIds.has(file.id)) {
               skipped.push(file.name || "Unknown");
+              budget.recordSkip("google_drive", "duplicate");
+              continue;
+            }
+            if (!file.id || !admittedNewIds.has(file.id)) {
+              skipped.push(file.name || "Unknown");
+              budget.recordSkip("google_drive", "job_item_limit");
               continue;
             }
 
@@ -482,6 +516,7 @@ export const googleDriveRouter = router({
               fileId: file.id!,
               title: file.name || "Untitled",
               description: `Imported from Google Drive folder: ${input.folderName}`,
+              budget,
               metadata: {
                 folderId: input.folderId,
                 folderName: input.folderName,
@@ -497,13 +532,17 @@ export const googleDriveRouter = router({
           }
         }
 
+        const ingestion = budget.summary();
+
         return {
-          success: true,
+          success: errors.length === 0 && ingestion.outcome === "completed",
+          outcome: ingestion.outcome,
           totalFiles: files.length,
           imported: imported.length,
           skipped: skipped.length,
           errors,
           importedFiles: imported,
+          ingestion,
         };
       } catch (error) {
         if (error instanceof TRPCError) throw error;

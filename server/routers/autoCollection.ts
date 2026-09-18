@@ -13,6 +13,7 @@ import {
   startKeywordPullJob,
   getKeywordPullJob,
   getActiveKeywordPullJob,
+  cancelKeywordPullJob,
 } from "../autoCollectionService";
 import { assertCaseOwnership } from "../_core/authz";
 import { getDb } from "../db";
@@ -173,6 +174,12 @@ export const autoCollectionRouter = router({
       await assertCaseOwnership(input.caseId, ctx.user.id);
       return getActiveKeywordPullJob(input.caseId, ctx.user.id);
     }),
+
+  cancelPullJob: protectedProcedure
+    .input(z.object({ jobId: z.string().uuid() }))
+    .mutation(async ({ input, ctx }) => ({
+      success: Boolean(await cancelKeywordPullJob(input.jobId, ctx.user.id)),
+    })),
 
   /**
    * Persist local-folder paths to auto-scan during keyword pulls.

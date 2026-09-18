@@ -13,6 +13,7 @@ import { shouldExcludePath, shouldExcludeFile } from '../shared/exclusions';
 import { isSupportedEvidenceMimeType, MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 import { addFile, updateScanProgress } from './database';
 import { inspectRegularFile } from './fileApproval';
+import { EVIDENCE_INGESTION_LIMITS } from '../shared/evidenceIngestion';
 
 export interface ScannerOptions {
   scanId: string;
@@ -31,6 +32,10 @@ export class FileScanner extends EventEmitter {
   private totalFiles: number = 0;
   private scannedFiles: number = 0;
   private totalSize: number = 0;
+  private skippedFiles: number = 0;
+  private skippedSize: number = 0;
+  private limitReason: string | null = null;
+  private budgetExhausted: boolean = false;
   
   constructor(options: ScannerOptions) {
     super();
@@ -61,7 +66,7 @@ export class FileScanner extends EventEmitter {
       
       // Scan each root path
       for (const rootPath of rootPaths) {
-        if (this.shouldStop) break;
+        if (this.shouldStop || this.budgetExhausted) break;
         
         try {
           await this.scanDirectory(rootPath);
@@ -81,6 +86,10 @@ export class FileScanner extends EventEmitter {
         this.emit('completed', {
           totalFiles: this.totalFiles,
           totalSize: this.totalSize,
+          skippedFiles: this.skippedFiles,
+          skippedSize: this.skippedSize,
+          limitReason: this.limitReason,
+          partial: this.skippedFiles > 0,
         });
         
         // Update status based on auto-upload setting
@@ -89,7 +98,11 @@ export class FileScanner extends EventEmitter {
           status: this.config.autoUpload ? 'uploading' : 'review',
           totalFiles: this.totalFiles,
           scannedFiles: this.scannedFiles,
+          skippedFiles: this.skippedFiles,
           totalSize: this.totalSize,
+          skippedSize: this.skippedSize,
+          limitReason: this.limitReason,
+          errorMessage: this.limitReason,
         });
       }
     } catch (error: any) {
@@ -149,6 +162,7 @@ export class FileScanner extends EventEmitter {
     }
     
     if (this.shouldStop) return;
+    if (this.budgetExhausted) return;
     
     // Check if path should be excluded
     if (shouldExcludePath(dirPath, this.platform, this.config.excludedFolders)) {
@@ -160,7 +174,7 @@ export class FileScanner extends EventEmitter {
       const entries = await fs.readdir(dirPath, { withFileTypes: true });
       
       for (const entry of entries) {
-        if (this.shouldStop) break;
+        if (this.shouldStop || this.budgetExhausted) break;
         
         // Wait if paused
         while (this.isPaused && !this.shouldStop) {
@@ -203,8 +217,37 @@ export class FileScanner extends EventEmitter {
       const mimeType = mime.lookup(filePath) || 'application/octet-stream';
       if (!isSupportedEvidenceMimeType(mimeType)) return;
 
+      const metadata = await fs.stat(filePath);
+      if (!metadata.size || metadata.size > EVIDENCE_INGESTION_LIMITS.maxFileBytes) {
+        this.skippedFiles += 1;
+        this.skippedSize += Math.max(0, metadata.size);
+        this.limitReason ??= 'Partial scan: one or more empty or oversized files were skipped.';
+        return;
+      }
+      if (this.totalFiles >= EVIDENCE_INGESTION_LIMITS.maxJobItems) {
+        this.skippedFiles += 1;
+        this.skippedSize += metadata.size;
+        this.limitReason = `Partial scan: the ${EVIDENCE_INGESTION_LIMITS.maxJobItems}-item ingestion limit was reached.`;
+        this.budgetExhausted = true;
+        return;
+      }
+      if (this.totalSize + metadata.size > EVIDENCE_INGESTION_LIMITS.maxJobBytes) {
+        this.skippedFiles += 1;
+        this.skippedSize += metadata.size;
+        this.limitReason = `Partial scan: the ${EVIDENCE_INGESTION_LIMITS.maxJobBytes}-byte ingestion limit was reached.`;
+        this.budgetExhausted = true;
+        return;
+      }
+
       // Capture the exact bytes and filesystem identity shown for review.
       const snapshot = await inspectRegularFile(filePath, MAX_EVIDENCE_FILE_BYTES);
+      if (this.totalSize + snapshot.size > EVIDENCE_INGESTION_LIMITS.maxJobBytes) {
+        this.skippedFiles += 1;
+        this.skippedSize += snapshot.size;
+        this.limitReason = `Partial scan: the ${EVIDENCE_INGESTION_LIMITS.maxJobBytes}-byte ingestion limit was reached.`;
+        this.budgetExhausted = true;
+        return;
+      }
       
       // Create file item
       const fileItem: FileItem = {
@@ -248,6 +291,8 @@ export class FileScanner extends EventEmitter {
         });
       }
     } catch (error: any) {
+      this.skippedFiles += 1;
+      this.limitReason ??= 'Partial scan: one or more files could not be read safely.';
       // Skip files we can't access
       if (error.code === 'EACCES' || error.code === 'EPERM') {
         console.log(`[Scanner] Permission denied: ${filePath}`);

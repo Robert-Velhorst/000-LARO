@@ -21,9 +21,11 @@ import {
   markFileReviewRequired,
   markFileUploaded,
   prepareScanUploadResume,
+  getScanIngestionTotals,
 } from './database';
 import { createDesktopScannerHeaders } from './scannerAuth';
 import { FileReviewRequiredError, readApprovedFile } from './fileApproval';
+import { EVIDENCE_INGESTION_LIMITS } from '../shared/evidenceIngestion';
 
 export interface UploaderOptions {
   scanId: string;
@@ -104,6 +106,13 @@ export class FileUploader extends EventEmitter {
     
     try {
       console.log(`[Uploader] Starting upload for scan ${this.scanId}`);
+      const selected = getScanIngestionTotals(this.scanId);
+      if (selected.items > EVIDENCE_INGESTION_LIMITS.maxJobItems || selected.bytes > EVIDENCE_INGESTION_LIMITS.maxJobBytes) {
+        throw new Error(
+          `The approved scanner selection exceeds the ${EVIDENCE_INGESTION_LIMITS.maxJobItems}-item or ` +
+          `${EVIDENCE_INGESTION_LIMITS.maxJobBytes}-byte ingestion budget. Start a smaller scan.`,
+        );
+      }
       prepareScanUploadResume(this.scanId);
       this.refreshCounters();
       
@@ -409,6 +418,7 @@ export class FileUploader extends EventEmitter {
           ...(await this.resolveHeaders()),
           'Content-Type': 'application/octet-stream',
           [SCANNER_UPLOAD_HEADERS.uploadId]: file.id,
+          [SCANNER_UPLOAD_HEADERS.jobId]: this.scanId,
           [SCANNER_UPLOAD_HEADERS.caseId]: this.getCaseId(),
           [SCANNER_UPLOAD_HEADERS.fileName]: encodeURIComponent(file.name),
           [SCANNER_UPLOAD_HEADERS.fileMime]: file.mimeType,

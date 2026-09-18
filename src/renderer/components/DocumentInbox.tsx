@@ -8,6 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import DocumentSources from "./DocumentSources";
 import InboxAssignmentControls from "./InboxAssignmentControls";
 import { MAX_EVIDENCE_FILE_BYTES, isSupportedDocumentAnalysisMimeType } from "../../../shared/evidenceFiles";
+import { EVIDENCE_INGESTION_LIMITS } from "../../../shared/evidenceIngestion";
 
 const MIME: Record<string, string> = { txt: "text/plain", csv: "text/csv", html: "text/html", htm: "text/html", eml: "message/rfc822",
   pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -119,7 +120,22 @@ export default function DocumentInbox({ onOpenCase }: { onOpenCase: (caseId: str
   const handleFiles = async (selected: FileList | null) => {
     if (!selected?.length || busy || !preferences.data) return;
     setBusy(true); stop.current = false; setErrors([]); setView("all"); setOffset(0);
-    const queue = Array.from(selected);
+    const queue: File[] = [];
+    let queuedBytes = 0;
+    let deferred = 0;
+    for (const file of Array.from(selected)) {
+      if (
+        queue.length >= EVIDENCE_INGESTION_LIMITS.maxJobItems ||
+        queuedBytes + file.size > EVIDENCE_INGESTION_LIMITS.maxJobBytes
+      ) {
+        deferred += 1;
+        continue;
+      }
+      queue.push(file);
+      queuedBytes += file.size;
+    }
+    if (deferred) report(`${deferred} document${deferred === 1 ? " was" : "s were"} deferred by the ingestion job limit.`);
+    const ingestionJobId = crypto.randomUUID();
     setProgress({ done: 0, total: queue.length });
     try {
       for (const [index, file] of queue.entries()) {
@@ -129,11 +145,20 @@ export default function DocumentInbox({ onOpenCase }: { onOpenCase: (caseId: str
           const mimeType = file.type || MIME[file.name.split(".").pop()?.toLowerCase() || ""] || "";
           if (!file.size || file.size > MAX_EVIDENCE_FILE_BYTES || !isSupportedDocumentAnalysisMimeType(mimeType)) throw new Error("Unsupported, empty or larger than 7 MB");
           setCurrent(`Saving ${file.name}`);
-          const item = await upload.mutateAsync({ fileName: file.name, sourcePath: file.webkitRelativePath || file.name, mimeType, base64: await base64(file) });
+          const item = await upload.mutateAsync({
+            fileName: file.name,
+            sourcePath: file.webkitRelativePath || file.name,
+            mimeType,
+            base64: await base64(file),
+            ingestionJobId,
+            ingestionItemId: `${index}-${file.name}`.slice(0, 200),
+          });
           stored = true;
-          if (preferences.data.autoAnalyzeImports) {
+          if (preferences.data.autoAnalyzeImports && item.analysisEligible) {
             setCurrent(`Analyzing ${file.name}`);
             await process.mutateAsync({ id: item.id });
+          } else if (preferences.data.autoAnalyzeImports && !item.analysisEligible) {
+            report(`${file.name}: original saved; automatic analysis was deferred by the ingestion job limit.`);
           }
         } catch (error) {
           report(`${file.name}: ${error instanceof Error ? error.message : "Processing failed"}${stored ? " (original saved)" : ""}`);

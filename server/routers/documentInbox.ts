@@ -11,6 +11,13 @@ import type { DocumentAnalysisResult } from "../documentIntelligence";
 import { writeAuditLogOrThrow } from "../audit";
 import { parseStoredDiscovery } from "../dossierDiscovery";
 import { getInboxAssignment, inboxAssignmentHistory, reassignInboxDocument } from "../inboxAssignments";
+import { randomUUID } from "node:crypto";
+import {
+  admitEvidenceIngestionRequest,
+  EvidenceIngestionLimitError,
+  withEvidenceIngestionRequestOperation,
+} from "../evidenceIngestionBudget";
+import { decodedBase64ByteLength, EVIDENCE_INGESTION_LIMITS } from "../../shared/evidenceIngestion";
 
 const idInput = z.object({ id: z.string().min(1).max(100) });
 
@@ -18,13 +25,67 @@ export const documentInboxRouter = router({
   upload: protectedProcedure.input(z.object({
     fileName: z.string().trim().min(1).max(255), sourcePath: z.string().trim().min(1).max(2000).optional(),
     mimeType: z.string().min(1).max(255),
+    ingestionJobId: z.string().min(1).max(200).optional(),
+    ingestionItemId: z.string().min(1).max(200).optional(),
     base64: z.string().min(1).max(MAX_EVIDENCE_BASE64_CHARS).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
-  })).mutation(({ ctx, input }) => {
-    const bytes = Buffer.from(input.base64, "base64");
-    if (!bytes.length || bytes.length > MAX_EVIDENCE_FILE_BYTES || !isSupportedDocumentAnalysisMimeType(input.mimeType)) {
+  })).mutation(async ({ ctx, input }) => {
+    if (!isSupportedDocumentAnalysisMimeType(input.mimeType)) {
       throw new TRPCError({ code: "BAD_REQUEST", message: "Choose a supported document between 1 byte and 7 MB" });
     }
-    return stageInboxDocument(ctx.user.id, { ...input, bytes });
+    const declaredBytes = decodedBase64ByteLength(input.base64);
+    const ingestionJobId = input.ingestionJobId ?? randomUUID();
+    const ingestionItemId = input.ingestionItemId ?? randomUUID();
+    let ingestion: Awaited<ReturnType<typeof admitEvidenceIngestionRequest>>;
+    try {
+      ingestion = await admitEvidenceIngestionRequest({
+        ownerId: ctx.user.id,
+        jobId: ingestionJobId,
+        itemId: ingestionItemId,
+        source: "document_inbox",
+        bytes: declaredBytes,
+      });
+    } catch (error) {
+      if (error instanceof EvidenceIngestionLimitError) {
+        throw new TRPCError({
+          code: error.code === "file_empty" || error.code === "file_too_large"
+            ? "PAYLOAD_TOO_LARGE"
+            : error.code === "source_changed" ? "CONFLICT" : "TOO_MANY_REQUESTS",
+          message: error.message,
+        });
+      }
+      throw error;
+    }
+    const bytes = Buffer.from(input.base64, "base64");
+    if (!bytes.length || bytes.length !== declaredBytes || bytes.length > MAX_EVIDENCE_FILE_BYTES) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Choose a supported document between 1 byte and 7 MB" });
+    }
+    try {
+      return await withEvidenceIngestionRequestOperation({
+        ownerId: ctx.user.id,
+        jobId: ingestionJobId,
+        source: "document_inbox",
+      }, async () => {
+        const item = await stageInboxDocument(ctx.user.id, { ...input, bytes });
+        const analysisEligible = ingestion.items <= EVIDENCE_INGESTION_LIMITS.maxAnalysisItems;
+        return {
+          ...item,
+          analysisEligible,
+          ingestion: {
+            outcome: analysisEligible ? "completed" as const : "partial" as const,
+            processedItems: ingestion.items,
+            processedBytes: ingestion.bytes,
+            reasons: analysisEligible
+              ? []
+              : [{ source: "document_inbox" as const, code: "analysis_limit" as const, count: 1 }],
+          },
+        };
+      });
+    } catch (error) {
+      if (error instanceof EvidenceIngestionLimitError) {
+        throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: error.message });
+      }
+      throw error;
+    }
   }),
   list: protectedProcedure.input(z.object({
     view: z.enum(["unassigned", "assigned", "all"]).default("unassigned"),

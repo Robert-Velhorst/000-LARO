@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { Readable } from "node:stream";
 import { buildCase, buildEvidence, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 
@@ -140,6 +141,38 @@ suite("Google Drive account selection", () => {
     expect(googleMocks.getRequests[0]).not.toHaveProperty("alt", "media");
   });
 
+  it("does not request Drive media after the cumulative job budget rejects metadata", async () => {
+    googleMocks.getRequests.length = 0;
+    googleMocks.getResponses.push({
+      data: { name: "budgeted.pdf", mimeType: "application/pdf", size: "2" },
+    });
+    const { EvidenceIngestionBudget } = await import("../../server/evidenceIngestionBudget");
+    const { downloadAndUploadGoogleDriveFile } = await import("../../server/googleDriveService");
+    const budget = new EvidenceIngestionBudget(undefined, {
+      maxFileBytes: 7 * 1024 * 1024,
+      maxJobBytes: 1,
+      maxJobItems: 10,
+      maxConcurrentOperations: 2,
+      maxAnalysisItems: 2,
+      minLocalStorageHeadroomBytes: 0,
+    });
+
+    await expect(downloadAndUploadGoogleDriveFile(
+      "BUDGETED_FILE",
+      "CASE_DRIVE_ACCOUNT_SELECTION",
+      userId,
+      "GOOGLE_DRIVE_FIRST",
+      { budget },
+    )).rejects.toThrow("ingestion reached");
+    expect(googleMocks.getRequests).toHaveLength(1);
+    expect(googleMocks.getRequests[0]).not.toHaveProperty("alt", "media");
+    expect(budget.summary()).toMatchObject({
+      outcome: "partial",
+      processedItems: 0,
+      reasons: [{ source: "google_drive", code: "job_byte_limit", count: 1 }],
+    });
+  });
+
   it("reads every Drive listing page before returning folder files", async () => {
     googleMocks.listRequests.length = 0;
     googleMocks.listResponses.push(
@@ -241,6 +274,37 @@ suite("Google Drive account selection", () => {
       fileIds: ["file-one"],
       fileNames: ["One.pdf", "Two.pdf"],
     })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("returns bounded partial completion instead of downloading beyond the Drive import budget", async () => {
+    const { PROVIDER_LIMITS } = await import("../../server/providerLimits");
+    const count = PROVIDER_LIMITS.googleDrive.maxImportFiles + 1;
+    googleMocks.getRequests.length = 0;
+    googleMocks.getResponses.push(...Array.from({ length: PROVIDER_LIMITS.googleDrive.maxImportFiles }, (_, index) => [
+      { data: { name: `bounded-${index}.mp4`, mimeType: "video/mp4", size: "1" } },
+      { data: Readable.from([Buffer.from([index])]) },
+    ]).flat());
+    const caller = app.makeCaller({ id: userId, role: "user" });
+
+    const result = await caller.googleDrive.importFiles({
+      caseId: "CASE_DRIVE_ACCOUNT_SELECTION",
+      accountId: "GOOGLE_DRIVE_SECOND",
+      fileIds: Array.from({ length: count }, (_, index) => `bounded-file-${index}`),
+      fileNames: Array.from({ length: count }, (_, index) => `bounded-${index}.mp4`),
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      outcome: "partial",
+      imported: PROVIDER_LIMITS.googleDrive.maxImportFiles,
+      errors: [],
+      ingestion: {
+        processedItems: PROVIDER_LIMITS.googleDrive.maxImportFiles,
+        skippedItems: 1,
+        reasons: [{ source: "google_drive", code: "job_item_limit", count: 1 }],
+      },
+    });
+    expect(googleMocks.getRequests).toHaveLength(PROVIDER_LIMITS.googleDrive.maxImportFiles * 2);
   });
 
   it("allows large folder resyncs when every discovered file was already imported", async () => {

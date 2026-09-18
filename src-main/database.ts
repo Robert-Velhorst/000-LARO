@@ -37,8 +37,11 @@ export function initDatabase(serverUrl?: string): void {
       scannedFiles INTEGER DEFAULT 0,
       uploadedFiles INTEGER DEFAULT 0,
       failedFiles INTEGER DEFAULT 0,
+      skippedFiles INTEGER DEFAULT 0,
       totalSize INTEGER DEFAULT 0,
       uploadedSize INTEGER DEFAULT 0,
+      skippedSize INTEGER DEFAULT 0,
+      limitReason TEXT,
       currentFile TEXT,
       errorMessage TEXT,
       startedAt TEXT NOT NULL,
@@ -70,6 +73,18 @@ export function initDatabase(serverUrl?: string): void {
     CREATE INDEX IF NOT EXISTS idx_files_scanId ON files(scanId);
     CREATE INDEX IF NOT EXISTS idx_files_uploadStatus ON files(uploadStatus);
   `);
+
+  const existingScanColumns = new Set(
+    (db.prepare('PRAGMA table_info(scans)').all() as Array<{ name: string }>).map((column) => column.name),
+  );
+  const scanColumns: Array<[string, string]> = [
+    ['skippedFiles', 'INTEGER DEFAULT 0'],
+    ['skippedSize', 'INTEGER DEFAULT 0'],
+    ['limitReason', 'TEXT'],
+  ];
+  for (const [column, type] of scanColumns) {
+    if (!existingScanColumns.has(column)) db.exec(`ALTER TABLE scans ADD COLUMN ${column} ${type}`);
+  }
 
   // Existing desktop installations receive additive local-state migrations.
   const existingFileColumns = new Set(
@@ -178,6 +193,11 @@ export function updateScanProgress(progress: Partial<ScanProgress>): void {
     updates.push('failedFiles = ?');
     values.push(progress.failedFiles);
   }
+
+  if (progress.skippedFiles !== undefined) {
+    updates.push('skippedFiles = ?');
+    values.push(progress.skippedFiles);
+  }
   
   if (progress.totalSize !== undefined) {
     updates.push('totalSize = ?');
@@ -187,6 +207,16 @@ export function updateScanProgress(progress: Partial<ScanProgress>): void {
   if (progress.uploadedSize !== undefined) {
     updates.push('uploadedSize = ?');
     values.push(progress.uploadedSize);
+  }
+
+  if (progress.skippedSize !== undefined) {
+    updates.push('skippedSize = ?');
+    values.push(progress.skippedSize);
+  }
+
+  if (progress.limitReason !== undefined) {
+    updates.push('limitReason = ?');
+    values.push(progress.limitReason);
   }
   
   if (progress.currentFile !== undefined) {
@@ -233,8 +263,11 @@ export function getScan(scanId: string): ScanProgress | null {
     scannedFiles: row.scannedFiles,
     uploadedFiles: row.uploadedFiles,
     failedFiles: row.failedFiles,
+    skippedFiles: row.skippedFiles,
     totalSize: row.totalSize,
     uploadedSize: row.uploadedSize,
+    skippedSize: row.skippedSize,
+    limitReason: row.limitReason,
     currentFile: row.currentFile,
     errorMessage: row.errorMessage,
   };
@@ -545,6 +578,16 @@ export interface ScanUploadSummary {
   terminalFiles: number;
   cancelledFiles: number;
   reviewRequiredFiles: number;
+}
+
+export function getScanIngestionTotals(scanId: string): { items: number; bytes: number } {
+  if (!db) throw new Error('Database not initialized');
+  const row = db.prepare(`
+    SELECT COUNT(*) AS items, COALESCE(SUM(size), 0) AS bytes
+    FROM files
+    WHERE scanId = ? AND uploadStatus NOT IN ('excluded', 'review_required')
+  `).get(scanId) as { items: number; bytes: number };
+  return { items: Number(row.items || 0), bytes: Number(row.bytes || 0) };
 }
 
 export function getScanUploadSummary(scanId: string): ScanUploadSummary {

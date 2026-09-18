@@ -23,7 +23,7 @@ import {
 import { decryptToken, encryptToken, refreshGmailToken } from './emailOAuth';
 import { getGmailMessage, getGmailAttachmentBytes } from './gmailService';
 import { searchGmailMessageIds } from './gmailMessageSearch';
-import { getLocalStorageDirectory, hashBuffer, storageDelete, storagePut } from './storage';
+import { getLocalStorageDirectory, storageDelete, storagePut, storagePutStream } from './storage';
 import { createEvidenceFile } from './evidence';
 import { analyzeStoredEvidence } from './documentAnalysisService';
 import { supportsDocumentAnalysisMime } from './documentIntelligence';
@@ -34,9 +34,18 @@ import { linkInboundOutreachReply } from './inboundOutreach';
 import * as fs from 'fs/promises';
 import { createReadStream } from 'fs';
 import * as path from 'path';
-import { collectBoundedBytes, withByteReadAdmission } from './boundedBytes';
+import { withByteReadAdmission } from './boundedBytes';
 import { MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 import { googleDriveSourcesSchema, savedGoogleDriveSources, type GoogleDriveSource } from '../shared/googleDriveSources';
+import {
+  EvidenceIngestionBudget,
+  EvidenceIngestionLimitError,
+} from './evidenceIngestionBudget';
+import type {
+  EvidenceIngestionSource,
+  EvidenceIngestionSummary,
+} from '../shared/evidenceIngestion';
+import { EVIDENCE_INGESTION_LIMITS } from '../shared/evidenceIngestion';
 
 /**
  * Evidence Auto-Collection Service
@@ -65,11 +74,17 @@ async function analyzeImportedEvidence(
   label: string,
   errors: string[],
   autoAnalyzeImports?: boolean,
+  budget?: EvidenceIngestionBudget,
+  source: EvidenceIngestionSource = 'manual',
 ): Promise<number> {
   if (!supportsDocumentAnalysisMime(mimeType)) return 0;
   try {
     if (autoAnalyzeImports === false) return 0;
     if (autoAnalyzeImports === undefined && !(await getWorkflowPreferences(userId)).autoAnalyzeImports) return 0;
+    if (budget && !budget.claimAnalysis(source)) {
+      errors.push(`Analysis deferred for ${source}: the ingestion analysis limit was reached`);
+      return 0;
+    }
     const analysis = await analyzeStoredEvidence({ userId, evidenceId });
     return analysis.result.analyzedWords ?? countWords(analysis.result.summary || '');
   } catch (error) {
@@ -649,6 +664,8 @@ export interface PullByKeywordsResult {
   driveFiles: number;
   localFiles: number;
   errors: string[];
+  outcome?: EvidenceIngestionSummary['outcome'];
+  ingestion?: EvidenceIngestionSummary;
 }
 
 export type PullProgressPhase = 'queued' | 'discovering' | 'gmail' | 'drive' | 'local' | 'finalizing';
@@ -733,6 +750,7 @@ async function pullFromGmail(
   accountIds?: string[],
   onProgress?: PullProgressReporter,
   autoAnalyzeImports?: boolean,
+  budget: EvidenceIngestionBudget = new EvidenceIngestionBudget(),
 ): Promise<{ messages: number; attachments: number }> {
   const db = await getDb();
   if (!db) return { messages: 0, attachments: 0 };
@@ -754,6 +772,7 @@ async function pullFromGmail(
         [selectedAccountId],
         onProgress,
         autoAnalyzeImports,
+        budget,
       );
       messages += result.messages;
       attachments += result.attachments;
@@ -765,6 +784,10 @@ async function pullFromGmail(
   const cred = await getFreshGmailAccessToken(userId, selectedAccountId);
   if (!cred) {
     if (selectedAccountId) errors.push(`Selected Gmail account ${selectedAccountId} is unavailable.`);
+    return { messages: 0, attachments: 0 };
+  }
+  if (!budget.hasCapacity()) {
+    budget.recordCapacityLimit('gmail_message');
     return { messages: 0, attachments: 0 };
   }
 
@@ -782,7 +805,9 @@ async function pullFromGmail(
   ].filter(Boolean).join(' ');
   const query = [keywordPart, datePart].filter(Boolean).join(' ');
 
-  const search = await searchGmailMessageIds(cred.accessToken, query);
+  const search = await searchGmailMessageIds(
+    cred.accessToken, query, budget.remainingItems(), budget.signal,
+  );
   const threads = search.messages;
   errors.push(...search.warnings);
 
@@ -796,9 +821,14 @@ async function pullFromGmail(
   });
 
   for (const t of threads) {
+    if (budget.signal?.aborted) break;
+    if (!budget.hasCapacity()) {
+      budget.recordCapacityLimit('gmail_message');
+      break;
+    }
     let messageWords = 1;
     try {
-      const msg = await getGmailMessage(cred.accessToken, t.id);
+      const msg = await getGmailMessage(cred.accessToken, t.id, budget.signal);
       const headers = (msg.payload?.headers || []).reduce<Record<string, string>>(
         (acc, h) => ((acc[h.name.toLowerCase()] = h.value), acc),
         {},
@@ -867,34 +897,52 @@ async function pullFromGmail(
           '',
           body,
         ].join('\n');
-        const messageStorageKey = `evidence/${caseId}/gmail/${uuidv4()}-${msg.id}.eml`;
-        const storedMessage = await storagePut(messageStorageKey, Buffer.from(messageSource), 'message/rfc822');
-        const messageEvidenceId = await createEvidenceFile(userId, {
-          caseId,
-          type: 'email',
-          source: 'gmail',
-          title: subject,
-          description: `From ${from} on ${date.toISOString()}`,
-          fileUrl: storedMessage.url,
-          fileName: `${msg.id}.eml`,
-          fileSize: String(Buffer.byteLength(messageSource)),
-          mimeType: 'message/rfc822',
-          metadata: JSON.stringify({
-            storageKey: storedMessage.key,
-            gmailMessageId: msg.id,
-            gmailThreadId: (msg as any).threadId,
-            from,
-            subject,
-            date: date.toISOString(),
-            bodyExcerpt: body.slice(0, 2000),
-            accountId: cred.accountId,
-            autoCollected: true,
-          }),
-          contentHash: storedMessage.sha256,
-          relevant: true,
-        });
-        await analyzeImportedEvidence(messageEvidenceId, userId, 'message/rfc822', subject, errors, autoAnalyzeImports);
-        messagesIngested++;
+        const messageBytes = Buffer.from(messageSource);
+        const reservation = await budget.reserve('gmail_message', messageBytes.length);
+        if (reservation) {
+          const messageStorageKey = `evidence/${caseId}/gmail/${uuidv4()}-${msg.id}.eml`;
+          const storedMessageRef: { value: Awaited<ReturnType<typeof storagePut>> | null } = { value: null };
+          try {
+            await reservation.run(async () => {
+              const storedMessage = await storagePut(messageStorageKey, messageBytes, 'message/rfc822');
+              storedMessageRef.value = storedMessage;
+              const messageEvidenceId = await createEvidenceFile(userId, {
+                caseId,
+                type: 'email',
+                source: 'gmail',
+                title: subject,
+                description: `From ${from} on ${date.toISOString()}`,
+                fileUrl: storedMessage.url,
+                fileName: `${msg.id}.eml`,
+                fileSize: String(messageBytes.length),
+                mimeType: 'message/rfc822',
+                metadata: JSON.stringify({
+                  storageKey: storedMessage.key,
+                  gmailMessageId: msg.id,
+                  gmailThreadId: (msg as any).threadId,
+                  from,
+                  subject,
+                  date: date.toISOString(),
+                  bodyExcerpt: body.slice(0, 2000),
+                  accountId: cred.accountId,
+                  autoCollected: true,
+                }),
+                contentHash: storedMessage.sha256,
+                relevant: true,
+              });
+              await analyzeImportedEvidence(
+                messageEvidenceId, userId, 'message/rfc822', subject, errors,
+                autoAnalyzeImports, budget, 'gmail_message',
+              );
+            });
+            reservation.complete(messageBytes.length);
+            messagesIngested++;
+          } catch (error) {
+            reservation.skip(error instanceof EvidenceIngestionLimitError ? error.code : 'store_failed');
+            if (storedMessageRef.value) await storageDelete(storedMessageRef.value.key).catch(() => undefined);
+            throw error;
+          }
+        }
       }
 
       // Download attachments.
@@ -923,48 +971,66 @@ async function pullFromGmail(
       }
 
       for (const att of attachments) {
+        if (budget.signal?.aborted) break;
+        if (!budget.hasCapacity()) {
+          budget.recordCapacityLimit('gmail_attachment');
+          break;
+        }
         let attachmentWords = 0;
         try {
           if (storedState.attachmentIds.has(att.attachmentId)) continue;
           if (typeof att.size === 'number' && att.size > MAX_EVIDENCE_FILE_BYTES) {
+            budget.recordSkip('gmail_attachment', 'file_too_large');
             throw new Error('Gmail attachment exceeds the 7 MB evidence limit');
           }
-          const buf = await getGmailAttachmentBytes(cred.accessToken, msg.id, att.attachmentId);
-          if (!buf) continue;
-          const safeName = path.basename(att.filename.replace(/\\/g, '/')) || 'attachment';
-          const storageKey = `evidence/${caseId}/gmail/${uuidv4()}-${safeName}`;
-          const storedAttachment = await storagePut(storageKey, buf, att.mimeType);
-          const attachmentEvidenceId = await createEvidenceFile(userId, {
-            caseId,
-            type: determineEvidenceType(att.mimeType),
-            source: 'gmail',
-            title: safeName,
-            description: `Attachment from email "${subject}"`,
-            fileUrl: storedAttachment.url,
-            fileName: safeName,
-            fileSize: String(buf.length),
-            mimeType: att.mimeType,
-            metadata: JSON.stringify({
-              storageKey: storedAttachment.key,
-              gmailMessageId: msg.id,
-              attachmentId: att.attachmentId,
-              accountId: cred.accountId,
-              parentSubject: subject,
-              autoCollected: true,
-            }),
-            contentHash: storedAttachment.sha256,
-            relevant: true,
-          });
-          attachmentWords = await analyzeImportedEvidence(
-            attachmentEvidenceId,
-            userId,
-            att.mimeType,
-            safeName,
-            errors,
-            autoAnalyzeImports,
-          );
-          storedState.attachmentIds.add(att.attachmentId);
-          attachmentsIngested++;
+          const reservation = await budget.reserve('gmail_attachment', att.size);
+          if (!reservation) continue;
+          const storedAttachmentRef: { value: Awaited<ReturnType<typeof storagePut>> | null } = { value: null };
+          try {
+            await reservation.run(async () => {
+              const buf = await getGmailAttachmentBytes(
+                cred.accessToken, msg.id, att.attachmentId, budget.signal,
+              );
+              if (!buf) throw new Error('Gmail attachment returned no bytes');
+              reservation.validateActualBytes(buf.length);
+              const safeName = path.basename(att.filename.replace(/\\/g, '/')) || 'attachment';
+              const storageKey = `evidence/${caseId}/gmail/${uuidv4()}-${safeName}`;
+              const storedAttachment = await storagePut(storageKey, buf, att.mimeType);
+              storedAttachmentRef.value = storedAttachment;
+              const attachmentEvidenceId = await createEvidenceFile(userId, {
+                caseId,
+                type: determineEvidenceType(att.mimeType),
+                source: 'gmail',
+                title: safeName,
+                description: `Attachment from email "${subject}"`,
+                fileUrl: storedAttachment.url,
+                fileName: safeName,
+                fileSize: String(buf.length),
+                mimeType: att.mimeType,
+                metadata: JSON.stringify({
+                  storageKey: storedAttachment.key,
+                  gmailMessageId: msg.id,
+                  attachmentId: att.attachmentId,
+                  accountId: cred.accountId,
+                  parentSubject: subject,
+                  autoCollected: true,
+                }),
+                contentHash: storedAttachment.sha256,
+                relevant: true,
+              });
+              attachmentWords = await analyzeImportedEvidence(
+                attachmentEvidenceId, userId, att.mimeType, safeName, errors,
+                autoAnalyzeImports, budget, 'gmail_attachment',
+              );
+              reservation.complete(buf.length);
+            });
+            storedState.attachmentIds.add(att.attachmentId);
+            attachmentsIngested++;
+          } catch (error) {
+            reservation.skip(error instanceof EvidenceIngestionLimitError ? error.code : 'store_failed');
+            if (storedAttachmentRef.value) await storageDelete(storedAttachmentRef.value.key).catch(() => undefined);
+            throw error;
+          }
         } catch (err) {
           errors.push(`Attachment "${att.filename}" failed: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
@@ -1009,6 +1075,7 @@ async function pullFromDrive(
   dateEnd?: Date,
   onProgress?: PullProgressReporter,
   autoAnalyzeImports?: boolean,
+  budget: EvidenceIngestionBudget = new EvidenceIngestionBudget(),
 ): Promise<{ files: number }> {
   const db = await getDb();
   if (!db) return { files: 0 };
@@ -1050,6 +1117,11 @@ async function pullFromDrive(
         totalItemsDelta: candidates.length,
       });
       for (const file of candidates) {
+        if (budget.signal?.aborted) break;
+        if (!budget.hasCapacity()) {
+          budget.recordCapacityLimit('google_drive');
+          break;
+        }
         if (!file.name || !file.id) continue;
         let fileWords = 0;
         try {
@@ -1065,51 +1137,67 @@ async function pullFromDrive(
               return false;
             }
           });
-          if (already) continue;
+          if (already) {
+            budget.recordSkip('google_drive', 'duplicate');
+            continue;
+          }
 
-          const fileData = await downloadAndUploadGoogleDriveFile(file.id, caseId, userId, cred.accountId);
-          const evidenceId = await createEvidenceFile(userId, {
-            caseId,
-            type: determineEvidenceType(fileData.mimeType),
-            source: 'google_drive',
-            title: file.name,
-            description: 'Auto-collected from Google Drive',
-            fileUrl: fileData.url,
-            fileName: fileData.fileName,
-            fileSize: fileData.size,
-            mimeType: fileData.mimeType,
-            metadata: JSON.stringify({
-              storageKey: fileData.key,
-              driveFileId: file.id,
-              driveAccountId: cred.accountId,
-              folderId,
-              sourceMimeType: fileData.sourceMimeType,
-              autoCollected: true,
-              collectedAt: new Date().toISOString(),
-              modifiedTime: fileData.modifiedTime,
-            }),
-            contentHash: fileData.sha256,
-            relevant: true,
+          const fileData = await downloadAndUploadGoogleDriveFile(
+            file.id, caseId, userId, cred.accountId, { budget, signal: budget.signal },
+          );
+          await budget.run(async () => {
+            let evidenceId: string;
+            try {
+              evidenceId = await createEvidenceFile(userId, {
+              caseId,
+              type: determineEvidenceType(fileData.mimeType),
+              source: 'google_drive',
+              title: file.name,
+              description: 'Auto-collected from Google Drive',
+              fileUrl: fileData.url,
+              fileName: fileData.fileName,
+              fileSize: fileData.size,
+              mimeType: fileData.mimeType,
+              metadata: JSON.stringify({
+                storageKey: fileData.key,
+                driveFileId: file.id,
+                driveAccountId: cred.accountId,
+                folderId,
+                sourceMimeType: fileData.sourceMimeType,
+                autoCollected: true,
+                collectedAt: new Date().toISOString(),
+                modifiedTime: fileData.modifiedTime,
+              }),
+              contentHash: fileData.sha256,
+              relevant: true,
+              });
+            } catch (error) {
+              await storageDelete(fileData.key).catch(() => undefined);
+              throw error;
+            }
+            fileWords = await analyzeImportedEvidence(
+              evidenceId, userId, fileData.mimeType, file.name, errors,
+              autoAnalyzeImports, budget, 'google_drive',
+            );
+            await db.insert(googleDriveFiles).values({
+              id: uuidv4(),
+              userId,
+              caseId,
+              accountId: cred.accountId,
+              googleFileId: file.id,
+              fileName: fileData.fileName,
+              mimeType: fileData.mimeType,
+              fileSize: fileData.size,
+              s3Key: fileData.key,
+              s3Url: fileData.url,
+              googleWebViewLink: file.webViewLink || null,
+              googleModifiedTime: fileData.modifiedTime,
+              evidenceType: determineEvidenceType(fileData.mimeType),
+              isIncluded: 'Yes',
+              metadata: JSON.stringify({ sourceMimeType: fileData.sourceMimeType }),
+              });
+            downloaded++;
           });
-          fileWords = await analyzeImportedEvidence(evidenceId, userId, fileData.mimeType, file.name, errors, autoAnalyzeImports);
-          await db.insert(googleDriveFiles).values({
-            id: uuidv4(),
-            userId,
-            caseId,
-            accountId: cred.accountId,
-            googleFileId: file.id,
-            fileName: fileData.fileName,
-            mimeType: fileData.mimeType,
-            fileSize: fileData.size,
-            s3Key: fileData.key,
-            s3Url: fileData.url,
-            googleWebViewLink: file.webViewLink || null,
-            googleModifiedTime: fileData.modifiedTime,
-            evidenceType: determineEvidenceType(fileData.mimeType),
-            isIncluded: 'Yes',
-            metadata: JSON.stringify({ sourceMimeType: fileData.sourceMimeType }),
-          });
-          downloaded++;
         } catch (err) {
           errors.push(`Drive file "${file.name}" failed: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
@@ -1139,7 +1227,7 @@ async function scanLocalDirectory(
   keywords: string[],
   matchMode: 'all' | 'any',
   errors: string[],
-  maxFiles = 500,
+  maxFiles = EVIDENCE_INGESTION_LIMITS.maxJobItems,
   maxDepth = 6,
 ): Promise<{ absPath: string; name: string }[]> {
   const matches: { absPath: string; name: string }[] = [];
@@ -1227,6 +1315,7 @@ async function pullFromLocalFolders(
   dateEnd?: Date,
   onProgress?: PullProgressReporter,
   autoAnalyzeImports?: boolean,
+  budget: EvidenceIngestionBudget = new EvidenceIngestionBudget(),
 ): Promise<{ files: number }> {
   const db = await getDb();
   if (!db) return { files: 0 };
@@ -1270,64 +1359,83 @@ async function pullFromLocalFolders(
     });
 
     for (const file of found) {
+      if (budget.signal?.aborted) break;
+      if (!budget.hasCapacity()) {
+        budget.recordCapacityLimit('local');
+        break;
+      }
       let fileWords = 0;
       try {
         const stat = await fs.stat(file.absPath);
         if (dateStart && stat.mtime < dateStart) continue;
         if (dateEnd && stat.mtime > dateEnd) continue;
         if (stat.size > MAX_EVIDENCE_FILE_BYTES) {
+          budget.recordSkip('local', 'file_too_large');
           throw new Error('Local evidence file exceeds the 7 MB evidence limit');
         }
-        const buf = await withByteReadAdmission(() => collectBoundedBytes(createReadStream(file.absPath), {
-          maxBytes: MAX_EVIDENCE_FILE_BYTES,
-          label: 'Local evidence file',
-          limitMessage: 'Local evidence file exceeds the 7 MB evidence limit',
-        }));
+        const reservation = await budget.reserve('local', stat.size);
+        if (!reservation) continue;
         // A source path can change; preserve each distinct byte version instead
         // of treating the filename as permanent proof that the file is imported.
         const key = pathKey(file.absPath);
         const versions = storedLocalVersions.get(key) || [];
-        const contentHash = hashBuffer(buf);
-        if (versions.some((version) => version.hash === contentHash)) continue;
         const ext = path.extname(file.name).toLowerCase();
         const mimeType = guessMimeFromExt(ext);
         const storageKey = `evidence/${caseId}/local/${uuidv4()}-${file.name}`;
-        const storedFile = await storagePut(storageKey, buf, mimeType);
-
-        let evidenceId: string;
+        const storedFileRef: { value: Awaited<ReturnType<typeof storagePutStream>> | null } = { value: null };
         try {
-          evidenceId = await createEvidenceFile(userId, {
-            caseId,
-            type: determineEvidenceType(mimeType),
-            source: 'local',
-            title: file.name,
-            description: `Auto-collected from local folder ${path.basename(resolvedFolderPath) || "selected folder"}`,
-            fileUrl: storedFile.url,
-            fileName: file.name,
-            fileSize: String(buf.length),
-            mimeType,
-            metadata: JSON.stringify({
-              storageKey: storedFile.key,
-              absPath: file.absPath,
-              sourceFolder: resolvedFolderPath,
-              sourceFolderLabel: path.basename(resolvedFolderPath) || "selected folder",
-              autoCollected: true,
-              collectedAt: new Date().toISOString(),
-              modifiedTime: stat.mtime.toISOString(),
-              previousVersionIds: versions.map((version) => version.id),
-            }),
-            contentHash: storedFile.sha256,
-            relevant: true,
+          await reservation.run(async () => {
+            const storedFile = await withByteReadAdmission(() => storagePutStream(
+              storageKey,
+              createReadStream(file.absPath),
+              mimeType,
+              { maxBytes: reservation.declaredBytes, expectedBytes: stat.size, signal: budget.signal },
+            ));
+            storedFileRef.value = storedFile;
+            if (versions.some((version) => version.hash === storedFile!.sha256)) {
+              await storageDelete(storedFile.key);
+              storedFileRef.value = null;
+              reservation.skip('duplicate');
+              return;
+            }
+            const evidenceId = await createEvidenceFile(userId, {
+              caseId,
+              type: determineEvidenceType(mimeType),
+              source: 'local',
+              title: file.name,
+              description: `Auto-collected from local folder ${path.basename(resolvedFolderPath) || "selected folder"}`,
+              fileUrl: storedFile.url,
+              fileName: file.name,
+              fileSize: String(storedFile.bytes),
+              mimeType,
+              metadata: JSON.stringify({
+                storageKey: storedFile.key,
+                absPath: file.absPath,
+                sourceFolder: resolvedFolderPath,
+                sourceFolderLabel: path.basename(resolvedFolderPath) || "selected folder",
+                autoCollected: true,
+                collectedAt: new Date().toISOString(),
+                modifiedTime: stat.mtime.toISOString(),
+                previousVersionIds: versions.map((version) => version.id),
+              }),
+              contentHash: storedFile.sha256,
+              relevant: true,
+            });
+            fileWords = await analyzeImportedEvidence(
+              evidenceId, userId, mimeType, file.name, errors,
+              autoAnalyzeImports, budget, 'local',
+            );
+            reservation.complete(storedFile.bytes);
+            versions.push({ id: evidenceId, hash: storedFile.sha256 });
+            storedLocalVersions.set(key, versions);
           });
+          if (storedFileRef.value) ingested++;
         } catch (error) {
-          try { await storageDelete(storedFile.key); }
+          reservation.skip(error instanceof EvidenceIngestionLimitError ? error.code : 'store_failed');
+          try { if (storedFileRef.value) await storageDelete(storedFileRef.value.key); }
           catch { errors.push(`Storage cleanup failed for local import "${file.name}"`); }
           throw error;
         }
-        fileWords = await analyzeImportedEvidence(evidenceId, userId, mimeType, file.name, errors, autoAnalyzeImports);
-        versions.push({ id: evidenceId, hash: contentHash });
-        storedLocalVersions.set(key, versions);
-        ingested++;
       } catch (err) {
         errors.push(`Local file "${file.absPath}" failed: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
@@ -1407,9 +1515,12 @@ export async function pullEvidenceByKeywords(params: {
   includeDrive?: boolean;
   includeLocal?: boolean;
   onProgress?: PullProgressReporter;
+  signal?: AbortSignal;
+  ingestionBudget?: EvidenceIngestionBudget;
 }): Promise<PullByKeywordsResult> {
   const matchMode = params.matchMode || 'any';
   const errors: string[] = [];
+  const ingestionBudget = params.ingestionBudget ?? new EvidenceIngestionBudget(params.signal);
 
   if (!params.keywords || params.keywords.length === 0) {
     throw new Error('At least one keyword is required');
@@ -1461,7 +1572,7 @@ export async function pullEvidenceByKeywords(params: {
       try {
         const result = await pullFromDrive(params.caseId, params.userId, params.keywords, matchMode,
           source.folderIds, errors, source.accountId, params.driveExactFileName,
-          params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports);
+          params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports, ingestionBudget);
         files += result.files;
       } catch (error) {
         errors.push(`Drive account ${source.accountId || 'default'} failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -1476,7 +1587,7 @@ export async function pullEvidenceByKeywords(params: {
   }
 
   const [gmail, drive, local] = await Promise.all([
-    (params.includeGmail === false ? Promise.resolve({ messages: 0, attachments: 0 }) : pullFromGmail(params.caseId, params.userId, params.keywords, matchMode, errors, params.dateStart, params.dateEnd, params.includeGmailAttachments !== false, gmailAccountIds, params.onProgress, autoAnalyzeImports)).catch((err) => {
+    (params.includeGmail === false ? Promise.resolve({ messages: 0, attachments: 0 }) : pullFromGmail(params.caseId, params.userId, params.keywords, matchMode, errors, params.dateStart, params.dateEnd, params.includeGmailAttachments !== false, gmailAccountIds, params.onProgress, autoAnalyzeImports, ingestionBudget)).catch((err) => {
       errors.push(`Gmail pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { messages: 0, attachments: 0 };
     }),
@@ -1484,11 +1595,17 @@ export async function pullEvidenceByKeywords(params: {
       errors.push(`Drive pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { files: 0 };
     }),
-    (params.includeLocal === false ? Promise.resolve({ files: 0 }) : pullFromLocalFolders(params.caseId, params.userId, params.keywords, matchMode, localFolderPaths, errors, params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports)).catch((err) => {
+    (params.includeLocal === false ? Promise.resolve({ files: 0 }) : pullFromLocalFolders(params.caseId, params.userId, params.keywords, matchMode, localFolderPaths, errors, params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports, ingestionBudget)).catch((err) => {
       errors.push(`Local pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { files: 0 };
     }),
   ]);
+  const ingestion = ingestionBudget.summary();
+  for (const reason of ingestion.reasons) {
+    if (reason.code !== 'duplicate') {
+      errors.push(`Partial ${reason.source} ingestion: ${reason.code} (${reason.count})`);
+    }
+  }
 
   // Log this run.
   try {
@@ -1499,7 +1616,8 @@ export async function pullEvidenceByKeywords(params: {
       userId: params.userId,
       runStartedAt: new Date(),
       runCompletedAt: new Date(),
-      status: errors.length === 0 ? 'completed' : 'completed_with_errors',
+      status: ingestion.outcome === 'cancelled' ? 'cancelled'
+        : errors.length === 0 && ingestion.outcome === 'completed' ? 'completed' : 'completed_with_errors',
       emailsFound: String(gmail.messages),
       emailsProcessed: String(gmail.messages),
       filesFound: String(drive.files + local.files + gmail.attachments),
@@ -1518,11 +1636,14 @@ export async function pullEvidenceByKeywords(params: {
     driveFiles: drive.files,
     localFiles: local.files,
     errors,
+    outcome: ingestion.outcome,
+    ingestion,
   };
 }
 
-type KeywordPullJobParams = Omit<Parameters<typeof pullEvidenceByKeywords>[0], 'onProgress'>;
+type KeywordPullJobParams = Omit<Parameters<typeof pullEvidenceByKeywords>[0], 'onProgress' | 'signal' | 'ingestionBudget'>;
 const runningKeywordPullJobIds = new Set<string>();
+const runningKeywordPullJobControllers = new Map<string, AbortController>();
 
 export async function startKeywordPullJob(params: KeywordPullJobParams) {
   const db = await getDb();
@@ -1564,18 +1685,25 @@ export async function startKeywordPullJob(params: KeywordPullJobParams) {
   });
 
   runningKeywordPullJobIds.add(id);
+  const controller = new AbortController();
+  runningKeywordPullJobControllers.set(id, controller);
   setImmediate(() => {
-    void executeKeywordPullJob(id, params);
+    void executeKeywordPullJob(id, params, controller);
   });
 
   const [job] = await db.select().from(keywordPullJobs).where(eq(keywordPullJobs.id, id)).limit(1);
   return job;
 }
 
-async function executeKeywordPullJob(id: string, params: KeywordPullJobParams): Promise<void> {
+async function executeKeywordPullJob(
+  id: string,
+  params: KeywordPullJobParams,
+  controller: AbortController,
+): Promise<void> {
   const db = await getDb();
   if (!db) {
     runningKeywordPullJobIds.delete(id);
+    runningKeywordPullJobControllers.delete(id);
     return;
   }
   const startedAt = new Date();
@@ -1629,17 +1757,22 @@ async function executeKeywordPullJob(id: string, params: KeywordPullJobParams): 
   };
 
   try {
-    const result = await pullEvidenceByKeywords({ ...params, onProgress });
+    const result = await pullEvidenceByKeywords({ ...params, onProgress, signal: controller.signal });
     onProgress({ phase: 'finalizing', message: 'Updating the case evidence index' });
     await writeChain;
     const completedAt = new Date();
+    const cancelled = controller.signal.aborted || result.outcome === 'cancelled';
+    const partial = result.outcome === 'partial';
     await db.update(keywordPullJobs).set({
-      status: result.errors.length > 0 ? 'completed_with_errors' : 'completed',
+      status: cancelled ? 'cancelled'
+        : partial || result.errors.length > 0 ? 'completed_with_errors' : 'completed',
       phase: 'finalizing',
-      message: result.errors.length > 0 ? 'Pull completed with source warnings' : 'Pull complete',
-      processedWords: Math.max(state.processedWords, state.totalWords),
+      message: cancelled ? 'Pull cancelled with bounded partial results'
+        : partial ? 'Pull completed with bounded partial results'
+          : result.errors.length > 0 ? 'Pull completed with source warnings' : 'Pull complete',
+      processedWords: cancelled ? state.processedWords : Math.max(state.processedWords, state.totalWords),
       totalWords: Math.max(state.processedWords, state.totalWords),
-      processedItems: Math.max(state.processedItems, state.totalItems),
+      processedItems: cancelled ? state.processedItems : Math.max(state.processedItems, state.totalItems),
       totalItems: Math.max(state.processedItems, state.totalItems),
       estimatedSecondsRemaining: 0,
       result: JSON.stringify(result),
@@ -1651,9 +1784,9 @@ async function executeKeywordPullJob(id: string, params: KeywordPullJobParams): 
     await writeChain;
     const completedAt = new Date();
     await db.update(keywordPullJobs).set({
-      status: 'failed',
-      message: 'Pull failed',
-      error: error instanceof Error ? error.message : String(error),
+      status: controller.signal.aborted ? 'cancelled' : 'failed',
+      message: controller.signal.aborted ? 'Pull cancelled with bounded partial results' : 'Pull failed',
+      error: controller.signal.aborted ? null : error instanceof Error ? error.message : String(error),
       estimatedSecondsRemaining: null,
       completedAt,
       updatedAt: completedAt,
@@ -1661,7 +1794,32 @@ async function executeKeywordPullJob(id: string, params: KeywordPullJobParams): 
     emitRealtimeDataChange(params.userId, { scope: 'evidence', caseId: params.caseId });
   } finally {
     runningKeywordPullJobIds.delete(id);
+    runningKeywordPullJobControllers.delete(id);
   }
+}
+
+export async function cancelKeywordPullJob(id: string, userId: string) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  const [job] = await db.select().from(keywordPullJobs)
+    .where(and(eq(keywordPullJobs.id, id), eq(keywordPullJobs.userId, userId)))
+    .limit(1);
+  if (!job) return null;
+  if (!['queued', 'running'].includes(job.status)) return job;
+
+  runningKeywordPullJobControllers.get(id)?.abort();
+  const completedAt = new Date();
+  await db.update(keywordPullJobs).set({
+    status: 'cancelled',
+    message: 'Pull cancelled with bounded partial results',
+    estimatedSecondsRemaining: 0,
+    completedAt,
+    updatedAt: completedAt,
+  }).where(and(eq(keywordPullJobs.id, id), eq(keywordPullJobs.userId, userId)));
+  const [cancelled] = await db.select().from(keywordPullJobs)
+    .where(and(eq(keywordPullJobs.id, id), eq(keywordPullJobs.userId, userId)))
+    .limit(1);
+  return cancelled ?? null;
 }
 
 export async function getKeywordPullJob(id: string, userId: string) {

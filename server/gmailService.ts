@@ -159,7 +159,11 @@ export async function searchGmailEmails(
 /**
  * Get full message details
  */
-export async function getGmailMessage(accessToken: string, messageId: string): Promise<GmailMessage> {
+export async function getGmailMessage(
+  accessToken: string,
+  messageId: string,
+  signal?: AbortSignal,
+): Promise<GmailMessage> {
   return withByteReadAdmission(async () => {
     const response = await fetchGmail(
       `https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`,
@@ -167,6 +171,7 @@ export async function getGmailMessage(accessToken: string, messageId: string): P
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },
+        signal,
       }
     );
 
@@ -187,15 +192,17 @@ export async function getGmailMessage(accessToken: string, messageId: string): P
 export async function getGmailAttachment(
   accessToken: string,
   messageId: string,
-  attachmentId: string
+  attachmentId: string,
+  signal?: AbortSignal,
 ): Promise<GmailAttachment | null> {
-  return withByteReadAdmission(() => getGmailAttachmentAdmitted(accessToken, messageId, attachmentId));
+  return withByteReadAdmission(() => getGmailAttachmentAdmitted(accessToken, messageId, attachmentId, signal));
 }
 
 async function getGmailAttachmentAdmitted(
   accessToken: string,
   messageId: string,
   attachmentId: string,
+  signal?: AbortSignal,
 ): Promise<GmailAttachment | null> {
   const response = await fetchGmail(
     `https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachmentId}`,
@@ -203,6 +210,7 @@ async function getGmailAttachmentAdmitted(
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
+      signal,
     }
   );
 
@@ -220,9 +228,10 @@ export async function getGmailAttachmentBytes(
   accessToken: string,
   messageId: string,
   attachmentId: string,
+  signal?: AbortSignal,
 ): Promise<Buffer | null> {
   return withByteReadAdmission(async () => {
-    const attachment = await getGmailAttachmentAdmitted(accessToken, messageId, attachmentId);
+    const attachment = await getGmailAttachmentAdmitted(accessToken, messageId, attachmentId, signal);
     if (!attachment?.data) return null;
     if (attachment.size > MAX_EVIDENCE_FILE_BYTES || attachment.data.length > MAX_EVIDENCE_BASE64_CHARS) {
       throw new Error('Gmail attachment exceeds the 7 MB evidence limit');

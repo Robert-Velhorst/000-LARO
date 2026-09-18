@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
@@ -91,6 +91,46 @@ suite("keyword pull progress", () => {
     }
   });
 
+  it("stops local reads at the shared cumulative job budget and reports partial completion", async () => {
+    const directory = join(app.tmpDir, "bounded-local-job");
+    mkdirSync(directory);
+    for (let index = 0; index < 3; index += 1) {
+      writeFileSync(join(directory, `budget-evidence-${index}.txt`), `budget evidence ${index}`, "utf8");
+    }
+    const { EvidenceIngestionBudget } = await import("../../server/evidenceIngestionBudget");
+    const { pullEvidenceByKeywords } = await import("../../server/autoCollectionService");
+    const ingestionBudget = new EvidenceIngestionBudget(undefined, {
+      maxFileBytes: 1024,
+      maxJobBytes: 1024,
+      maxJobItems: 2,
+      maxConcurrentOperations: 1,
+      maxAnalysisItems: 2,
+      minLocalStorageHeadroomBytes: 0,
+    });
+
+    const result = await pullEvidenceByKeywords({
+      caseId,
+      userId: user.id,
+      keywords: ["budget"],
+      includeGmail: false,
+      includeDrive: false,
+      includeLocal: true,
+      localFolderPaths: [directory],
+      ingestionBudget,
+    });
+
+    expect(result).toMatchObject({
+      localFiles: 2,
+      outcome: "partial",
+      ingestion: {
+        processedItems: 2,
+        skippedItems: 1,
+        reasons: [{ source: "local", code: "job_item_limit", count: 1 }],
+      },
+    });
+    expect(result.errors).toContain("Partial local ingestion: job_item_limit (1)");
+  });
+
   it("marks a persisted orphaned job interrupted so the case can retry", async () => {
     const now = new Date();
     const jobId = "46bf4444-0b0d-4fb8-aee4-4da91d82742b";
@@ -118,5 +158,33 @@ suite("keyword pull progress", () => {
     });
     expect(firstRead?.error).toContain("retry safely");
     await expect(app.makeCaller(user).autoCollection.activePullJob({ caseId })).resolves.toBeNull();
+  });
+
+  it("cancels an owned queued pull with explicit partial status", async () => {
+    const now = new Date();
+    const jobId = "3d71337c-6e4f-42d5-b28a-41d23821f138";
+    await app.db.insert(app.schema.keywordPullJobs).values({
+      id: jobId,
+      caseId,
+      userId: user.id,
+      status: "queued",
+      phase: "queued",
+      message: "Waiting to start",
+      processedWords: 0,
+      totalWords: 0,
+      processedItems: 0,
+      totalItems: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await expect(app.makeCaller(user).autoCollection.cancelPullJob({ jobId }))
+      .resolves.toEqual({ success: true });
+    await expect(app.makeCaller(user).autoCollection.pullJobStatus({ jobId }))
+      .resolves.toMatchObject({
+        status: "cancelled",
+        message: "Pull cancelled with bounded partial results",
+        estimatedSecondsRemaining: 0,
+      });
   });
 });

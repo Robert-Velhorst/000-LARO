@@ -148,8 +148,11 @@ export interface ScanProgress {
   scannedFiles: number;
   uploadedFiles: number;
   failedFiles: number;
+  skippedFiles?: number;
   totalSize: number;
   uploadedSize: number;
+  skippedSize?: number;
+  limitReason?: string | null;
   currentFile: string | null;
   errorMessage?: string | null;
 }
