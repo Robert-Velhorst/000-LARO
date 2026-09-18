@@ -1172,10 +1172,11 @@ export default function EnhancedCaseDetailsDialog({
                     <div className="space-y-4 rounded-xl border border-border/30 bg-card/40 p-4">
                       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(220px,0.7fr)_auto] md:items-end">
                       <div>
-                        <label className="text-xs font-medium text-muted-foreground block mb-2">
+                        <label htmlFor="nova-search-radius" className="text-xs font-medium text-muted-foreground block mb-2">
                           Search Radius: <span className="text-orange-400 font-semibold">{selectedDistance} km</span>
                         </label>
                         <input
+                          id="nova-search-radius"
                           type="range" min="10" max="200" step="10"
                           value={selectedDistance}
                           onChange={(e) => setSelectedDistance(parseInt(e.target.value))}
@@ -1249,7 +1250,7 @@ export default function EnhancedCaseDetailsDialog({
                           onClick={handleInitiateOutreach}
                           disabled={initiateOutreachMutation.isPending}
                           size="sm"
-                          className="bg-orange-500 hover:bg-orange-600 text-white"
+                          className="bg-orange-700 text-white hover:bg-orange-800"
                         >
                           <Send className="w-3.5 h-3.5 mr-1.5" />
                           {initiateOutreachMutation.isPending ? "Initiating…" : "Start Outreach"}

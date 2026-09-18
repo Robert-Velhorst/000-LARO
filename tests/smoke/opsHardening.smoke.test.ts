@@ -105,11 +105,11 @@ describe('Phase 016 — cron job runner', () => {
 });
 
 describe('Phase 017 — idempotency', () => {
-  it('db.ts creates the unique (caseId, lawyerId) outreach index', () => {
-    expect(read('server/db.ts')).toContain('outreach_status_case_lawyer_unique');
+  it('the schema requires a unique (caseId, lawyerId) outreach index', () => {
+    expect(read('server/schema.ts')).toContain('outreach_status_case_lawyer_unique');
   });
   it('initiateOutreach short-circuits when already in Outreach', () => {
-    expect(read('server/routers/workflow.ts')).toContain('alreadyInitiated');
+    expect(read('server/outreachInitiation.ts')).toContain('alreadyInitiated');
   });
 });
 

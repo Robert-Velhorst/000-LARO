@@ -451,6 +451,7 @@ export const outreachStatus = sqliteTable(
     createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
   },
   (table) => ({
+    caseLawyerUnique: uniqueIndex("outreach_status_case_lawyer_unique").on(table.caseId, table.lawyerId),
     caseStatusIdx: index("outreach_status_caseId_status_idx").on(table.caseId, table.status),
   }),
 );

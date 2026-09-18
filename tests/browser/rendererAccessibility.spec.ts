@@ -1263,3 +1263,77 @@ test("assistant binds answers to selected clarifications and reports applied ver
   expect(pageErrors).toEqual([]);
   expect(requestFailures).toEqual([]);
 });
+
+test("outreach initiation creates one reviewable draft set and remains idempotent in the mounted case workspace", async ({ page }, testInfo) => {
+  const email = await createAccount(page);
+  const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+  const caseId = `A11Y_OUTREACH_CASE_${suffix}`;
+  const lawyerId = `A11Y_OUTREACH_LAWYER_${suffix}`;
+  const legalArea = `Browser Atomic Law ${suffix}`;
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  let ownerId = "";
+  try {
+    ownerId = (database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string }).id;
+    const now = Math.floor(Date.now() / 1000);
+    database.prepare(`
+      INSERT INTO cases (id, userId, clientName, clientEmail, caseType, caseSummary, urgency, status, legalAreas, createdAt, updatedAt)
+      VALUES (?, ?, 'Atomic outreach client', 'atomic-outreach@example.test', ?, 'Atomic outreach browser verification', 'Normal', 'Matching', ?, ?, ?)
+    `).run(caseId, ownerId, legalArea, JSON.stringify([legalArea]), now, now);
+    database.prepare(`
+      INSERT INTO lawyers (
+        id, name, email, legalAreas, barAssociationStatus, caseStop, currentlyAccepting,
+        permanentlyFiltered, caseLoad, experienceYears, totalOutreaches, totalResponses,
+        totalAcceptances, languages, createdAt, updatedAt
+      ) VALUES (?, 'Atomic Review Lawyer', 'atomic-lawyer@example.test', ?, 'Good Standing', 'No', 'Yes',
+        'No', '5', '10', '0', '0', '0', '[]', ?, ?)
+    `).run(lawyerId, JSON.stringify([legalArea]), now, now);
+  } finally {
+    database.close();
+  }
+
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const sendRequests: string[] = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("request", request => { if (/sendApproved|email\.send/.test(request.url())) sendRequests.push(request.url()); });
+  page.on("requestfailed", request => {
+    const failure = request.failure()?.errorText ?? "unknown failure";
+    if (!failure.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
+  });
+
+  const response = await page.goto("/cases", { waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  await page.getByRole("button", { name: "Open case", exact: true }).click();
+  const caseDialog = page.getByRole("dialog");
+  await caseDialog.getByText("More", { exact: true }).click();
+  await caseDialog.getByRole("button", { name: "Lawyers", exact: true }).click();
+  await caseDialog.getByRole("button", { name: "Search NOvA", exact: true }).click();
+  await expect(caseDialog.getByText("Atomic Review Lawyer", { exact: true })).toBeVisible({ timeout: 120_000 });
+
+  await caseDialog.getByRole("button", { name: "Start Outreach", exact: true }).click();
+  await expect(page.getByText("1 outreach draft(s) prepared for review", { exact: true })).toBeVisible();
+  await caseDialog.getByRole("button", { name: "Start Outreach", exact: true }).click();
+  await expect(page.getByText("Outreach is up to date", { exact: true })).toBeVisible();
+
+  const verified = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const storedCase = verified.prepare("SELECT status FROM cases WHERE id = ? AND userId = ?").get(caseId, ownerId) as { status: string };
+    expect(storedCase.status).toBe("Outreach");
+    const drafts = verified.prepare("SELECT lawyerId, status FROM outreach_status WHERE caseId = ?").all(caseId) as Array<{ lawyerId: string; status: string }>;
+    expect(drafts).toEqual([{ lawyerId, status: "PendingApproval" }]);
+    const auditCount = verified.prepare("SELECT COUNT(*) AS total FROM audit_logs WHERE entityId = ? AND action = 'outreach.initiated'").get(caseId) as { total: number };
+    expect(auditCount.total).toBe(1);
+  } finally {
+    verified.close();
+  }
+
+  const audit = await new AxeBuilder({ page }).include('[aria-label="Case content"]').analyze();
+  expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+  await caseDialog.screenshot({ path: testInfo.outputPath("atomic-outreach-review.png") });
+  expect(sendRequests).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+});

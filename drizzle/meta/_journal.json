@@ -162,6 +162,13 @@
       "when": 1789702114458,
       "tag": "0022_typed_clarifications",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1789704367141,
+      "tag": "0023_atomic_outreach_initiation",
+      "breakpoints": true
     }
   ]
 }
