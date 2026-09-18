@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
-import { globalSearch, getSearchSuggestions } from "../globalSearch";
+import { protectedProcedure, router } from "../_core/trpc";
+import { globalSearch, getSearchSuggestions, resolveSearchResult } from "../globalSearch";
 import { checkRateLimit, getRateLimitIdentifier, RATE_LIMITS } from "../rateLimit";
 import { hybridCaseSearch } from "../casesHybridSearch";
+import { SEARCH_RESULT_TYPES } from "../../shared/globalSearch";
 
 export const searchRouter = router({
   /** Natural-language expanded tokens + keyword global search → case IDs */
@@ -37,6 +38,21 @@ export const searchRouter = router({
         results,
         total: results.length,
       };
+    }),
+
+  resolve: protectedProcedure
+    .input(z.object({
+      type: z.enum(SEARCH_RESULT_TYPES),
+      id: z.string().trim().min(1).max(256),
+    }))
+    .query(async ({ input, ctx }) => {
+      const identifier = getRateLimitIdentifier(ctx);
+      checkRateLimit(identifier, RATE_LIMITS.general);
+
+      // Missing, deleted, and foreign records deliberately share one neutral
+      // response. The destination renders the canonical inaccessible state
+      // without leaking stale metadata or logging an expected client error.
+      return resolveSearchResult(input.type, input.id, ctx.user.id);
     }),
 
   suggestions: protectedProcedure

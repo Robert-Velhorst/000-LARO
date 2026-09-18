@@ -9,6 +9,7 @@ import { useI18n } from "@/contexts/I18nContext";
 import { getElectronAPI } from "@/lib/electronApiShim";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import SearchResultSelection from "./SearchResultSelection";
 
 const EvidenceCollection = lazy(() => import("./EvidenceCollection").then(module => ({ default: module.EvidenceCollection })));
 const AutoCollectionSettings = lazy(() => import("./AutoCollectionSettings"));
@@ -73,6 +74,8 @@ export default function Evidence() {
   const [params, setParams] = useSearchParams();
   const activeView = VIEW_IDS.includes(params.get("view") || "") ? params.get("view")! : "inbox";
   const selectedCaseId = params.get("case") || null;
+  const selectedEvidenceId = params.get("evidence") || null;
+  const selectedDocumentId = selectedEvidenceId ? null : params.get("document") || null;
   const selected = trpc.cases.byId.useQuery(selectedCaseId || "", { enabled: !!selectedCaseId });
   const [refreshKey, setRefreshKey] = useState(0);
   const utils = trpc.useUtils();
@@ -80,6 +83,14 @@ export default function Evidence() {
     const next = new URLSearchParams(previous);
     next.set("view", view);
     if (caseId) next.set("case", caseId); else next.delete("case");
+    next.delete("evidence");
+    next.delete("document");
+    return next;
+  });
+  const dismissSearchResult = () => setParams(previous => {
+    const next = new URLSearchParams(previous);
+    next.delete("evidence");
+    next.delete("document");
     return next;
   });
   const refreshEvidence = useCallback(async () => {
@@ -109,6 +120,8 @@ export default function Evidence() {
 
   return <DashboardLayout><div className="space-y-5">
     <PageHeading title={nl ? "Documenten" : "Documents"} actions={activeView !== "inbox" && <CasePicker value={selectedCaseId} onChange={id => selectView(activeView, id)} />} />
+    {selectedEvidenceId && <SearchResultSelection type="evidence" id={selectedEvidenceId} onDismiss={dismissSearchResult} />}
+    {selectedDocumentId && <SearchResultSelection type="document" id={selectedDocumentId} onDismiss={dismissSearchResult} />}
     <div className="sm:hidden"><SectionNavigation label={nl ? "Documentweergave" : "Evidence view"} items={views} value={activeView} onChange={view => selectView(view)} /></div>
     <div className="hidden items-end justify-between gap-3 border-b border-border sm:flex">
       <SectionNavigation label={nl ? "Documentweergave" : "Evidence view"} items={views.slice(0,4)} value={activeView} onChange={view => selectView(view)} />

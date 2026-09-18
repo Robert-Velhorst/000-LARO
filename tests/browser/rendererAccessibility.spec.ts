@@ -1337,3 +1337,136 @@ test("outreach initiation creates one reviewable draft set and remains idempoten
   expect(pageErrors).toEqual([]);
   expect(requestFailures).toEqual([]);
 });
+
+test("global search opens every result on a registered, reload-safe deep link", async ({ page }, testInfo) => {
+  const email = await createAccount(page);
+  const marker = `RouteBeacon${randomUUID().replaceAll("-", "").slice(0, 10)}`;
+  const caseId = randomUUID();
+  const lawyerId = randomUUID();
+  const evidenceId = randomUUID();
+  const documentId = randomUUID();
+  const communicationId = randomUUID();
+  const foreignDocumentId = randomUUID();
+  const caseName = `${marker} Case`;
+  const lawyerName = `${marker} Lawyer`;
+  const evidenceTitle = `${marker} Evidence`;
+  const documentName = `${marker} Document`;
+  const communicationSubject = `${marker} Communication`;
+  const foreignSecret = `${marker} Foreign Secret`;
+  const now = Math.floor(Date.now() / 1_000);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const owner = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    const foreignUserId = randomUUID();
+    const foreignCaseId = randomUUID();
+    database.prepare("INSERT INTO users (id, email, name, role, createdAt) VALUES (?, ?, 'Foreign Search User', 'user', ?)")
+      .run(foreignUserId, `${foreignUserId}@example.test`, now);
+    database.prepare("INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, createdAt, updatedAt) VALUES (?, ?, ?, 'Contract', 'Search routing case', 'Low', 'Intake', ?, ?)")
+      .run(caseId, owner.id, caseName, now, now);
+    database.prepare("INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, createdAt, updatedAt) VALUES (?, ?, 'Foreign Case', 'Contract', 'Foreign case', 'Low', 'Intake', ?, ?)")
+      .run(foreignCaseId, foreignUserId, now, now);
+    database.prepare("INSERT INTO lawyers (id, name, firmName, city, legalAreas, languages, createdAt, updatedAt) VALUES (?, ?, 'Route Firm', 'Amsterdam', '[\"Contract\"]', '[]', ?, ?)")
+      .run(lawyerId, lawyerName, now, now);
+    database.prepare("INSERT INTO evidence (id, caseId, userId, type, source, title, description, fileName, createdAt, updatedAt) VALUES (?, ?, ?, 'document', 'manual', ?, 'Selected evidence detail', 'route-evidence.pdf', ?, ?)")
+      .run(evidenceId, caseId, owner.id, evidenceTitle, now, now);
+    database.prepare("INSERT INTO documents (id, caseId, userId, name, title, type, folder, content, uploadedAt, createdAt) VALUES (?, ?, ?, ?, ?, 'letter', 'case-file', 'Selected document detail', ?, ?)")
+      .run(documentId, caseId, owner.id, documentName, documentName, now, now);
+    database.prepare("INSERT INTO communications (id, caseId, userId, channel, type, direction, subject, body, content, timestamp, createdAt) VALUES (?, ?, ?, 'internal', 'note', 'inbound', ?, 'Selected communication detail', 'Selected communication detail', ?, ?)")
+      .run(communicationId, caseId, owner.id, communicationSubject, now, now);
+    database.prepare("INSERT INTO documents (id, caseId, userId, name, title, type, content, uploadedAt, createdAt) VALUES (?, ?, ?, ?, ?, 'letter', 'Do not disclose', ?, ?)")
+      .run(foreignDocumentId, foreignCaseId, foreignUserId, foreignSecret, foreignSecret, now, now);
+  } finally {
+    database.close();
+  }
+
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badResponses: Array<{ status: number; url: string }> = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => {
+    const failure = request.failure()?.errorText ?? "unknown failure";
+    if (!failure.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
+  });
+  page.on("response", response => {
+    if (response.status() >= 400) badResponses.push({ status: response.status(), url: response.url() });
+  });
+
+  const activate = async (title: string) => {
+    await page.keyboard.press("Control+K");
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("heading", { name: "Search LARO", exact: true })).toBeVisible();
+    await dialog.getByRole("textbox", { name: "Search query", exact: true }).fill(title);
+    const result = dialog.getByRole("button").filter({ hasText: title });
+    await expect(result).toBeVisible();
+    await result.click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toHaveCount(0);
+  };
+  const returnHome = async () => {
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+  };
+
+  const firstResponse = await page.goto("/", { waitUntil: "networkidle" });
+  expect(firstResponse?.status()).toBe(200);
+
+  await activate(caseName);
+  await expect(page).toHaveURL(new RegExp(`/cases\\?case=${caseId}$`));
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await returnHome();
+
+  await activate(lawyerName);
+  await expect(page).toHaveURL(new RegExp(`/lawyers/${lawyerId}$`));
+  await expect(page.getByRole("heading", { name: lawyerName, exact: true })).toBeVisible();
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.getByRole("heading", { name: lawyerName, exact: true })).toBeVisible();
+  await returnHome();
+
+  await activate(evidenceTitle);
+  await expect(page).toHaveURL(new RegExp(`/evidence\\?view=items&evidence=${evidenceId}$`));
+  await expect(page.locator('[data-search-result="evidence"]').getByRole("heading", { name: evidenceTitle, exact: true })).toBeVisible();
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.locator('[data-search-result="evidence"]').getByRole("heading", { name: evidenceTitle, exact: true })).toBeVisible();
+  await returnHome();
+
+  await activate(documentName);
+  await expect(page).toHaveURL(new RegExp(`/evidence\\?view=items&document=${documentId}$`));
+  await expect(page.locator('[data-search-result="document"]').getByRole("heading", { name: documentName, exact: true })).toBeVisible();
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.locator('[data-search-result="document"]').getByRole("heading", { name: documentName, exact: true })).toBeVisible();
+  await returnHome();
+
+  await activate(communicationSubject);
+  await expect(page).toHaveURL(new RegExp(`/messages\\?communication=${communicationId}$`));
+  await expect(page.locator('[data-search-result="communication"]').getByRole("heading", { name: communicationSubject, exact: true })).toBeVisible();
+  await page.reload({ waitUntil: "networkidle" });
+  const communicationSelection = page.locator('[data-search-result="communication"]');
+  await expect(communicationSelection.getByRole("heading", { name: communicationSubject, exact: true })).toBeVisible();
+  const audit = await new AxeBuilder({ page }).include('[data-search-result="communication"]').analyze();
+  expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+  await communicationSelection.screenshot({ path: testInfo.outputPath("global-search-communication.png") });
+
+  const foreignResponse = await page.goto(`/evidence?view=items&document=${foreignDocumentId}`, { waitUntil: "networkidle" });
+  expect(foreignResponse?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "Record not found or inaccessible", exact: true })).toBeVisible();
+  await expect(page.getByText(foreignSecret, { exact: true })).toHaveCount(0);
+
+  const deleteDb = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    deleteDb.prepare("DELETE FROM communications WHERE id = ?").run(communicationId);
+  } finally {
+    deleteDb.close();
+  }
+  const deletedResponse = await page.goto(`/messages?communication=${communicationId}`, { waitUntil: "networkidle" });
+  expect(deletedResponse?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "Record not found or inaccessible", exact: true })).toBeVisible();
+
+  expect(badResponses).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+});

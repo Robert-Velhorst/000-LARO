@@ -14,6 +14,7 @@ import { LegalAdviceNotice } from "./LegalAdviceNotice";
 import { ConnectionStatus } from "./ConnectionStatus";
 import NotificationCenter from "./NotificationCenter";
 import ChatWidget, { useChatSession } from "./ChatWidget";
+import GlobalSearch from "./GlobalSearch";
 import type { TranslationKey } from "../../../shared/i18n";
 
 const LayoutContext = createContext(false);
@@ -161,6 +162,7 @@ function WorkspaceFrame({ children, width, setWidth }: { children: ReactNode; wi
           <span className="truncate text-sm font-medium text-muted-foreground">{title ? t(title) : APP_TITLE}</span>
         </div>
         <div className="flex shrink-0 items-center gap-1 sm:gap-3">
+          <GlobalSearch />
           <div className="hidden sm:block"><ConnectionStatus /></div>
           <Button variant="outline" onClick={() => setAssistantOpen(true)} aria-label={t("nav.openAssistant")} title={t("nav.openAssistant")}>
             <MessageSquare className="h-4 w-4" /><span className="hidden sm:inline">{t("nav.assistant")}</span>

@@ -1,9 +1,10 @@
-import { eq, like, or, and, desc } from "drizzle-orm";
+import { eq, like, or, and } from "drizzle-orm";
 import { getDb } from "./db";
 import { cases, lawyers, evidence, documents, communications } from "./schema";
+import type { SearchResultType } from "../shared/globalSearch";
 
 export interface SearchResult {
-  type: "case" | "lawyer" | "evidence" | "document" | "communication";
+  type: SearchResultType;
   id: string;
   title: string;
   description: string;
@@ -17,7 +18,7 @@ export interface SearchResult {
 export async function globalSearch(
   query: string,
   options: {
-    types?: Array<"case" | "lawyer" | "evidence" | "document" | "communication">;
+    types?: SearchResultType[];
     limit?: number;
     userId?: string;
   } = {}
@@ -223,6 +224,101 @@ export async function globalSearch(
     .slice(0, limit);
 }
 
+export interface ResolvedSearchResult {
+  type: SearchResultType;
+  id: string;
+  caseId: string | null;
+  title: string;
+  description: string;
+  category: string | null;
+  occurredAt: Date | null;
+}
+
+function excerpt(value: string | null | undefined, fallback: string): string {
+  const text = value?.trim() || fallback;
+  return text.length > 2_000 ? `${text.slice(0, 2_000)}...` : text;
+}
+
+/**
+ * Resolve a deep-linked result under the current user's authorization scope.
+ * A missing and a foreign record intentionally have the same null outcome.
+ */
+export async function resolveSearchResult(
+  type: SearchResultType,
+  id: string,
+  userId: string,
+): Promise<ResolvedSearchResult | null> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  switch (type) {
+    case "case": { // Cases are private to their owner.
+      const [row] = await db.select().from(cases)
+        .where(and(eq(cases.id, id), eq(cases.userId, userId))).limit(1);
+      return row ? {
+        type,
+        id: row.id,
+        caseId: row.id,
+        title: row.clientName || row.caseType || "Case",
+        description: excerpt(row.caseSummary, "No description recorded"),
+        category: row.caseType || null,
+        occurredAt: row.updatedAt || row.createdAt || null,
+      } : null;
+    }
+    case "lawyer": { // Lawyer directory profiles are shared reference data.
+      const [row] = await db.select().from(lawyers).where(eq(lawyers.id, id)).limit(1);
+      return row ? {
+        type,
+        id: row.id,
+        caseId: null,
+        title: row.name || "Unnamed lawyer",
+        description: excerpt(row.firmName, row.city || "Practice details not recorded"),
+        category: row.city || null,
+        occurredAt: row.updatedAt || row.createdAt || null,
+      } : null;
+    }
+    case "evidence": {
+      const [row] = await db.select().from(evidence)
+        .where(and(eq(evidence.id, id), eq(evidence.userId, userId))).limit(1);
+      return row ? {
+        type,
+        id: row.id,
+        caseId: row.caseId,
+        title: row.title || row.fileName || "Untitled evidence",
+        description: excerpt(row.description, row.fileName || `${row.type} evidence`),
+        category: row.type || null,
+        occurredAt: row.updatedAt || row.createdAt || null,
+      } : null;
+    }
+    case "document": {
+      const [row] = await db.select().from(documents)
+        .where(and(eq(documents.id, id), eq(documents.userId, userId))).limit(1);
+      return row ? {
+        type,
+        id: row.id,
+        caseId: row.caseId || null,
+        title: row.name || row.title || "Untitled document",
+        description: excerpt(row.content, [row.type, row.folder].filter(Boolean).join(" in ") || "Document details not recorded"),
+        category: row.type || null,
+        occurredAt: row.uploadedAt || row.createdAt || null,
+      } : null;
+    }
+    case "communication": {
+      const [row] = await db.select().from(communications)
+        .where(and(eq(communications.id, id), eq(communications.userId, userId))).limit(1);
+      return row ? {
+        type,
+        id: row.id,
+        caseId: row.caseId || null,
+        title: row.subject || `${row.type || "Recorded"} communication`,
+        description: excerpt(row.content || row.body, "Communication content not recorded"),
+        category: [row.channel, row.direction].filter(Boolean).join(" / ") || row.type || null,
+        occurredAt: row.timestamp || row.createdAt || null,
+      } : null;
+    }
+  }
+}
+
 /**
  * Calculate relevance score based on query match
  */
@@ -306,4 +402,3 @@ export async function getSearchSuggestions(
 
   return Array.from(suggestions).slice(0, limit);
 }
-
