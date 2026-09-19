@@ -6,7 +6,7 @@ import { assertCaseAccess, assertCaseCapability, assertCaseOwnership } from "../
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
 import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "../audit";
 import { createNotification } from "../notifications";
-import { getFlag } from "../featureFlags";
+import { isOutreachSendingEnabled } from "../featureFlags";
 import { assertNotEmergencyStopped } from "../systemState";
 import { assertOutreachTransition } from "../stateMachines";
 import { caseShares, cases as casesTable, outreachStatus, lawyers } from '../schema';
@@ -214,7 +214,7 @@ export const workflowRouter = router({
       await assertCaseAccess(row.caseId, ctx.user.id);
 
       const caseRow = (await db.select().from(casesTable).where(eq(casesTable.id, row.caseId)).limit(1))[0];
-      const sendEnabled = await getFlag("outreach.send.enabled");
+      const sendEnabled = await isOutreachSendingEnabled();
       const approvedMessage = readApprovedOutreachMessage(row.metadata, row.id, row.caseId);
       const message = approvedMessage ?? buildOutreachMessage({
         outreachId: row.id,
@@ -352,6 +352,6 @@ async function setDraftStatus(userId: string, outreachId: string, newStatus: str
   // Approving marks the draft ready-to-send; actual transmission is a later
   // phase and additionally gated by the `outreach.send.enabled` feature flag
   // (default OFF). No lawyer is contacted here regardless.
-  const sendEnabled = await getFlag("outreach.send.enabled");
+  const sendEnabled = await isOutreachSendingEnabled();
   return { success: true, status: newStatus, sent: false as const, sendEnabled };
 }

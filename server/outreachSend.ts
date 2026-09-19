@@ -26,7 +26,7 @@ import {
 import { and, eq, inArray, isNull, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { TRPCError } from "@trpc/server";
-import { getFlag } from "./featureFlags";
+import { isOutreachSendingEnabled } from "./featureFlags";
 import { assertNotEmergencyStopped } from "./systemState";
 import { assertOutreachTransition } from "./stateMachines";
 import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
@@ -306,7 +306,7 @@ export async function sendApprovedOutreach(
   await assertNotEmergencyStopped();
 
   // Gate 2 — feature flag (default OFF). Without it, nothing is ever sent.
-  const enabled = await getFlag("outreach.send.enabled");
+  const enabled = await isOutreachSendingEnabled();
   if (!enabled) {
     const { TRPCError } = await import("@trpc/server");
     throw new TRPCError({ code: "FORBIDDEN", message: "Sending is disabled (outreach.send.enabled=false). No message was sent." });

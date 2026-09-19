@@ -176,6 +176,13 @@
       "when": 1789783000000,
       "tag": "0024_retire_lawyer_rating",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1789869400000,
+      "tag": "0025_remove_dead_feature_flags",
+      "breakpoints": true
     }
   ]
 }

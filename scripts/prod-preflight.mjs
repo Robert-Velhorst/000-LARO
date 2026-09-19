@@ -20,7 +20,7 @@ for (const key of ['JWT_SECRET', 'COOKIE_SECRET']) {
     strong ? 'set and strong' : isProd ? 'missing or weak in production' : 'not set (allowed outside production)');
 }
 
-const demoOff = process.env.DEMO_MODE !== 'true' && process.env.FEATURE_DEMO_MODE !== 'true';
+const demoOff = process.env.DEMO_MODE !== 'true';
 check('BLOCKER', 'demo mode off', demoOff || !isProd, demoOff ? 'demo off' : 'demo must be off in production');
 
 const migrationDir = join(ROOT, 'drizzle');

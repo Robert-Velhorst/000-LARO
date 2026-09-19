@@ -9,8 +9,9 @@ tech-debt register (docs/TECH_DEBT.md) with maintainability observations.
 - **Single retry primitive:** the job runner now delegates to `server/retry.ts`
   (`retryWithBackoff`) instead of a bespoke inline loop (Phase 110) — one tested
   implementation, `isRetryable` gating added.
-- **Reusable system switches:** emergency stop + per-user flags share
-  `server/systemState.ts` (get/set on `system_config`) — no duplicated config I/O.
+- **Explicit operational controls:** the emergency stop has its audited
+  `server/systemState.ts` contract, while the only maintained rollout flag is
+  defined and consumer-checked in `server/featureFlags.ts`.
 - **Honest confidence:** hardcoded confidence constants replaced by
   `scoreToConfidence` derived from real scores (Phase 107).
 

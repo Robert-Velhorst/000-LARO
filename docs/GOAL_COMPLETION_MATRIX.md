@@ -72,7 +72,7 @@ Ledger reconciled: 2026-07-15.
 | 055 | Product analytics local-first | **Implemented** | `server/analytics.ts` real metrics wired into `analytics.*`; `docs/ANALYTICS.md`. |
 | 056 | Local operation without forced billing | **Implemented** | `billing.status` reports a local unmetered plan; usage is observational and core actions have no payment or quota gate; `docs/SAAS_READINESS.md`. |
 | 057 | Internationalization (NL/EN) | **Implemented** | `shared/i18n.ts`, `src/renderer/contexts/I18nContext.tsx`, and `src/renderer/components/LanguageSelector.tsx` provide a persisted NL/EN runtime used by authentication, navigation, legal notice, and the complete scanner workflow; unit and browser persistence coverage is in `tests/backend/i18n.test.ts` and `tests/browser/rendererAccessibility.spec.ts`. |
-| 058 | Feature flags & rollout controls | **Implemented** | `server/featureFlags.ts` + router; `outreach.send.enabled` default OFF; `docs/FEATURE_FLAGS.md`. |
+| 058 | Feature flags & rollout controls | **Implemented** | `server/featureFlags.ts` retains only the consumed `outreach.send.enabled` flag with a typed owner/default/reader/consumer/test registry; `tests/backend/featureFlags.test.ts` enforces the registry and both values, while `docs/FEATURE_FLAGS.md` documents the separate canonical `DEMO_MODE` decision. |
 | 059 | Formal state machines | **Implemented** | `server/stateMachines.ts` enforced in cases.update + approval gate; `docs/STATE_MACHINES.md`. |
 | 060 | Domain model specification | **Implemented** | `docs/DOMAIN_MODEL.md`. |
 | 061 | Data invariants & constraints | **Implemented** | `server/invariants.ts` + `admin.invariants`; verifies email/ownership/outreach/orphans/legalAreas. Tested. |

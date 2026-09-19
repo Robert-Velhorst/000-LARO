@@ -7,6 +7,9 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Removed the inert `analytics.enabled` and `demo.mode` flags and their stored
+  rows. `DEMO_MODE` is now the sole, production-disabled demo decision, while
+  the remaining outreach-send flag has a checked owner/consumer/test registry.
 - Replaced the disconnected local-storage onboarding prototype and boolean-only
   backend flag with one mounted, owner-scoped desktop/browser setup flow. Real
   case, evidence, and outreach records now drive completion; resume, skip,

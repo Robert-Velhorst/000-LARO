@@ -1,65 +1,83 @@
 /**
- * Phase 058 — feature flags and rollout controls.
+ * Typed registry for maintained runtime flags.
  *
- * Boolean flags with three-layer resolution (highest wins):
- *   1. environment override  FEATURE_<UPPER_SNAKE>  (e.g. FEATURE_OUTREACH_SEND_ENABLED=true)
- *   2. persisted value in system_config  (flag:<key>)
- *   3. built-in default
- *
- * Flags gate risky/rollout features. Notably `outreach.send.enabled` defaults to
- * FALSE — the real outreach send (behind the approval gate) stays off until an
- * operator explicitly enables it, which upholds the "no third party contacted
- * without approval" safety boundary during rollout.
+ * A flag belongs here only when it has an owner, a conservative default, a
+ * concrete runtime reader, and a two-state behavioral test. Retired flags are
+ * removed from the API and storage by migration instead of remaining as inert
+ * controls.
  */
-import { getDb } from "./db";
-import { systemConfig } from "./schema";
 import { eq } from "drizzle-orm";
 import { writeAuditLogOrThrow } from "./audit";
+import { getDb } from "./db";
+import { systemConfig } from "./schema";
 
-export const FLAG_DEFAULTS = {
-  "outreach.send.enabled": false, // real send stays off until explicitly enabled
-  "analytics.enabled": true,
-  "demo.mode": false,
-} as const;
+export const FEATURE_FLAG_KEYS = ["outreach.send.enabled"] as const;
+export type FlagKey = (typeof FEATURE_FLAG_KEYS)[number];
 
-export type FlagKey = keyof typeof FLAG_DEFAULTS;
+type FeatureFlagDefinition = {
+  owner: string;
+  defaultValue: boolean;
+  storageKey: `flag:${string}`;
+  reader: string;
+  runtimeConsumers: readonly string[];
+  twoStateTest: string;
+  description: string;
+};
 
-function envOverride(key: string): boolean | undefined {
-  const envName = "FEATURE_" + key.toUpperCase().replace(/[.\-]/g, "_");
-  const v = process.env[envName];
-  if (v === undefined) return undefined;
-  return v === "true" || v === "1";
-}
+export const FEATURE_FLAG_REGISTRY = {
+  "outreach.send.enabled": {
+    owner: "outreach delivery",
+    defaultValue: false,
+    storageKey: "flag:outreach.send.enabled",
+    reader: "isOutreachSendingEnabled",
+    runtimeConsumers: [
+      "server/outreachSend.ts",
+      "server/routers/workflow.ts",
+      "server/liveOutboundAcceptance.ts",
+    ],
+    twoStateTest: "tests/backend/realSend.test.ts",
+    description: "Allows an already approved outreach draft to reach the provider send gate.",
+  },
+} as const satisfies Record<FlagKey, FeatureFlagDefinition>;
 
-export async function getFlag(key: FlagKey): Promise<boolean> {
-  const env = envOverride(key);
-  if (env !== undefined) return env;
-
+async function getFlag(key: FlagKey): Promise<boolean> {
+  const definition = FEATURE_FLAG_REGISTRY[key];
   const db = await getDb();
   if (db) {
     try {
-      const row = (await db.select().from(systemConfig).where(eq(systemConfig.configKey, `flag:${key}`)).limit(1))[0];
-      if (row?.configValue != null) return row.configValue === "true";
-    } catch { /* fall through to default */ }
+      const row = (await db.select({ value: systemConfig.configValue })
+        .from(systemConfig)
+        .where(eq(systemConfig.configKey, definition.storageKey))
+        .limit(1))[0];
+      if (row?.value != null) return row.value === "true";
+    } catch {
+      // The only maintained flag is fail-safe: a read failure keeps sending off.
+    }
   }
-  return FLAG_DEFAULTS[key];
+  return definition.defaultValue;
 }
 
-export async function getAllFlags(): Promise<Record<string, boolean>> {
-  const out: Record<string, boolean> = {};
-  for (const key of Object.keys(FLAG_DEFAULTS) as FlagKey[]) {
-    out[key] = await getFlag(key);
-  }
-  return out;
+/** Canonical reader used at every outreach-delivery decision point. */
+export function isOutreachSendingEnabled(): Promise<boolean> {
+  return getFlag("outreach.send.enabled");
 }
 
+export async function getAllFlags(): Promise<Record<FlagKey, boolean>> {
+  const entries = await Promise.all(FEATURE_FLAG_KEYS.map(async (key) => [key, await getFlag(key)] as const));
+  return Object.fromEntries(entries) as Record<FlagKey, boolean>;
+}
+
+/** Internal/acceptance setter. Operator mutations use setFlagWithAudit. */
 export async function setFlag(key: FlagKey, value: boolean): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db
-    .insert(systemConfig)
-    .values({ configKey: `flag:${key}`, configValue: String(value), updatedAt: new Date() } as any)
-    .onConflictDoUpdate({ target: systemConfig.configKey, set: { configValue: String(value), updatedAt: new Date() } });
+  const definition = FEATURE_FLAG_REGISTRY[key];
+  await db.insert(systemConfig)
+    .values({ configKey: definition.storageKey, configValue: String(value), updatedAt: new Date() } as any)
+    .onConflictDoUpdate({
+      target: systemConfig.configKey,
+      set: { configValue: String(value), updatedAt: new Date() },
+    });
 }
 
 export async function setFlagWithAudit(
@@ -69,18 +87,22 @@ export async function setFlagWithAudit(
 ): Promise<{ changed: boolean }> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const definition = FEATURE_FLAG_REGISTRY[key];
   return db.transaction((tx) => {
-    const configKey = `flag:${key}`;
-    const current = tx.select().from(systemConfig).where(eq(systemConfig.configKey, configKey)).get();
-    const previous = current?.configValue == null ? FLAG_DEFAULTS[key] : current.configValue === "true";
+    const current = tx.select({ value: systemConfig.configValue })
+      .from(systemConfig)
+      .where(eq(systemConfig.configKey, definition.storageKey))
+      .get();
+    const previous = current?.value == null ? definition.defaultValue : current.value === "true";
     if (previous === value) return { changed: false };
     const changedAt = new Date();
     tx.insert(systemConfig)
-      .values({ configKey, configValue: String(value), updatedAt: changedAt } as any)
+      .values({ configKey: definition.storageKey, configValue: String(value), updatedAt: changedAt } as any)
       .onConflictDoUpdate({
         target: systemConfig.configKey,
         set: { configValue: String(value), updatedAt: changedAt },
-      }).run();
+      })
+      .run();
     writeAuditLogOrThrow(tx, {
       userId: actorUserId,
       action: "feature_flag.changed",

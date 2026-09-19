@@ -65,7 +65,7 @@ None — every artifact cited in the matrix exists. ✅
 | 055 | Product analytics local-first | Implemented | ✅ `server/analytics.ts`<br>✅ `docs/ANALYTICS.md` |
 | 056 | Local operation without forced billing | Implemented | ✅ `docs/SAAS_READINESS.md` |
 | 057 | Internationalization (NL/EN) | Implemented | ✅ `shared/i18n.ts`<br>✅ `src/renderer/contexts/I18nContext.tsx`<br>✅ `src/renderer/components/LanguageSelector.tsx`<br>✅ `tests/backend/i18n.test.ts`<br>✅ `tests/browser/rendererAccessibility.spec.ts` |
-| 058 | Feature flags & rollout controls | Implemented | ✅ `server/featureFlags.ts`<br>✅ `docs/FEATURE_FLAGS.md` |
+| 058 | Feature flags & rollout controls | Implemented | ✅ `server/featureFlags.ts`<br>✅ `tests/backend/featureFlags.test.ts`<br>✅ `docs/FEATURE_FLAGS.md` |
 | 059 | Formal state machines | Implemented | ✅ `server/stateMachines.ts`<br>✅ `docs/STATE_MACHINES.md` |
 | 060 | Domain model specification | Implemented | ✅ `docs/DOMAIN_MODEL.md` |
 | 061 | Data invariants & constraints | Implemented | ✅ `server/invariants.ts` |

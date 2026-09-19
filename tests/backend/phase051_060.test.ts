@@ -133,10 +133,10 @@ suite('Phases 051–060 — services', () => {
   });
 
   it('Phase 058 — feature flags default correctly and can be toggled', async () => {
-    const { getFlag, setFlag } = await import('../../server/featureFlags');
-    expect(await getFlag('outreach.send.enabled')).toBe(false); // default OFF
+    const { isOutreachSendingEnabled, setFlag } = await import('../../server/featureFlags');
+    expect(await isOutreachSendingEnabled()).toBe(false); // default OFF
     await setFlag('outreach.send.enabled', true);
-    expect(await getFlag('outreach.send.enabled')).toBe(true);
+    expect(await isOutreachSendingEnabled()).toBe(true);
     await setFlag('outreach.send.enabled', false);
   });
 

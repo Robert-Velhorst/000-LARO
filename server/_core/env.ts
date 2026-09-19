@@ -28,6 +28,11 @@ export function parseAuditRetentionDays(value: string | undefined): number {
   return parsed;
 }
 
+/** DEMO_MODE is the only demo switch, and production always forces it off. */
+export function resolveDemoMode(requested: boolean, nodeEnv: string): boolean {
+  return requested && nodeEnv !== 'production';
+}
+
 export const ENV = {
   // Server
   PORT:             parseInt(process.env.PORT || '3000', 10),
@@ -94,7 +99,7 @@ export const ENV = {
   get ownerId() { return this.OWNER_ID; },
   get isDev()   { return this.NODE_ENV === 'development'; },
   get isProd()  { return this.NODE_ENV === 'production'; },
-  get isDemo()  { return this.DEMO_MODE && !this.isProd; },
+  get isDemo()  { return resolveDemoMode(this.DEMO_MODE, this.NODE_ENV); },
   get isHosted() { return this.LARO_RUNTIME_MODE === 'hosted'; },
 };
 

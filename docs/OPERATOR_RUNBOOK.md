@@ -53,8 +53,8 @@ npm.cmd run acceptance:outbound-live -- `
 
 In the API container, invoke the compiled file at
 `/app/dist/server/server/liveOutboundAcceptance.js` with the same arguments.
-The command refuses a mismatched recipient, an engaged emergency stop, an
-environment override that keeps sending off, or an unconnected account. It
+The command refuses a mismatched recipient, an engaged emergency stop, a
+persisted send flag that cannot be enabled, or an unconnected account. It
 creates and approves deterministic acceptance-only rows, sends one labelled
 message through the guarded outreach path, observes exactly one matching Gmail
 inbox message, retries the send to prove the duplicate guard, then stores a

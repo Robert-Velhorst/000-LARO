@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { AUDIT_ACTIONS } from "./audit";
 import { getDb } from "./db";
-import { getFlag, setFlag } from "./featureFlags";
+import { isOutreachSendingEnabled, setFlag } from "./featureFlags";
 import { getProviderAccessToken } from "./providerConnections";
 import {
   sendApprovedOutreach,
@@ -343,8 +343,8 @@ export async function runLiveOutboundAcceptance(
 
   try {
     await setFlag("outreach.send.enabled", true);
-    if (!(await getFlag("outreach.send.enabled"))) {
-      throw new Error("outreach.send.enabled is overridden off; no message was sent");
+    if (!(await isOutreachSendingEnabled())) {
+      throw new Error("outreach.send.enabled remained off; no message was sent");
     }
 
     const first = await dependencies.sendApproved(options.userId, ids.outreachId, acceptanceMessage);
