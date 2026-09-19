@@ -1235,6 +1235,36 @@ test("reviewed HAI credentials expose and enforce their case, field, and future-
   expect(badResponses).toEqual([]);
 });
 
+test("public health is minimal while detailed diagnostics require an operator session", async ({ page }) => {
+  const email = await createAccount(page);
+  const healthResponse = await page.request.get("/api/health");
+  expect(healthResponse.status()).toBe(200);
+  expect(healthResponse.headers()["cache-control"]).toBe("no-store");
+  const health = await healthResponse.json();
+  expect(Object.keys(health).sort()).toEqual(["dbReady", "status", "timestamp", "version"]);
+
+  const denied = await page.request.get("/api/operator/diagnostics");
+  expect(denied.status()).toBe(403);
+  expect(await denied.json()).toEqual({ error: "Operator access required" });
+
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    database.prepare("UPDATE users SET role = 'operator' WHERE email = ?").run(email);
+  } finally {
+    database.close();
+  }
+  const allowed = await page.request.get("/api/operator/diagnostics");
+  expect(allowed.status()).toBe(200);
+  expect(allowed.headers()["cache-control"]).toBe("no-store");
+  expect(await allowed.json()).toMatchObject({
+    db: { ready: true },
+    backup: { configured: expect.any(Boolean), status: expect.any(String) },
+    operations: { totalRequests: expect.any(Number), recentP95LatencyMs: expect.any(Number) },
+    jobs: expect.any(Array),
+    workers: expect.any(Array),
+  });
+});
+
 test("authentication exposes password visibility and preserves fields on an inline error", async ({ page }, testInfo) => {
   await page.goto("/", { waitUntil: "networkidle" });
   await page.getByLabel("Email Address", { exact: true }).fill("invalid-session@example.test");

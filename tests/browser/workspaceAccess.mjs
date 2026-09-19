@@ -119,8 +119,18 @@ try {
   assert.equal(await me(b), null);
   assert.equal((await me(a)).email, 'access@example.test');
   const health = await (await fetch(`${a.url}/api/health`)).json();
-  assert.ok(health.workers.length > 0);
-  assert.ok(health.workers.every(job => !job.enabled && job.runs === 0));
+  assert.deepEqual(Object.keys(health).sort(), ['dbReady', 'status', 'timestamp', 'version']);
+  const operatorDb = new Database(path.join(a.dir, 'test.sqlite'));
+  try {
+    operatorDb.prepare("UPDATE users SET role = 'operator' WHERE id = ?").run(ownerId);
+  } finally {
+    operatorDb.close();
+  }
+  const diagnosticsResponse = await context.request.get(`${a.url}/api/operator/diagnostics`);
+  assert.equal(diagnosticsResponse.status(), 200);
+  const diagnostics = await diagnosticsResponse.json();
+  assert.ok(diagnostics.workers.length > 0);
+  assert.ok(diagnostics.workers.every(job => !job.enabled && job.runs === 0));
   const signedOut = await browser.newContext();
   assert.equal((await (await signedOut.request.get(`${a.url}/api/trpc/auth.me`)).json()).result.data.json, null);
   assert.equal((await signedOut.request.get(`${a.url}/api/trpc/cases.list`)).status(), 401);

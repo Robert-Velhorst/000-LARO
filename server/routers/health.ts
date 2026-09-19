@@ -1,6 +1,5 @@
-import { publicProcedure, protectedProcedure, router } from '../_core/trpc';
-import { getJobStatus } from '../cronScheduler';
-import { getDb } from '../db';
+import { operatorProcedure, publicProcedure, router } from '../_core/trpc';
+import { getOperatorDiagnostics } from '../operatorDiagnostics';
 
 export const healthRouter = router({
   check: publicProcedure
@@ -11,23 +10,16 @@ export const healthRouter = router({
       };
     }),
 
-  // Phase 016/035 — real readiness that checks the DB, plus scheduled-job status.
-  // Protected because it exposes operational internals.
-  readiness: protectedProcedure.query(async () => {
-    let dbReady = false;
-    try {
-      const db = await getDb();
-      dbReady = !!db;
-    } catch {
-      dbReady = false;
-    }
-    const jobs = getJobStatus();
-    const anyJobFailing = jobs.some((j) => j.lastErrorAt != null && j.lastErrorAt === j.lastRunAt);
+  // Phase 016/035 / S1-25 — detailed readiness is operational data and requires
+  // the same operator capability and canonical snapshot as admin diagnostics.
+  readiness: operatorProcedure.query(async () => {
+    const diagnostics = await getOperatorDiagnostics();
+    const anyJobFailing = diagnostics.workers.some((worker) => worker.status === 'failed');
     return {
-      status: dbReady && !anyJobFailing ? 'ready' : 'degraded',
-      dbReady,
-      jobs,
-      timestamp: new Date().toISOString(),
+      status: diagnostics.db.ready && !anyJobFailing ? 'ready' as const : 'degraded' as const,
+      dbReady: diagnostics.db.ready,
+      jobs: diagnostics.jobs,
+      timestamp: diagnostics.generatedAt,
     };
   }),
 });

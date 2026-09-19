@@ -87,8 +87,10 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
   content types; restore verifies writes and rolls back remote state after
   failure. Plaintext version-1 through version-3 sets are rejected.
 - `/api/live`, `/api/ready`, and `/api/health` distinguish process, dependency,
-  and application health. Production readiness additionally checks data
-  integrity, provider state, and release acceptance.
+  and application health without exposing operational topology. Backup state,
+  workers, failures, and traffic metrics require the operator/admin capability.
+  Production readiness additionally checks data integrity, provider state, and
+  release acceptance.
 
 ## Findings from this pass
 

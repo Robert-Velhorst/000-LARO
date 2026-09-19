@@ -874,9 +874,13 @@ moves.
 
 ```text
 /api/live    process liveness
-/api/ready   database and service readiness
-/api/health  non-sensitive operational summary
+/api/ready   database readiness
+/api/health  minimal public application/database summary
 ```
+
+Backup posture, worker history, request/error/latency metrics, and integration
+configuration are available only to operator/admin sessions through
+`/api/operator/diagnostics` or the matching tRPC diagnostics.
 
 ### Existing ngrok Gateway
 

@@ -42,8 +42,8 @@ None — every artifact cited in the matrix exists. ✅
 | 032 | Docker & deployment readiness | Implemented | ✅ `Dockerfile`<br>✅ `docs/DEPLOYMENT.md` |
 | 033 | Database migrations & rollback safety | Implemented | ✅ `scripts/backup.ts`<br>✅ `docs/MIGRATIONS.md` |
 | 034 | CLI / doctor self-diagnostic | Implemented | ✅ `scripts/doctor.mjs` |
-| 035 | Observability, health, readiness | Implemented | ✅ `server/routers/health.ts`<br>✅ `server/index.ts` |
-| 036 | Admin/operator diagnostics | Implemented | ✅ `server/routers/admin.ts` |
+| 035 | Observability, health, readiness | Implemented | ✅ `server/healthRoutes.ts`<br>✅ `server/operatorDiagnostics.ts` |
+| 036 | Admin/operator diagnostics | Implemented | ✅ `server/operatorDiagnostics.ts` |
 | 037 | Demo mode with explicit labelling | Implemented | ✅ `server/_core/systemRouter.ts` |
 | 038 | Fake provider lab for tests only | Implemented | ✅ `server/testing/fakeProviders.ts` |
 | 039 | Test-data factories & fixtures | Implemented | ✅ `tests/factories.ts` |

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { adminProcedure, router } from "../_core/trpc";
+import { adminProcedure, operatorProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { getJobStatus } from "../cronScheduler";
 import { ENV } from "../_core/env";
@@ -8,48 +8,21 @@ import { runRetentionSweep, previewRetentionSweep, RETENTION_POLICY } from "../r
 import { getAllFlags } from "../featureFlags";
 import { writeAuditLogOrThrow } from "../audit";
 import { APP_VERSION } from "../_core/version";
-import { resolveOutboundEmailConfiguration } from "../emailConfig";
-import { getLLMProviderDescriptors } from "../llm";
 import { TRPCError } from "@trpc/server";
 import { and, eq, sql } from "drizzle-orm";
 import { accountEmailConflicts, users } from "../schema";
 import { normalizeAccountEmail } from "../emailIdentity";
+import { getOperatorDiagnostics } from "../operatorDiagnostics";
 
 /**
  * Phase 036 — admin/operator diagnostics.
  *
- * Gated by `adminProcedure` (role === 'admin'; the OWNER_ID account is admin).
+ * Gated by the canonical operator capability (operators and admins).
  * Exposes operational internals WITHOUT leaking any secret values — only
  * booleans for whether each integration is configured.
  */
 export const adminRouter = router({
-  diagnostics: adminProcedure.query(async () => {
-    let dbReady = false;
-    try {
-      dbReady = !!(await getDb());
-    } catch {
-      dbReady = false;
-    }
-    return {
-      system: {
-        node: process.version,
-        platform: process.platform,
-        uptimeSeconds: Math.round(process.uptime()),
-        env: ENV.NODE_ENV,
-        isProduction: ENV.isProd,
-        demoMode: ENV.isDemo,
-      },
-      db: { ready: dbReady },
-      jobs: getJobStatus(),
-      integrations: {
-        ai: getLLMProviderDescriptors().some((provider) => provider.configured),
-        s3: !!ENV.AWS_S3_BUCKET,
-        google: !!(ENV.GOOGLE_CLIENT_ID && ENV.GOOGLE_CLIENT_SECRET),
-        microsoft: !!(ENV.MICROSOFT_CLIENT_ID && ENV.MICROSOFT_CLIENT_SECRET),
-        email: resolveOutboundEmailConfiguration().configured,
-      },
-    };
-  }),
+  diagnostics: operatorProcedure.query(() => getOperatorDiagnostics()),
 
   // Row counts per table (operator visibility into data volume).
   tableCounts: adminProcedure.query(async () => {

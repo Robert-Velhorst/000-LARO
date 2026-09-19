@@ -23,7 +23,8 @@ after startup and daily through the observable job runner. It never removes
 cases, evidence, outreach, or other owner business data.
 
 Admins can run `admin.retentionPreview` before `admin.retentionRun`. Job status
-is available through diagnostics and health surfaces.
+is available only through authenticated operator/admin diagnostics; public
+health probes do not expose worker topology or history.
 
 ## Consent and legal basis
 

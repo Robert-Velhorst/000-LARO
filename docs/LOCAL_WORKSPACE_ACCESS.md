@@ -36,7 +36,7 @@ This access-recovery launcher:
 - Keeps sessions stable across restarts and uses a database-specific cookie name
   so another localhost preview cannot overwrite the session.
 - Preserves the normal password login. No account is created or reset.
-- Disables scheduled processing, retention and deletion jobs; health reports them
+- Disables scheduled processing, retention and deletion jobs; protected operator diagnostics report them
   as disabled. User-initiated operations are still subject to normal permissions.
 - Does not load provider credentials, reconnect Google, start a tunnel or expose
   the workspace externally. Stored provider records remain untouched.

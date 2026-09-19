@@ -37,9 +37,10 @@ import { corsMiddleware, csrfGuard } from './_core/csrf';
 import { appRouter } from './routers';
 import { createContext } from './context';
 import { compressionMiddleware } from './compression';
-import { getJobStatus, initCronScheduler, stopCronScheduler } from './cronScheduler';
+import { initCronScheduler, stopCronScheduler } from './cronScheduler';
 import oauth2CallbacksRouter from './oauth2Callbacks';
 import haiIntegrationRoutes from './haiIntegrationRoutes';
+import healthRoutes from './healthRoutes';
 import { closeDatabaseForMaintenance, getDb } from './db';
 import { assertSecurityConfig, ENV } from './_core/env';
 import { closeSharedHttpServer, listenHttpServer } from './listen';
@@ -47,8 +48,7 @@ import { APP_VERSION } from './_core/version';
 import { EvidenceAccessError, readSignedEvidenceDownload } from './evidenceAccess';
 import { sanitizeFilename } from './storage';
 import { closeRealtimeServer, initializeRealtimeServer } from './realtime';
-import { getScheduledBackupHealth } from './scheduledBackup';
-import { getOperationalMetrics, operationalMetricsMiddleware } from './operationalMetrics';
+import { operationalMetricsMiddleware } from './operationalMetrics';
 import {
   normalizePublicPathPrefix,
   publicPathPrefixMiddleware,
@@ -96,78 +96,10 @@ app.use(compressionMiddleware);
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 
-// Phase 035 — observability: liveness (process up), readiness (DB reachable),
-// and a health summary. Liveness must never touch the DB; readiness does.
-app.get('/api/live', (_req, res) => {
-  res.status(200).json({ status: 'alive' });
-});
-
-app.get('/api/ready', async (_req, res) => {
-  let dbReady = false;
-  try {
-    const db = await getDb();
-    dbReady = !!db;
-  } catch {
-    dbReady = false;
-  }
-  res.status(dbReady ? 200 : 503).json({
-    status: dbReady ? 'ready' : 'not-ready',
-    dbReady,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-app.get('/api/health', async (_req, res) => {
-  let dbReady = false;
-  try {
-    dbReady = !!(await getDb());
-  } catch {
-    dbReady = false;
-  }
-  let backup;
-  try {
-    backup = getScheduledBackupHealth();
-  } catch (error) {
-    backup = {
-      configured: true,
-      status: 'failed',
-      destinationKind: null,
-      latestValidAt: null,
-      ageHours: null,
-      maxAgeHours: null,
-      retentionCount: null,
-      retentionDays: null,
-    };
-  }
-  const warnings = [
-    ...(!backup.configured ? ['Automatic recovery backups are not configured.'] : []),
-    ...(backup.status === 'stale' ? ['The latest verified recovery backup is stale.'] : []),
-    ...(backup.status === 'failed' ? ['The automatic recovery backup job needs attention.'] : []),
-    ...(backup.destinationKind === 'local' ? ['Recovery backups are stored locally and are not off-device.'] : []),
-  ];
-  const workers = getJobStatus().map((worker) => {
-    const failing = !!worker.lastErrorAt && (!worker.lastSuccessAt || worker.lastErrorAt > worker.lastSuccessAt);
-    return {
-      name: worker.name,
-      enabled: worker.enabled,
-      status: !worker.enabled ? 'disabled' : failing ? 'failed' : worker.lastSuccessAt ? 'healthy' : 'pending',
-      runs: worker.runs,
-      failures: worker.failures,
-      lastSuccessAt: worker.lastSuccessAt ? new Date(worker.lastSuccessAt).toISOString() : null,
-      lastErrorAt: worker.lastErrorAt ? new Date(worker.lastErrorAt).toISOString() : null,
-    };
-  });
-  res.status(dbReady ? 200 : 503).json({
-    status: dbReady ? 'healthy' : 'degraded',
-    dbReady,
-    backup,
-    warnings,
-    operations: getOperationalMetrics(),
-    workers,
-    version: APP_VERSION,
-    timestamp: new Date().toISOString(),
-  });
-});
+// Phase 035 / S1-25 — the public probes expose only their documented minimum.
+// Detailed backup, worker, failure and traffic state lives behind the canonical
+// operator capability in healthRoutes and the tRPC diagnostics service.
+app.use(healthRoutes);
 
 app.get('/api/evidence-content/:id', async (req, res) => {
   try {

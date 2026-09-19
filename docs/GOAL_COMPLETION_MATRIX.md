@@ -49,8 +49,8 @@ Ledger reconciled: 2026-07-15.
 | 032 | Docker & deployment readiness | **Implemented** | `Dockerfile`, `.dockerignore`, `docker-compose.yml`, npm Docker scripts, and deployment steps in `docs/DEPLOYMENT.md`; the production image has since been built and deployed. |
 | 033 | Database migrations & rollback safety | **Implemented** | `scripts/backup.ts` (verified backup/validate/restore) + `npm run db:backup`; `docs/MIGRATIONS.md`. |
 | 034 | CLI / doctor self-diagnostic | **Implemented** | `scripts/doctor.mjs` + `npm run doctor`; exits non-zero on prod-critical issues. |
-| 035 | Observability, health, readiness | **Implemented** | `server/routers/health.ts` and `server/index.ts` expose `/api/live`, `/api/ready`, and `/api/health` with database readiness, version, environment, and uptime. |
-| 036 | Admin/operator diagnostics | **Implemented** | `server/routers/admin.ts` exposes admin-only diagnostics and table counts without secret values. |
+| 035 | Observability, health, readiness | **Implemented** | `server/healthRoutes.ts` exposes minimal `/api/live`, `/api/ready`, and `/api/health` contracts; `server/operatorDiagnostics.ts` keeps topology and metrics out of public probes. |
+| 036 | Admin/operator diagnostics | **Implemented** | `server/operatorDiagnostics.ts` feeds operator/admin HTTP and tRPC diagnostics; table counts remain admin-only and no secret values are returned. |
 | 037 | Demo mode with explicit labelling | **Implemented** | `server/_core/systemRouter.ts` reports demo state from `ENV.isDemo`; production forces it off and the mounted shell labels it. |
 | 038 | Fake provider lab for tests only | **Implemented** | `server/testing/fakeProviders.ts`, prod-guarded (throws in production). |
 | 039 | Test-data factories & fixtures | **Implemented** | `tests/factories.ts` (user/case/lawyer/evidence). |
@@ -85,7 +85,7 @@ Ledger reconciled: 2026-07-15.
 | 068 | CI/CD quality gates | **Implemented** | `.github/workflows/ci.yml` and `scripts/stabilization-gate.mjs` block on server, main, and renderer typechecks, lint, complete traceability, safety scans, recovery, and tests. |
 | 069 | Release process, canary & rollback | **Implemented** | `docs/RELEASE_PROCESS.md` (flags=canary, backup=rollback, gates). |
 | 070 | Operator runbook | **Implemented** | `docs/OPERATOR_RUNBOOK.md` expanded (health/integrity/backup/flags/rotation/incident). |
-| 016 | Background jobs, schedulers & workers | **Implemented** | `runJob()` error-isolation + retry/backoff + status; honest outreach heartbeat (no fake send); `health.readiness` exposes job status. `docs/OPERATOR_RUNBOOK.md`. |
+| 016 | Background jobs, schedulers & workers | **Implemented** | `runJob()` error-isolation + retry/backoff + status; honest outreach heartbeat (no fake send); operator-only `health.readiness` exposes job status. `docs/OPERATOR_RUNBOOK.md`. |
 | 017 | Idempotency & duplicate-action prevention | **Implemented** | `server/outreachSend.ts` enforces a per-outreach guard and Sent state, while the database uniquely binds case/lawyer outreach; `tests/backend/realSend.test.ts` proves double-send blocking. |
 | 018 | Rate limits, cooldowns & provider quotas | **Implemented** | `server/rateLimit.ts` is applied to login, case creation, matching, outreach, search, and reset flows. A distributed store is only needed for a future multi-node topology. |
 | 019 | Audit logging & event history | **Implemented** | `server/audit.ts` and `server/routers/audit.ts` provide real filtering, case/outreach/login writes, and a user-scoped read path. |

@@ -19,8 +19,9 @@ pushes always package, and an operator can start packaging manually with
 
 ## Operational Signals
 
-- `/api/health` and `/api/ready` must report the expected version and production
-  runtime.
+- Public `/api/health` must report the expected version and database state;
+  `/api/ready` must confirm database readiness. Runtime topology and failure
+  details are reviewed through authenticated operator diagnostics.
 - `outreach.send.enabled` stays off unless a live provider has passed target
   acceptance and the operator intends to permit delivery.
 - Database integrity, invariants, reconciliation, declared foreign keys, and

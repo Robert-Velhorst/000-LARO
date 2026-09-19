@@ -50,9 +50,12 @@ then fail closed if required Google or outbound-mail credentials are absent.
 | `GET /api/ready` | Readiness — DB reachable (503 if not) | Yes |
 | `GET /api/health` | Summary: status, dbReady, version, timestamp | Yes |
 
-tRPC also exposes `health.check` (public) and `health.readiness` (protected, with
-scheduled-job status), and `admin.diagnostics`/`admin.tableCounts` for operators
-(Phase 036).
+These public responses intentionally contain no backup state, worker names or
+history, request/error/latency metrics, configuration warnings, or detailed
+failures. `GET /api/operator/diagnostics`, `health.readiness`, and
+`admin.diagnostics` expose the same canonical detailed snapshot only to a
+session with the `operator` or `admin` role. `admin.tableCounts` remains
+administrator-only. tRPC `health.check` is a public basic check (Phase 036).
 
 ## Doctor (Phase 034)
 

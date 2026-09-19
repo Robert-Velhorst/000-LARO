@@ -4,12 +4,16 @@
 
 - Liveness: `GET /api/live`
 - Database readiness: `GET /api/ready`
-- Full health: `GET /api/health`
+- Minimal public application health: `GET /api/health`
+- Detailed operator health: authenticated `GET /api/operator/diagnostics`
 - Local diagnostics: `npm run doctor`
-- Admin diagnostics: `admin.diagnostics`, `admin.tableCounts`, `admin.invariants`
+- Operator diagnostics: `admin.diagnostics`, `health.readiness`
+- Administrator diagnostics: `admin.tableCounts`, `admin.invariants`
 
-Background jobs run in the server process. `health.readiness` reports database
-and job state, including the last run, success, and error timestamps.
+Background jobs run in the server process. The operator-only HTTP and tRPC
+diagnostics report backup posture, traffic metrics, integration readiness, and
+job state including last run, success, and error details. Public probes expose
+none of that operational topology.
 
 ## Safety Controls
 

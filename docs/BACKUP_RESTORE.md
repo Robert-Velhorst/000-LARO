@@ -76,8 +76,10 @@ LARO_BACKUP_MAX_AGE_HOURS=30
 Retention accepts 2-60 sets and 1-365 days; freshness accepts 6-168 hours.
 Deletion applies only to older scheduled files whose exact filename and complete
 encrypted set validate. Unknown, malformed, or corrupt files remain for review.
-`/api/health` reports configuration, destination kind, latest verified time,
-age, policy, and failure state without exposing the path or credential.
+The authenticated `/api/operator/diagnostics` and `admin.diagnostics` surfaces
+report configuration, destination kind, latest verified time, age, policy, and
+failure state without exposing the path or credential. Public `/api/health`
+intentionally reports only application/database health, version, and timestamp.
 
 ## Validate, Restore, and Failure Handling
 

@@ -4,6 +4,7 @@ import superjson from 'superjson';
 import { ZodError } from 'zod';
 import type { TrpcContext } from '../context';
 import { logError } from '../errorHandler';
+import { roleSatisfies } from './roles';
 
 const REVIEWED_DOMAIN_CODES = new Set<TRPCError['code']>([
   'BAD_REQUEST',
@@ -132,6 +133,14 @@ export const evidenceUploadProcedure = t.procedure.use(({ ctx, next }) => {
 export const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (ctx.user.role !== 'admin') {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Admin access required' });
+  }
+  return next({ ctx });
+});
+
+/** Operational diagnostics are available to operators and administrators. */
+export const operatorProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (!roleSatisfies(ctx.user.role, 'operator')) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Operator access required' });
   }
   return next({ ctx });
 });

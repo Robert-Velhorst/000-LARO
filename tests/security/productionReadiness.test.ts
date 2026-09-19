@@ -505,6 +505,7 @@ describe('production readiness regressions', () => {
     const emailConfig = readFileSync(join(ROOT, 'server/emailConfig.ts'), 'utf8');
     const emailRouter = readFileSync(join(ROOT, 'server/routers/email.ts'), 'utf8');
     const adminRouter = readFileSync(join(ROOT, 'server/routers/admin.ts'), 'utf8');
+    const operatorDiagnostics = readFileSync(join(ROOT, 'server/operatorDiagnostics.ts'), 'utf8');
     const systemRouter = readFileSync(join(ROOT, 'server/_core/systemRouter.ts'), 'utf8');
     expect(server).toContain('!ENV.SERVER_ONLY');
     expect(database.indexOf('migrate(_db')).toBeLessThan(database.lastIndexOf('ensureSupportTicketsTable(sqlite)'));
@@ -560,7 +561,8 @@ describe('production readiness regressions', () => {
     expect(gitignore).toContain('.laro-provider-config.json');
     expect(emailConfig).toContain('required.filter((name) => !present(environment[name]))');
     expect(emailRouter).toContain('resolveOutboundEmailConfiguration()');
-    expect(adminRouter).toContain('email: resolveOutboundEmailConfiguration().configured');
+    expect(adminRouter).toContain('getOperatorDiagnostics()');
+    expect(operatorDiagnostics).toContain('email: resolveOutboundEmailConfiguration().configured');
     expect(systemRouter).toContain('configured: outboundEmail.configured');
     const systemEmail = readFileSync(join(ROOT, 'server/systemEmail.ts'), 'utf8');
     expect(systemEmail).toContain('tls: { minVersion: "TLSv1.2" }');
