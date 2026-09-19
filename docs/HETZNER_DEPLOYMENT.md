@@ -37,7 +37,9 @@ docker compose --env-file .env.hetzner -f docker-compose.hetzner.yml ps
 
 Replace the example address with the real domain. Setup creates fresh private
 secrets in `.env.hetzner` and refuses to overwrite an existing file. Keep a
-protected copy of it: the signing key also protects stored provider tokens.
+protected copy of it: the signing key protects stored provider tokens and the
+independent `LARO_RECOVERY_KEY` decrypts backup envelopes. Escrow that recovery
+credential separately from every exported backup and never paste it into chat.
 Configure the existing proxy to serve the LARO domain over HTTPS and forward
 HTTP and WebSocket traffic to `127.0.0.1:3187`. A proxy running inside Docker
 needs a suitable private network/upstream address instead of its own loopback.
@@ -160,8 +162,9 @@ docker compose --env-file .env.hetzner -f docker-compose.hetzner.yml exec -T lar
 docker compose --env-file .env.hetzner -f docker-compose.hetzner.yml cp laro:/backups ./exported-backups
 ```
 
-Keep a protected off-server copy of the backups and configuration. A backup on
-the same server alone cannot recover from losing that server. Follow
+Keep a protected off-server copy of the encrypted payloads and manifests, and a
+separate protected escrow copy of `LARO_RECOVERY_KEY`. A backup and its only key
+on the same server cannot recover from losing that server. Follow
 `BACKUP_RESTORE.md` and test restoration in an isolated deployment. Before each
 upgrade, record the deployed commit/image, take a backup, and preserve the
 previous image. If a migration prevents rollback, restore the matching backup

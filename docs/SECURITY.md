@@ -57,10 +57,10 @@ Date: 2026-08-22
 - Keep standalone secrets and OAuth credentials outside Git and outside desktop artifacts.
 - Keep `outreach.send.enabled` off until provider, approval, emergency-stop, ownership, and audit checks are verified in the target environment.
 - Run `npm run gate`, `npm run readiness`, `npm audit --omit=dev`, and the Python suite before release.
-- Create and validate a complete backup set before migration. Store its database,
-  manifest, optional desktop-secret sidecar, and local evidence directory
-  together on access-controlled or encrypted media; restore only while writes
-  are stopped. S3-backed deployments require independent bucket recovery.
+- Create and validate a complete version-4 backup before migration. The database,
+  application secrets, and evidence are one authenticated ciphertext; keep its
+  separate recovery credential outside the backup target and restore only while
+  writes are stopped. S3 versioning remains defense in depth.
 - Create and validate the separate Flask recovery set before Flask maintenance.
   Keep its four members together, retain external `SECRET_KEY` and
   `LARO_TOKEN_ENCRYPTION_KEY` values in independent secret escrow, and restore
@@ -73,12 +73,17 @@ Date: 2026-08-22
 ## Rotation
 
 Desktop secrets live in `userData/laro-secrets.json` and derive both session
-signatures and OAuth-token encryption. `npm run db:backup` bundles this file with
-the database when it is present beside `DATABASE_URL`, then records hashes and a
-non-reversible compatibility tag in the backup-set manifest.
+signatures and OAuth-token encryption. `npm run db:backup` puts this file,
+the database, and evidence inside an AES-256-GCM recovery envelope. The separate
+`userData/laro-recovery.key` is never included and must be escrowed separately.
 Deleting it while LARO is stopped intentionally rotates the local keys on next
 launch, invalidates existing sessions, and makes previously encrypted provider
 tokens unusable until the accounts are reconnected.
+
+Rotate the recovery key independently: retain the old escrowed key until every
+set encrypted by it expires, switch to the new key, then create, validate, and
+restore-test a replacement set. Losing the only recovery key is intentionally
+unrecoverable and must not trigger silent replacement while encrypted sets exist.
 
 The Flask token vault follows the same recovery principle. A locally generated
 Fernet key is bundled inside the protected token-vault snapshot. An environment-

@@ -29,6 +29,7 @@ const environment = {
   NODE_ENV: 'production', HOST: dockerImage ? '0.0.0.0' : '127.0.0.1', PORT: String(port),
   SERVER_ONLY: 'true', LARO_SERVE_WEB: 'true', LARO_RUNTIME_MODE: 'local',
   JWT_SECRET: randomBytes(32).toString('hex'), COOKIE_SECRET: randomBytes(32).toString('hex'),
+  LARO_RECOVERY_KEY: randomBytes(32).toString('hex'),
   STANDALONE_SIGNUP_TOKEN: setupCode,
   DATABASE_URL: path.join(temporary, 'laro.sqlite'),
   LOCAL_STORAGE_DIR: path.join(temporary, 'uploads'),

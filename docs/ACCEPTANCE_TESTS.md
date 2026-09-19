@@ -18,7 +18,7 @@ temporary SQLite databases; they do not contact external people or accounts.
 | AC11 | Export and erase user data | acceptance and GDPR suites | Automated |
 | AC12 | Prevent cross-user access | isolation and outreach lifecycle suites | Automated |
 | AC13 | Reject hostile input and unsafe paths | adversarial and file-safety suites | Automated |
-| AC14 | Recover validated SQLite, matching desktop encryption secrets, and referenced local evidence while preserving every previous path | backup-set suite and blocking recovery drill | Automated |
+| AC14 | Decrypt and recover validated SQLite, matching desktop secrets, and referenced evidence with a separately escrowed recovery key while preserving every previous path | backup-envelope suite and blocking recovery drill | Automated |
 | AC15 | Boot the packaged desktop on a free loopback port | clean-profile packaged runtime probe | Automated locally |
 | AC16 | Discover media/organization candidates without sharing case prose | `tests/backend/outreachDirectory.test.ts` | Automated with a controlled public-search response |
 | AC17 | Prevent unreviewed or rejected targets from appearing as active case matches | `tests/backend/outreachDirectory.test.ts` | Automated |

@@ -7,6 +7,10 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Replaced plaintext recovery directories with a version-4 AES-256-GCM envelope
+  protected by an independently escrowed recovery key. Validation now rejects
+  copied or tampered payloads, wrong keys, and retired version-1 through
+  version-3 plaintext sets before restore.
 - Upgraded better-sqlite3 to its N-API release with bundled Windows, macOS, and
   Linux binaries. Cross-platform packaging now preserves the target binary
   instead of compiling or accidentally shipping the host platform module.

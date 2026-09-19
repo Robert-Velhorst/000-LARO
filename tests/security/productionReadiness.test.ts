@@ -647,19 +647,26 @@ describe('production readiness regressions', () => {
   it('fails closed on undurable desktop encryption secrets before opening SQLite', () => {
     const main = readFileSync(join(ROOT, 'src-main/index.ts'), 'utf8');
     const secrets = readFileSync(join(ROOT, 'src-main/desktopSecrets.ts'), 'utf8');
+    const recoveryKey = readFileSync(join(ROOT, 'src-main/desktopRecoveryKey.ts'), 'utf8');
     const secretSetup = main.indexOf('ensureDesktopSecrets(userDataPath)');
+    const recoverySetup = main.indexOf('ensureDesktopRecoveryKey(userDataPath, backupDirectory)');
     const databaseOpen = main.indexOf('initAgentDb()');
 
     expect(secretSetup).toBeGreaterThan(-1);
-    expect(databaseOpen).toBeGreaterThan(secretSetup);
+    expect(recoverySetup).toBeGreaterThan(secretSetup);
+    expect(databaseOpen).toBeGreaterThan(recoverySetup);
     expect(main).toContain("LARO will close without opening the database.");
     expect(secrets).toContain("flag: 'wx'");
     expect(secrets).toContain('fs.renameSync(temporaryPath, secretsPath)');
     expect(secrets).not.toContain('using in-memory values');
+    expect(recoveryKey).toContain("path.join(userDataPath, 'laro-recovery.key')");
+    expect(recoveryKey).toContain('Encrypted backups exist but the desktop recovery key is missing');
+    expect(recoveryKey).toContain("mode: 0o600");
   });
 
   it('binds recovery backups to encryption keys and managed evidence bytes', () => {
     const backupSet = readFileSync(join(ROOT, 'server/backupSet.ts'), 'utf8');
+    const backupEnvelope = readFileSync(join(ROOT, 'server/backupEnvelope.ts'), 'utf8');
     const backupStorage = readFileSync(join(ROOT, 'server/backupStorage.ts'), 'utf8');
     const backupCore = readFileSync(join(ROOT, 'server/backup.ts'), 'utf8');
     const backupCli = readFileSync(join(ROOT, 'scripts/backup.ts'), 'utf8');
@@ -683,12 +690,19 @@ describe('production readiness regressions', () => {
     expect(backupSet).toContain('s3Install.rollback()');
     expect(backupSet).toContain('readBack.contentType !== entry.contentType');
     expect(backupSet).toContain('legacy-external-s3');
+    expect(backupSet).toContain('createBackupBundle');
+    expect(backupSet).toContain('resolveRecoveryKey');
+    expect(backupEnvelope).toContain('aes-256-gcm');
+    expect(backupEnvelope).toContain('crypto.scryptSync');
+    expect(backupEnvelope).toContain('Plaintext backup-set version');
+    expect(backupEnvelope).toContain('Recovery credential does not match this backup set');
     expect(backupCli).toContain('Refusing a database-only restore');
     expect(backupCli).toContain('parsed.allowLegacy');
     expect(backupCli).toContain('parsed.allowMissingStorage');
     expect(recoveryDrill).toContain('backup.createBackupSet');
     expect(recoveryDrill).toContain('backupOfPreviousSecrets');
     expect(recoveryDrill).toContain('backupOfPreviousStorage');
+    expect(recoveryDrill).toContain('Published recovery payload exposes evidence or application secrets');
   });
 
   it('ships coordinated Flask ledger, auth, token-vault, and upload recovery', () => {

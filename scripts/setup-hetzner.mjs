@@ -22,6 +22,8 @@ try {
     'LARO_BIND_PORT=3187',
     `JWT_SECRET=${randomBytes(32).toString('hex')}`,
     `COOKIE_SECRET=${randomBytes(32).toString('hex')}`,
+    '# Independent backup-envelope key. Escrow this separately from exported backups.',
+    `LARO_RECOVERY_KEY=${randomBytes(32).toString('hex')}`,
     '# Enter this setup code in the signup form to create the first owner.',
     '# Enrollment closes automatically after that account has been created.',
     `STANDALONE_SIGNUP_TOKEN=${randomBytes(32).toString('hex')}`,

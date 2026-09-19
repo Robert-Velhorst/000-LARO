@@ -16,8 +16,11 @@ suite('automatic recovery backups', () => {
   let app: TestApp;
   let backupDirectory: string;
   let config: ScheduledBackupConfig;
+  let previousRecoveryKey: string | undefined;
 
   beforeAll(async () => {
+    previousRecoveryKey = process.env.LARO_RECOVERY_KEY;
+    process.env.LARO_RECOVERY_KEY = 'scheduled-backup-test-recovery-key-'.padEnd(64, '6');
     app = await bootTestApp();
     backupDirectory = path.join(app.tmpDir, 'scheduled-backups');
     fs.writeFileSync(path.join(app.tmpDir, 'laro-secrets.json'), JSON.stringify({
@@ -37,6 +40,8 @@ suite('automatic recovery backups', () => {
     const { closeDatabaseForMaintenance } = await import('../../server/db');
     closeDatabaseForMaintenance();
     app?.cleanup();
+    if (previousRecoveryKey === undefined) delete process.env.LARO_RECOVERY_KEY;
+    else process.env.LARO_RECOVERY_KEY = previousRecoveryKey;
   });
 
   it('is opt-in and rejects unsafe policy values', () => {

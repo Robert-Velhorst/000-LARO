@@ -34,10 +34,14 @@ suite('recovery-ready backup sets', () => {
   let app: TestApp;
   let secretsPath: string;
   let storagePath: string;
+  let previousRecoveryKey: string | undefined;
   const managedKey = 'evidence/backup-set/source.txt';
   const originalEvidence = 'original legal evidence bytes';
+  const recoveryKey = 'backup-set-test-recovery-key-'.padEnd(64, '9');
 
   beforeAll(async () => {
+    previousRecoveryKey = process.env.LARO_RECOVERY_KEY;
+    process.env.LARO_RECOVERY_KEY = recoveryKey;
     app = await bootTestApp();
     secretsPath = path.join(app.tmpDir, 'laro-secrets.json');
     storagePath = path.join(app.tmpDir, 'uploads');
@@ -63,9 +67,11 @@ suite('recovery-ready backup sets', () => {
     const { closeDatabaseForMaintenance } = await import('../../server/db');
     closeDatabaseForMaintenance();
     app?.cleanup();
+    if (previousRecoveryKey === undefined) delete process.env.LARO_RECOVERY_KEY;
+    else process.env.LARO_RECOVERY_KEY = previousRecoveryKey;
   });
 
-  it('publishes database, secrets, and complete referenced local evidence', async () => {
+  it('publishes one encrypted payload containing database, secrets, and complete referenced evidence', async () => {
     const destination = path.join(app.tmpDir, 'complete.sqlite');
 
     const result = await createBackupSet(destination, { desktopSecretsPath: secretsPath });
@@ -73,10 +79,17 @@ suite('recovery-ready backup sets', () => {
 
     expect(result.databasePath).toBe(destination);
     expect(result.manifestPath).toBe(backupSetManifestPath(destination));
-    expect(result.secretsPath).toBe(backupSetSecretsPath(destination));
-    expect(result.storagePath).toBe(backupSetStoragePath(destination));
+    expect(result.secretsPath).toBeNull();
+    expect(result.storagePath).toBeNull();
+    expect(fs.existsSync(backupSetSecretsPath(destination))).toBe(false);
+    expect(fs.existsSync(backupSetStoragePath(destination))).toBe(false);
     expect(validation.valid).toBe(true);
     expect(validation.storageCoverage).toBe('complete-local');
+    expect(validation.envelope?.version).toBe(4);
+    expect(validation.envelope?.protection).toMatchObject({
+      algorithm: 'aes-256-gcm',
+      kdf: 'scrypt',
+    });
     expect(validation.manifest?.version).toBe(3);
     expect(validation.manifest?.encryption.mode).toBe('bundled-desktop-secret');
     expect(validation.manifest?.storage).toMatchObject({
@@ -84,10 +97,10 @@ suite('recovery-ready backup sets', () => {
       fileCount: 1,
       totalBytes: Buffer.byteLength(originalEvidence),
     });
-    expect(fs.readFileSync(
-      path.join(backupSetStoragePath(destination), ...managedKey.split('/')),
-      'utf8',
-    )).toBe(originalEvidence);
+    const encrypted = fs.readFileSync(destination);
+    expect(encrypted.subarray(0, 16).toString('utf8')).not.toContain('SQLite format 3');
+    expect(encrypted.includes(Buffer.from(originalEvidence))).toBe(false);
+    expect(encrypted.includes(Buffer.from(desktopSecrets().jwtSecret))).toBe(false);
     expect(validation.tables).toContain('evidence');
     expect(fs.readdirSync(app.tmpDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
     expect(fs.existsSync(`${destination}-wal`)).toBe(false);
@@ -113,40 +126,43 @@ suite('recovery-ready backup sets', () => {
     })).rejects.toThrow('inside the live local evidence directory');
   });
 
-  it('detects database, secret, and evidence tampering before restore', async () => {
+  it('detects payload and authenticated-manifest tampering before restore', async () => {
     const databaseTamper = path.join(app.tmpDir, 'database-tamper.sqlite');
     await createBackupSet(databaseTamper, { desktopSecretsPath: secretsPath });
     fs.appendFileSync(databaseTamper, 'tamper');
     expect(validateBackupSet(databaseTamper)).toMatchObject({
       valid: false,
-      reason: expect.stringContaining('database hash or size'),
+      reason: expect.stringContaining('payload hash or size'),
     });
 
-    const sidecarTamper = path.join(app.tmpDir, 'sidecar-tamper.sqlite');
-    await createBackupSet(sidecarTamper, { desktopSecretsPath: secretsPath });
-    fs.writeFileSync(`${sidecarTamper}-wal`, 'untracked transaction bytes');
-    expect(validateBackupSet(sidecarTamper)).toMatchObject({
+    const manifestTamper = path.join(app.tmpDir, 'manifest-tamper.sqlite');
+    await createBackupSet(manifestTamper, { desktopSecretsPath: secretsPath });
+    const manifestPath = backupSetManifestPath(manifestTamper);
+    const envelope = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    envelope.createdAt = new Date(Date.parse(envelope.createdAt) + 1_000).toISOString();
+    fs.writeFileSync(manifestPath, JSON.stringify(envelope, null, 2));
+    expect(validateBackupSet(manifestTamper)).toMatchObject({
       valid: false,
-      reason: expect.stringContaining('untracked non-empty SQLite WAL sidecar'),
+      reason: expect.stringContaining('authentication failed'),
     });
+  });
 
-    const secretTamper = path.join(app.tmpDir, 'secret-tamper.sqlite');
-    await createBackupSet(secretTamper, { desktopSecretsPath: secretsPath });
-    fs.appendFileSync(backupSetSecretsPath(secretTamper), 'tamper');
-    expect(validateBackupSet(secretTamper)).toMatchObject({
+  it('requires the separate recovery credential and supports key rotation through a new set', async () => {
+    const first = path.join(app.tmpDir, 'recovery-key-a.sqlite');
+    const second = path.join(app.tmpDir, 'recovery-key-b.sqlite');
+    const rotatedKey = 'rotated-backup-recovery-key-'.padEnd(64, '8');
+    await createBackupSet(first, { desktopSecretsPath: secretsPath, recoveryKey });
+    await createBackupSet(second, { desktopSecretsPath: secretsPath, recoveryKey: rotatedKey });
+
+    expect(validateBackupSet(first, { recoveryKey }).valid).toBe(true);
+    expect(validateBackupSet(first, { recoveryKey: rotatedKey })).toMatchObject({
       valid: false,
-      reason: expect.stringContaining('desktop-secret hash'),
+      reason: expect.stringContaining('does not match'),
     });
-
-    const storageTamper = path.join(app.tmpDir, 'storage-tamper.sqlite');
-    await createBackupSet(storageTamper, { desktopSecretsPath: secretsPath });
-    fs.appendFileSync(
-      path.join(backupSetStoragePath(storageTamper), ...managedKey.split('/')),
-      'tamper',
-    );
-    expect(validateBackupSet(storageTamper)).toMatchObject({
+    expect(validateBackupSet(second, { recoveryKey: rotatedKey }).valid).toBe(true);
+    expect(validateBackupSet(second, { recoveryKey })).toMatchObject({
       valid: false,
-      reason: expect.stringContaining('Local evidence inventory'),
+      reason: expect.stringContaining('does not match'),
     });
   });
 
@@ -205,15 +221,8 @@ suite('recovery-ready backup sets', () => {
         bucket: 'laro-evidence-backup-a',
         fileCount: 1,
       });
-      const bundledObject = path.join(backupSetStoragePath(destination), bundledS3File(managedKey));
-      expect(fs.readFileSync(bundledObject, 'utf8')).toBe(originalEvidence);
-      fs.appendFileSync(bundledObject, 'tamper');
-      expect(validateBackupSet(destination, { externalJwtSecret: jwtSecret })).toMatchObject({
-        valid: false,
-        reason: expect.stringContaining('Bundled S3 evidence inventory'),
-      });
-      fs.writeFileSync(bundledObject, originalEvidence);
-      expect(validateBackupSet(destination, { externalJwtSecret: jwtSecret }).valid).toBe(true);
+      expect(fs.existsSync(backupSetStoragePath(destination))).toBe(false);
+      expect(fs.readFileSync(destination).includes(Buffer.from(originalEvidence))).toBe(false);
 
       process.env.AWS_S3_BUCKET = 'laro-evidence-backup-b';
       await expect(restoreBackupSet(destination, {
@@ -263,21 +272,18 @@ suite('recovery-ready backup sets', () => {
     }
   });
 
-  it('labels version-1 sets as missing storage coverage and requires an override', async () => {
+  it('detects and explicitly retires legacy plaintext backup sets', async () => {
     const destination = path.join(app.tmpDir, 'version-one.sqlite');
-    await createBackupSet(destination, { desktopSecretsPath: secretsPath });
+    fs.writeFileSync(destination, 'legacy plaintext placeholder');
     const manifestPath = backupSetManifestPath(destination);
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    manifest.version = 1;
-    delete manifest.storage;
-    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    fs.writeFileSync(manifestPath, JSON.stringify({ format: 'laro-backup-set', version: 1 }, null, 2));
 
     expect(validateBackupSet(destination)).toMatchObject({
-      valid: true,
-      storageCoverage: 'legacy-missing',
+      valid: false,
+      reason: expect.stringContaining('Plaintext backup-set version 1 is retired'),
     });
     await expect(restoreBackupSet(destination, { desktopSecretsPath: secretsPath }))
-      .rejects.toThrow('evidence coverage is not proven');
+      .rejects.toThrow('Plaintext backup-set version 1 is retired');
   });
 
   it('does not publish an S3 backup set when referenced bytes are unavailable', async () => {
@@ -335,10 +341,8 @@ suite('recovery-ready backup sets', () => {
       if (storage?.mode !== 'bundled-s3') throw new Error('Expected bundled S3 storage');
       const hostileObject = storage.objects.find((entry) => entry.key === hostileKey);
       expect(hostileObject?.file).toMatch(/^objects\/[a-f0-9]{64}$/);
-      expect(fs.readFileSync(
-        path.join(backupSetStoragePath(destination), ...hostileObject!.file.split('/')),
-        'utf8',
-      )).toBe('portable bytes');
+      expect(fs.existsSync(backupSetStoragePath(destination))).toBe(false);
+      expect(fs.readFileSync(destination).includes(Buffer.from('portable bytes'))).toBe(false);
     } finally {
       (app.db as any).$client.prepare('DELETE FROM evidence_files WHERE id = ?')
         .run('BACKUP_SET_HOSTILE_KEY');
@@ -347,28 +351,20 @@ suite('recovery-ready backup sets', () => {
     }
   });
 
-  it('labels version-2 S3 inventories as incomplete and blocks restore by default', async () => {
+  it('rejects a downgraded envelope instead of treating it as a legacy set', async () => {
     const destination = path.join(app.tmpDir, 'version-two-s3.sqlite');
     await createBackupSet(destination, { desktopSecretsPath: secretsPath });
     const manifestPath = backupSetManifestPath(destination);
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     manifest.version = 2;
-    manifest.storage = {
-      mode: 'external-s3',
-      bucket: 'legacy-inventory-only',
-      region: 'eu-west-1',
-      managedKeyCount: 1,
-      managedKeysSha256: createHash('sha256').update(JSON.stringify([managedKey])).digest('hex'),
-    };
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-    fs.rmSync(backupSetStoragePath(destination), { recursive: true, force: true });
 
     expect(validateBackupSet(destination)).toMatchObject({
-      valid: true,
-      storageCoverage: 'legacy-external-s3',
+      valid: false,
+      reason: expect.stringContaining('Plaintext backup-set version 2 is retired'),
     });
     await expect(restoreBackupSet(destination, { desktopSecretsPath: secretsPath }))
-      .rejects.toThrow('evidence coverage is not proven');
+      .rejects.toThrow('Plaintext backup-set version 2 is retired');
   });
 
   it('rolls back a newly introduced S3 object when restore verification fails', async () => {
@@ -441,16 +437,12 @@ suite('recovery-ready backup sets', () => {
     }
   });
 
-  it('rechecks the staged database against its manifest before replacing live data', async () => {
+  it('does not expose a directly restorable SQLite database', async () => {
     const destination = path.join(app.tmpDir, 'staged-database.sqlite');
     await createBackupSet(destination, { desktopSecretsPath: secretsPath });
-    const manifest = JSON.parse(fs.readFileSync(backupSetManifestPath(destination), 'utf8'));
     const { restoreDatabase } = await import('../../server/backup');
 
-    expect(() => restoreDatabase(destination, {
-      bytes: manifest.database.bytes,
-      sha256: '0'.repeat(64),
-    })).toThrow('staged database does not match');
+    expect(() => restoreDatabase(destination)).toThrow();
     expect((app.db as any).$client
       .prepare('SELECT id FROM users WHERE id = ?')
       .get('BACKUP_SET_MARKER')).toEqual({ id: 'BACKUP_SET_MARKER' });

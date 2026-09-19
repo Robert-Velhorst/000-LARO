@@ -20,6 +20,21 @@ for (const key of ['JWT_SECRET', 'COOKIE_SECRET']) {
     strong ? 'set and strong' : isProd ? 'missing or weak in production' : 'not set (allowed outside production)');
 }
 
+if (process.env.LARO_BACKUP_DIRECTORY?.trim()) {
+  const recoveryKeyFile = process.env.LARO_RECOVERY_KEY_FILE?.trim();
+  let recoveryKey = process.env.LARO_RECOVERY_KEY;
+  if (!recoveryKey && recoveryKeyFile && existsSync(recoveryKeyFile)) {
+    recoveryKey = readFileSync(recoveryKeyFile, 'utf8').trim();
+  }
+  const recoveryStrong = !!recoveryKey && Buffer.byteLength(recoveryKey, 'utf8') >= 32;
+  check(
+    'BLOCKER',
+    'separate backup recovery credential',
+    recoveryStrong || !isProd,
+    recoveryStrong ? 'configured separately from app secrets' : 'missing or weak while scheduled backups are enabled',
+  );
+}
+
 const demoOff = process.env.DEMO_MODE !== 'true';
 check('BLOCKER', 'demo mode off', demoOff || !isProd, demoOff ? 'demo off' : 'demo must be off in production');
 

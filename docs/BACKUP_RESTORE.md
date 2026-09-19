@@ -6,65 +6,66 @@ complete recovery point. The Electron server path is `DATABASE_URL`; the desktop
 `<userData>/laro-server.sqlite`, `<userData>/laro-secrets.json`, and
 `<userData>/uploads`.
 
-## Electron Backup
+## Encrypted Electron and API Backup
+
+Version 4 publishes exactly two files:
+
+- `<backup>` is one AES-256-GCM ciphertext containing the SQLite snapshot,
+  matching application secrets, complete local or S3 evidence bytes, and the
+  private integrity inventory;
+- `<backup>.manifest.json` contains only the authenticated envelope parameters,
+  ciphertext size/hash, creation time, and a non-secret recovery-key identifier.
+
+The recovery credential is processed through scrypt and is never written into
+the payload, manifest, `laro-secrets.json`, or backup destination. Copying either
+or both published files does not reveal SQLite pages, evidence, provider-token
+keys, original S3 keys, content types, or the private inventory without that
+separate credential.
+
+Create an owner-only key file containing at least 32 random bytes, escrow a copy
+in a password manager or offline protected store, and keep it outside the backup
+target. Do not paste it into Git, tickets, logs, or chat. Then use:
 
 ```powershell
-npm run db:backup
-npm run db:backup -- C:\Backups\laro.sqlite
+npm run db:backup -- C:\Backups\laro.sqlite --recovery-key-file C:\Protected\laro-recovery.key
+npm run db:validate -- C:\Backups\laro.sqlite --recovery-key-file C:\Protected\laro-recovery.key
 ```
 
-The command uses SQLite's online backup API, then requires `PRAGMA quick_check`,
-a clean foreign-key check, and the minimum LARO schema. It publishes a backup set
-only after every member is complete:
+`LARO_RECOVERY_KEY_FILE` provides the same owner-only file contract.
+`LARO_RECOVERY_KEY` is available for a protected container secret environment;
+it must not equal or be derived from `JWT_SECRET`, `COOKIE_SECRET`, or the
+desktop key file. The packaged desktop generates
+`<userData>/laro-recovery.key` with owner-only permissions on first use and uses
+it for unattended backups. The operator must escrow that file separately; it is
+deliberately excluded from every recovery payload.
 
-- `<backup>`: the verified SQLite database;
-- `<backup>.manifest.json`: database size/hash and encryption compatibility;
-- `<backup>.secrets.json`: the matching desktop keys, when a valid
-  `laro-secrets.json` exists beside `DATABASE_URL`;
-- `<backup>.files/`: every database-referenced evidence object from local
-  managed storage or S3, with per-file size and SHA-256 inventory in the
-  manifest; S3 entries also retain their content type.
+Before encryption, LARO uses SQLite's online backup API, checks SQLite and
+foreign-key integrity, binds the matching application secrets, and proves every
+database-referenced local or S3 evidence object. Local storage is rescanned to
+detect changes during the snapshot. S3 reads are bounded to 64 MB per object,
+100,000 objects, and 100 GB total. Unsafe paths, links, missing objects, source
+changes, or hash mismatches abort publication. The envelope manifest is renamed
+last and marks a complete set; existing targets are never intentionally reused.
 
-The manifest is renamed into place last and acts as the completion marker. LARO
-refuses to overwrite an existing set. For a standalone server whose key comes
-from `JWT_SECRET`, no secret sidecar is written; the manifest instead contains a
-non-reversible compatibility tag and validation requires the matching
-environment secret. Use `--desktop-secrets <path>` or
-`LARO_DESKTOP_SECRETS_PATH` when desktop keys are not beside the database. Use
-`--local-storage <path>` or `LARO_LOCAL_STORAGE_PATH` for a nonstandard evidence
-root.
-
-For local storage, LARO copies and hashes every regular file, rejects symbolic
-links and unsafe paths, verifies that every database-managed storage key exists,
-then rescans the source after the SQLite snapshot. Any addition, removal, or byte
-change aborts publication. When `AWS_S3_BUCKET` is configured, LARO reads every
-database-referenced object through the bounded storage reader and writes the raw
-bytes into `<backup>.files/`. Missing objects, objects above 64 MB, more than
-100,000 managed objects, a set above 100 GB, unsafe keys, or any post-copy hash
-mismatch abort publication. The manifest binds the snapshot to its source bucket
-and region. Original S3 keys remain in the manifest while snapshot files use
-portable SHA-256 key names, including on Windows. S3 versioning and replication
-remain recommended defense in depth,
-but version-3 recovery no longer depends on the live object remaining present.
-
-The default destination is a timestamped file under `db-backups` beside the live
-database. Keep every set member together on access-controlled or encrypted
-storage. The desktop sidecar contains secret key material.
+Use `--desktop-secrets`/`LARO_DESKTOP_SECRETS_PATH` and
+`--local-storage`/`LARO_LOCAL_STORAGE_PATH` only for nonstandard live paths.
+Those values identify inputs; their data still goes inside the ciphertext.
 
 ## Automatic Recovery Sets
 
-The packaged desktop and Docker API schedule the same recovery-ready set format
-described above every day at 01:15. At startup, LARO validates existing scheduled
-sets and creates a catch-up set when none is current. It immediately validates a
-new set before counting it as healthy. Runs do not overlap.
+Desktop and Docker schedule the same encrypted format daily at 01:15, validate
+it immediately, and avoid overlapping runs. Docker must receive an independent
+`LARO_RECOVERY_KEY` through its protected environment. Desktop uses its separate
+owner-only recovery-key file. A missing or wrong key makes backup health fail;
+the system never counts an unreadable set as healthy.
 
 Docker mounts `${LARO_BACKUP_HOST_DIRECTORY:-./.laro-backups}` at `/backups`.
-The desktop defaults to `<userData>/backups`. Both defaults are local copies;
-they protect against database corruption and accidental application-state loss,
-but not device loss. For real off-device protection, point the Docker host path
-at a protected synced or network destination and label it accurately:
+Desktop defaults to `<userData>/backups`. These local defaults do not protect
+against device loss. Point the host path to protected synced or network storage
+for an off-device copy and label it accurately:
 
 ```dotenv
+LARO_RECOVERY_KEY=<independent high-entropy secret from protected storage>
 LARO_BACKUP_HOST_DIRECTORY=C:\Users\owner\OneDrive\LARO Backups
 LARO_BACKUP_DESTINATION_KIND=synced
 LARO_BACKUP_RETENTION_COUNT=14
@@ -72,87 +73,53 @@ LARO_BACKUP_RETENTION_DAYS=30
 LARO_BACKUP_MAX_AGE_HOURS=30
 ```
 
-`LARO_BACKUP_RETENTION_COUNT` accepts 2-60 sets and defaults to 14.
-`LARO_BACKUP_RETENTION_DAYS` accepts 1-365 days and defaults to 30. Account and
-case erasure applies to live data immediately; recovery copies expire under
-this bounded policy and must remain access-controlled until then.
-`LARO_BACKUP_MAX_AGE_HOURS` accepts 6-168 hours and defaults to 30. Invalid
-values stop scheduler initialization rather than silently weakening the policy.
-Retention deletes only older files whose exact scheduled filename and complete
-manifest still validate. Unknown, malformed, or corrupt files are preserved for
-operator review.
+Retention accepts 2-60 sets and 1-365 days; freshness accepts 6-168 hours.
+Deletion applies only to older scheduled files whose exact filename and complete
+encrypted set validate. Unknown, malformed, or corrupt files remain for review.
+`/api/health` reports configuration, destination kind, latest verified time,
+age, policy, and failure state without exposing the path or credential.
 
-`/api/health` reports whether automatic backups are configured, the declared
-destination kind, latest verified timestamp, age, freshness threshold, retention
-count, and failure state. It never exposes the destination path or calls `local`
-storage off-device. Manual `db:backup`, validation, restore, and recovery-drill
-commands remain available for release and incident operations.
+## Validate, Restore, and Failure Handling
 
-## Electron Validate
+Validation requires the recovery credential, authenticates the public envelope,
+decrypts into an owner-only temporary directory, then verifies the private
+database/secrets/evidence manifest before reporting success. Restore repeats all
+checks before changing live state, preserves the previous database, secrets, and
+evidence paths, and rolls staged state back if a later operation fails:
 
 ```powershell
-npm run db:validate -- C:\Backups\laro.sqlite
+npm run db:restore -- C:\Backups\laro.sqlite --recovery-key-file C:\Protected\laro-recovery.key
 ```
 
-Validation is read-only. For a backup set it verifies the manifest, filenames,
-sizes, SHA-256 hashes, SQLite integrity, foreign keys, core schema, encryption
-key compatibility, and complete local or bundled-S3 byte coverage. A
-database-only backup is labelled legacy because token and file recovery cannot
-be proven. Version-1 sets and version-2 S3 inventory-only sets can still be
-inspected, but are labelled as missing complete storage coverage.
+For S3, the active bucket and region must match. LARO preserves current objects,
+restores recorded bytes and content types, reads them back, and removes newly
+introduced objects if verification or database replacement fails.
 
-## Electron Restore
+Version 1-3 manifest-based sets stored plaintext application data and are now
+explicitly retired: current validation and restore identify their version and
+refuse them. While the original workspace and keys still exist, create and
+validate a new version-4 set, then quarantine or securely retire the old copy.
+A database-only legacy snapshot remains an exceptional manual recovery source,
+not a complete or confidential LARO backup.
 
-1. Stop incoming API traffic or close LARO Desktop.
-2. Validate the selected backup.
-3. Restore it:
+If the recovery key is lost, encrypted sets are intentionally unrecoverable.
+Do not generate a replacement and expect it to decrypt retained backups. Restore
+the separately escrowed key or create a new set from the still-working original
+workspace. Desktop startup refuses to silently replace a missing key when it can
+see retained encrypted backups.
 
-```powershell
-npm run db:restore -- C:\Backups\laro.sqlite
-```
-
-Restore verifies the complete set before changing live state. For desktop sets it
-stages the bundled keys and evidence directory, preserves all current paths, and
-then restores SQLite. A database failure independently rolls back storage and
-keys; an incomplete rollback is reported as a maintenance error. Previous state
-remains beside each live path with a `.bak-<timestamp>` suffix.
-
-An S3-backed version-3 set restores only when the active bucket and region
-exactly match the manifest. Before writing the backup bytes, LARO snapshots all
-objects referenced by the live database into a timestamped local previous-state
-directory plus its own manifest. Every restored write retains the recorded
-content type and must return the manifest SHA-256. It is then read back from S3;
-bytes, hash, size, and content type must all match before restore continues. A
-failed write, read-back mismatch, or database replacement restores previous
-objects and removes newly introduced keys; incomplete rollback is reported and
-the previous-state directory and manifest are kept for operator recovery.
-
-A legacy database-only restore is blocked by default. After separately proving
-that the correct historical key is installed, an operator can accept that risk
-explicitly:
-
-```powershell
-npm run db:restore -- C:\Backups\legacy.sqlite --allow-legacy
-```
-
-Version-1 sets and version-2 S3 inventory-only sets without complete evidence
-coverage are also blocked. Only after separately restoring and verifying the
-matching evidence may an operator use:
-
-```powershell
-npm run db:restore -- C:\Backups\v1.sqlite --allow-missing-storage
-```
+For planned key rotation, create a new independent key, retain the old escrowed
+key, switch the scheduler, create and restore-test a new set, and keep the old
+key until every old-key set has expired or been securely retired. Never delete
+the old key before its retention window closes.
 
 ## Electron Recovery Proof
 
-```powershell
-npm run recovery:drill
-```
-
-The drill creates an isolated migrated database, key file, and referenced legal
-evidence object; changes all three live states; restores the set; and proves data,
-key, and evidence recovery plus preservation of every previous path. It never
-touches the live profile. `npm run readiness` includes this drill.
+`npm run recovery:drill` creates isolated data, encrypts it, proves the published
+payload contains neither SQLite magic nor known evidence/application-secret
+bytes, destroys live state, restores all members with the separate recovery
+credential, and verifies that every previous path was preserved. It never
+touches the live profile and remains part of the blocking gate.
 
 ## Flask Recovery Set
 

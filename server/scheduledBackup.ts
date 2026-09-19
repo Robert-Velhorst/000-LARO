@@ -38,7 +38,7 @@ interface ValidBackup {
 
 const BACKUP_FILE_PATTERN = /^laro-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9]{8}\.sqlite$/;
 const MAX_BACKUP_CANDIDATES = 120;
-const MAX_BACKUP_DATABASE_BYTES = 20 * 1024 * 1024 * 1024;
+const MAX_ENCRYPTED_BACKUP_BYTES = 121 * 1024 * 1024 * 1024;
 let inFlight: Promise<void> | null = null;
 let latestValidAt: string | null = null;
 let lastError: string | null = null;
@@ -81,7 +81,7 @@ function scheduledCandidates(directory: string): string[] {
 
 function validBackups(config: ScheduledBackupConfig): ValidBackup[] {
   return scheduledCandidates(config.directory).flatMap((databasePath) => {
-    if (fs.statSync(databasePath).size > MAX_BACKUP_DATABASE_BYTES) {
+    if (fs.statSync(databasePath).size > MAX_ENCRYPTED_BACKUP_BYTES) {
       throw new Error('Backup candidate exceeds the validation size limit.');
     }
     const validation = validateBackupSet(databasePath);

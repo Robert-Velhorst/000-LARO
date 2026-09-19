@@ -22,6 +22,7 @@ import { isDesktopDevelopmentMode, resolveDesktopServerPort } from './desktopPor
 import { acquireSingleInstanceLock } from './singleInstance';
 import { installDenyByDefaultPermissions } from './sessionPermissions';
 import { ensureDesktopSecrets } from './desktopSecrets';
+import { ensureDesktopRecoveryKey } from './desktopRecoveryKey';
 import { loadProtectedProviderConfig } from './providerConfig';
 import { getDesktopScannerAuth, getRemoteUploadAuth, createDesktopScannerHeaders } from './scannerAuth';
 import { resolveDesktopConnection } from './remoteConnection';
@@ -338,12 +339,15 @@ if (ownsDesktopProfile) app.whenReady().then(async () => {
   try {
     const secretResult = ensureDesktopSecrets(userDataPath);
     console.log(`[Electron] Desktop secrets ready (${secretResult.source}).`);
+    const backupDirectory = process.env.LARO_BACKUP_DIRECTORY || path.join(userDataPath, 'backups');
+    const recoveryResult = ensureDesktopRecoveryKey(userDataPath, backupDirectory);
+    console.log(`[Electron] Separate recovery key ready (${recoveryResult.source}).`);
   } catch (error) {
     log.error('[Electron] Desktop secret initialization failed:', error);
     dialog.showErrorBox(
       'Security Setup Error',
-      "LARO could not securely load or persist this installation's secrets. " +
-        'Check the user-data permissions or restore laro-secrets.json. LARO will close without opening the database.',
+      "LARO could not securely load or persist this installation's secrets or recovery key. " +
+        'Check the user-data permissions or restore the separately escrowed key files. LARO will close without opening the database.',
     );
     app.quit();
     return;

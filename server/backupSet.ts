@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import {
   backupDatabase,
@@ -21,9 +22,19 @@ import {
   type BundledLocalStorageManifest,
   type BundledS3StorageManifest,
 } from "./backupStorage";
+import {
+  createBackupBundle,
+  decryptBackupBundle,
+  encryptBackupBundle,
+  extractBackupBundle,
+  parseBackupEnvelopeManifest,
+  resolveRecoveryKey,
+  type BackupEnvelopeManifest,
+  type RecoveryCredentialOptions,
+} from "./backupEnvelope";
 
 const FORMAT = "laro-backup-set";
-const VERSION = 3;
+const PLAINTEXT_VERSION = 3;
 const INVENTORY_ONLY_VERSION = 2;
 const LEGACY_VERSION = 1;
 const SECRET_PATTERN = /^[a-f0-9]{64}$/;
@@ -52,16 +63,16 @@ type EncryptionManifestEntry =
       compatibilityTag: string;
     };
 
-export interface BackupSetManifest {
+interface PlaintextBackupSetManifest {
   format: typeof FORMAT;
-  version: typeof VERSION | typeof INVENTORY_ONLY_VERSION | typeof LEGACY_VERSION;
+  version: typeof PLAINTEXT_VERSION | typeof INVENTORY_ONLY_VERSION | typeof LEGACY_VERSION;
   createdAt: string;
   database: DatabaseManifestEntry;
   encryption: EncryptionManifestEntry;
   storage?: BackupStorageManifest;
 }
 
-export interface CreateBackupSetOptions {
+export interface CreateBackupSetOptions extends RecoveryCredentialOptions {
   desktopSecretsPath?: string;
   externalJwtSecret?: string;
   localStoragePath?: string;
@@ -71,14 +82,15 @@ export interface CreateBackupSetOptions {
   ) => Promise<{ body: Buffer; contentType: string }>;
 }
 
-export interface ValidateBackupSetOptions {
+export interface ValidateBackupSetOptions extends RecoveryCredentialOptions {
   externalJwtSecret?: string;
 }
 
 export interface BackupSetValidation {
   valid: boolean;
   reason?: string;
-  manifest?: BackupSetManifest;
+  manifest?: PlaintextBackupSetManifest;
+  envelope?: BackupEnvelopeManifest;
   tables?: string[];
   storageCoverage?: "complete-local" | "complete-s3" | "legacy-external-s3" | "legacy-missing";
 }
@@ -147,7 +159,7 @@ function isHexDigest(value: unknown): value is string {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 }
 
-function parseManifest(manifestPath: string): BackupSetManifest {
+function parseManifest(manifestPath: string): PlaintextBackupSetManifest {
   let parsed: unknown;
   try {
     parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
@@ -160,7 +172,7 @@ function parseManifest(manifestPath: string): BackupSetManifest {
   const encryption = candidate.encryption as Record<string, unknown> | undefined;
   const baseValid =
     candidate.format === FORMAT &&
-    (candidate.version === VERSION || candidate.version === INVENTORY_ONLY_VERSION || candidate.version === LEGACY_VERSION) &&
+    (candidate.version === PLAINTEXT_VERSION || candidate.version === INVENTORY_ONLY_VERSION || candidate.version === LEGACY_VERSION) &&
     typeof candidate.createdAt === "string" &&
     !Number.isNaN(Date.parse(candidate.createdAt)) &&
     database &&
@@ -180,15 +192,15 @@ function parseManifest(manifestPath: string): BackupSetManifest {
     throw new Error("Backup-set encryption mode is unsupported.");
   }
   if (
-    (candidate.version === VERSION || candidate.version === INVENTORY_ONLY_VERSION) &&
+    (candidate.version === PLAINTEXT_VERSION || candidate.version === INVENTORY_ONLY_VERSION) &&
     !isBackupStorageManifest(candidate.storage)
   ) {
     throw new Error("Backup-set storage metadata is invalid.");
   }
-  if (candidate.version === VERSION && (candidate.storage as BackupStorageManifest).mode === "external-s3") {
+  if (candidate.version === PLAINTEXT_VERSION && (candidate.storage as BackupStorageManifest).mode === "external-s3") {
     throw new Error("Version-3 backup sets must bundle S3 evidence bytes.");
   }
-  return parsed as BackupSetManifest;
+  return parsed as PlaintextBackupSetManifest;
 }
 
 function discoverDesktopSecrets(databasePath: string): string | null {
@@ -241,7 +253,7 @@ function removeIfPresent(filePath: string): void {
   }
 }
 
-export async function createBackupSet(
+async function createPlaintextBackupSet(
   destinationPath: string,
   options: CreateBackupSetOptions = {},
 ): Promise<{
@@ -356,9 +368,9 @@ export async function createBackupSet(
       };
     }
 
-    const manifest: BackupSetManifest = {
+    const manifest: PlaintextBackupSetManifest = {
       format: FORMAT,
-      version: VERSION,
+      version: PLAINTEXT_VERSION,
       createdAt: new Date().toISOString(),
       database: databaseEntry,
       encryption,
@@ -404,7 +416,7 @@ export async function createBackupSet(
   }
 }
 
-export function validateBackupSet(
+function validatePlaintextBackupSet(
   databaseBackupPath: string,
   options: ValidateBackupSetOptions = {},
 ): BackupSetValidation {
@@ -636,12 +648,12 @@ async function installS3StorageSnapshot(
   }
 }
 
-export async function restoreBackupSet(
+async function restorePlaintextBackupSet(
   databaseBackupPath: string,
   options: RestoreBackupSetOptions = {},
 ): Promise<RestoreBackupSetResult> {
   const databasePath = path.resolve(databaseBackupPath);
-  const validation = validateBackupSet(databasePath, options);
+  const validation = validatePlaintextBackupSet(databasePath, options);
   if (!validation.valid || !validation.manifest) {
     throw new Error(`Refusing to restore backup set: ${validation.reason || "validation failed"}`);
   }
@@ -763,5 +775,164 @@ export async function restoreBackupSet(
       );
     }
     throw error;
+  }
+}
+
+function encryptedStagingDirectory(prefix: string): string {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  fs.chmodSync(directory, 0o700);
+  return directory;
+}
+
+function assertEncryptedDestinationAvailable(
+  destination: string,
+  options: CreateBackupSetOptions,
+): void {
+  const databasePath = currentDatabasePath();
+  const secretSource = resolveSecretSource(databasePath, options);
+  const externalBucket = options.localStoragePath ? "" : (process.env.AWS_S3_BUCKET || "").trim();
+  const localStorageSource = externalBucket
+    ? null
+    : resolveLocalStoragePath(databasePath, options, secretSource.mode === "desktop");
+  if (
+    localStorageSource &&
+    (destination === path.resolve(localStorageSource) ||
+      destination.startsWith(path.resolve(localStorageSource) + path.sep))
+  ) {
+    throw new Error("Refusing to create a backup set inside the live local evidence directory.");
+  }
+  const finalPaths = [
+    destination,
+    backupSetManifestPath(destination),
+    backupSetSecretsPath(destination),
+    backupSetStoragePath(destination),
+  ];
+  const existing = finalPaths.find((filePath) => fs.existsSync(filePath));
+  if (existing) throw new Error(`Refusing to overwrite an existing backup-set file: ${existing}`);
+}
+
+/**
+ * Create a version-4 recovery set. The published payload is one authenticated
+ * ciphertext; database, evidence, and desktop secrets only exist together
+ * inside that envelope and require a separate recovery credential.
+ */
+export async function createBackupSet(
+  destinationPath: string,
+  options: CreateBackupSetOptions = {},
+): Promise<{
+  databasePath: string;
+  manifestPath: string;
+  secretsPath: null;
+  storagePath: null;
+  bytes: number;
+}> {
+  const destination = path.resolve(destinationPath);
+  const manifestPath = backupSetManifestPath(destination);
+  assertEncryptedDestinationAvailable(destination, options);
+  const recoveryKey = resolveRecoveryKey(options);
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  const staging = encryptedStagingDirectory("laro-encrypted-backup-");
+  const stagedDatabase = path.join(staging, "database.sqlite");
+  const bundlePath = path.join(staging, "recovery.bundle");
+  const nonce = `${process.pid}-${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
+  const temporaryPayload = `${destination}.${nonce}.tmp`;
+  const temporaryManifest = `${manifestPath}.${nonce}.tmp`;
+  let payloadPublished = false;
+  try {
+    const plaintext = await createPlaintextBackupSet(stagedDatabase, options);
+    createBackupBundle(stagedDatabase, bundlePath);
+    const innerManifest = parseManifest(plaintext.manifestPath);
+    // The payload filename participates in authenticated metadata. Encrypt to a
+    // same-basename staging directory so no post-encryption manifest rewrite is
+    // needed when the final destination differs from the temporary path.
+    const namedStagingDirectory = path.join(staging, "published");
+    fs.mkdirSync(namedStagingDirectory, { mode: 0o700 });
+    const namedPayload = path.join(namedStagingDirectory, path.basename(destination));
+    const finalEnvelope = encryptBackupBundle(bundlePath, namedPayload, recoveryKey, innerManifest.createdAt);
+    fs.renameSync(namedPayload, temporaryPayload);
+    fs.writeFileSync(temporaryManifest, JSON.stringify(finalEnvelope, null, 2), {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    fs.renameSync(temporaryPayload, destination);
+    payloadPublished = true;
+    fs.renameSync(temporaryManifest, manifestPath);
+    return {
+      databasePath: destination,
+      manifestPath,
+      secretsPath: null,
+      storagePath: null,
+      bytes: plaintext.bytes,
+    };
+  } catch (error) {
+    removeIfPresent(temporaryPayload);
+    removeIfPresent(temporaryManifest);
+    if (payloadPublished) removeIfPresent(destination);
+    throw error;
+  } finally {
+    removeIfPresent(staging);
+  }
+}
+
+function openEncryptedBackup(
+  databaseBackupPath: string,
+  options: ValidateBackupSetOptions,
+): {
+  staging: string;
+  databasePath: string;
+  envelope: BackupEnvelopeManifest;
+} {
+  const databasePath = path.resolve(databaseBackupPath);
+  const envelope = parseBackupEnvelopeManifest(backupSetManifestPath(databasePath));
+  const recoveryKey = resolveRecoveryKey(options);
+  const staging = encryptedStagingDirectory("laro-decrypted-backup-");
+  const bundlePath = path.join(staging, "recovery.bundle");
+  try {
+    decryptBackupBundle(databasePath, bundlePath, envelope, recoveryKey);
+    const contents = path.join(staging, "contents");
+    const extractedDatabase = extractBackupBundle(bundlePath, contents);
+    fs.rmSync(bundlePath, { force: true });
+    return { staging, databasePath: extractedDatabase, envelope };
+  } catch (error) {
+    removeIfPresent(staging);
+    throw error;
+  }
+}
+
+export function validateBackupSet(
+  databaseBackupPath: string,
+  options: ValidateBackupSetOptions = {},
+): BackupSetValidation {
+  let opened: ReturnType<typeof openEncryptedBackup> | null = null;
+  try {
+    opened = openEncryptedBackup(databaseBackupPath, options);
+    const validation = validatePlaintextBackupSet(opened.databasePath, options);
+    return validation.valid
+      ? { ...validation, envelope: opened.envelope }
+      : validation;
+  } catch (error) {
+    return { valid: false, reason: error instanceof Error ? error.message : String(error) };
+  } finally {
+    if (opened) removeIfPresent(opened.staging);
+  }
+}
+
+export async function restoreBackupSet(
+  databaseBackupPath: string,
+  options: RestoreBackupSetOptions = {},
+): Promise<RestoreBackupSetResult> {
+  let opened: ReturnType<typeof openEncryptedBackup> | null = null;
+  try {
+    opened = openEncryptedBackup(databaseBackupPath, options);
+    return await restorePlaintextBackupSet(opened.databasePath, options);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Refusing to restore backup set:")) throw error;
+    throw new Error(
+      `Refusing to restore encrypted backup set: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  } finally {
+    if (opened) removeIfPresent(opened.staging);
   }
 }
