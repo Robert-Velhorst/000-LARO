@@ -113,7 +113,7 @@ Its JSON output contains counts and evidence identifiers only. For the API-only
 container, run the compiled equivalent:
 
 ```powershell
-docker exec <laro-container> node /app/dist/server/server/liveProviderAcceptance.js --user-id <owner-id> --google-account-id <account-id>
+docker exec <laro-container> /nodejs/bin/node /app/dist/server/server/liveProviderAcceptance.js --user-id <owner-id> --google-account-id <account-id>
 ```
 
 The probe sends no message, creates no case/evidence/outreach record, never

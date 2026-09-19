@@ -57,6 +57,7 @@
     "verify:electron-native": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/verify-electron-sqlite.cjs",
     "verify:packaged:native": "node scripts/verify-packaged-native.mjs",
     "verify:workflow-actions": "node scripts/verify-workflow-action-pins.mjs",
+    "verify:security-workflow": "node scripts/verify-security-workflow.mjs",
     "verify:behavioral-tests": "node scripts/verify-behavioral-test-boundary.mjs",
     "verify:renderer-boundary": "node scripts/verify-renderer-boundary.mjs",
     "release:prepare": "node scripts/prepare-release-acceptance.mjs",

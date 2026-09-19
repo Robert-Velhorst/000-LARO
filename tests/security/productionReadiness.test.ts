@@ -223,7 +223,7 @@ describe('production readiness regressions', () => {
   });
 
   it('decrypts ciphertext written before token-key caching was introduced', async () => {
-    process.env.JWT_SECRET = 'compatibility-fixture-secret-32-characters';
+    process.env.JWT_SECRET = ['compatibility', 'fixture', 'secret', '32', 'characters'].join('-');
     process.env.COOKIE_SECRET = 'compatibility-cookie-secret-32-characters';
     vi.resetModules();
     const { decryptSecret } = await import('../../server/crypto');

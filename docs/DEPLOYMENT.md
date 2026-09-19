@@ -32,10 +32,13 @@ ngrok deployment has been verified, restart it through
 configuration and enforces the persisted public route. Direct Compose starts
 then fail closed if required Google or outbound-mail credentials are absent.
 
-- Healthcheck: the container polls `/api/health`.
+- Healthcheck: the container polls `/api/ready`.
 - Runtime readiness: `npm run readiness:runtime` verifies production secrets,
   SQLite integrity and migrations, evidence-volume read/write, API health and
   version, and fail-closed HAI authentication without shipping development tools.
+- The final production image is distroless and has no shell or npm. Execute its
+  shipped operational scripts with `/nodejs/bin/node`; npm commands remain for
+  the source checkout and build stage only.
 - Configure via `.env` (see `.env.example`). In production the server refuses to
   start without strong `JWT_SECRET`/`COOKIE_SECRET` (Phase 006).
 

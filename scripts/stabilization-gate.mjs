@@ -36,6 +36,7 @@ const BLOCKING = [
   { name: "renderer source boundary", cmd: process.execPath, args: ["scripts/verify-renderer-boundary.mjs"] },
   { name: "lint", cmd: process.execPath, args: [NPM_CLI, "run", "lint", "--silent"] },
   { name: "workflow action pins", cmd: process.execPath, args: ["scripts/verify-workflow-action-pins.mjs"] },
+  { name: "security workflow contract", cmd: process.execPath, args: ["scripts/verify-security-workflow.mjs"] },
   { name: "behavioral acceptance boundary", cmd: process.execPath, args: ["scripts/verify-behavioral-test-boundary.mjs"] },
   { name: "renderer bundle budget", cmd: process.execPath, args: [NPM_CLI, "run", "check:renderer-bundle", "--silent"] },
   { name: "dependency audit", cmd: process.execPath, args: [NPM_CLI, "audit", "--audit-level=moderate"] },

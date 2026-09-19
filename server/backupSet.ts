@@ -849,7 +849,12 @@ export async function createBackupSet(
     fs.mkdirSync(namedStagingDirectory, { mode: 0o700 });
     const namedPayload = path.join(namedStagingDirectory, path.basename(destination));
     const finalEnvelope = encryptBackupBundle(bundlePath, namedPayload, recoveryKey, innerManifest.createdAt);
-    fs.renameSync(namedPayload, temporaryPayload);
+    // The encrypted staging directory normally lives under the OS temp path,
+    // while production backups live on a mounted volume. rename(2) cannot
+    // cross that filesystem boundary, so copy into a destination-local
+    // exclusive temp file and retain atomic rename only for publication.
+    fs.copyFileSync(namedPayload, temporaryPayload, fs.constants.COPYFILE_EXCL);
+    fs.chmodSync(temporaryPayload, 0o600);
     fs.writeFileSync(temporaryManifest, JSON.stringify(finalEnvelope, null, 2), {
       encoding: "utf8",
       flag: "wx",

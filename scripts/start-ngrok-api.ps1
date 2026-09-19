@@ -449,7 +449,7 @@ try {
     if ($localHealth.status -ne "healthy") {
         throw "LARO local health verification did not report healthy."
     }
-    & docker compose -p $ComposeProjectName exec -T laro-server npm run readiness:runtime
+    & docker compose -p $ComposeProjectName exec -T laro-server /nodejs/bin/node scripts/runtime-readiness.mjs
     if ($LASTEXITCODE -ne 0) {
         throw "LARO runtime readiness verification failed."
     }

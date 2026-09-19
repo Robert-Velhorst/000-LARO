@@ -203,6 +203,9 @@ try {
   await page.getByLabel('Email Address').fill('owner@example.test');
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Sign Up', exact: true }).click();
+  const onboarding = page.getByRole('dialog', { name: 'Set up your LARO workspace' });
+  await onboarding.waitFor();
+  await onboarding.getByRole('button', { name: 'Skip setup', exact: true }).click();
   await page.getByRole('button', { name: 'Open account menu' }).waitFor();
   assert.deepEqual(await rpc(page, 'auth.enrollment'), { open: false, requiresSetupCode: true });
   checked('browser owner setup and enrollment closure');
@@ -291,6 +294,7 @@ try {
   assert.deepEqual(report.consoleErrors, [], 'Browser console errors');
   assert.deepEqual(report.failedRequests, [], 'Browser network failures');
   assert.deepEqual(report.badResponses, [], 'Unexpected HTTP errors');
+  assert.doesNotMatch(serverLog, /"event":"worker_failed"/, 'Background worker failure in the production container');
   report.passed = true;
 } catch (error) {
   report.passed = false;

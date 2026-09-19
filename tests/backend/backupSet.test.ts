@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   backupSetManifestPath,
   backupSetSecretsPath,
@@ -108,6 +108,30 @@ suite('recovery-ready backup sets', () => {
     expect(fs.readdirSync(app.tmpDir).filter(
       (name) => name.startsWith('complete.sqlite.') && name.includes('.tmp-'),
     )).toEqual([]);
+  });
+
+  it('publishes through a destination-local temp file when OS temp is another filesystem', async () => {
+    const destination = path.join(app.tmpDir, 'cross-device.sqlite');
+    const nativeRename = fs.renameSync.bind(fs);
+    const rename = vi.spyOn(fs, 'renameSync').mockImplementation((source, target) => {
+      if (path.basename(path.dirname(String(source))) === 'published') {
+        throw Object.assign(new Error('simulated cross-device rename'), { code: 'EXDEV' });
+      }
+      return nativeRename(source, target);
+    });
+
+    try {
+      await expect(createBackupSet(destination, { desktopSecretsPath: secretsPath }))
+        .resolves.toMatchObject({ databasePath: destination });
+      expect(validateBackupSet(destination).valid).toBe(true);
+      expect(rename.mock.calls.some(([source, target]) =>
+        String(source).includes(`${destination}.`) &&
+        String(source).endsWith('.tmp') &&
+        target === destination,
+      )).toBe(true);
+    } finally {
+      rename.mockRestore();
+    }
   });
 
   it('refuses to overwrite any member of an existing backup set', async () => {

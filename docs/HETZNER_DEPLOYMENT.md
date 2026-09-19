@@ -157,10 +157,13 @@ project name after moving the checkout. Never use `down --volumes` on the live
 installation.
 
 ```sh
-docker compose --env-file .env.hetzner -f docker-compose.hetzner.yml exec -T laro npm run db:readiness
-docker compose --env-file .env.hetzner -f docker-compose.hetzner.yml exec -T laro npm run db:backup
+docker compose --env-file .env.hetzner -f docker-compose.hetzner.yml exec -T laro /nodejs/bin/node scripts/run-built-operation.mjs data-readiness
+docker compose --env-file .env.hetzner -f docker-compose.hetzner.yml exec -T laro /nodejs/bin/node scripts/run-built-operation.mjs backup
 docker compose --env-file .env.hetzner -f docker-compose.hetzner.yml cp laro:/backups ./exported-backups
 ```
+
+The production image is distroless and deliberately contains no shell or npm.
+Run compiled maintenance operations through `/nodejs/bin/node` as shown above.
 
 Keep a protected off-server copy of the encrypted payloads and manifests, and a
 separate protected escrow copy of `LARO_RECOVERY_KEY`. A backup and its only key

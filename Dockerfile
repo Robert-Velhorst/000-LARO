@@ -24,12 +24,15 @@ COPY public ./public
 COPY index.html vite.config.mts tailwind.config.js postcss.config.cjs ./
 RUN npm run build:server && npm run build:renderer && npm prune --omit=dev --ignore-scripts
 
-FROM node:22-bookworm-slim AS runtime
+# The runtime intentionally omits npm, a shell, and the OS package manager.
+# Keep the root-compatible variant while existing installations still have
+# root-owned data and backup volumes; changing that ownership is a migration.
+FROM gcr.io/distroless/nodejs22-debian13:latest@sha256:412a5f8fce490bcff01fc2a73ec43bb62071e1b71dd847eeacaae7b8ecef1dc1 AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV SERVER_ONLY=true
 
-COPY package.json package-lock.json ./
+COPY package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist/server ./dist/server
 COPY --from=build /app/dist/renderer ./dist/renderer
@@ -49,6 +52,6 @@ EXPOSE 3000
 
 # Container healthcheck hits the real health endpoint.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD ["/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 
-CMD ["node", "dist/server/server/index.js"]
+CMD ["dist/server/server/index.js"]

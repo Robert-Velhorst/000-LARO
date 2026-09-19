@@ -10,6 +10,7 @@
  * the module fresh via vi.resetModules().
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { randomBytes } from 'node:crypto';
 
 const ORIGINAL = { ...process.env };
 
@@ -45,8 +46,8 @@ describe('Phase 006 — assertSecurityConfig', () => {
 
   it('passes in production when strong secrets are set', async () => {
     process.env.NODE_ENV = 'production';
-    process.env.JWT_SECRET = 'f7c3bc1d808e04732adf679965ccc34ca7ae3441';
-    process.env.COOKIE_SECRET = '9b74c9897bac770ffc029102a200c5de13cb2f31';
+    process.env.JWT_SECRET = randomBytes(32).toString('hex');
+    process.env.COOKIE_SECRET = randomBytes(32).toString('hex');
     const { assertSecurityConfig } = await loadEnv();
     expect(() => assertSecurityConfig()).not.toThrow();
   });

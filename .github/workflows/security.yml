@@ -11,13 +11,14 @@ on:
 
 permissions:
   contents: read
-  security-events: write
-  issues: write
 
 jobs:
   codeql:
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     strategy:
       fail-fast: false
       matrix:
@@ -28,11 +29,14 @@ jobs:
         uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
         with:
           languages: ${{ matrix.language }}
+          queries: security-extended
       - name: Analyze source
         uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
 
   secret-scan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -42,31 +46,50 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_COMMENTS: false
+          GITLEAKS_ENABLE_SUMMARY: false
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: false
+          GITLEAKS_VERSION: 8.24.3
+      - name: Scan the checked-out tree for merge-result secrets
+        run: gitleaks dir --redact --verbose --exit-code 2 .
 
   container-security:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Build the runtime image
-        run: docker build -t laro-security:${{ github.sha }} .
+        run: |
+          mkdir -p out/security
+          docker build --pull -t laro-security:${{ github.sha }} .
       - name: Generate CycloneDX software inventory
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.74.0
           scan-type: image
           image-ref: laro-security:${{ github.sha }}
+          scanners: vuln
           format: cyclonedx
           output: out/security/laro-sbom.cdx.json
+          exit-code: '0'
+          list-all-pkgs: true
+          hide-progress: true
+          timeout: 10m
       - name: Reject unaccepted high and critical vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.74.0
           scan-type: image
           image-ref: laro-security:${{ github.sha }}
+          scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: false
           exit-code: '1'
           format: table
+          hide-progress: true
+          timeout: 10m
+          skip-setup-trivy: true
       - name: Upload the software inventory
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -80,6 +103,9 @@ jobs:
     if: always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')
     needs: [codeql, secret-scan, container-security]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Open or update the security-scan failure record
