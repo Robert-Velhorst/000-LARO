@@ -7,6 +7,11 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Replaced title-only notification writes and split reminder guards with typed,
+  owner-validated notification records. Kinds, context, metadata, registered
+  destinations, and deduplication keys now persist together; writers report
+  created/already-exists/failure explicitly, failed reminders remain retryable,
+  and stale or cross-owner destinations are non-actionable in the renderer.
 - Unified global, case, evidence, timeline, lawyer, suggestion, hybrid, and
   saved-search execution under `literal-search-v1`. LIKE/regex metacharacters
   are now literal, Unicode/case normalization is consistent, malformed rows are

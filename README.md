@@ -187,7 +187,9 @@ private-source accuracy or production-acceptance claim follows from this preview
 - Owned cases with status, urgency, legal areas, parties, identifiers, claims,
   positions, deadlines, obligations, risks, notes, and audit history.
 - Draft autosave and restore during case intake.
-- Search, filtering, saved searches, notifications, and activity history.
+- Search, filtering, saved searches, and activity history. Notifications retain
+  their typed owner-scoped context, use registered internal destinations, and
+  deduplicate atomically; see the [Notification Contract](docs/NOTIFICATION_CONTRACT.md).
 - Literal-safe global and workspace search with one Unicode/case normalization
   contract and explicit category completeness; see
   [Literal Search Contract](docs/SEARCH_CONTRACT.md).

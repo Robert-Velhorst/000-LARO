@@ -706,14 +706,28 @@ export const messageTemplates = sqliteTable("message_templates", {
   createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
 });
 
-export const notifications = sqliteTable("notifications", {
-  id: text("id").primaryKey(),
-  userId: text("userId"),
-  title: text("title"),
-  body: text("body"),
-  read: integer("read", { mode: "boolean" }).default(false),
-  createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
-});
+export const notifications = sqliteTable(
+  "notifications",
+  {
+    id: text("id").primaryKey(),
+    userId: text("userId"),
+    kind: text("kind"),
+    title: text("title"),
+    body: text("body"),
+    actionUrl: text("actionUrl"),
+    metadata: text("metadata"),
+    caseId: text("caseId"),
+    lawyerId: text("lawyerId"),
+    evidenceFileId: text("evidenceFileId"),
+    dedupKey: text("dedupKey"),
+    read: integer("read", { mode: "boolean" }).default(false),
+    createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
+  },
+  (table) => ({
+    userDedupUnique: uniqueIndex("notifications_user_dedup_unique").on(table.userId, table.dedupKey),
+    userCreatedIdx: index("notifications_user_created_idx").on(table.userId, table.createdAt),
+  }),
+);
 
 export type InsertNotification = typeof notifications.$inferInsert;
 

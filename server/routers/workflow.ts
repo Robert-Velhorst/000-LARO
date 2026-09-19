@@ -143,7 +143,7 @@ export const workflowRouter = router({
       db.transaction((tx: any) => {
         for (const draft of prepared) applyDraftStatusInTransaction(tx, ctx.user.id, draft);
       });
-      for (const draft of prepared) await notifyDraftStatus(ctx.user.id, draft.newStatus);
+      for (const draft of prepared) await notifyDraftStatus(ctx.user.id, draft);
       return { success: true as const, approved: prepared.length, sent: false as const };
     }),
 
@@ -245,6 +245,8 @@ export const workflowRouter = router({
 
 interface PreparedDraftStatus {
   outreachId: string;
+  caseId: string;
+  lawyerId: string | null;
   previousStatus: string | null;
   newStatus: string;
   metadata: string | null;
@@ -299,6 +301,8 @@ async function prepareDraftStatus(
 
   return {
     outreachId,
+    caseId: row.caseId,
+    lawyerId: row.lawyerId ?? null,
     previousStatus: row.status ?? null,
     newStatus,
     metadata,
@@ -329,14 +333,19 @@ function applyDraftStatusInTransaction(tx: any, userId: string, draft: PreparedD
   });
 }
 
-async function notifyDraftStatus(userId: string, newStatus: string) {
+async function notifyDraftStatus(userId: string, draft: PreparedDraftStatus) {
   await createNotification({
     userId,
-    title: newStatus === OUTREACH_APPROVED ? "Outreach draft approved" : "Outreach draft rejected",
+    kind: "case_status_change",
+    title: draft.newStatus === OUTREACH_APPROVED ? "Outreach draft approved" : "Outreach draft rejected",
     body:
-      newStatus === OUTREACH_APPROVED
+      draft.newStatus === OUTREACH_APPROVED
         ? "The draft is marked ready to send. No message has been sent yet."
         : "The draft was rejected and will not be sent.",
+    caseId: draft.caseId,
+    lawyerId: draft.lawyerId ?? undefined,
+    metadata: { outreachId: draft.outreachId, status: draft.newStatus },
+    dedupKey: `outreach-draft-status:${draft.outreachId}:${draft.newStatus}`,
   });
 }
 
@@ -347,7 +356,7 @@ async function setDraftStatus(userId: string, outreachId: string, newStatus: str
   db.transaction((tx: any) => {
     applyDraftStatusInTransaction(tx, userId, prepared);
   });
-  await notifyDraftStatus(userId, newStatus);
+  await notifyDraftStatus(userId, prepared);
 
   // Approving marks the draft ready-to-send; actual transmission is a later
   // phase and additionally gated by the `outreach.send.enabled` feature flag

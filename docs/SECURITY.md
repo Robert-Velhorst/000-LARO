@@ -1,6 +1,6 @@
 # Security
 
-Date: 2026-09-19
+Date: 2026-09-20
 
 ## Implemented controls
 
@@ -14,6 +14,10 @@ Date: 2026-09-19
   in Electron main; the session is re-resolved for every upload batch so logout
   stops subsequent uploads.
 - Case-scoped operations use authenticated ownership checks. Lawyer creation is admin-only; lawyer reads, local messages, transactional email tests, and agent controls require authentication.
+- Notification writes validate the owner plus case/evidence/lawyer relationship
+  and derive an internal destination from a closed registry. Reads revalidate
+  those relationships in batches and suppress action URLs, metadata, and entity
+  IDs for forged, cross-owner, or deleted destinations.
 - KvK, Rechtspraak, and KOOP public-source research verifies case ownership
   before provider contact. Every attempt must persist a mandatory audit receipt,
   but that history contains only bounded metadata (source, normalized query,

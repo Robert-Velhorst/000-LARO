@@ -64,6 +64,12 @@ It renders a complete no-result message only when every requested category
 completed; partial and failed responses keep successful results visible and show
 a retryable incomplete-state notice at desktop and mobile widths.
 
+The notification popover renders the persisted kind rather than a fabricated
+system type. `View` is shown only for an owner-validated destination registered
+in `shared/notifications.ts`; deleted or cross-owner context is labelled
+unavailable and cannot navigate. Desktop/mobile browser coverage also checks
+the named dialog, typed icon semantics, HTTP status, console, and network state.
+
 ## Scanner boundary
 
 - The scanner reuses the authenticated main-window session; it never creates an

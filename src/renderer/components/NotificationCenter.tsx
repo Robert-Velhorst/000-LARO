@@ -41,6 +41,7 @@ export interface Notification {
   caseId?: string | null;
   lawyerId?: string | null;
   evidenceFileId?: string | null;
+  destinationStatus?: "available" | "unavailable" | "not_applicable";
 }
 
 export default function NotificationCenter() {
@@ -156,7 +157,7 @@ export default function NotificationCenter() {
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[calc(100vw-1rem)] p-0 sm:w-96" align="end">
+      <PopoverContent aria-label="Notifications" className="w-[calc(100vw-1rem)] p-0 sm:w-96" align="end">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div>
@@ -193,14 +194,21 @@ export default function NotificationCenter() {
                 return (
                   <div
                     key={notification.id}
+                    data-notification-id={notification.id}
+                    data-notification-kind={notification.type}
+                    data-notification-destination={notification.destinationStatus}
                     className={`p-4 hover:bg-accent/50 transition-colors ${
                       !notification.isRead ? "bg-accent/20" : ""
                     }`}
                   >
                     <div className="flex gap-3">
                       {/* Icon */}
-                      <div className={`flex-shrink-0 w-10 h-10 rounded-full ${bg} flex items-center justify-center`}>
-                        <Icon className={`w-5 h-5 ${color}`} />
+                      <div
+                        role="img"
+                        aria-label={`${notification.type.replaceAll("_", " ")} notification`}
+                        className={`flex-shrink-0 w-10 h-10 rounded-full ${bg} flex items-center justify-center`}
+                      >
+                        <Icon aria-hidden="true" className={`w-5 h-5 ${color}`} />
                       </div>
 
                       {/* Content */}
@@ -229,6 +237,7 @@ export default function NotificationCenter() {
                                 className="h-auto p-0 text-xs"
                                 onClick={() => {
                                   if (notification.actionUrl?.startsWith("/") && !notification.actionUrl.startsWith("//")) {
+                                    if (!notification.isRead) handleMarkAsRead(notification.id);
                                     navigate(notification.actionUrl);
                                   }
                                   setOpen(false);
@@ -237,6 +246,9 @@ export default function NotificationCenter() {
                                 View
                               </Button>
                             </>
+                          )}
+                          {notification.destinationStatus === "unavailable" && (
+                            <span className="text-xs text-muted-foreground">Destination unavailable</span>
                           )}
                         </div>
                       </div>
@@ -267,4 +279,3 @@ export default function NotificationCenter() {
     </Popover>
   );
 }
-

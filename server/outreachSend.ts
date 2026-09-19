@@ -521,8 +521,13 @@ export async function recordOutreachResponse(
   });
   await createNotification({
     userId,
+    kind: "lawyer_response",
     title: response === "Interested" ? "Lawyer is interested" : response === "Declined" ? "Lawyer declined" : "No lawyer response",
     body: notes?.trim() || `Outreach status changed to ${response}.`,
+    caseId: row.caseId!,
+    lawyerId: row.lawyerId!,
+    metadata: { outreachId, response },
+    dedupKey: `outreach-response:${outreachId}:${response}`,
   });
 
   return { outreachId, status: response, caseId: row.caseId };

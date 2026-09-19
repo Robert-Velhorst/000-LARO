@@ -222,6 +222,8 @@ function ensureIndexes(sqlite: InstanceType<typeof Database>) {
     `CREATE INDEX IF NOT EXISTS evidence_items_userId_idx ON evidence_items(userId);`,
     `CREATE INDEX IF NOT EXISTS unified_messages_userId_idx ON unified_messages(userId);`,
     `CREATE INDEX IF NOT EXISTS notifications_userId_idx ON notifications(userId);`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS notifications_user_dedup_unique ON notifications(userId, dedupKey);`,
+    `CREATE INDEX IF NOT EXISTS notifications_user_created_idx ON notifications(userId, createdAt);`,
     `CREATE INDEX IF NOT EXISTS audit_logs_userId_idx ON audit_logs(userId);`,
     `CREATE INDEX IF NOT EXISTS audit_logs_createdAt_idx ON audit_logs(createdAt);`,
   ];

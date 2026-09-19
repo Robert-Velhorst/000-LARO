@@ -28,6 +28,9 @@ original phase-074 snapshot are mounted and typed.
   enumerates every created, refreshed, reviewed, skipped, and pending target and
   reports provider/result bounds as partial.
 - Draft preparation, approval, explicit delivery, replies, and outreach analytics.
+- Typed owner-scoped notifications with registered case, evidence, and lawyer
+  destinations. The canonical writer returns durable created/already-exists/
+  failure outcomes, and reminder deduplication is the notification row itself.
 - Gmail/Drive OAuth and evidence collection when configured, including a
   versioned shared-grant disconnect review and one confirmed cleanup operation.
 - Case-owned KvK, Rechtspraak, and KOOP research with durable metadata-only
@@ -62,3 +65,6 @@ original phase-074 snapshot are mounted and typed.
 - Gap-analysis reads revalidate the saved input revision. Evidence create,
   delete, same-source revision, timeline correction, concurrent input change,
   and failed recomputation regressions keep old derived results hidden.
+- Notification reads batch-revalidate current owner context. Cross-owner,
+  deleted, or non-registered destinations expose no action or entity identity;
+  concurrent and failed reminder writes are covered behaviorally.

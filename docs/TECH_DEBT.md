@@ -38,6 +38,7 @@ Updated: 2026-09-20
 | D32 | Public-record searches were not case-owned and provider failures could resemble zero-result history | - | Resolved with pre-fetch ownership checks, metadata-only mandatory receipts, explicit completeness states, null failure counts, and backend/browser regressions across KvK, Rechtspraak, and KOOP |
 | D33 | Gap-analysis results could outlive the evidence, source analysis, case, or timeline revision that produced them | - | Resolved with exact input manifests and revision checks, explicit fresh/stale/running/failed/unavailable states, hidden non-current derived output, recomputation gates, and backend/browser regressions |
 | D34 | Maintained text searches interpreted punctuation and category failure inconsistently | - | Resolved with the documented `literal-search-v1` normalization/escaping contract, per-category completeness, malformed-row isolation, truthful renderer states, and backend/browser regressions |
+| D35 | Notification writes discarded type/context and could mark reminder deduplication complete after a failed insert | - | Resolved with typed owner-validated records, registered destinations, explicit durable outcomes, one atomic row-level deduplication authority, stale-reference suppression, and backend/browser regressions |
 
 D10 is operationally contained without rewriting installed databases. A native
 foreign-key conversion remains migration work, not a release blocker while the

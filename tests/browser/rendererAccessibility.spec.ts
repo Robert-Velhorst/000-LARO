@@ -2390,3 +2390,140 @@ test("coverage review hides derived results and distinguishes stale, running, fa
   expect(pageErrors).toEqual([]);
   expect(requestFailures).toEqual([]);
 });
+
+test("typed notifications render safe actions and suppress unavailable destinations", async ({ page }, testInfo) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badResponses: string[] = [];
+  page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("requestfailed", (request) => {
+    const failure = request.failure()?.errorText ?? "unknown failure";
+    if (!failure.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
+  });
+  page.on("response", (response) => {
+    if (response.status() >= 400) badResponses.push(`${response.status()} ${response.url()}`);
+  });
+  await page.addInitScript(() => localStorage.setItem("laro.locale", "en"));
+
+  const email = await createAccount(page);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  const suffix = randomUUID();
+  const caseId = `A11Y_NOTIFICATION_CASE_${suffix}`;
+  const otherUserId = `A11Y_NOTIFICATION_OTHER_${suffix}`;
+  const foreignCaseId = `A11Y_NOTIFICATION_FOREIGN_${suffix}`;
+  const lawyerId = `A11Y_NOTIFICATION_LAWYER_${suffix}`;
+  const evidenceId = `A11Y_NOTIFICATION_EVIDENCE_${suffix}`;
+  try {
+    const owner = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    const now = Math.floor(Date.now() / 1000);
+    database.prepare("INSERT INTO users (id, email, name, role, createdAt) VALUES (?, ?, 'Other notification owner', 'user', ?)")
+      .run(otherUserId, `${otherUserId.toLowerCase()}@example.test`, now);
+    database.prepare(
+      `INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, createdAt, updatedAt)
+       VALUES (?, ?, 'Notification browser case', 'Employment', 'Typed notification browser fixture', 'Medium', 'Matching', ?, ?)`,
+    ).run(caseId, owner.id, now, now);
+    database.prepare(
+      `INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, createdAt, updatedAt)
+       VALUES (?, ?, 'Foreign notification case', 'Employment', 'Must not be exposed', 'Medium', 'Matching', ?, ?)`,
+    ).run(foreignCaseId, otherUserId, now, now);
+    database.prepare("INSERT INTO lawyers (id, name, email, createdAt, updatedAt) VALUES (?, 'Notification Lawyer', ?, ?, ?)")
+      .run(lawyerId, `${lawyerId.toLowerCase()}@law.example.test`, now, now);
+    database.prepare(
+      "INSERT INTO outreach_status (id, caseId, lawyerId, status, createdAt, updatedAt) VALUES (?, ?, ?, 'Interested', ?, ?)",
+    ).run(`A11Y_NOTIFICATION_OUTREACH_${suffix}`, caseId, lawyerId, now, now);
+    database.prepare(
+      `INSERT INTO evidence (id, caseId, userId, type, source, title, relevant, createdAt, updatedAt)
+       VALUES (?, ?, ?, 'document', 'manual', 'Notification evidence', 1, ?, ?)`,
+    ).run(evidenceId, caseId, owner.id, now, now);
+
+    const insertNotification = database.prepare(`
+      INSERT INTO notifications
+        (id, userId, kind, title, body, actionUrl, metadata, caseId, lawyerId, evidenceFileId, dedupKey, read, createdAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+    `);
+    insertNotification.run(
+      `A11Y_NOTIFICATION_RESPONSE_${suffix}`,
+      owner.id,
+      "lawyer_response",
+      "Browser lawyer response",
+      "The lawyer response is ready.",
+      `/cases?case=${encodeURIComponent(caseId)}`,
+      JSON.stringify({ response: "Interested" }),
+      caseId,
+      lawyerId,
+      null,
+      `browser-lawyer-response:${suffix}`,
+      now + 3,
+    );
+    insertNotification.run(
+      `A11Y_NOTIFICATION_EVIDENCE_ROW_${suffix}`,
+      owner.id,
+      "evidence_uploaded",
+      "Browser evidence uploaded",
+      "The evidence is available.",
+      `/evidence?view=items&case=${encodeURIComponent(caseId)}&evidence=${encodeURIComponent(evidenceId)}`,
+      JSON.stringify({ source: "manual" }),
+      caseId,
+      null,
+      evidenceId,
+      `browser-evidence:${suffix}`,
+      now + 2,
+    );
+    insertNotification.run(
+      `A11Y_NOTIFICATION_UNAVAILABLE_${suffix}`,
+      owner.id,
+      "case_status_change",
+      "Unavailable foreign destination",
+      "This destination must stay disabled.",
+      `/cases?case=${encodeURIComponent(foreignCaseId)}`,
+      JSON.stringify({ confidential: true }),
+      foreignCaseId,
+      null,
+      null,
+      `browser-unavailable:${suffix}`,
+      now + 1,
+    );
+  } finally {
+    database.close();
+  }
+
+  const reloadResponse = await page.reload({ waitUntil: "networkidle" });
+  expect(reloadResponse?.status()).toBe(200);
+  const trigger = page.getByRole("button", { name: /Open notifications/ });
+
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await trigger.click();
+    const popover = page.locator('[data-slot="popover-content"]');
+    await expect(popover).toBeVisible();
+    const lawyerResponse = popover.locator('[data-notification-kind="lawyer_response"]');
+    const evidenceUploaded = popover.locator('[data-notification-kind="evidence_uploaded"]');
+    const unavailable = popover.locator('[data-notification-id^="A11Y_NOTIFICATION_UNAVAILABLE_"]');
+    await expect(lawyerResponse.getByRole("img", { name: "lawyer response notification" })).toBeVisible();
+    await expect(evidenceUploaded.getByRole("img", { name: "evidence uploaded notification" })).toBeVisible();
+    await expect(lawyerResponse).toHaveAttribute("data-notification-destination", "available");
+    await expect(evidenceUploaded).toHaveAttribute("data-notification-destination", "available");
+    await expect(unavailable).toHaveAttribute("data-notification-destination", "unavailable");
+    await expect(unavailable.getByText("Destination unavailable", { exact: true })).toBeVisible();
+    await expect(unavailable.getByRole("button", { name: "View", exact: true })).toHaveCount(0);
+    const audit = await new AxeBuilder({ page }).include('[data-slot="popover-content"]').analyze();
+    expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`typed-notifications-${viewport.name}.png`), fullPage: false });
+    await page.keyboard.press("Escape");
+    await expect(popover).toBeHidden();
+  }
+
+  await page.setViewportSize(VIEWPORTS[0]);
+  await trigger.click();
+  const lawyerResponse = page.locator('[data-notification-kind="lawyer_response"]');
+  await lawyerResponse.getByRole("button", { name: "View", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/cases\\?case=${caseId}$`));
+  await expect(page.getByRole("dialog")).toBeVisible();
+
+  expect(badResponses).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+});

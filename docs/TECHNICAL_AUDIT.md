@@ -76,6 +76,10 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
   separate state transitions; delivery is disabled by default and fail-closed.
 - Case and outreach transitions claim their exact prior state. Response and case
   outcome changes are transactional, so stale or invalid requests roll back.
+- Notifications retain typed owner-scoped context and only expose registered
+  internal destinations while referenced records remain valid. Reminder
+  deduplication commits in the notification row, so failed persistence remains
+  retryable and cannot be reported as created.
 - Required audit evidence is written in the same transaction as consequential
   case and outreach changes. Audit failure rolls back the state change, and
   multi-draft approval either commits every draft and audit row or commits none.

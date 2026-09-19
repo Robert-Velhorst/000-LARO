@@ -191,8 +191,12 @@ export const casesRouter = router({
 
       await createNotification({ // Phase 027
         userId,
+        kind: "case_status_change",
         title: `Case created for ${input.clientName}`,
         body: `Classified as: ${classification.areas.join(", ")}. Review matched lawyers next.`,
+        caseId,
+        metadata: { status: "Matching", legalAreas: classification.areas },
+        dedupKey: `case-created:${caseId}`,
       });
       emitRealtimeDataChange(userId, { scope: "case", caseId });
 

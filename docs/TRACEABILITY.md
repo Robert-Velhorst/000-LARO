@@ -34,7 +34,7 @@ None — every artifact cited in the matrix exists. ✅
 | 024 | Templates, presets, defaults | Implemented | ✅ `server/routers/messageTemplates.ts` |
 | 025 | AI/provider abstraction & deterministic fallback | Implemented | ✅ `server/classification.ts` |
 | 026 | Human review queue & approval gates | Implemented | ✅ `server/routers/workflow.ts` |
-| 027 | Notifications & reminders | Implemented | ✅ `server/reminders.ts` |
+| 027 | Notifications & reminders | Implemented | ✅ `server/notifications.ts`<br>✅ `shared/notifications.ts`<br>✅ `server/reminders.ts`<br>✅ `tests/backend/notificationDurability.test.ts` |
 | 028 | Privacy controls & data deletion | Implemented | ✅ `server/gdpr.ts` |
 | 029 | Security headers & web security | Implemented | ✅ `server/index.ts` |
 | 030 | Secrets management & credential rotation | Implemented | ✅ `server/crypto.ts` |
