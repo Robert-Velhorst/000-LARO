@@ -1,6 +1,28 @@
 # Roadmap and External Gates
 
-Current as of 2026-08-14.
+Current as of 2026-09-19.
+
+## Third-Round Candidate
+
+Implementation commit `6011f45e03145b85820ed8cb94e57a3a94ed5ec8`
+passes the complete local verification required by issue #178. The evidence,
+negative-path mapping, maintained-source audit, container ID, and Windows
+artifact checksum are in
+[`THIRD_ROUND_VERIFICATION.md`](THIRD_ROUND_VERIFICATION.md).
+
+The next delivery gates are deliberately separate:
+
+1. Push the candidate and obtain the protected GitHub CI/Windows results.
+2. Review and merge the candidate before closing the corresponding GitHub
+   issues; an open issue is not treated as closed merely because its local code
+   is present.
+3. Run the portable artifact on native Windows and confirm startup plus a
+   scanned-PDF OCR path.
+4. Deploy only after the owner supplies the current Hetzner, DNS, TLS,
+   persistence, secret, backup, and existing-data migration inputs; then repeat
+   browser and desktop acceptance against that public target.
+5. Address issue #179's acceptance-test path audit without weakening the #178
+   negative-path coverage.
 
 ## Completed Production Path
 
@@ -50,16 +72,17 @@ must not be represented as operational.
 
 ## Engineering Follow-Up
 
-1. Expand declared foreign keys after installed-data reconciliation; the
+1. Complete the external candidate gates listed above.
+2. Expand declared foreign keys after installed-data reconciliation; the
    production data-readiness gate now detects violations before migration.
-2. Complete renderer NL/EN string migration.
-3. Add platform-normalized pixel baselines for high-risk interaction states and
+3. Complete renderer NL/EN string migration.
+4. Add platform-normalized pixel baselines for high-risk interaction states and
    extend focus-order coverage into complex route-specific case and evidence
    editors; shared-shell keyboard behavior is now blocking.
-4. Normalize historical text-backed numeric fields through a reviewed,
+5. Normalize historical text-backed numeric fields through a reviewed,
    backup-tested migration; the production readiness gate now detects malformed,
    unsafe, or internally inconsistent count data before conversion.
-5. Continue dependency review while preserving the enforced renderer bundle budgets.
+6. Continue dependency review while preserving the enforced renderer bundle budgets.
 
 These items improve maintainability and coverage; they do not replace the
 target-account acceptance required for any enabled external provider.

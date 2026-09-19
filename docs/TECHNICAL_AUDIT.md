@@ -1,9 +1,15 @@
 # Current Technical Audit
 
-Date: 2026-08-22
-Branch: `main` (updates proposed through pull requests)
-Baseline commit: `bcb992c358351a169c99fd9ee5d29c9bc2b63bd4`
+Date: 2026-09-19
+Branch: `milestone3/remediate-roadmap` (local candidate; not merged)
+Baseline implementation commit: `6011f45e03145b85820ed8cb94e57a3a94ed5ec8`
 Specification: `000-LARO__Giant_Codex_Goal_Prompt.pdf`, 124 pages, phases 000-115
+
+The reconciled third-round verification for issues #154-#178 is
+[`THIRD_ROUND_VERIFICATION.md`](THIRD_ROUND_VERIFICATION.md). It records the
+exact local commands, negative-path proofs, maintained-source search, Docker
+image, Windows artifact, and external boundaries. GitHub issue state, protected
+CI, native Windows execution, and deployment acceptance remain separate.
 
 ## Scope and method
 
@@ -14,8 +20,9 @@ This is the current audit required by the specification appendix. The earlier
 The current pass inspected all phase titles and deliverables, the release-candidate tree,
 runtime entry points, router composition, database migrations, provider gates,
 renderer routes, tests, CI workflows, release documentation, and generated
-traceability. The candidate contains 719 tracked files: 433 TypeScript/TSX
-files, 122 tracked test files, and 17 tracked migration artifacts.
+traceability. At implementation commit `6011f45`, the candidate contains 949
+tracked files: 577 TypeScript/TSX files, 189 tracked test files, and 32 tracked
+migration artifacts.
 
 ## Current architecture
 
@@ -74,9 +81,11 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
   multi-draft approval either commits every draft and audit row or commits none.
 - Evidence analysis distinguishes source observations from inference and keeps
   document/source identifiers available to the user.
-- Backup sets bind the database, encryption-key compatibility, and managed
-  evidence bytes. Version-3 S3 sets preserve original keys and content types,
-  verify restored objects, and roll back remote state after failed recovery.
+- Version-4 backup sets place the database, desktop secrets, and bounded managed
+  evidence bytes in one authenticated encrypted payload whose recovery key is
+  separate from application secrets. S3 members preserve original keys and
+  content types; restore verifies writes and rolls back remote state after
+  failure. Plaintext version-1 through version-3 sets are rejected.
 - `/api/live`, `/api/ready`, and `/api/health` distinguish process, dependency,
   and application health. Production readiness additionally checks data
   integrity, provider state, and release acceptance.
@@ -104,12 +113,14 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
 | Credential-bearing Trello and Telegram reads used query-string transports | High | Converted every token-bearing procedure to a POST-backed mutation, removed dormant unsigned/non-expiring Trello OAuth generation, bounded Telegram token/file inputs, and added provider deadlines and response-size ceilings |
 | Provider identity normalization could duplicate historical mixed-case accounts | High | Provider lookup now occurs case-insensitively inside the credential/audit transaction; startup reconciliation preserves child references, normalizes identities, and creates a unique owner/provider/email index; concurrent reconnect tests converge on one row |
 | Trello and Telegram token operations lacked aggregate admission controls | High | Added persistent per-user/provider request quotas and shared bounded-read admission around provider calls; the 31st request is rejected before provider contact |
+| Linux cross-packaging omitted the Windows canvas binary used for scanned-PDF OCR | High | `dist:win` and Store builds stage the exact pinned Windows canvas package; CI repeats the step and packaged-native verification requires x64 PE SQLite and canvas bindings |
 
 ## Verdict
 
-The tracked application is an operational release candidate, not the prototype
+The tracked application is a locally verified release candidate, not the prototype
 described by the historical audit. Repository-controlled phase requirements are
-implemented and now have artifact-level traceability. A production release must
+implemented and now have artifact-level traceability. The candidate is not yet
+merged or deployed. A production release must
 still distinguish code readiness from owner-controlled live-provider acceptance:
 valid Google consent and a reviewed real-send acceptance record cannot be
 manufactured by tests or documentation.

@@ -1,5 +1,28 @@
 # Final Verification Report
 
+## 2026-09-19 third-round addendum
+
+The current local milestone candidate is
+`6011f45e03145b85820ed8cb94e57a3a94ed5ec8` on
+`milestone3/remediate-roadmap`. Its third-round trust/resource verification is
+recorded in [`THIRD_ROUND_VERIFICATION.md`](THIRD_ROUND_VERIFICATION.md).
+
+On that candidate, all blocking gates pass: 174 test files passed and one was
+skipped; 1,050 tests passed and two were skipped. The exact-commit browser run
+passed 27/27 scenarios in stable Chrome, Python discovery passed 223/223 tests,
+fresh-database readiness installed and validated 255 relationship guards, the
+encrypted recovery drill restored every member, both npm audits reported zero
+vulnerabilities, and the Node 22 Docker image built successfully.
+
+The Windows portable artifact now validates both the x64 PE SQLite binding and
+the x64 PE canvas binding required for scanned-PDF OCR. Its SHA-256 is
+`c11ebeef4efd5536380ecc2bb284ba506f5cd1380432aa9667fefe16b2dc401e`.
+
+This addendum is repository-local evidence. It does not replace the dated
+protected-`main`, live-provider, or deployment evidence below, and it does not
+claim a push, merge, native Windows launch, Hetzner deployment, or new public
+production acceptance.
+
 Date: 2026-08-14
 Verification target: protected `main` merge commit
 `1e46aac7c85ef5510d2d4ace4c3239c4b232d76d`.
