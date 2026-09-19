@@ -13,7 +13,8 @@ const source = `${party}\n\n${situation}`;
 const analysis = { coverage: { complete: true }, extractionConfidence: null, summary: source,
   citations: [{ id: "src-1", quote: party }, { id: "src-2", quote: situation }] } as DocumentAnalysisResult;
 const preferences: WorkflowPreferences = { analysisMode: "local", analysisProvider: "ollama", autoAnalyzeImports: true,
-  autoOrganizeDocuments: true, shareRawDocumentContent: false, outreachReviewMode: "each", messageApprovalMode: "each" };
+  autoOrganizeDocuments: true, shareRawDocumentContent: false, externalDocumentSharingConsent: null,
+  outreachReviewMode: "each", messageApprovalMode: "each" };
 const cases = [{ id: "owned-housing", title: "Lekkage", summary: `${party} ${situation}`, metadata: null },
   { id: "owned-benefits", title: "Bijstand", summary: "Jan heeft bijstand aangevraagd. De gemeente heeft de aanvraag afgewezen.", metadata: null }];
 const run = () => discoverDossier({ ownerId: "DOSSIER_PASSAGE_TEST", analysis, sourceText: source, cases, preferences });

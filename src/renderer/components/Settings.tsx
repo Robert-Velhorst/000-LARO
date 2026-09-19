@@ -26,13 +26,17 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { EXTERNAL_DOCUMENT_SHARING_SCOPE } from "../../../shared/workflowConsent";
 
 type SettingsSection = "workflow" | "email" | "sources" | "hai" | "security";
+type ExternalAnalysisProvider = "forge" | "openai" | "anthropic" | "google" | "deepseek" | "groq" | "together";
 
 const NAV_ITEMS: Array<{
   id: SettingsSection;
@@ -99,6 +103,9 @@ export default function Settings() {
   const [haiTokenName, setHaiTokenName] = useState("HAI connected source");
   const [haiTokenDays, setHaiTokenDays] = useState("90");
   const [revealedHaiToken, setRevealedHaiToken] = useState<string | null>(null);
+  const [consentDialogOpen, setConsentDialogOpen] = useState(false);
+  const [acknowledgeFullDocumentContent, setAcknowledgeFullDocumentContent] = useState(false);
+  const [acknowledgeAutomaticImports, setAcknowledgeAutomaticImports] = useState(false);
   const utils = trpc.useUtils();
 
   const providerQuery = trpc.email.getProviderInfo.useQuery(undefined, { enabled: section === "email" });
@@ -106,6 +113,8 @@ export default function Settings() {
   const workflowPreferences = trpc.userPreferences.workflow.useQuery();
   const analysisCapabilities = trpc.documentAnalysis.capabilities.useQuery();
   const updateWorkflowMutation = trpc.userPreferences.updateWorkflow.useMutation();
+  const grantExternalDocumentSharingMutation = trpc.userPreferences.grantExternalDocumentSharing.useMutation();
+  const revokeExternalDocumentSharingMutation = trpc.userPreferences.revokeExternalDocumentSharing.useMutation();
   const testEmailMutation = trpc.email.test.useMutation();
   const exportDataMutation = trpc.gdpr.exportData.useMutation();
   const auditLog = trpc.audit.list.useQuery(
@@ -124,7 +133,8 @@ export default function Settings() {
   const createHaiTokenMutation = trpc.haiIntegration.createToken.useMutation();
   const revokeHaiTokenMutation = trpc.haiIntegration.revokeToken.useMutation();
 
-  const preferencesUnavailable = !workflowPreferences.data || updateWorkflowMutation.isPending;
+  const consentMutationPending = grantExternalDocumentSharingMutation.isPending || revokeExternalDocumentSharingMutation.isPending;
+  const preferencesUnavailable = !workflowPreferences.data || updateWorkflowMutation.isPending || consentMutationPending;
   const navItems = NAV_ITEMS.map(item => ({ ...item, label: nl ? ({ workflow: "Analyse en controle", email: "E-mail", sources: "Bronnen", hai: "HAI-koppeling", security: "Gegevens en privacy" }[item.id]) : item.label }));
 
   useEffect(() => {
@@ -133,14 +143,57 @@ export default function Settings() {
 
   const updateWorkflow = async (updates: Parameters<typeof updateWorkflowMutation.mutateAsync>[0]) => {
     try {
-      await updateWorkflowMutation.mutateAsync(updates);
+      const consentWasActive = workflowPreferences.data?.shareRawDocumentContent === true;
+      const updated = await updateWorkflowMutation.mutateAsync(updates);
       await Promise.all([
         utils.userPreferences.workflow.invalidate(),
         utils.documentAnalysis.capabilities.invalidate(),
       ]);
-      toast.success("Workflow preference saved");
+      toast.success(consentWasActive && !updated.shareRawDocumentContent
+        ? "Workflow preference saved; external document-sharing consent was revoked"
+        : "Workflow preference saved");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Workflow preference could not be saved");
+    }
+  };
+
+  const refreshWorkflowConsent = async () => {
+    await Promise.all([
+      utils.userPreferences.workflow.invalidate(),
+      utils.documentAnalysis.capabilities.invalidate(),
+    ]);
+  };
+
+  const handleGrantExternalDocumentSharing = async () => {
+    const provider = workflowPreferences.data?.analysisProvider;
+    if (!provider || provider === "local" || provider === "ollama") return;
+    try {
+      await grantExternalDocumentSharingMutation.mutateAsync({
+        provider: provider as ExternalAnalysisProvider,
+        scope: EXTERNAL_DOCUMENT_SHARING_SCOPE,
+        automaticImports: workflowPreferences.data!.autoAnalyzeImports,
+        acknowledgeFullDocumentContent: true,
+        acknowledgeAutomaticImports: true,
+      });
+      await refreshWorkflowConsent();
+      setConsentDialogOpen(false);
+      setAcknowledgeFullDocumentContent(false);
+      setAcknowledgeAutomaticImports(false);
+      toast.success(`Full-document processing allowed for ${provider}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Document-sharing consent could not be saved");
+    }
+  };
+
+  const handleRevokeExternalDocumentSharing = async () => {
+    const consentId = workflowPreferences.data?.externalDocumentSharingConsent?.id;
+    if (!consentId) return;
+    try {
+      await revokeExternalDocumentSharingMutation.mutateAsync({ consentId });
+      await refreshWorkflowConsent();
+      toast.success("External document-sharing consent revoked");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Document-sharing consent could not be revoked");
     }
   };
 
@@ -304,20 +357,87 @@ export default function Settings() {
                       onCheckedChange={(checked) => void updateWorkflow({ autoOrganizeDocuments: checked })} />
                   </div>
                 </div>
-                <div className="flex items-center justify-between gap-4 border-t border-border/60 pt-4">
+                <div className="space-y-3 border-t border-border/60 pt-4">
                   <div>
-                    <Label htmlFor="share-raw-analysis">Allow full source text for cloud analysis</Label>
-                    <p className="mt-1 text-xs text-muted-foreground">Enabled by default so the selected provider can assess the complete record. Turning this off forces local analysis.</p>
+                    <Label>External full-document processing</Label>
+                    <p className="mt-1 text-xs text-muted-foreground">Off by default. Consent applies only to the selected external provider and is revoked when the provider or automatic-import setting changes.</p>
                   </div>
-                  <Switch
-                    id="share-raw-analysis"
-                    checked={workflowPreferences.data?.shareRawDocumentContent ?? true}
-                    disabled={preferencesUnavailable}
-                    onCheckedChange={(checked) => void updateWorkflow({ shareRawDocumentContent: checked })}
-                  />
+                  {workflowPreferences.data?.analysisProvider === "local" || workflowPreferences.data?.analysisProvider === "ollama" ? (
+                    <Alert>
+                      <HardDrive className="h-4 w-4" />
+                      <AlertDescription>This analysis mode stays on this LARO installation and does not require external document-sharing consent.</AlertDescription>
+                    </Alert>
+                  ) : workflowPreferences.data?.shareRawDocumentContent ? (
+                    <div className="flex flex-col gap-3 border border-border/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="space-y-1 text-sm">
+                        <p className="font-medium">Allowed for {analysisCapabilities.data?.providers.find((item) => item.id === workflowPreferences.data?.analysisProvider)?.label || workflowPreferences.data?.analysisProvider}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Granted {workflowPreferences.data.externalDocumentSharingConsent?.grantedAt
+                            ? new Date(workflowPreferences.data.externalDocumentSharingConsent.grantedAt).toLocaleString()
+                            : "now"}. Automatic imports are {workflowPreferences.data.externalDocumentSharingConsent?.automaticImports ? "included" : "not included"}.
+                        </p>
+                      </div>
+                      <Button type="button" variant="destructive" disabled={preferencesUnavailable} onClick={() => void handleRevokeExternalDocumentSharing()}>
+                        Revoke permission
+                      </Button>
+                    </div>
+                  ) : (
+                    <Alert>
+                      <Shield className="h-4 w-4" />
+                      <AlertDescription className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <span>No document content will be sent to the selected external provider. Analysis remains local until you review and grant permission.</span>
+                        <Button type="button" variant="outline" disabled={preferencesUnavailable} onClick={() => setConsentDialogOpen(true)}>
+                          Review permission
+                        </Button>
+                      </AlertDescription>
+                    </Alert>
+                  )}
                 </div>
               </CardContent>
             </Card>
+
+            <Dialog open={consentDialogOpen} onOpenChange={(open) => {
+              setConsentDialogOpen(open);
+              if (!open) {
+                setAcknowledgeFullDocumentContent(false);
+                setAcknowledgeAutomaticImports(false);
+              }
+            }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Allow external full-document processing?</DialogTitle>
+                  <DialogDescription>
+                    Review exactly what LARO may send before granting permission. This permission can be revoked at any time.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div className="space-y-1 border border-border/60 p-3 text-sm">
+                    <p><span className="font-medium">Provider:</span> {analysisCapabilities.data?.providers.find((item) => item.id === workflowPreferences.data?.analysisProvider)?.label || workflowPreferences.data?.analysisProvider}</p>
+                    <p><span className="font-medium">Scope:</span> Full source text and extracted document passages for analysis, dossier discovery, case assistance, and timeline proposals.</p>
+                    <p><span className="font-medium">Automatic imports:</span> {workflowPreferences.data?.autoAnalyzeImports ? "New Gmail, Drive, and local imports may be sent automatically after storage." : "Automatic import analysis is currently off."}</p>
+                    <p className="text-xs text-muted-foreground">Changing the provider or automatic-import setting revokes this permission and requires a new review.</p>
+                  </div>
+                  <label className="flex items-start gap-3 text-sm" htmlFor="acknowledge-full-document-content">
+                    <Checkbox id="acknowledge-full-document-content" checked={acknowledgeFullDocumentContent} onCheckedChange={(value) => setAcknowledgeFullDocumentContent(value === true)} />
+                    <span>I understand that complete document content may leave this LARO installation and be processed by the named provider.</span>
+                  </label>
+                  <label className="flex items-start gap-3 text-sm" htmlFor="acknowledge-automatic-imports">
+                    <Checkbox id="acknowledge-automatic-imports" checked={acknowledgeAutomaticImports} onCheckedChange={(value) => setAcknowledgeAutomaticImports(value === true)} />
+                    <span>I reviewed the automatic-import behavior shown above and consent to that exact setting.</span>
+                  </label>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setConsentDialogOpen(false)}>Cancel</Button>
+                  <Button
+                    type="button"
+                    disabled={!acknowledgeFullDocumentContent || !acknowledgeAutomaticImports || consentMutationPending}
+                    onClick={() => void handleGrantExternalDocumentSharing()}
+                  >
+                    {grantExternalDocumentSharingMutation.isPending ? "Saving..." : "Grant permission"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
             <Card className="rounded-none border-0 border-t border-border bg-transparent shadow-none">
               <CardHeader className="px-0 py-5">

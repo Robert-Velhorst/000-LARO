@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { eq } from "drizzle-orm";
 import { buildCase, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
+import { EXTERNAL_DOCUMENT_SHARING_SCOPE } from "../../shared/workflowConsent";
 
 function providerResponse(content: Record<string, unknown>): Response {
   return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }), {
@@ -21,6 +22,18 @@ function providerResponse(content: Record<string, unknown>): Response {
   });
   afterAll(() => app?.cleanup());
   afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+  async function enableOpenAiDocumentSharing() {
+    const caller = app.makeCaller(owner);
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai" });
+    await caller.userPreferences.grantExternalDocumentSharing({
+      provider: "openai",
+      scope: EXTERNAL_DOCUMENT_SHARING_SCOPE,
+      automaticImports: true,
+      acknowledgeFullDocumentContent: true,
+      acknowledgeAutomaticImports: true,
+    });
+  }
 
   it("persists precise edits without a language model, preserves sources and rejects stale or invalid edits", async () => {
     const caller = app.makeCaller(owner);
@@ -80,7 +93,7 @@ function providerResponse(content: Record<string, unknown>): Response {
 
   it("prevents an in-flight assistant correction from overwriting a manual correction", async () => {
     const caller = app.makeCaller(owner);
-    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: true });
+    await enableOpenAiDocumentSharing();
     vi.stubEnv("OPENAI_API_KEY", "fixture-only");
     let signal!: () => void;
     let release!: (response: Response) => void;
@@ -104,7 +117,7 @@ function providerResponse(content: Record<string, unknown>): Response {
 
   it("keeps a grounded proposal out of the timeline until the owner confirms, and records rejection", async () => {
     const caller = app.makeCaller(owner);
-    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: true });
+    await enableOpenAiDocumentSharing();
     vi.stubEnv("OPENAI_API_KEY", "fixture-only");
     const before = await caller.documentAnalysis.generateCaseTimeline({ caseId: "timeline-case" });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(providerResponse({
@@ -163,7 +176,7 @@ function providerResponse(content: Record<string, unknown>): Response {
 
   it("rejects hallucinated field support and cross-case document references without altering the timeline", async () => {
     const caller = app.makeCaller(owner);
-    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: true });
+    await enableOpenAiDocumentSharing();
     vi.stubEnv("OPENAI_API_KEY", "fixture-only");
     const before = await caller.documentAnalysis.generateCaseTimeline({ caseId: "timeline-case" });
     const fetch = vi.fn()
@@ -195,7 +208,7 @@ function providerResponse(content: Record<string, unknown>): Response {
 
   it("leaves the timeline unchanged when the provider fails or returns malformed output", async () => {
     const caller = app.makeCaller(owner);
-    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: true });
+    await enableOpenAiDocumentSharing();
     vi.stubEnv("OPENAI_API_KEY", "fixture-only");
     const before = await caller.documentAnalysis.generateCaseTimeline({ caseId: "timeline-case" });
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("provider unavailable")));

@@ -8,8 +8,7 @@ import { hashBuffer, sanitizeFilename, storageDelete, storagePut, storageRead } 
 import { writeAuditLogOrThrow } from "./audit";
 import { createCaseId } from "./ids";
 import { analyzeDocumentExtraction, extractDocumentTextInAcquiredSlot, withDocumentAnalysisResourceSlot, type DocumentAnalysisResult } from "./documentIntelligence";
-import { getWorkflowPreferences } from "./workflowPreferences";
-import { isLocalLLMProvider } from "./llm";
+import { documentContentAuthorizationToken, getWorkflowPreferences } from "./workflowPreferences";
 import { referencesForCase, sourceReferences } from "./documentCaseMatching";
 import { evidenceTypeForMime, MAX_EVIDENCE_FILE_BYTES } from "../shared/evidenceFiles";
 import { discoverDossier, discoveryCaseSnapshot, type DiscoveryCase, type DiscoveryDecision } from "./dossierDiscovery";
@@ -85,6 +84,10 @@ async function organizeInboxDocumentUnlocked(userId: string, id: string, explici
   const { row: original } = await readInboxOriginal(userId, id);
   const db = await getDb();
   const preferences = await getWorkflowPreferences(userId);
+  const discoveryProvider = preferences.analysisProvider === "local" ? null : preferences.analysisProvider;
+  const discoveryAuthorizationToken = discoveryProvider
+    ? documentContentAuthorizationToken(preferences, discoveryProvider, userId)
+    : null;
   const originalAnalysis: DocumentAnalysisResult | null = original.analysis ? JSON.parse(original.analysis) : null;
   const originalReferences = sourceReferences(original.sourceText || "");
   let discovery: DiscoveryDecision | null = null;
@@ -100,7 +103,7 @@ async function organizeInboxDocumentUnlocked(userId: string, id: string, explici
         canContinue: async () => {
           const currentPreferences = await getWorkflowPreferences(userId);
           if (!currentPreferences.autoOrganizeDocuments || currentPreferences.analysisProvider !== preferences.analysisProvider ||
-              currentPreferences.shareRawDocumentContent !== preferences.shareRawDocumentContent) return false;
+              (discoveryProvider && documentContentAuthorizationToken(currentPreferences, discoveryProvider, userId) !== discoveryAuthorizationToken)) return false;
           const current = await getOwnedInboxItem(userId, id);
           if (current.analysis !== original.analysis || current.sourceText !== original.sourceText || current.evidenceId !== original.evidenceId) return false;
           const currentCases = await db.select().from(cases).where(eq(cases.userId, userId));
@@ -136,7 +139,7 @@ async function organizeInboxDocumentUnlocked(userId: string, id: string, explici
       if (snapshot !== currentSnapshot || original.analysis !== row.analysis || original.sourceText !== row.sourceText) {
         reason = "The source or case inventory changed during discovery. Retry with the updated context.";
       } else if (!latestPreferences.autoOrganizeDocuments || preferences.analysisProvider !== latestPreferences.analysisProvider ||
-                 preferences.shareRawDocumentContent !== latestPreferences.shareRawDocumentContent) {
+                 (discoveryProvider && documentContentAuthorizationToken(latestPreferences, discoveryProvider, userId) !== discoveryAuthorizationToken)) {
         reason = "The analysis or organization settings changed during discovery. Retry with the current settings.";
       } else if (discovery.action === "assign" && discovery.caseId) {
         caseId = discovery.caseId;
@@ -240,20 +243,22 @@ export async function processInboxDocument(userId: string, id: string, force = f
       try {
         const preferences = await getWorkflowPreferences(userId);
         const provider = preferences.analysisProvider === "local" ? undefined : preferences.analysisProvider;
+        const authorizationToken = provider ? documentContentAuthorizationToken(preferences, provider, userId) : null;
         const extraction = await withDocumentAnalysisResourceSlot(async () => {
           const { bytes } = await readInboxOriginal(userId, id);
           return extractDocumentTextInAcquiredSlot(bytes, row.mimeType);
         });
         const result = await analyzeDocumentExtraction({ extraction, provider,
           budget: { ownerId: userId },
-          deepAnalysis: Boolean(provider && (isLocalLLMProvider(provider) || preferences.shareRawDocumentContent)),
+          deepAnalysis: Boolean(provider && authorizationToken),
           // The transport invokes this after queueing, for every source chunk.
           beforeDispatch: async () => {
             const current = await getOwnedInboxItem(userId, id);
             const currentPreferences = await getWorkflowPreferences(userId);
             return current.contentHash === row.contentHash && current.storageKey === row.storageKey &&
               currentPreferences.analysisProvider === preferences.analysisProvider &&
-              Boolean(provider && (isLocalLLMProvider(provider) || currentPreferences.shareRawDocumentContent));
+              Boolean(provider && authorizationToken &&
+                documentContentAuthorizationToken(currentPreferences, provider, userId) === authorizationToken);
           },
         });
         db.transaction((tx) => {

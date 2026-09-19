@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { analyzeDocumentBytes, extractDocumentText, findingHasLiteralSourceSupport } from "../../server/documentIntelligence";
 import { buildCase, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
+import { EXTERNAL_DOCUMENT_SHARING_SCOPE } from "../../shared/workflowConsent";
 
 const suite = sqliteAvailable ? describe : describe.skip;
 const OCR_FIXTURE = readFileSync(join(__dirname, "..", "fixtures", "ocr-dutch-decision.png"));
@@ -100,6 +101,20 @@ describe("document intelligence units", () => {
       expect(finding.citations.length).toBeGreaterThan(0);
       expect(finding.citations.every((id) => citationIds.has(id))).toBe(true);
     }
+  });
+
+  it("fails closed before external deep analysis without a dispatch-time consent check", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "fixture-only");
+    const fetchMock = vi.fn(() => Promise.reject(new Error("external request must not run")));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(analyzeDocumentBytes({
+      bytes: Buffer.from("Private source content that must remain local without explicit authorization."),
+      mimeType: "text/plain",
+      deepAnalysis: true,
+      provider: "openai",
+      budget: { ownerId: "NO_CONSENT_OWNER" },
+    })).rejects.toThrow("dispatch-time consent check");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("extracts Dutch image text locally and keeps OCR findings source-linked", async () => {
@@ -232,28 +247,32 @@ suite("persisted document analysis and source-linked timeline", () => {
     vi.unstubAllEnvs();
   });
 
-  it.each([
-    { shareRawDocumentContent: false },
-    { analysisProvider: "local" as const },
-  ])("does not send filed evidence after permission changes: %j", async (change) => {
+  it.each(["revoke", "provider"] as const)("does not send filed evidence after permission changes: %s", async (change) => {
     const caller = app.makeCaller(owner);
     const intelligence = await import("../../server/documentIntelligence");
     const originalExtract = intelligence.extractDocumentTextInAcquiredSlot;
-    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: true });
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai" });
+    await caller.userPreferences.grantExternalDocumentSharing({ provider: "openai", scope: EXTERNAL_DOCUMENT_SHARING_SCOPE, automaticImports: true,
+      acknowledgeFullDocumentContent: true, acknowledgeAutomaticImports: true });
     vi.stubEnv("OPENAI_API_KEY", "test-not-a-real-key");
     const fetch = vi.fn(() => Promise.reject(new Error("No transmission after revocation")));
     vi.stubGlobal("fetch", fetch);
     const extraction = vi.spyOn(intelligence, "extractDocumentTextInAcquiredSlot").mockImplementation(async (...args) => {
       const result = await originalExtract(...args);
-      await caller.userPreferences.updateWorkflow(change);
+      if (change === "revoke") {
+        const current = await caller.userPreferences.workflow();
+        await caller.userPreferences.revokeExternalDocumentSharing({ consentId: current.externalDocumentSharingConsent!.id });
+      } else {
+        await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
+      }
       return result;
     });
     try {
-      const caseId = `CASE_PERMISSION_${Object.keys(change)[0]}`;
+      const caseId = `CASE_PERMISSION_${change}`;
       await app.db.insert(app.schema.cases).values(buildCase({ id: caseId, userId: owner.id }));
       const uploaded = await caller.evidenceFiles.upload({
         caseId, title: "Permission regression", type: "document",
-        fileName: `permission-${Object.keys(change)[0]}.txt`, mimeType: "text/plain", source: "manual",
+        fileName: `permission-${change}.txt`, mimeType: "text/plain", source: "manual",
         base64: Buffer.from("Private correspondence for a source permission regression test.").toString("base64"),
       });
       const result = await caller.documentAnalysis.analyzeEvidence({ evidenceId: uploaded.id, deepAnalysis: true });
@@ -263,7 +282,7 @@ suite("persisted document analysis and source-linked timeline", () => {
       expect(result.result.coverage.complete).toBe(false);
     } finally {
       extraction.mockRestore();
-      await caller.userPreferences.updateWorkflow({ analysisProvider: "local", shareRawDocumentContent: true });
+      await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
     }
   });
 
@@ -321,6 +340,8 @@ suite("persisted document analysis and source-linked timeline", () => {
     ]));
     expect(timeline.reconstruction.nodes[0].summary).toContain("Gemeente Utrecht");
     await caller.userPreferences.updateWorkflow({ analysisProvider: "openai" });
+    await caller.userPreferences.grantExternalDocumentSharing({ provider: "openai", scope: EXTERNAL_DOCUMENT_SHARING_SCOPE, automaticImports: true,
+      acknowledgeFullDocumentContent: true, acknowledgeAutomaticImports: true });
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
     const correctionFetch = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -514,7 +535,9 @@ suite("persisted document analysis and source-linked timeline", () => {
     vi.stubEnv("TOGETHER_API_KEY", "test-together-key");
     vi.stubEnv("LARO_OPENAI_MODEL", "provider-test-model-v1");
 
-    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: true });
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai" });
+    await caller.userPreferences.grantExternalDocumentSharing({ provider: "openai", scope: EXTERNAL_DOCUMENT_SHARING_SCOPE, automaticImports: true,
+      acknowledgeFullDocumentContent: true, acknowledgeAutomaticImports: true });
     const openai = await caller.documentAnalysis.analyzeEvidence({ evidenceId: uploaded.id, deepAnalysis: true });
     expect(openai).toMatchObject({ cached: false, result: { analysisProvider: "openai", providerStatus: "complete" } });
     await expect(caller.documentAnalysis.analyzeEvidence({ evidenceId: uploaded.id, deepAnalysis: true }))
@@ -525,6 +548,11 @@ suite("persisted document analysis and source-linked timeline", () => {
       .resolves.toMatchObject({ cached: false, result: { analysisProvider: "openai", providerModel: "provider-test-model-v2" } });
 
     await caller.userPreferences.updateWorkflow({ analysisProvider: "together" });
+    const blockedTogether = await caller.documentAnalysis.analyzeEvidence({ evidenceId: uploaded.id, deepAnalysis: true });
+    expect(blockedTogether).toMatchObject({ cached: false, result: { analysisProvider: "local", providerStatus: "not_requested" } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await caller.userPreferences.grantExternalDocumentSharing({ provider: "together", scope: EXTERNAL_DOCUMENT_SHARING_SCOPE, automaticImports: true,
+      acknowledgeFullDocumentContent: true, acknowledgeAutomaticImports: true });
     const together = await caller.documentAnalysis.analyzeEvidence({ evidenceId: uploaded.id, deepAnalysis: true });
     expect(together).toMatchObject({ cached: false, result: { analysisProvider: "together", providerStatus: "complete" } });
 

@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { eq } from "drizzle-orm";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 import { buildUser } from "../factories";
+import { EXTERNAL_DOCUMENT_SHARING_SCOPE } from "../../shared/workflowConsent";
 
 (sqliteAvailable ? describe : describe.skip)("autonomous document inbox", () => {
   let app: TestApp;
@@ -138,9 +139,13 @@ import { buildUser } from "../factories";
     expect(JSON.parse(rows[0].result).timelineEvents.length).toBeGreaterThan(0);
   });
 
-  it("keeps analysis local when external sharing is disabled", async () => {
+  it("keeps a future inbox import local when an external provider has no consent", async () => {
     const caller = app.makeCaller(owner);
-    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: false });
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai" });
+    await expect(caller.userPreferences.workflow()).resolves.toMatchObject({
+      autoAnalyzeImports: true,
+      shareRawDocumentContent: false,
+    });
     vi.stubEnv("OPENAI_API_KEY", "test-not-a-real-key");
     const fetch = vi.fn(() => Promise.reject(new Error("No cloud requests allowed")));
     vi.stubGlobal("fetch", fetch);
@@ -148,7 +153,7 @@ import { buildUser } from "../factories";
     await caller.documentInbox.process({ id: item.id });
     expect((await caller.documentInbox.get({ id: item.id })).analysis.providerStatus).toBe("not_requested");
     expect(fetch).not.toHaveBeenCalled();
-    await caller.userPreferences.updateWorkflow({ analysisProvider: "local", shareRawDocumentContent: true });
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
   });
 
   it("persists extraction failures without discarding the original and supports pagination", async () => {
@@ -162,25 +167,29 @@ import { buildUser } from "../factories";
     expect(first.items[0].id).not.toBe(second.items[0].id);
   });
 
-  it.each([
-    { shareRawDocumentContent: false },
-    { analysisProvider: "local" as const },
-  ])("rechecks analysis permission after extraction: %j", async (change) => {
+  it.each(["revoke", "provider"] as const)("rechecks analysis permission after extraction: %s", async (change) => {
     const caller = app.makeCaller(owner);
     const intelligence = await import("../../server/documentIntelligence");
     const originalExtract = intelligence.extractDocumentTextInAcquiredSlot;
-    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: true });
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai" });
+    await caller.userPreferences.grantExternalDocumentSharing({ provider: "openai", scope: EXTERNAL_DOCUMENT_SHARING_SCOPE, automaticImports: true,
+      acknowledgeFullDocumentContent: true, acknowledgeAutomaticImports: true });
     vi.stubEnv("OPENAI_API_KEY", "test-not-a-real-key");
     const fetch = vi.fn(() => Promise.reject(new Error("Revoked document must not leave this computer")));
     vi.stubGlobal("fetch", fetch);
     const extraction = vi.spyOn(intelligence, "extractDocumentTextInAcquiredSlot").mockImplementation(async (...args) => {
       const result = await originalExtract(...args);
-      await caller.userPreferences.updateWorkflow(change);
+      if (change === "revoke") {
+        const current = await caller.userPreferences.workflow();
+        await caller.userPreferences.revokeExternalDocumentSharing({ consentId: current.externalDocumentSharingConsent!.id });
+      } else {
+        await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
+      }
       return result;
     });
     try {
       const text = "Private correspondence about an unresolved housing dispute, without a case reference.";
-      const item = await upload(text, `revocation-${Object.keys(change)[0]}.txt`);
+      const item = await upload(text, `revocation-${change}.txt`);
       await caller.documentInbox.process({ id: item.id });
       expect(extraction).toHaveBeenCalledOnce();
       expect(fetch).not.toHaveBeenCalled();
@@ -188,7 +197,7 @@ import { buildUser } from "../factories";
       expect(Buffer.from((await caller.documentInbox.download({ id: item.id })).base64, "base64").toString()).toBe(text);
     } finally {
       extraction.mockRestore();
-      await caller.userPreferences.updateWorkflow({ analysisProvider: "local", shareRawDocumentContent: true });
+      await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
     }
   });
 

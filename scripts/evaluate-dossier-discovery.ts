@@ -57,6 +57,7 @@ async function main() {
   const { analyzeDocumentBytes } = await import("../server/documentIntelligence");
   const preferences: WorkflowPreferences = { analysisMode: "local", analysisProvider: "ollama",
     autoAnalyzeImports: true, autoOrganizeDocuments: true, shareRawDocumentContent: false,
+    externalDocumentSharingConsent: null,
     outreachReviewMode: "each", messageApprovalMode: "each" };
   const nativeFetch = globalThis.fetch;
   let transport: Array<Record<string, unknown>> = [];

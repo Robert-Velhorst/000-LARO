@@ -1,8 +1,8 @@
 import { createHash } from "crypto";
 import { z } from "zod";
-import { invokeLLM, isLLMProviderConfigured, isLocalLLMProvider, LLM_PROVIDERS, type LLMProvider } from "./llm";
+import { invokeLLM, isLLMProviderConfigured, LLM_PROVIDERS, type LLMProvider } from "./llm";
 import type { DocumentAnalysisResult } from "./documentIntelligence";
-import type { WorkflowPreferences } from "./workflowPreferences";
+import { isDocumentContentProviderAuthorized, type WorkflowPreferences } from "./workflowPreferences";
 import { compareDossierSituations, comparisonSchema, MAX_COMPARISON_CASES } from "./dossierComparison";
 import { checkLLMAuthorization } from "./llmTransport";
 import { isLLMUsageLimitError } from "./llmUsageBudget";
@@ -93,7 +93,7 @@ export async function discoverDossier(input: {
   if (!preferences.autoOrganizeDocuments) return review("Automatic organization is disabled");
   if (preferences.analysisProvider === "local") return review("Select a configured language model in Settings for dossier discovery without a case reference. Local Ollama avoids external analysis charges.");
   const provider = preferences.analysisProvider;
-  if (!isLocalLLMProvider(provider) && !preferences.shareRawDocumentContent) return review("External source sharing is disabled; select a local language model for content-based dossier discovery.");
+  if (!isDocumentContentProviderAuthorized(preferences, provider, input.ownerId)) return review("External source sharing has not been consented to for this provider; review its permission in Settings or select a local language model.");
   if (!isLLMProviderConfigured(provider)) return review("The selected discovery provider is not configured. The original remains in the inbox.", provider);
   if (!analysis.coverage.complete) return review("Source extraction is incomplete; autonomous dossier discovery requires review.", provider);
   if (analysis.extractionConfidence !== null && analysis.extractionConfidence < 80) return review("OCR confidence is too low for autonomous dossier discovery.", provider);

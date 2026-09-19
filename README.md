@@ -125,7 +125,8 @@ private-source accuracy or production-acceptance claim follows from this preview
 2. **Raw evidence remains part of the record.** Analysis adds a review layer; it
    does not replace or exclude the underlying document.
 3. **Local-first by default.** Core case work and deterministic analysis do not
-   require a paid AI provider. Optional cloud providers are selected explicitly.
+   require a paid AI provider. Selecting an optional cloud provider does not send
+   documents; full-source processing requires a separate reviewed consent.
 4. **Human review before consequence.** Suggestions, timeline corrections,
    shortlists, messages, and exports remain reviewable.
 5. **No implicit external action.** Sending requires ownership, exact-message
@@ -212,8 +213,10 @@ are recorded in [Autonomous Dossier Discovery](docs/AUTONOMOUS_DOSSIER_REQUIREME
   are processed sequentially with per-file failures, original preservation, progress
   and a stop-after-current-document control. Each supported file is limited to 7 MB.
 - **Settings > Workflow** controls automatic import analysis, automatic
-  dossier discovery, the analysis provider and full-source cloud sharing. Local
-  deterministic analysis does not imply a configured local language model.
+  dossier discovery, the analysis provider and provider-bound full-source consent.
+  New and legacy accounts have no external sharing permission by default. Changing
+  the provider or automatic-import setting revokes consent; local deterministic
+  analysis does not imply a configured local language model.
 - Automatic organization currently recognizes explicit source labels such as
   `zaaknummer`, `dossiernummer`, `kenmerk` and `case reference`, followed by an
   identifier containing letters and numbers (at least six characters). Purely
@@ -240,7 +243,8 @@ are recorded in [Autonomous Dossier Discovery](docs/AUTONOMOUS_DOSSIER_REQUIREME
 - Selected-provider failures, unsupported quotations, incomplete extraction,
   OCR confidence below 80, ambiguous responses and changed settings/context leave
   the original in the inbox. No fallback to another provider occurs. Cloud
-  discovery requires full-source sharing; local Ollama must actually be configured.
+  discovery requires active consent for that exact provider and automatic-import
+  state; local Ollama must actually be configured.
   The deterministic `local` option is not a language model.
 - Discovery admits at most 1,000 owned cases, compared in groups of at most 20
   within a 32,000-character request limit. Every group sees the complete source;
@@ -737,7 +741,11 @@ secrets, databases, token vaults, or evidence.
 ### Analysis Providers
 
 Local deterministic analysis is the default and needs no API key. The owner can
-select one configured provider in **Settings > Workflow**.
+select one configured provider in **Settings > Workflow**. Selecting or configuring
+an external provider does not authorize document transmission. The owner must review
+the named provider, full-document scope, and current automatic-import implication,
+then grant consent explicitly. Consent records the actor and timestamp, can be
+revoked immediately, and is invalidated by provider or automatic-import changes.
 
 | Provider | Credential | Model override |
 | --- | --- | --- |
@@ -912,6 +920,9 @@ summary fields, but excludes contacts, source bytes/quotes, and provider secrets
 - Scanner uploads keep session and scanner authority in the Electron main
   process; reusable API credentials are not exposed to renderer JavaScript.
 - Server-owned encrypted provider credentials.
+- External document processing is denied without active owner consent bound to the
+  selected provider and current automatic-import setting. Grant and revocation are
+  mandatory audit events committed atomically with the preference record.
 - Provider connection and local disconnection records commit atomically with
   their required audit evidence. Invalid account identities or empty access
   tokens are rejected before storage, and provider network calls have bounded

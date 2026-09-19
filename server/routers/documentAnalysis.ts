@@ -15,8 +15,8 @@ import {
 } from "../documentIntelligence";
 import { getDb } from "../db";
 import { documentAnalyses, evidence, timeline as persistedTimeline } from "../schema";
-import { getWorkflowPreferences } from "../workflowPreferences";
-import { getLLMProviderDescriptors, invokeLLM, isLLMProviderConfigured, isLocalLLMProvider } from "../llm";
+import { documentContentAuthorizationToken, getWorkflowPreferences } from "../workflowPreferences";
+import { getLLMProviderDescriptors, invokeLLM, isLLMProviderConfigured } from "../llm";
 import { createAuditLog, writeAuditLogOrThrow } from "../audit";
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
 
@@ -202,6 +202,7 @@ export const documentAnalysisRouter = router({
       selectedAnalysisProvider: preferences.analysisProvider,
       autoAnalyzeImports: preferences.autoAnalyzeImports,
       shareRawDocumentContent: preferences.shareRawDocumentContent,
+      externalDocumentSharingConsent: preferences.externalDocumentSharingConsent,
       supportedMimeTypes: supportedDocumentAnalysisMimeTypes(),
       ocrAvailable: true,
       ocrLanguages: ["nld", "eng"],
@@ -275,7 +276,8 @@ export const documentAnalysisRouter = router({
       await assertCaseOwnership(input.caseId, ctx.user.id);
       const preferences = await getWorkflowPreferences(ctx.user.id);
       const provider = preferences.analysisProvider === "local" ? null : preferences.analysisProvider;
-      if (!provider || (!isLocalLLMProvider(provider) && !preferences.shareRawDocumentContent) || !isLLMProviderConfigured(provider)) {
+      const authorizationToken = provider ? documentContentAuthorizationToken(preferences, provider, ctx.user.id) : null;
+      if (!provider || !authorizationToken || !isLLMProviderConfigured(provider)) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
           message: "Natural-language timeline editing needs configured local analysis or full-source cloud analysis selected in Settings.",
@@ -373,6 +375,10 @@ export const documentAnalysisRouter = router({
       }).join("\n");
       const response = await invokeLLM({
         provider,
+        beforeDispatch: async () => {
+          const currentPreferences = await getWorkflowPreferences(ctx.user.id);
+          return documentContentAuthorizationToken(currentPreferences, provider, ctx.user.id) === authorizationToken;
+        },
         budget: { ownerId: ctx.user.id, operation: "timeline_correction", caseId: input.caseId },
         messages: [
           {

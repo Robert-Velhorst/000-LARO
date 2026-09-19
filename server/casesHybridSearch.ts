@@ -1,9 +1,9 @@
 import { and, eq, like, or } from "drizzle-orm";
 import { getDb } from "./db";
 import { cases } from "./schema";
-import { invokeLLM, isLLMProviderConfigured, isLocalLLMProvider } from "./llm";
+import { invokeLLM, isLLMProviderConfigured } from "./llm";
 import { globalSearch } from "./globalSearch";
-import { getWorkflowPreferences } from "./workflowPreferences";
+import { documentContentAuthorizationToken, getWorkflowPreferences } from "./workflowPreferences";
 import { isLLMUsageLimitError } from "./llmUsageBudget";
 
 const STOP = new Set([
@@ -27,7 +27,8 @@ async function expandCaseSearchTerms(query: string, userId: string): Promise<str
 
   const preferences = await getWorkflowPreferences(userId);
   const provider = preferences.analysisProvider === "local" ? null : preferences.analysisProvider;
-  const hasLlm = Boolean(provider && (isLocalLLMProvider(provider) || preferences.shareRawDocumentContent) && isLLMProviderConfigured(provider));
+  const authorizationToken = provider ? documentContentAuthorizationToken(preferences, provider, userId) : null;
+  const hasLlm = Boolean(provider && authorizationToken && isLLMProviderConfigured(provider));
 
   if (!hasLlm) {
     return tokenizeHeuristic(trimmed);
@@ -36,6 +37,11 @@ async function expandCaseSearchTerms(query: string, userId: string): Promise<str
   try {
     const res = await invokeLLM({
       provider: provider!,
+      beforeDispatch: async () => {
+        const currentPreferences = await getWorkflowPreferences(userId);
+        return Boolean(provider && authorizationToken &&
+          documentContentAuthorizationToken(currentPreferences, provider, userId) === authorizationToken);
+      },
       budget: { ownerId: userId, operation: "hybrid_search" },
       messages: [
         {

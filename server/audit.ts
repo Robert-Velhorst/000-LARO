@@ -46,6 +46,8 @@ const MANDATORY_AUDIT_ACTIONS = new Set([
   "provider.disconnected",
   "provider.disconnect_revoked",
   "retention.sweep",
+  "workflow.external_document_sharing_granted",
+  "workflow.external_document_sharing_revoked",
 ]);
 
 const REDACTED_SECRET = "[REDACTED_SECRET]";

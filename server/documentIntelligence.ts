@@ -8,7 +8,7 @@ import {
   isSupportedDocumentAnalysisMimeType,
   isSupportedImageOcrMimeType,
 } from "../shared/evidenceFiles";
-import { getLLMProviderDescriptors, invokeLLM, isLLMProviderConfigured, type LLMProvider } from "./llm";
+import { getLLMProviderDescriptors, invokeLLM, isLLMProviderConfigured, isLocalLLMProvider, type LLMProvider } from "./llm";
 import { isLLMUsageLimitError } from "./llmUsageBudget";
 import { extractImageBatchText, extractImageText } from "./ocr";
 
@@ -978,5 +978,9 @@ export async function analyzeDocumentExtraction(options: {
   const base = deterministicAnalysis(extraction);
   if (!options.deepAnalysis) return base;
   if (!options.budget?.ownerId.trim()) throw new Error("Deep document analysis requires an owner-scoped model budget");
-  return enrichAnalysis(base, options.provider || "forge", options.budget, options.beforeDispatch);
+  const provider = options.provider || "forge";
+  if (!isLocalLLMProvider(provider) && !options.beforeDispatch) {
+    throw new Error("External document analysis requires a dispatch-time consent check");
+  }
+  return enrichAnalysis(base, provider, options.budget, options.beforeDispatch);
 }

@@ -46,7 +46,7 @@ vi.mock("../../server/llm", async (importOriginal) => {
   beforeEach(async () => {
     gateway.mockReset();
     compareAgainst(() => false);
-    await app.makeCaller(owner).userPreferences.updateWorkflow({ analysisProvider: "ollama", autoOrganizeDocuments: true, shareRawDocumentContent: false });
+    await app.makeCaller(owner).userPreferences.updateWorkflow({ analysisProvider: "ollama", autoOrganizeDocuments: true });
   });
   afterAll(() => app?.cleanup());
 
@@ -101,7 +101,7 @@ vi.mock("../../server/llm", async (importOriginal) => {
 
   it("does not send content externally when sharing or automatic organization is disabled", async () => {
     const caller = app.makeCaller(owner);
-    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: false });
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai" });
     const privateItem = await staged();
     expect(await caller.documentInbox.process({ id: privateItem.id })).toMatchObject({ decision: "needs_review" });
     await caller.userPreferences.updateWorkflow({ analysisProvider: "ollama", autoOrganizeDocuments: false });

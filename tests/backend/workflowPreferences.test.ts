@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { and, eq } from "drizzle-orm";
 import { buildCase, buildLawyer, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
+import { EXTERNAL_DOCUMENT_SHARING_SCOPE } from "../../shared/workflowConsent";
 
 const suite = sqliteAvailable ? describe : describe.skip;
 
@@ -31,14 +32,14 @@ suite("persisted workflow controls", () => {
     await expect(ownerCaller.userPreferences.workflow()).resolves.toMatchObject({
       analysisMode: "local",
       autoAnalyzeImports: true,
-      shareRawDocumentContent: true,
+      shareRawDocumentContent: false,
+      externalDocumentSharingConsent: null,
       outreachReviewMode: "each",
       messageApprovalMode: "each",
     });
 
     const updated = await ownerCaller.userPreferences.updateWorkflow({
       analysisMode: "cloud",
-      shareRawDocumentContent: false,
       outreachReviewMode: "batch",
       messageApprovalMode: "batch",
     });
@@ -77,7 +78,7 @@ suite("persisted workflow controls", () => {
   it("does not send raw content to a provider when full-source sharing is disabled", async () => {
     const caller = app.makeCaller(owner);
     await app.db.insert(app.schema.cases).values(buildCase({ id: "CASE_WORKFLOW_ANALYSIS", userId: owner.id }));
-    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: false });
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai" });
     vi.stubEnv("OPENAI_API_KEY", "test-openai-key");
     const fetchMock = vi.fn(() => Promise.reject(new Error("provider must not be called")));
     vi.stubGlobal("fetch", fetchMock);
@@ -110,6 +111,155 @@ suite("persisted workflow controls", () => {
       selectedAnalysisProvider: "openai",
       shareRawDocumentContent: false,
     });
+  });
+
+  it("does not treat a legacy sharing flag or another actor's record as consent", async () => {
+    const legacy = {
+      analysisMode: "cloud",
+      analysisProvider: "openai",
+      autoAnalyzeImports: true,
+      autoOrganizeDocuments: true,
+      shareRawDocumentContent: true,
+      outreachReviewMode: "each",
+      messageApprovalMode: "each",
+    };
+    await app.db.insert(app.schema.userPreferences).values({
+      id: "legacy-workflow-preferences",
+      userId: other.id,
+      key: "workflow-controls",
+      value: JSON.stringify(legacy),
+      updatedAt: new Date(),
+    });
+    const otherCaller = app.makeCaller(other);
+    await expect(otherCaller.userPreferences.workflow()).resolves.toMatchObject({
+      analysisProvider: "openai",
+      shareRawDocumentContent: false,
+      externalDocumentSharingConsent: null,
+    });
+
+    await app.db.update(app.schema.userPreferences).set({
+      value: JSON.stringify({
+        ...legacy,
+        externalDocumentSharingConsent: {
+          id: "foreign-consent",
+          version: 1,
+          provider: "openai",
+          scope: EXTERNAL_DOCUMENT_SHARING_SCOPE,
+          actorUserId: owner.id,
+          grantedAt: new Date().toISOString(),
+          automaticImports: true,
+          revokedAt: null,
+          revokedByUserId: null,
+        },
+      }),
+    }).where(and(
+      eq(app.schema.userPreferences.userId, other.id),
+      eq(app.schema.userPreferences.key, "workflow-controls"),
+    ));
+    await expect(otherCaller.userPreferences.workflow()).resolves.toMatchObject({
+      shareRawDocumentContent: false,
+      externalDocumentSharingConsent: null,
+    });
+  });
+
+  it("records reviewed provider-bound consent and revokes it on provider, import, and owner changes", async () => {
+    const caller = app.makeCaller(owner);
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", autoAnalyzeImports: true });
+    await expect(caller.userPreferences.workflow()).resolves.toMatchObject({
+      analysisProvider: "openai",
+      shareRawDocumentContent: false,
+      externalDocumentSharingConsent: null,
+    });
+
+    await expect(caller.userPreferences.grantExternalDocumentSharing({
+      provider: "openai",
+      scope: EXTERNAL_DOCUMENT_SHARING_SCOPE,
+      automaticImports: true,
+      acknowledgeFullDocumentContent: false,
+      acknowledgeAutomaticImports: true,
+    } as any)).rejects.toThrow();
+    await expect(caller.userPreferences.grantExternalDocumentSharing({
+      provider: "openai",
+      scope: EXTERNAL_DOCUMENT_SHARING_SCOPE,
+      automaticImports: false,
+      acknowledgeFullDocumentContent: true,
+      acknowledgeAutomaticImports: true,
+    })).rejects.toMatchObject({ code: "CONFLICT" });
+
+    const granted = await caller.userPreferences.grantExternalDocumentSharing({
+      provider: "openai",
+      scope: EXTERNAL_DOCUMENT_SHARING_SCOPE,
+      automaticImports: true,
+      acknowledgeFullDocumentContent: true,
+      acknowledgeAutomaticImports: true,
+    });
+    expect(granted).toMatchObject({
+      analysisProvider: "openai",
+      shareRawDocumentContent: true,
+      externalDocumentSharingConsent: {
+        version: 1,
+        provider: "openai",
+        scope: EXTERNAL_DOCUMENT_SHARING_SCOPE,
+        actorUserId: owner.id,
+        automaticImports: true,
+        revokedAt: null,
+        revokedByUserId: null,
+      },
+    });
+    expect(new Date(granted.externalDocumentSharingConsent!.grantedAt).toISOString())
+      .toBe(granted.externalDocumentSharingConsent!.grantedAt);
+
+    const switched = await caller.userPreferences.updateWorkflow({ analysisProvider: "together" });
+    expect(switched).toMatchObject({
+      analysisProvider: "together",
+      shareRawDocumentContent: false,
+      externalDocumentSharingConsent: {
+        id: granted.externalDocumentSharingConsent!.id,
+        provider: "openai",
+        revokedByUserId: owner.id,
+      },
+    });
+    expect(switched.externalDocumentSharingConsent?.revokedAt).toEqual(expect.any(String));
+
+    const together = await caller.userPreferences.grantExternalDocumentSharing({
+      provider: "together",
+      scope: EXTERNAL_DOCUMENT_SHARING_SCOPE,
+      automaticImports: true,
+      acknowledgeFullDocumentContent: true,
+      acknowledgeAutomaticImports: true,
+    });
+    expect(together.shareRawDocumentContent).toBe(true);
+    const importChanged = await caller.userPreferences.updateWorkflow({ autoAnalyzeImports: false });
+    expect(importChanged).toMatchObject({
+      shareRawDocumentContent: false,
+      externalDocumentSharingConsent: { provider: "together", automaticImports: true, revokedByUserId: owner.id },
+    });
+
+    await caller.userPreferences.updateWorkflow({ autoAnalyzeImports: true });
+    const regranted = await caller.userPreferences.grantExternalDocumentSharing({
+      provider: "together",
+      scope: EXTERNAL_DOCUMENT_SHARING_SCOPE,
+      automaticImports: true,
+      acknowledgeFullDocumentContent: true,
+      acknowledgeAutomaticImports: true,
+    });
+    const revoked = await caller.userPreferences.revokeExternalDocumentSharing({
+      consentId: regranted.externalDocumentSharingConsent!.id,
+    });
+    expect(revoked).toMatchObject({
+      shareRawDocumentContent: false,
+      externalDocumentSharingConsent: { revokedByUserId: owner.id },
+    });
+
+    const consentAudits = await app.db.select().from(app.schema.auditLogs).where(and(
+      eq(app.schema.auditLogs.userId, owner.id),
+      eq(app.schema.auditLogs.entityType, "workflow_consent"),
+    ));
+    expect(consentAudits.filter((row) => row.action === "workflow.external_document_sharing_granted")).toHaveLength(3);
+    expect(consentAudits.filter((row) => row.action === "workflow.external_document_sharing_revoked")).toHaveLength(3);
+    expect(JSON.parse(consentAudits.find((row) => row.action === "workflow.external_document_sharing_granted")!.details!))
+      .toMatchObject({ provider: "openai", scope: EXTERNAL_DOCUMENT_SHARING_SCOPE, actorUserId: owner.id, automaticImports: true });
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
   });
 
   it("supports batch approval but keeps automatic external messages pending", async () => {
