@@ -789,6 +789,105 @@ test("source controls retain paused work and refresh status without reloading", 
   }
 });
 
+test("shared Google disconnect review names both capabilities and cancellation preserves multiple accounts", async ({ page }, testInfo) => {
+  const email = await createAccount(page);
+  const caseId = `GOOGLE_DISCONNECT_${randomUUID()}`;
+  const primaryAccountId = `GOOGLE_PRIMARY_${randomUUID()}`;
+  const otherAccountId = `GOOGLE_OTHER_${randomUUID()}`;
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const owner = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    const now = Math.floor(Date.now() / 1000);
+    database.prepare("INSERT INTO cases (id,userId,clientName,createdAt,updatedAt) VALUES (?,?,?,?,?)")
+      .run(caseId, owner.id, "Google disconnect review", now, now);
+    const insertAccount = database.prepare("INSERT INTO email_accounts (id,userId,provider,email,status,accessToken,connectedAt,createdAt,updatedAt) VALUES (?,?, 'gmail', ?, 'connected', 'TEST_CIPHERTEXT', ?, ?, ?)");
+    insertAccount.run(primaryAccountId, owner.id, "primary-google@example.test", now, now, now);
+    insertAccount.run(otherAccountId, owner.id, "other-google@example.test", now, now, now);
+    database.prepare(`INSERT INTO auto_collection_settings
+      (id,caseId,userId,emailAccountIds,metadata,autoDownloadAttachments,autoDownloadGoogleDriveFiles,isEnabled,updatedAt)
+      VALUES (?,?,?,?,?,1,1,1,?)`)
+      .run(
+        `SETTINGS_${primaryAccountId}`,
+        caseId,
+        owner.id,
+        JSON.stringify([primaryAccountId, otherAccountId]),
+        JSON.stringify({ googleDriveSources: [
+          { accountId: primaryAccountId, folderIds: ["primary-folder"] },
+          { accountId: otherAccountId, folderIds: ["other-folder"] },
+        ] }),
+        now,
+      );
+    const insertSource = database.prepare("INSERT INTO evidence_sources (id,caseId,userId,sourceType,status,createdAt) VALUES (?,?,?,?, 'connected', ?)");
+    insertSource.run(`SOURCE_GMAIL_${primaryAccountId}`, caseId, owner.id, "Gmail", now);
+    insertSource.run(`SOURCE_DRIVE_${primaryAccountId}`, caseId, owner.id, "GoogleDrive", now);
+  } finally {
+    database.close();
+  }
+
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badResponses: Array<{ status: number; url: string }> = [];
+  let disconnectMutations = 0;
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => requestFailures.push(`${request.method()} ${request.url()}`));
+  page.on("response", response => { if (response.status() >= 400) badResponses.push({ status: response.status(), url: response.url() }); });
+  page.on("request", request => {
+    if (request.method() === "POST" && /providerConnections\.disconnect(?:\?|$)/.test(decodeURIComponent(request.url()))) {
+      disconnectMutations += 1;
+    }
+  });
+
+  const response = await page.goto(`/evidence?view=connections&case=${caseId}`, { waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  const account = page.getByTestId("google-account").filter({ hasText: "primary-google@example.test" });
+  await account.getByRole("button", { name: "Disconnect primary-google@example.test", exact: true }).click();
+  await expect(account.getByText("Review shared Google disconnect", { exact: true })).toBeVisible();
+  await expect(account.getByText("The shared Google OAuth credential will be revoked and removed.", { exact: true })).toBeVisible();
+  await expect(account.getByText("Gmail evidence collection will be removed", { exact: true })).toBeVisible();
+  await expect(account.getByText("Google Drive evidence collection will be removed", { exact: true })).toBeVisible();
+  await expect(account.getByText(/1 scheduled collection configuration.*reference this account/)).toBeVisible();
+  await expect(account.getByText("Google disconnect review: Gmail and Google Drive (enabled)", { exact: true })).toBeVisible();
+  await expect(account.getByText("2 local Google source record(s) will remain for the 1 other Google account(s).", { exact: true })).toBeVisible();
+  await expect(account.getByText("Gmail: 1 record(s) will remain", { exact: true })).toBeVisible();
+  await expect(account.getByText("Google Drive: 1 record(s) will remain", { exact: true })).toBeVisible();
+  await expect(account.getByText("Collected documents and other Google accounts stay unchanged.", { exact: true })).toBeVisible();
+  await expect(account.getByRole("button", { name: "Revoke Gmail and Drive", exact: true })).toBeEnabled();
+
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await account.scrollIntoViewIfNeeded();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).include('[aria-label="Google accounts"]').analyze();
+    expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await account.screenshot({ path: testInfo.outputPath(`shared-google-disconnect-${viewport.name}.png`) });
+  }
+
+  await account.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(account.getByText("Review shared Google disconnect", { exact: true })).toHaveCount(0);
+  expect(disconnectMutations).toBe(0);
+  const verification = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const accountCount = verification.prepare("SELECT COUNT(*) AS total FROM email_accounts WHERE id IN (?, ?)")
+      .get(primaryAccountId, otherAccountId) as { total: number };
+    const settings = verification.prepare("SELECT emailAccountIds, metadata FROM auto_collection_settings WHERE id = ?")
+      .get(`SETTINGS_${primaryAccountId}`) as { emailAccountIds: string; metadata: string };
+    const sourceCount = verification.prepare("SELECT COUNT(*) AS total FROM evidence_sources WHERE id IN (?, ?)")
+      .get(`SOURCE_GMAIL_${primaryAccountId}`, `SOURCE_DRIVE_${primaryAccountId}`) as { total: number };
+    expect(accountCount.total).toBe(2);
+    expect(JSON.parse(settings.emailAccountIds)).toEqual([primaryAccountId, otherAccountId]);
+    expect(JSON.parse(settings.metadata).googleDriveSources).toHaveLength(2);
+    expect(sourceCount.total).toBe(2);
+  } finally {
+    verification.close();
+  }
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+  expect(badResponses).toEqual([]);
+});
+
 test("inbox discovers and grows a dossier without preselecting a case", async ({ page }) => {
   await createAccount(page);
   await page.goto("/evidence", { waitUntil: "networkidle" });

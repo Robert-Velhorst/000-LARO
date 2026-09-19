@@ -1,6 +1,6 @@
 # Security
 
-Date: 2026-08-22
+Date: 2026-09-19
 
 ## Implemented controls
 
@@ -23,9 +23,13 @@ Date: 2026-08-22
 - Microsoft evidence collection remains unavailable until a complete collector
   passes owner-scoping and live-account acceptance; configured credentials do
   not make that unfinished surface appear connected.
-- Desktop Google disconnect revokes the durable refresh grant before deleting
-  owner-scoped encrypted credentials and shared Gmail/Drive connection records.
-  Provider or network failure retains the local credential for a safe retry.
+- Google disconnect uses an owner-scoped, versioned pre-action review naming the
+  shared credential, Gmail and Drive consequences, scheduled collection, and
+  local source-record disposition. Stale review stops before provider contact.
+  Confirmed disconnect revokes the durable refresh grant before one transaction
+  removes the credential, rewrites only affected schedule references, performs
+  final-account source cleanup, and stores the mandatory audit. Provider or
+  network failure retains the full shared local state for a safe retry.
 - Trello OAuth is disabled until server-side encrypted token persistence exists. No token is reflected into HTML or posted to an arbitrary origin.
 - Electron keeps Node integration disabled, enables context isolation and renderer sandboxing, and permits external navigation only to HTTPS, `mailto:`, or loopback HTTP URLs.
 - Production startup fails if the database cannot initialize. The API binds to loopback by default; Docker explicitly opts into `0.0.0.0`.

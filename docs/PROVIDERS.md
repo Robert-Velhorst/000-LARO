@@ -1,6 +1,6 @@
 # External Provider Status
 
-Date: 2026-08-01
+Date: 2026-09-19
 
 | Provider | Purpose | Required configuration | Current status |
 |---|---|---|---|
@@ -21,18 +21,22 @@ request `Mail.Send`, and the product keeps Microsoft connection unavailable
 until a real owner-scoped collector and target-account acceptance exist.
 
 Provider configuration is not connection success. The UI shows Google as
-connected only after persisted account state confirms OAuth completion. A
-disconnect removes the shared Gmail/Drive credential and source connection
-records for that owner only after Google confirms revocation. If Google is
-unreachable or returns a non-terminal failure, LARO retains the encrypted
-credential so the owner can retry instead of silently leaving an active grant.
+connected only after persisted account state confirms OAuth completion. Gmail
+and Drive are capabilities of one account grant, with one disconnect review
+that names the account, shared credential, both capabilities, affected scheduled
+collection, and owner-scoped source-record disposition. A versioned impact
+revision rejects stale confirmation before provider contact. If Google is
+unreachable or returns a non-terminal failure, LARO retains the complete local
+credential, collection, and source state so the owner can retry without a
+partial success.
 
 ## OAuth credential lifecycle
 
 `server/providerConnections.ts` is the single owner-scoped lifecycle used by
 the callback, renderer, Gmail collection, Drive collection, live acceptance,
 disconnect, and account erasure. The renderer has one API surface,
-`providerConnections`, with only availability, list, begin, and disconnect.
+`providerConnections`, with availability, list, begin, disconnect impact, and
+confirmed disconnect.
 Access and refresh tokens are never returned by that router. The former
 `emailAccounts` mutations and the Gmail/Drive enhanced connect/disconnect
 aliases were removed; collection jobs cannot manually refresh a grant.
@@ -59,8 +63,10 @@ aliases were removed; collection jobs cannot manually refresh a grant.
 - User-initiated disconnect revokes the durable Google refresh grant first. A
   transient revocation failure retains local state for retry; HTTP 400 means the
   grant is already invalid and is a successful terminal result. Local credential
-  deletion and its audit are one transaction. Shared Gmail/Drive source state is
-  removed only after the owner's final Google account is disconnected.
+  deletion, affected schedule-reference cleanup, final-account source cleanup,
+  and the mandatory audit are one transaction. Other account selections and
+  collected documents remain. Shared Gmail/Drive source state is removed only
+  after the owner's final Google account is disconnected.
 - GDPR erasure uses the same provider revocation adapter before deleting the
   only local grant copy. Remote failure is summarized in the durable erasure
   receipt but cannot block local erasure; the owner may still need to revoke the

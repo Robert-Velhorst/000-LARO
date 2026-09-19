@@ -7,6 +7,13 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Represented Gmail and Google Drive as capabilities of one Google account
+  grant. Disconnect now requires a versioned impact review naming the account,
+  both capabilities, affected scheduled collection, and local source-record
+  disposition; stale reviews stop before provider contact, provider failures
+  retain the complete local state, and confirmed cleanup updates only the
+  reviewed account selections while preserving other Google accounts and
+  collected documents.
 - Scoped automatic media/organization shortlist review to the stable target IDs
   returned by the active case discovery run. Reports now enumerate created,
   refreshed, reviewed, skipped, and pending targets, preserve manual and

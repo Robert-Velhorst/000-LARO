@@ -1,6 +1,6 @@
 # Frontend Architecture
 
-Current as of 2026-08-14.
+Current as of 2026-09-19.
 
 ## Shipped surfaces
 
@@ -46,6 +46,13 @@ counts and explains provider/result bounds when a run is partial. Mutations
 invalidate the relevant queries so users do not
 need to reload the page. The workspace is verified without horizontal overflow
 at 390x844 and 1280x800.
+
+The Evidence Connections view presents each Google account as one shared OAuth
+grant with Gmail and Drive capabilities. Disconnect expands an owner-scoped
+impact review before enabling confirmation; it names affected schedule entries
+with owner-visible case labels, explains source-record retention or removal, and
+states that collected documents and other accounts remain. Cancellation sends no
+mutation, and a failed or stale confirmation keeps the review open for retry.
 
 ## Scanner boundary
 

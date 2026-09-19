@@ -36,7 +36,11 @@ export async function verifyGoogleAccounts(page, database, ownerId, origin, outp
     await expect(section.getByRole('button', { name: 'Add Google account', exact: true })).toBeEnabled();
     await expect.poll(() => popup.isClosed()).toBe(true);
     await section.getByRole('button', { name: 'Disconnect second@example.test', exact: true }).click();
-    await expect(section.getByText(/Other accounts and collected documents stay unchanged/)).toBeVisible();
+    await expect(section.getByText('Review shared Google disconnect', { exact: true })).toBeVisible();
+    await expect(section.getByText('Gmail evidence collection will be removed', { exact: true })).toBeVisible();
+    await expect(section.getByText('Google Drive evidence collection will be removed', { exact: true })).toBeVisible();
+    await expect(section.getByText('Collected documents and other Google accounts stay unchanged.', { exact: true })).toBeVisible();
+    await expect(section.getByRole('button', { name: 'Revoke Gmail and Drive', exact: true })).toBeEnabled();
     await section.getByRole('button', { name: 'Cancel', exact: true }).click();
     assert.equal(db.prepare('SELECT count(*) AS n FROM email_accounts').get().n, 2);
     await page.getByRole('tab', { name: 'Sources', exact: true }).click();

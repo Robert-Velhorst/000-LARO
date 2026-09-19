@@ -1,6 +1,6 @@
 # Backend Endpoint Usage Audit
 
-Updated: 2026-07-20
+Updated: 2026-09-19
 
 ## Current contract
 
@@ -22,7 +22,8 @@ original phase-074 snapshot are mounted and typed.
   enumerates every created, refreshed, reviewed, skipped, and pending target and
   reports provider/result bounds as partial.
 - Draft preparation, approval, explicit delivery, replies, and outreach analytics.
-- Gmail/Drive OAuth and evidence collection when configured.
+- Gmail/Drive OAuth and evidence collection when configured, including a
+  versioned shared-grant disconnect review and one confirmed cleanup operation.
 - Operator diagnostics, readiness, recovery, retention, reconciliation,
   emergency stop, and feature flags.
 
@@ -43,3 +44,6 @@ original phase-074 snapshot are mounted and typed.
 - Browser QA covers every mounted route in the packaged Chromium target.
 - New irreversible actions require owner scope, confirmation, audit,
   idempotency, and a visible failure state.
+- Google disconnect confirmation is bound to the reviewed account, capabilities,
+  scheduled collection, source-record disposition, and current owner state;
+  changed state must be reviewed again before provider contact.

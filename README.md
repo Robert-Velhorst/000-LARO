@@ -805,9 +805,14 @@ Gateway callback:
 https://<gateway-domain>/<prefix>/api/oauth/gmail/callback
 ```
 
-After consent, status updates without page reload. Disconnect revokes the Google
-grant before deleting local encrypted credentials. If revocation fails, the
-credential remains for retry and no false success is recorded.
+After consent, status updates without page reload. Gmail and Drive are shown as
+capabilities of one Google account grant. Disconnect first loads a versioned
+review naming the account, shared credential, both capabilities, affected
+scheduled collection, and local source-record disposition. A changed review is
+rejected before Google is contacted. Disconnect then revokes the shared grant
+before deleting local encrypted credentials and updating the reviewed schedule
+references. If revocation fails, credentials, source records, and collection
+settings remain for retry and no partial success is recorded.
 
 ### Multiple Google Accounts
 
@@ -831,8 +836,10 @@ and folder IDs per entry. Existing single-account settings remain readable.
 Legacy folders without an account identity must be assigned explicitly before
 saving. Ownership is checked before collection, and imported evidence records
 the account used. A failed Drive account is reported without suppressing later
-selected accounts. Disconnect confirmation names the account and covers both
-its Gmail and Drive grant; other accounts and collected evidence remain intact.
+selected accounts. Disconnect confirmation names the account and both Gmail and
+Drive consequences. Only that account is removed from scheduled selections.
+Shared source connection records remain while another Google account exists;
+collected evidence is never deleted by provider disconnect.
 
 Regression checks use disposable databases and controlled Google responses.
 They do not establish live consent, mailbox access, or Drive access for any

@@ -4,6 +4,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import {
   beginProviderConnection,
   disconnectProviderConnection,
+  getGoogleDisconnectImpact,
   listProviderConnections,
   ProviderConnectionError,
   providerConnectionAvailability,
@@ -36,6 +37,19 @@ export const providerConnectionsRouter = router({
     .input(z.object({ provider: provider.optional() }).optional())
     .query(({ input, ctx }) => listProviderConnections(ctx.user.id, input?.provider)),
 
+  disconnectImpact: protectedProcedure
+    .input(z.object({ accountId: z.string().trim().min(1).max(256) }))
+    .query(async ({ input, ctx }) => {
+      try {
+        return await getGoogleDisconnectImpact({
+          userId: ctx.user.id,
+          accountId: input.accountId,
+        });
+      } catch (error) {
+        asTrpcError(error);
+      }
+    }),
+
   begin: protectedProcedure
     .input(z.object({ provider }))
     .mutation(async ({ input, ctx }) => {
@@ -53,12 +67,17 @@ export const providerConnectionsRouter = router({
     }),
 
   disconnect: protectedProcedure
-    .input(z.object({ accountId: z.string().trim().min(1).max(256) }))
+    .input(z.object({
+      accountId: z.string().trim().min(1).max(256),
+      impactRevision: z.string().regex(/^[a-f0-9]{64}$/),
+      acknowledgeSharedGoogleGrant: z.literal(true),
+      initiatedFrom: z.enum(["shared_google_grant", "gmail", "google_drive"]),
+    }))
     .mutation(async ({ input, ctx }) => {
       try {
         return await disconnectProviderConnection({
           userId: ctx.user.id,
-          accountId: input.accountId,
+          ...input,
         });
       } catch (error) {
         asTrpcError(error);

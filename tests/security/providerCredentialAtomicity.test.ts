@@ -49,6 +49,19 @@ suite("provider credential audit atomicity", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
   }
 
+  async function reviewedDisconnectInput(
+    accountId: string,
+    initiatedFrom: "shared_google_grant" | "gmail" | "google_drive",
+  ) {
+    const impact = await app.makeCaller(owner).providerConnections.disconnectImpact({ accountId });
+    return {
+      accountId,
+      impactRevision: impact.impactRevision,
+      acknowledgeSharedGoogleGrant: true as const,
+      initiatedFrom,
+    };
+  }
+
   it("rolls back a newly stored OAuth connection when its audit cannot be written", async () => {
     const releaseFailure = rejectAuditAction("provider.connected", "reject_provider_connect_audit");
     try {
@@ -325,9 +338,9 @@ suite("provider credential audit atomicity", () => {
 
     const releaseFailure = rejectAuditAction("provider.disconnect_revoked", "reject_enhanced_disconnect_audit");
     try {
-      await expect(app.makeCaller(owner).providerConnections.disconnect({
-        accountId: "PROVIDER_ATOMIC_ENHANCED",
-      })).rejects.toThrow();
+      await expect(app.makeCaller(owner).providerConnections.disconnect(
+        await reviewedDisconnectInput("PROVIDER_ATOMIC_ENHANCED", "shared_google_grant"),
+      )).rejects.toThrow();
     } finally {
       releaseFailure();
     }
@@ -356,9 +369,9 @@ suite("provider credential audit atomicity", () => {
 
     const releaseFailure = rejectAuditAction("provider.disconnect_revoked", "reject_direct_disconnect_audit");
     try {
-      await expect(app.makeCaller(owner).providerConnections.disconnect({
-        accountId: "PROVIDER_ATOMIC_DIRECT",
-      })).rejects.toThrow();
+      await expect(app.makeCaller(owner).providerConnections.disconnect(
+        await reviewedDisconnectInput("PROVIDER_ATOMIC_DIRECT", "gmail"),
+      )).rejects.toThrow();
     } finally {
       releaseFailure();
     }
@@ -383,9 +396,9 @@ suite("provider credential audit atomicity", () => {
 
     const releaseFailure = rejectAuditAction("provider.disconnect_revoked", "reject_drive_disconnect_audit");
     try {
-      await expect(app.makeCaller(owner).providerConnections.disconnect({
-        accountId: "PROVIDER_ATOMIC_DRIVE",
-      })).rejects.toThrow();
+      await expect(app.makeCaller(owner).providerConnections.disconnect(
+        await reviewedDisconnectInput("PROVIDER_ATOMIC_DRIVE", "google_drive"),
+      )).rejects.toThrow();
     } finally {
       releaseFailure();
     }

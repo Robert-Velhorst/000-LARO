@@ -8,6 +8,11 @@ import { useGoogleOAuthConnection } from "@/hooks/useGoogleOAuthConnection";
 
 type AccountRevision = { id: string; status: string | null; updatedAt: Date | null; connectedAt: Date | null };
 const revision = (account: AccountRevision) => JSON.stringify([account.status, account.updatedAt, account.connectedAt]);
+const sourceLabel = (sourceType: string) => {
+  if (sourceType.toLowerCase() === "gmail") return "Gmail";
+  if (["googledrive", "google_drive"].includes(sourceType.toLowerCase())) return "Google Drive";
+  return sourceType;
+};
 
 export default function EvidenceConnectionsCard() {
   const utils = trpc.useUtils();
@@ -19,6 +24,10 @@ export default function EvidenceConnectionsCard() {
   const revoke = trpc.providerConnections.disconnect.useMutation();
   const baseline = useRef(new Map<string, string>());
   const [removing, setRemoving] = useState<string | null>(null);
+  const disconnectImpact = trpc.providerConnections.disconnectImpact.useQuery(
+    { accountId: removing || "" },
+    { enabled: Boolean(removing), retry: false },
+  );
   const refreshAll = useCallback(() => {
     void utils.providerConnections.list.invalidate();
   }, [utils]);
@@ -43,13 +52,30 @@ export default function EvidenceConnectionsCard() {
     }
   };
   const disconnect = async (accountId: string) => {
+    if (!disconnectImpact.data || disconnectImpact.data.account.id !== accountId) {
+      toast.error("Review the current shared Google disconnect impact before confirming");
+      return;
+    }
     try {
-      await revoke.mutateAsync({ accountId });
+      const result = await revoke.mutateAsync({
+        accountId,
+        impactRevision: disconnectImpact.data.impactRevision,
+        acknowledgeSharedGoogleGrant: true,
+        initiatedFrom: "shared_google_grant",
+      });
       setRemoving(null);
       refreshAll();
-      toast.success("Google account disconnected");
+      const providerResult = result.revocationOutcome === "revoked"
+        ? "Google confirmed that the shared grant was revoked."
+        : result.revocationOutcome === "already_invalid"
+          ? "The shared Google grant was already invalid."
+          : "No reusable Google credential was stored.";
+      toast.success(
+        `${providerResult} Gmail and Google Drive were removed from LARO; ${result.scheduledCollectionsUpdated} scheduled collection configuration(s) were updated and collected documents were retained.`,
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not disconnect this account");
+      await disconnectImpact.refetch();
     }
   };
   const googleAccounts = (accounts.data ?? []).filter((account) => account.provider === "gmail");
@@ -90,10 +116,54 @@ export default function EvidenceConnectionsCard() {
             </div>
           </div>
           {removing === account.id && <Alert><AlertDescription className="space-y-3">
-            <p className="break-words">Disconnect Gmail and Drive for {account.email}? Other accounts and collected documents stay unchanged.</p>
-            <div className="flex gap-2">
-              <Button variant="destructive" size="sm" disabled={revoke.isPending} onClick={() => void disconnect(account.id)}>Confirm disconnect</Button>
+            <div className="space-y-2 break-words">
+              <p className="font-medium">Review shared Google disconnect</p>
+              <p>Account: {account.email}</p>
+              {disconnectImpact.isLoading ? <p role="status">Loading disconnect impact...</p>
+                : disconnectImpact.error ? <p role="alert">The disconnect impact could not be loaded. Retry before disconnecting.</p>
+                  : disconnectImpact.data ? <>
+                    <p>{disconnectImpact.data.credential.willRevoke
+                      ? "The shared Google OAuth credential will be revoked and removed."
+                      : "No reusable Google credential is stored; the shared Gmail and Drive connection record will be removed."}</p>
+                    <ul className="list-disc space-y-1 pl-5">
+                      {disconnectImpact.data.capabilities.map((capability) => <li key={capability.id}>{capability.label} will be removed</li>)}
+                    </ul>
+                    <p>
+                      {disconnectImpact.data.scheduledCollections.length} scheduled collection configuration(s) reference this account.
+                      Their affected Gmail or Drive selections will be removed.
+                    </p>
+                    {disconnectImpact.data.scheduledCollections.length > 0 && <ul className="list-disc space-y-1 pl-5 text-xs">
+                      {disconnectImpact.data.scheduledCollections.map((collection) => <li key={collection.settingsId}>
+                        {collection.caseLabel}: {collection.capabilities.map((value) => value === "gmail" ? "Gmail" : "Google Drive").join(" and ")}
+                        {collection.enabled ? " (enabled)" : " (disabled)"}
+                      </li>)}
+                    </ul>}
+                    <p>
+                      {disconnectImpact.data.localSourceRecords.reduce((total, source) => total + source.count, 0)} local Google source record(s)
+                      {disconnectImpact.data.remainingGoogleAccountsAfter === 0
+                        ? " will be removed because this is the final saved Google account."
+                        : ` will remain for the ${disconnectImpact.data.remainingGoogleAccountsAfter} other Google account(s).`}
+                    </p>
+                    {disconnectImpact.data.localSourceRecords.length > 0 && <ul className="list-disc space-y-1 pl-5 text-xs">
+                      {disconnectImpact.data.localSourceRecords.map((source) => <li key={source.sourceType}>
+                        {sourceLabel(source.sourceType)}: {source.count} record(s) will {source.willRemove ? "be removed" : "remain"}
+                      </li>)}
+                    </ul>}
+                    <p>Collected documents and other Google accounts stay unchanged.</p>
+                  </> : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={revoke.isPending || !disconnectImpact.data || disconnectImpact.isFetching}
+                onClick={() => void disconnect(account.id)}
+              >
+                {revoke.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Revoke Gmail and Drive
+              </Button>
               <Button variant="outline" size="sm" disabled={revoke.isPending} onClick={() => setRemoving(null)}>Cancel</Button>
+              {disconnectImpact.error && <Button variant="outline" size="sm" disabled={disconnectImpact.isFetching} onClick={() => void disconnectImpact.refetch()}>Retry impact</Button>}
             </div>
           </AlertDescription></Alert>}
         </div>
