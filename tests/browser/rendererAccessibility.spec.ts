@@ -39,7 +39,9 @@ async function createAccountThroughSignup(page: Page) {
   await page.getByLabel("Email Address").fill(email);
   await page.getByLabel("Password", { exact: true }).fill("A11yAudit!2026");
   await page.getByRole("button", { name: "Sign Up", exact: true }).click();
-  await expect(page.getByRole("button", { name: /Open account menu|Accountmenu openen/ })).toBeVisible();
+  await expect(page.getByRole("dialog", {
+    name: /Set up your LARO workspace|Uw LARO-werkruimte instellen/,
+  })).toBeVisible();
   const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
   try {
     const user = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
@@ -50,7 +52,7 @@ async function createAccountThroughSignup(page: Page) {
     database.close();
   }
   await page.reload({ waitUntil: "networkidle" });
-  await page.waitForLoadState("networkidle");
+  await expect(page.getByRole("button", { name: /Open account menu|Accountmenu openen/ })).toBeVisible();
   return email;
 }
 
