@@ -8,17 +8,13 @@ import {
   downloadAndUploadGoogleDriveFile,
 } from "../googleDriveService";
 import { getDb } from "../db";
-import { emailAccounts, evidence } from "../schema";
+import { evidence } from "../schema";
 import { eq, and } from "drizzle-orm";
-import { beginOAuthFlowAsync } from "../oauth2";
-import { SESSION_COOKIE_NAME } from "../sessionCookie";
 import { startKeywordPullJob } from "../autoCollectionService";
 import { assertCaseOwnership } from "../_core/authz";
 import { createEvidenceFile } from "../evidence";
 import { analyzeStoredEvidence } from "../documentAnalysisService";
 import { supportsDocumentAnalysisMime } from "../documentIntelligence";
-import { revokeStoredGoogleTokens } from "../emailOAuth";
-import { AUDIT_ACTIONS, createAuditLog, writeAuditLogOrThrow } from "../audit";
 import { PROVIDER_LIMITS } from "../providerLimits";
 import { enforcePersistentRateLimit, RATE_LIMITS } from "../rateLimit";
 import { EvidenceIngestionBudget } from "../evidenceIngestionBudget";
@@ -98,134 +94,6 @@ async function ingestDriveEvidence(options: {
  */
 export const googleDriveRouter = router({
   /**
-   * Status endpoint used by GoogleDriveIntegration.tsx. Reports both whether
-   * the user has Drive access (via Gmail OAuth — same connection) and a
-   * rough per-case summary so the legacy UI keeps working.
-   */
-  getStatus: protectedProcedure
-    .input(z.object({ caseId: z.string() }))
-    .query(async ({ ctx, input }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id);
-      const db = await getDb();
-      if (!db) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
-      }
-
-      const accounts = await db
-        .select()
-        .from(emailAccounts)
-        .where(and(
-          eq(emailAccounts.userId, ctx.user.id),
-          eq(emailAccounts.provider, "gmail"),
-          eq(emailAccounts.status, "connected"),
-        ));
-
-      const connected = accounts.length > 0;
-
-      // Count Drive-sourced evidence for the case.
-      const rows = await db
-        .select()
-        .from(evidence)
-        .where(and(
-          eq(evidence.caseId, input.caseId),
-          eq(evidence.userId, ctx.user.id),
-          eq(evidence.source, "google_drive")
-        ));
-      const itemsCollected = rows.length;
-
-      return {
-        connected,
-        status: connected
-          ? {
-              id: accounts[0].id,
-              status: "connected",
-              itemsCollected: String(itemsCollected),
-              lastSyncedAt: accounts[0].connectedAt,
-            }
-          : null,
-      };
-    }),
-
-  /**
-   * Return the OAuth URL the renderer should open to connect Google Drive.
-   * Drive access piggy-backs on the Gmail OAuth scopes, so this just kicks
-   * off the Gmail flow.
-   */
-  connect: protectedProcedure.mutation(async ({ ctx }) => {
-    const url = await beginOAuthFlowAsync(
-      "gmail",
-      ctx.user.id,
-      ctx.req.cookies?.[SESSION_COOKIE_NAME] || '',
-    );
-    return { authUrl: url };
-  }),
-
-  /**
-   * Disconnect: removes the Gmail/Drive credentials for the user. Note this
-   * removes Gmail access too because they share one OAuth token.
-   */
-  disconnect: protectedProcedure
-    .input(z.object({ caseId: z.string().optional(), sourceId: z.string().optional() }))
-    .mutation(async ({ ctx }) => {
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
-
-      const accounts = await db.select().from(emailAccounts).where(
-        and(eq(emailAccounts.userId, ctx.user.id), eq(emailAccounts.provider, "gmail"))
-      );
-      const revocationOutcomes: string[] = [];
-      try {
-        for (const account of accounts) {
-          revocationOutcomes.push(await revokeStoredGoogleTokens(account));
-        }
-      } catch (error) {
-        await createAuditLog({
-          userId: ctx.user.id,
-          action: AUDIT_ACTIONS.PROVIDER_DISCONNECT_FAILED,
-          entityType: "provider_connection",
-          entityId: "google",
-          details: {
-            provider: "google",
-            route: "googleDrive.disconnect",
-            accountCount: accounts.length,
-            reason: "upstream_revocation_failed",
-            localStateRetained: true,
-          },
-        });
-        throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: "Google did not confirm token revocation; the local connection was retained so disconnect can be retried.",
-          cause: error,
-        });
-      }
-
-      const revocationConfirmed = revocationOutcomes.some(
-        (outcome) => outcome === "revoked" || outcome === "already_invalid"
-      );
-      db.transaction((tx: any) => {
-        tx.delete(emailAccounts)
-          .where(and(eq(emailAccounts.userId, ctx.user.id), eq(emailAccounts.provider, "gmail")))
-          .run();
-        writeAuditLogOrThrow(tx, {
-          userId: ctx.user.id,
-          action: revocationConfirmed
-            ? AUDIT_ACTIONS.PROVIDER_DISCONNECT_REVOKED
-            : AUDIT_ACTIONS.PROVIDER_DISCONNECTED,
-          entityType: "provider_connection",
-          entityId: "google",
-          details: {
-            provider: "google",
-            route: "googleDrive.disconnect",
-            accountCount: accounts.length,
-            revocationOutcomes,
-            localCredentialsRemoved: true,
-          },
-        });
-      });
-      return { success: true };
-    }),
-
-  /**
    * Kick off a Drive sync for a case. Without keywords we don't know what to
    * pull, so this is a thin wrapper that returns a no-op result if no
    * auto-collection settings exist yet.
@@ -280,32 +148,6 @@ export const googleDriveRouter = router({
         },
       };
     }),
-
-  /**
-   * Check if user has Google Drive connected
-   */
-  checkConnection: protectedProcedure.query(async ({ ctx }) => {
-    const db = await getDb();
-    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
-
-    const accounts = await db
-      .select()
-      .from(emailAccounts)
-      .where(and(
-        eq(emailAccounts.userId, ctx.user.id),
-        eq(emailAccounts.provider, "gmail"),
-        eq(emailAccounts.status, "connected"),
-      ));
-
-    return {
-      connected: accounts.length > 0,
-      accounts: accounts.map(a => ({
-        id: a.id,
-        email: a.email,
-        displayName: a.displayName,
-      })),
-    };
-  }),
 
   /**
    * List folders in Google Drive (for folder picker)

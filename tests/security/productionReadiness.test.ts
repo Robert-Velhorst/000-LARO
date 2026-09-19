@@ -304,7 +304,7 @@ describe('production readiness regressions', () => {
     expect(callback).toContain("'Cross-Origin-Opener-Policy', 'unsafe-none'");
     expect(callback).toContain("'Referrer-Policy', 'no-referrer'");
     expect(callback).toContain("action.addEventListener('click', () => window.location.reload())");
-    expect(callback).toContain('const retryable = !tokenExchangeCompleted && isRetryableOAuthNetworkError(error)');
+    expect(callback).toContain('const retryable = error instanceof ProviderCallbackError && error.retryable');
     expect(callback).toContain('window.close()');
     expect(oauthFlow).toContain("window.addEventListener('message', handleOAuthComplete)");
     expect(oauthFlow).toContain("window.open(authUrl, 'laro-google-oauth'");

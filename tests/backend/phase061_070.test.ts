@@ -6,7 +6,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { bootTestApp, sqliteAvailable, type TestApp } from '../helpers/app';
 import { buildUser, buildLawyer, buildCase, buildEvidence } from '../factories';
 import { encryptToken } from '../../server/emailOAuth';
-import { saveEmailAccount } from '../../server/oauth2';
+import { storeProviderConnection } from '../../server/providerConnections';
 
 const suite = sqliteAvailable ? describe : describe.skip;
 
@@ -65,7 +65,7 @@ suite('Phases 061–070', () => {
       { id: 'SOURCE_GMAIL_ADMIN61', userId: ADMIN.id, sourceType: 'Gmail', status: 'connected' },
     ] as any);
 
-    await app.makeCaller(U).gmailEnhanced.disconnect();
+    await app.makeCaller(U).providerConnections.disconnect({ accountId: 'GOOGLE_U61' });
 
     expect(revoke).toHaveBeenCalledTimes(1);
     const revokeBody = revoke.mock.calls[0][1]?.body as URLSearchParams;
@@ -99,14 +99,14 @@ suite('Phases 061–070', () => {
     expect(audit).toBeTruthy();
     expect(JSON.parse(audit.details)).toMatchObject({
       provider: 'google',
-      accountCount: 1,
-      revocationOutcomes: ['revoked'],
+      revocationOutcome: 'revoked',
       localCredentialsRemoved: true,
       localSourcesRemoved: true,
     });
     expect(audit.details).not.toContain('refresh-u');
 
-    await app.makeCaller(U).gmailEnhanced.disconnect();
+    await expect(app.makeCaller(U).providerConnections.disconnect({ accountId: 'GOOGLE_U61' }))
+      .rejects.toMatchObject({ code: 'NOT_FOUND' });
     const revocationAudits = await app.db.select().from(app.schema.auditLogs)
       .where(and(
         eq(app.schema.auditLogs.userId, U.id),
@@ -117,7 +117,7 @@ suite('Phases 061–070', () => {
 
   it('rejects new Outlook OAuth connections while its collector is unavailable', async () => {
     await expect(
-      app.makeCaller(U).emailAccounts.getAuthUrl({ provider: 'outlook' } as never)
+      app.makeCaller(U).providerConnections.begin({ provider: 'outlook' })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
@@ -131,7 +131,7 @@ suite('Phases 061–070', () => {
       id: 'SOURCE_GMAIL_U61_RETRY', userId: U.id, sourceType: 'Gmail', status: 'connected',
     } as any);
 
-    await expect(app.makeCaller(U).gmailEnhanced.disconnect()).rejects.toMatchObject({
+    await expect(app.makeCaller(U).providerConnections.disconnect({ accountId: 'GOOGLE_U61_RETRY' })).rejects.toMatchObject({
       code: 'PRECONDITION_FAILED',
     });
 
@@ -162,7 +162,7 @@ suite('Phases 061–070', () => {
       accessToken: encryptToken('already-invalid'), status: 'connected',
     } as any);
 
-    await app.makeCaller(U).emailAccounts.revoke({ accountId: 'GOOGLE_U61_INVALID' });
+    await app.makeCaller(U).providerConnections.disconnect({ accountId: 'GOOGLE_U61_INVALID' });
 
     const account = await app.db.select().from(app.schema.emailAccounts)
       .where(eq(app.schema.emailAccounts.id, 'GOOGLE_U61_INVALID'));
@@ -177,7 +177,7 @@ suite('Phases 061–070', () => {
   });
 
   it('records a Google connection without tokens or account PII in audit details', async () => {
-    const accountId = await saveEmailAccount(
+    const accountId = await storeProviderConnection(
       U.id,
       'gmail',
       {

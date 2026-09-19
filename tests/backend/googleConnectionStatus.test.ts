@@ -5,7 +5,7 @@ import { buildUser } from '../factories';
 
 const suite = sqliteAvailable ? describe : describe.skip;
 
-suite('shared Google connection status', () => {
+suite('canonical Google connection status', () => {
   let app: TestApp;
   const owner = { id: 'USER_GOOGLE_STATUS', role: 'user' };
   const other = { id: 'USER_GOOGLE_STATUS_OTHER', role: 'user' };
@@ -24,7 +24,7 @@ suite('shared Google connection status', () => {
 
   afterAll(() => app?.cleanup());
 
-  it('reports the same connected accounts for Gmail and Drive', async () => {
+  it('reports owner-scoped connected and reconnect-required accounts once', async () => {
     await app.db.insert(app.schema.emailAccounts).values([
       {
         id: 'GOOGLE_RECONNECT_REQUIRED',
@@ -51,22 +51,21 @@ suite('shared Google connection status', () => {
     ] as any);
 
     const caller = app.makeCaller(owner);
-    const gmail = await caller.gmailEnhanced.getStatus();
-    const drive = await caller.googleDrive.checkConnection();
+    const connections = await caller.providerConnections.list({ provider: 'gmail' });
 
-    expect(gmail).toMatchObject({
-      connected: true,
-      accountCount: 1,
-      email: 'connected@example.com',
-    });
-    expect(drive).toEqual({
-      connected: true,
-      accounts: [{
+    expect(connections).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'GOOGLE_RECONNECT_REQUIRED',
+        status: 'reconnect_required',
+      }),
+      expect.objectContaining({
         id: 'GOOGLE_CONNECTED',
         email: 'connected@example.com',
         displayName: 'Connected owner',
-      }],
-    });
+        status: 'connected',
+      }),
+    ]));
+    expect(connections).toHaveLength(2);
   });
 
   it('does not present a retained non-connected row as usable Drive access', async () => {
@@ -79,14 +78,9 @@ suite('shared Google connection status', () => {
     } as any);
 
     const caller = app.makeCaller(owner);
-    await expect(caller.gmailEnhanced.getStatus()).resolves.toMatchObject({
-      connected: false,
-      accountCount: 0,
-    });
-    await expect(caller.googleDrive.checkConnection()).resolves.toEqual({
-      connected: false,
-      accounts: [],
-    });
+    await expect(caller.providerConnections.list({ provider: 'gmail' })).resolves.toEqual([
+      expect.objectContaining({ id: 'GOOGLE_FAILED_ONLY', status: 'reconnect_required' }),
+    ]);
 
     const otherRows = await app.db.select().from(app.schema.emailAccounts)
       .where(eq(app.schema.emailAccounts.userId, other.id));

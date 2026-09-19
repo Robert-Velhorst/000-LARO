@@ -38,7 +38,10 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
   );
 
   // Fetch connected email accounts
-  const { data: accountsData } = trpc.emailAccounts.list.useQuery(undefined, { refetchOnWindowFocus: true });
+  const { data: accountsData } = trpc.providerConnections.list.useQuery(
+    { provider: "gmail" },
+    { refetchOnWindowFocus: true },
+  );
   
   const emailAccounts = accountsData ?? [];
   const googleAccounts = emailAccounts.filter((account) => account.provider === "gmail");

@@ -107,19 +107,20 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
     data: driveStatus,
     error: driveStatusError,
     refetch: refetchDriveStatus,
-  } = trpc.googleDrive.checkConnection.useQuery(undefined, {
+  } = trpc.providerConnections.list.useQuery({ provider: "gmail" }, {
     refetchOnWindowFocus: true,
   });
+  const driveConnected = (driveStatus ?? []).some((account) => account.status === "connected");
   const refreshGoogleConnection = useCallback(async () => {
     const result = await refetchDriveStatus();
-    return Boolean(result.data?.connected);
+    return Boolean(result.data?.some((account) => account.status === "connected"));
   }, [refetchDriveStatus]);
   const {
     connecting: connectingGoogle,
     beginConnection: beginGoogleConnection,
     cancelConnection: cancelGoogleConnection,
   } = useGoogleOAuthConnection({
-    connected: Boolean(driveStatus?.connected),
+    connected: driveConnected,
     refreshConnection: refreshGoogleConnection,
   });
   const { data: localFolderData, refetch: refetchLocalFolders } =
@@ -220,7 +221,7 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
     onError: (err) => toast.error(`Failed to add folder: ${err.message}`),
   });
 
-  const connectMutation = trpc.googleDrive.connect.useMutation({
+  const connectMutation = trpc.providerConnections.begin.useMutation({
     onSuccess: (data) => {
       if (data?.authUrl) {
         beginGoogleConnection(data.authUrl);
@@ -299,7 +300,7 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
   };
 
   const handleConnectDrive = () => {
-    connectMutation.mutate();
+    connectMutation.mutate({ provider: "gmail" });
   };
 
   const progressValue = currentJob
@@ -413,7 +414,7 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
                 <RefreshCw className="mr-2 h-3.5 w-3.5" />
                 Google status unavailable - retry
               </Button>
-            ) : driveStatus?.connected ? (
+            ) : driveConnected ? (
               <Badge variant="outline" className="border-green-500/40 text-green-400">
                 <CheckCircle2 className="w-3 h-3 mr-1" /> Connected
               </Badge>

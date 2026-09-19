@@ -2,8 +2,8 @@ import { and, eq, inArray } from "drizzle-orm";
 import { AUDIT_ACTIONS } from "./audit";
 import { ENV } from "./_core/env";
 import { getDb } from "./db";
-import { decryptToken } from "./emailOAuth";
 import { listGoogleDriveFolders } from "./googleDriveService";
+import { getProviderAccessToken, inspectProviderCredentialStorage } from "./providerConnections";
 import { testGmailConnection } from "./gmailService";
 import {
   auditLogs,
@@ -121,9 +121,11 @@ export async function collectLiveProviderAcceptance(
   let oauthTokensDecryptable = false;
   if (googleAccount?.accessToken && googleAccount.refreshToken) {
     try {
-      oauthTokensDecryptable = Boolean(
-        decryptToken(googleAccount.accessToken) && decryptToken(googleAccount.refreshToken),
-      );
+      const storage = await inspectProviderCredentialStorage({
+        userId: googleAccount.userId,
+        accountId: googleAccount.id,
+      });
+      oauthTokensDecryptable = storage.accessTokenDecryptable && storage.refreshGrantDecryptable;
     } catch {
       oauthTokensDecryptable = false;
     }
@@ -146,16 +148,14 @@ export async function collectLiveProviderAcceptance(
   }
 
   let gmailRead = false;
-  if (googleAccount?.id) {
+  if (googleAccount?.id && googleAccount.userId) {
     try {
-      const [freshAccount] = await db
-        .select({ accessToken: emailAccounts.accessToken })
-        .from(emailAccounts)
-        .where(eq(emailAccounts.id, googleAccount.id))
-        .limit(1);
-      if (freshAccount?.accessToken) {
-        gmailRead = (await dependencies.testGmail(decryptToken(freshAccount.accessToken))).ok;
-      }
+      const accessToken = await getProviderAccessToken({
+        userId: googleAccount.userId,
+        accountId: googleAccount.id,
+        provider: "gmail",
+      });
+      gmailRead = (await dependencies.testGmail(accessToken)).ok;
     } catch {
       gmailRead = false;
     }

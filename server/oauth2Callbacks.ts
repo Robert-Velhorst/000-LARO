@@ -2,13 +2,12 @@ import { randomBytes } from 'crypto';
 import { Router, type Request, type Response } from 'express';
 import {
   activateOAuthStateAsync,
-  consumeOAuthStateAsync,
-  exchangeCodeForTokens,
-  getAccountInfo,
-  isRetryableOAuthNetworkError,
   OAuthStateError,
-  saveEmailAccount,
 } from './oauth2';
+import {
+  completeProviderConnectionCallback,
+  ProviderCallbackError,
+} from './providerConnections';
 import { getSessionCookieOptions } from './cookies';
 import { SESSION_COOKIE_NAME } from './sessionCookie';
 
@@ -104,7 +103,6 @@ function sendCallbackPage(
 
 function callbackHandler(provider: OAuthProvider) {
   return async (req: Request, res: Response) => {
-    let tokenExchangeCompleted = false;
     try {
       const code = typeof req.query.code === 'string' ? req.query.code : '';
       const state = typeof req.query.state === 'string' ? req.query.state : '';
@@ -122,25 +120,25 @@ function callbackHandler(provider: OAuthProvider) {
         ? req.cookies[oauthFlowBindingCookieName(provider)]
         : '';
       res.clearCookie(oauthFlowBindingCookieName(provider), oauthBindingCookieOptions(req));
-      const oauthState = await consumeOAuthStateAsync(state, provider, bindingSecret);
-      const tokens = await exchangeCodeForTokens(provider, code, oauthState.codeVerifier);
-      tokenExchangeCompleted = true;
-      const accountInfo = await getAccountInfo(provider, tokens.accessToken);
-      if (!accountInfo.email) throw new Error('Provider profile did not include an email address');
-      await saveEmailAccount(oauthState.userId, provider, tokens, accountInfo);
+      const connected = await completeProviderConnectionCallback({
+        provider,
+        code,
+        state,
+        bindingSecret,
+      });
 
       const providerName = provider === 'gmail' ? 'Google' : 'Microsoft';
       sendCallbackPage(res, {
         success: true,
         title: `${providerName} connected`,
-        message: `${accountInfo.email} is connected to LARO.`,
+        message: `${connected.email} is connected to LARO.`,
       });
     } catch (error) {
       const invalidState = error instanceof OAuthStateError;
       if (!invalidState) {
         console.error(`[OAuth2] ${provider} callback failed:`, error);
       }
-      const retryable = !tokenExchangeCompleted && isRetryableOAuthNetworkError(error);
+      const retryable = error instanceof ProviderCallbackError && error.retryable;
       sendCallbackPage(res, {
         success: false,
         title: 'Connection failed',

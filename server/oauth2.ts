@@ -1,12 +1,8 @@
 
-import { getDb } from "./db";
-import { emailAccounts } from "./schema";
-import { eq, and, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import crypto from "crypto";
 import { encryptToken, decryptToken } from "./emailOAuth";
 import { ENV } from "./_core/env";
-import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
 import { readBoundedResponseJson, withBoundedHttpResponse } from "./boundedHttpResponse";
 import { getHostedRedisOAuthStateClient } from "./hostedRedis";
 import { createRedisOAuthStateStore, type StoredOAuthFlow } from "./oauthStateStore";
@@ -396,14 +392,6 @@ export async function consumeOAuthStateAsync(
   }
 }
 
-export async function getAuthorizationUrlAsync(
-  provider: 'gmail' | 'outlook',
-  userId: string,
-  initiatingSessionToken = '',
-): Promise<string> {
-  return await beginOAuthFlowAsync(provider, userId, initiatingSessionToken);
-}
-
 /**
  * Exchange authorization code for tokens
  */
@@ -508,136 +496,5 @@ export async function getAccountInfo(
   return {
     email: d.mail || d.userPrincipalName || "",
     displayName: d.displayName,
-  };
-}
-
-export async function saveEmailAccount(
-  userId: string,
-  provider: "gmail" | "outlook",
-  tokens: OAuth2Tokens,
-  accountInfo: EmailAccountInfo
-): Promise<string> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const normalizedEmail = accountInfo.email.trim().toLowerCase();
-  if (
-    !tokens.accessToken.trim() ||
-    normalizedEmail.length > 320 ||
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
-  ) {
-    throw new Error("Provider connection did not return valid account credentials");
-  }
-
-  const row = {
-    userId,
-    provider,
-    email: normalizedEmail,
-    accessToken: encryptToken(tokens.accessToken),
-    refreshToken: tokens.refreshToken ? encryptToken(tokens.refreshToken) : null,
-    tokenExpiry: new Date(Date.now() + tokens.expiresIn * 1000),
-    status: "connected",
-    connectedAt: new Date(),
-    metadata: JSON.stringify({
-      displayName: accountInfo.displayName,
-      profilePicture: accountInfo.profilePicture,
-      tokenType: tokens.tokenType,
-      expiresIn: tokens.expiresIn,
-    }),
-    updatedAt: new Date(),
-  };
-
-  return db.transaction((tx: any) => {
-    const existing = tx.select()
-      .from(emailAccounts)
-      .where(and(
-        eq(emailAccounts.userId, userId),
-        eq(emailAccounts.provider, provider),
-        sql`lower(trim(${emailAccounts.email})) = ${normalizedEmail}`,
-      ))
-      .limit(1)
-      .get();
-    const accountId = existing?.id ?? nanoid();
-    if (existing) {
-      tx.update(emailAccounts).set({
-        ...row,
-        refreshToken: row.refreshToken ?? existing.refreshToken,
-      }).where(eq(emailAccounts.id, existing.id)).run();
-    } else {
-      tx.insert(emailAccounts).values({ id: accountId, ...row, createdAt: new Date() }).run();
-    }
-    writeAuditLogOrThrow(tx, {
-      userId,
-      action: AUDIT_ACTIONS.PROVIDER_CONNECTED,
-      entityType: "provider_connection",
-      entityId: accountId,
-      details: {
-        provider: provider === "gmail" ? "google" : "microsoft",
-        requestedScopes: getOAuth2Config(provider).scopes,
-        tokenReportedScopes: tokens.scope ? tokens.scope.split(/\s+/).filter(Boolean) : [],
-        refreshGrantStored: Boolean(row.refreshToken ?? existing?.refreshToken),
-      },
-    });
-    return accountId;
-  });
-}
-
-export async function refreshAccessToken(
-  provider: "gmail" | "outlook",
-  refreshToken: string
-): Promise<OAuth2Tokens> {
-  const config = getOAuth2Config(provider);
-  if (provider === "gmail") {
-    const body = new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: config.clientId,
-      grant_type: "refresh_token",
-    });
-    if (config.clientSecret) {
-      body.set("client_secret", config.clientSecret);
-    }
-    const { response: res, data } = await fetchOAuthJson<Record<string, string>>(
-      () => fetchTokenEndpoint("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-      }),
-      "Google OAuth response",
-    );
-    if (!res.ok) {
-      throw new Error(data.error_description || data.error || "Gmail refresh failed");
-    }
-    return {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token || refreshToken,
-      expiresIn: Number(data.expires_in) || 3600,
-      tokenType: data.token_type || "Bearer",
-      scope: data.scope,
-    };
-  }
-
-  const body = new URLSearchParams({
-    refresh_token: refreshToken,
-    client_id: config.clientId,
-    client_secret: config.clientSecret,
-    grant_type: "refresh_token",
-    scope: config.scopes.join(" "),
-  });
-  const { response: res, data } = await fetchOAuthJson<Record<string, string>>(
-    () => fetchTokenEndpoint("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    }),
-    "Microsoft OAuth response",
-  );
-  if (!res.ok) {
-    throw new Error(data.error_description || data.error || "Outlook refresh failed");
-  }
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token || refreshToken,
-    expiresIn: Number(data.expires_in) || 3600,
-    tokenType: data.token_type || "Bearer",
-    scope: data.scope,
   };
 }

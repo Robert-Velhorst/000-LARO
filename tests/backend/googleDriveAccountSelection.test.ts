@@ -109,7 +109,7 @@ suite("Google Drive account selection", () => {
   it("fails closed when multiple accounts exist without a selection", async () => {
     const { listGoogleDriveFolders } = await import("../../server/googleDriveService");
     await expect(listGoogleDriveFolders(userId)).rejects.toThrow(
-      "Multiple Google accounts are connected",
+      "Multiple provider accounts are connected",
     );
   });
 
@@ -117,7 +117,7 @@ suite("Google Drive account selection", () => {
     const { listGoogleDriveFolders } = await import("../../server/googleDriveService");
     await expect(
       listGoogleDriveFolders(userId, undefined, "GOOGLE_DRIVE_OTHER_OWNER"),
-    ).rejects.toThrow("Selected Google account is not connected");
+    ).rejects.toThrow("The selected provider account was not found");
   });
 
   it("rejects oversized Drive files from metadata before downloading media", async () => {
@@ -445,9 +445,9 @@ suite("Google Drive account selection", () => {
   });
 
   it("reconnecting the same email preserves its refresh grant and other accounts", async () => {
-    const { saveEmailAccount } = await import("../../server/oauth2");
+    const { storeProviderConnection } = await import("../../server/providerConnections");
     const { decryptToken } = await import("../../server/emailOAuth");
-    const id = await saveEmailAccount(userId, "gmail", {
+    const id = await storeProviderConnection(userId, "gmail", {
       accessToken: "renewed-first", expiresIn: 3600, tokenType: "Bearer",
     }, { email: " FIRST@example.com " });
     expect(id).toBe("GOOGLE_DRIVE_FIRST");
@@ -457,16 +457,16 @@ suite("Google Drive account selection", () => {
   });
 
   it("adding a different email creates a separate account without replacing existing grants", async () => {
-    const { saveEmailAccount } = await import("../../server/oauth2");
+    const { storeProviderConnection } = await import("../../server/providerConnections");
     const { decryptToken } = await import("../../server/emailOAuth");
-    const id = await saveEmailAccount(userId, "gmail", {
+    const id = await storeProviderConnection(userId, "gmail", {
       accessToken: "third-access", refreshToken: "third-refresh", expiresIn: 3600, tokenType: "Bearer",
     }, { email: "third@example.com" });
     const accounts = await app.db.select().from(app.schema.emailAccounts);
     expect(accounts.filter((account: any) => account.userId === userId)).toHaveLength(3);
     expect(decryptToken(accounts.find((account: any) => account.id === id).accessToken)).toBe("third-access");
     expect(decryptToken(accounts.find((account: any) => account.id === "GOOGLE_DRIVE_SECOND").accessToken)).toBe("second-access-token");
-    const listed = await app.makeCaller({ id: userId, role: "user" }).emailAccounts.list();
+    const listed = await app.makeCaller({ id: userId, role: "user" }).providerConnections.list({ provider: "gmail" });
     expect(listed).toHaveLength(3);
     expect(JSON.stringify(listed)).not.toContain("accessToken");
     expect(JSON.stringify(listed)).not.toContain("other@example.com");

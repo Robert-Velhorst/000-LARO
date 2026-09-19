@@ -11,15 +11,16 @@ const revision = (account: AccountRevision) => JSON.stringify([account.status, a
 
 export default function EvidenceConnectionsCard() {
   const utils = trpc.useUtils();
-  const accounts = trpc.emailAccounts.list.useQuery(undefined, { refetchOnWindowFocus: true, refetchInterval: 5000 });
-  const oauth = trpc.emailAccounts.getAuthUrl.useMutation();
-  const revoke = trpc.emailAccounts.revoke.useMutation();
+  const accounts = trpc.providerConnections.list.useQuery(
+    { provider: "gmail" },
+    { refetchOnWindowFocus: true, refetchInterval: 5000 },
+  );
+  const oauth = trpc.providerConnections.begin.useMutation();
+  const revoke = trpc.providerConnections.disconnect.useMutation();
   const baseline = useRef(new Map<string, string>());
   const [removing, setRemoving] = useState<string | null>(null);
   const refreshAll = useCallback(() => {
-    void utils.emailAccounts.list.invalidate();
-    void utils.gmailEnhanced.getStatus.invalidate();
-    void utils.googleDrive.checkConnection.invalidate();
+    void utils.providerConnections.list.invalidate();
   }, [utils]);
   const refreshConnection = useCallback(async () => {
     const result = await accounts.refetch();

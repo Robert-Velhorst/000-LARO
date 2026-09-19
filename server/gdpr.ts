@@ -17,6 +17,10 @@ import { collectManagedStorageKeys } from "./managedStorage";
 import { enqueueStorageDeletions, processQueuedStorageDeletions } from "./storageDeletionQueue";
 import { nanoid } from "nanoid";
 import { writeAuditLogOrThrow } from "./audit";
+import {
+  prepareProviderConnectionsForErasure,
+  type ProviderErasureRevocationSummary,
+} from "./providerConnections";
 
 function rawClient(db: any): any {
   return db.$client ?? db.session?.client ?? null;
@@ -136,11 +140,16 @@ export async function deleteUserData(userId: string): Promise<{
   storageCleanupPending: number;
   erasureStatus: "completed" | "storage_cleanup_pending";
   erasureRequestId: string;
+  providerRevocation: ProviderErasureRevocationSummary;
 }> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const sqlite = rawClient(db);
   if (!sqlite) throw new Error("Storage engine not available for deletion");
+
+  // Remote grants are attempted before their encrypted local copies disappear.
+  // An upstream outage is recorded but never blocks the owner's local erasure.
+  const providerRevocation = await prepareProviderConnectionsForErasure(userId);
 
   const tables = listUserTables(sqlite);
   const userScoped = tables.filter((t) => t !== "users" && tableColumns(sqlite, t).includes("userId"));
@@ -191,6 +200,7 @@ export async function deleteUserData(userId: string): Promise<{
         erasureRequestId,
         deletedRowsByTable: deleted,
         storageObjectsQueued: storageKeys.length,
+        providerRevocation,
         actor: "self_service_account_owner",
       },
       idempotencyKey: `gdpr-delete:${erasureRequestId}`,
@@ -205,5 +215,6 @@ export async function deleteUserData(userId: string): Promise<{
     storageCleanupPending: cleanup.requestedPending,
     erasureStatus: cleanup.requestedPending > 0 ? "storage_cleanup_pending" : "completed",
     erasureRequestId,
+    providerRevocation,
   };
 }

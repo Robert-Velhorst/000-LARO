@@ -50,8 +50,8 @@ export function GoogleDriveFolderBrowser({
   const [selectedAccountId, setSelectedAccountId] = useState(initialAccountId || "");
 
   // Check connection status
-  const { data: connectionData, isLoading: isCheckingConnection } = trpc.googleDrive.checkConnection.useQuery();
-  const connectedAccounts = connectionData?.accounts ?? [];
+  const { data: connectionData, isLoading: isCheckingConnection } = trpc.providerConnections.list.useQuery({ provider: "gmail" });
+  const connectedAccounts = (connectionData ?? []).filter((account) => account.status === "connected");
 
   useEffect(() => {
     if (connectedAccounts.length === 0) return;
@@ -67,7 +67,7 @@ export function GoogleDriveFolderBrowser({
   // List folders
   const { data: foldersData, isLoading: isLoadingFolders, error: foldersError, refetch: retryFolders } = trpc.googleDrive.listFolders.useQuery(
     { parentId, accountId: selectedAccountId || undefined },
-    { enabled: !!connectionData?.connected && !!selectedAccountId }
+    { enabled: connectedAccounts.length > 0 && !!selectedAccountId }
   );
 
   // Get file preview
@@ -184,7 +184,7 @@ export function GoogleDriveFolderBrowser({
     );
   }
 
-  if (!connectionData?.connected) {
+  if (connectedAccounts.length === 0) {
     return (
       <Card>
         <CardHeader>
@@ -198,7 +198,7 @@ export function GoogleDriveFolderBrowser({
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground mb-4">
-            Go to Settings → Email Accounts to connect your Google account. Once connected, you'll be able to browse and import files from Google Drive.
+            Go to Settings → Google accounts to connect your account. Once connected, you'll be able to browse and import files from Google Drive.
           </p>
         </CardContent>
       </Card>

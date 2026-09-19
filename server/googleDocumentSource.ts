@@ -2,7 +2,7 @@ import { z } from "zod";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "./db";
 import { emailAccounts } from "./schema";
-import { decryptToken, encryptToken, refreshGmailToken } from "./emailOAuth";
+import { getProviderAccessToken } from "./providerConnections";
 import { readBoundedResponseBytes, readBoundedResponseJson, withBoundedHttpResponse } from "./boundedHttpResponse";
 import { MAX_EVIDENCE_BASE64_CHARS, MAX_EVIDENCE_FILE_BYTES, isSupportedDocumentAnalysisMimeType } from "../shared/evidenceFiles";
 import { escapeDriveQueryLiteral } from "./googleDriveService";
@@ -31,19 +31,7 @@ export async function requireSourceGoogleAccount(userId: string, accountId: stri
 }
 
 async function accessToken(userId: string, accountId: string): Promise<string> {
-  const account = await requireSourceGoogleAccount(userId, accountId);
-  if (account.tokenExpiry && account.tokenExpiry.getTime() <= Date.now() + 30_000) {
-    if (!account.refreshToken) throw new Error("Selected Google account requires reconnection");
-    const refreshed = await refreshGmailToken(decryptToken(account.refreshToken));
-    const db = await getDb();
-    const updated = db.update(emailAccounts).set({ accessToken: encryptToken(refreshed.accessToken), tokenExpiry: new Date(refreshed.expiryDate) })
-      .where(and(eq(emailAccounts.id, accountId), eq(emailAccounts.userId, userId), eq(emailAccounts.status, "connected"), eq(emailAccounts.accessToken, account.accessToken!))).run();
-    if (!updated.changes) throw new Error("Google account connection changed during refresh; retry after reconnecting");
-    return refreshed.accessToken;
-  }
-  const token = decryptToken(account.accessToken!);
-  if (!token) throw new Error("Selected Google account requires reconnection");
-  return token;
+  return getProviderAccessToken({ userId, accountId, provider: "gmail", refreshWindowMs: 30_000 });
 }
 
 async function request<T>(userId: string, config: GoogleConfiguration, url: URL, read: (response: Response) => Promise<T>): Promise<T> {

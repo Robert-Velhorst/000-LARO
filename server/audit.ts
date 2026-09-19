@@ -41,6 +41,7 @@ const MANDATORY_AUDIT_ACTIONS = new Set([
   "outreach.targets_matched",
   "outreach.target_match_status_changed",
   "provider.connected",
+  "provider.credentials_invalidated",
   "provider.credentials_refreshed",
   "provider.disconnected",
   "provider.disconnect_revoked",
@@ -248,6 +249,7 @@ export const AUDIT_ACTIONS = {
 
   // Provider connection actions
   PROVIDER_CONNECTED: "provider.connected",
+  PROVIDER_CREDENTIALS_INVALIDATED: "provider.credentials_invalidated",
   PROVIDER_CREDENTIALS_REFRESHED: "provider.credentials_refreshed",
   PROVIDER_DISCONNECTED: "provider.disconnected",
   PROVIDER_DISCONNECT_REVOKED: "provider.disconnect_revoked",

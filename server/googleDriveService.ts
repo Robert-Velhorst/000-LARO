@@ -1,10 +1,10 @@
 import { google } from 'googleapis';
 import { getDb } from './db';
-import { emailAccounts, googleDriveFiles } from './schema';
+import { googleDriveFiles } from './schema';
 import { eq, and } from 'drizzle-orm';
 import { storagePutStream } from './storage';
 import { v4 as uuidv4 } from 'uuid';
-import { decryptToken, encryptToken, refreshGmailToken } from './emailOAuth';
+import { getProviderAccessToken } from './providerConnections';
 import { MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 import { withByteReadAdmission } from './boundedBytes';
 import { PROVIDER_LIMITS, ProviderBatchBudget } from './providerLimits';
@@ -22,50 +22,11 @@ import {
  * Get an authenticated Drive client for a user
  */
 async function getDriveClient(userId: string, accountId?: string) {
-  const db = await getDb();
-  if (!db) throw new Error('Database not available');
-
-  const accounts = await db
-    .select()
-    .from(emailAccounts)
-    .where(and(
-      eq(emailAccounts.userId, userId),
-      eq(emailAccounts.provider, 'gmail'),
-      ...(accountId ? [eq(emailAccounts.id, accountId)] : []),
-    ))
-    .limit(2);
-
-  if (accounts.length === 0) {
-    throw new Error(accountId ? 'Selected Google account is not connected.' : 'No Google account is connected.');
-  }
-  if (!accountId && accounts.length > 1) {
-    throw new Error('Multiple Google accounts are connected. Select the Drive account to use.');
-  }
-
-  const emailAccount = accounts[0];
-  if (emailAccount.status !== 'connected' || !emailAccount.accessToken) {
-    throw new Error('Selected Google account is not connected.');
-  }
-  let accessToken = decryptToken(emailAccount.accessToken!);
-
-  // Refresh token if expired
-  const now = new Date();
-  if (emailAccount.tokenExpiry && new Date(emailAccount.tokenExpiry) <= now) {
-    if (!emailAccount.refreshToken) {
-      throw new Error('Selected Google account requires reconnection.');
-    }
-    const refreshToken = decryptToken(emailAccount.refreshToken!);
-    const newTokens = await refreshGmailToken(refreshToken);
-    
-    accessToken = newTokens.accessToken;
-    
-    await db.update(emailAccounts)
-      .set({
-        accessToken: encryptToken(accessToken),
-        tokenExpiry: new Date(newTokens.expiryDate),
-      })
-      .where(eq(emailAccounts.id, emailAccount.id));
-  }
+  const accessToken = await getProviderAccessToken({
+    userId,
+    accountId,
+    provider: 'gmail',
+  });
 
   const auth = new google.auth.OAuth2();
   auth.setCredentials({ access_token: accessToken });

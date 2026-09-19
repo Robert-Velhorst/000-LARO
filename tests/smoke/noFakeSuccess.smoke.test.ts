@@ -58,12 +58,25 @@ describe('Phase 014 — case outreach progress is not hardcoded', () => {
 });
 
 describe('Phase 012 — provider connectors are honest', () => {
-  const src = read('server/routers/enhancedConnections.ts');
+  const src = read('server/providerConnections.ts');
+  const providerRouter = read('server/routers/providerConnections.ts');
+  const routerIndex = read('server/routers/index.ts');
+  const driveRouter = read('server/routers/googleDrive.ts');
   it('no longer returns a blanket dummy auth URL', () => {
     expect(src).not.toContain('Return a dummy auth URL');
   });
   it('reports availability based on real configuration', () => {
-    expect(src).toContain('providerAvailability');
+    expect(src).toContain('providerConnectionAvailability');
+  });
+  it('exports one connection lifecycle without manual refresh or Drive aliases', () => {
+    expect(routerIndex).toContain('providerConnections: providerConnectionsRouter');
+    expect(routerIndex).not.toMatch(/emailAccounts:\s*emailAccountsRouter/);
+    expect(routerIndex).not.toContain('gmailEnhanced:');
+    expect(routerIndex).not.toContain('googleDriveEnhanced:');
+    expect(providerRouter).not.toMatch(/refreshToken\s*:/);
+    expect(providerRouter).not.toMatch(/syncJobs\s*:/);
+    expect(driveRouter).not.toMatch(/\bconnect:\s*protectedProcedure/);
+    expect(driveRouter).not.toMatch(/\bdisconnect:\s*protectedProcedure/);
   });
 });
 

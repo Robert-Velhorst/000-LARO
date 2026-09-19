@@ -64,15 +64,13 @@ suite("private data boundaries", () => {
 
   afterAll(() => app?.cleanup());
 
-  it("redacts stored credentials and returns only the caller's sync jobs", async () => {
-    const accounts = await app.makeCaller(B).emailAccounts.list();
+  it("redacts stored credentials and scopes provider state to the caller", async () => {
+    const accounts = await app.makeCaller(B).providerConnections.list({ provider: "gmail" });
     expect(accounts).toHaveLength(1);
     expect(accounts[0].id).toBe("BOUNDARY_ACCOUNT_B");
     expect(accounts[0]).not.toHaveProperty("accessToken");
     expect(accounts[0]).not.toHaveProperty("refreshToken");
 
-    const jobs = await app.makeCaller(B).emailAccounts.syncJobs();
-    expect(jobs.map((job: any) => job.id)).toEqual(["BOUNDARY_JOB_B"]);
     expect(await app.makeCaller(B).emailMessages.getSyncJob({ jobId: "BOUNDARY_JOB_A" })).toBeNull();
     expect((await app.makeCaller(B).emailMessages.getSyncJob({ jobId: "BOUNDARY_JOB_B" }))?.id).toBe("BOUNDARY_JOB_B");
   });

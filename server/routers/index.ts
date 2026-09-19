@@ -27,7 +27,7 @@ import { lawyerRatingRouter } from "./lawyerRating";
 import { trelloEnhancedRouter } from "./trelloEnhanced";
 import { telegramEnhancedRouter } from "./telegramEnhanced";
 import { gapAnalysisRouter } from "./gapAnalysis";
-import { emailAccountsRouter } from "./emailAccounts";
+import { providerConnectionsRouter } from "./providerConnections";
 import { emailRouter } from "./email";
 import { userPreferencesRouter } from "./userPreferences";
 import { bulkImportRouter } from "./bulkImport";
@@ -55,13 +55,6 @@ import { auditRouter } from "./audit";
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
 import { createAuditLog, writeAuditLogOrThrow, AUDIT_ACTIONS } from "../audit";
 import { verifyLocalTestTicket } from "../localTestAccess";
-import {
-  gmailEnhancedRouter,
-  outlookEnhancedRouter,
-  googleDriveEnhancedRouter,
-  oneDriveEnhancedRouter,
-  slackEnhancedRouter,
-} from "./enhancedConnections";
 import { z } from "zod";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
@@ -121,7 +114,7 @@ export const appRouter = router({
   trelloEnhanced: trelloEnhancedRouter,
   telegramEnhanced: telegramEnhancedRouter,
   gapAnalysis: gapAnalysisRouter,
-  emailAccounts: emailAccountsRouter,
+  providerConnections: providerConnectionsRouter,
   email: emailRouter,
   userPreferences: userPreferencesRouter,
   bulkImport: bulkImportRouter,
@@ -173,12 +166,6 @@ export const appRouter = router({
   admin: adminRouter,
   audit: auditRouter, // Phase 019 — event-history read path
   
-  gmailEnhanced: gmailEnhancedRouter,
-  outlookEnhanced: outlookEnhancedRouter,
-  googleDriveEnhanced: googleDriveEnhancedRouter,
-  oneDriveEnhanced: oneDriveEnhancedRouter,
-  slackEnhanced: slackEnhancedRouter,
-
   // Auth procedures
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),

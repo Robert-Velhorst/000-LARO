@@ -20,7 +20,7 @@ import {
   getAllFilesInFolder,
   getGoogleDriveFileMetadata,
 } from './googleDriveService';
-import { decryptToken, encryptToken, refreshGmailToken } from './emailOAuth';
+import { getProviderAccessToken, listProviderConnections } from './providerConnections';
 import { getGmailMessage, getGmailAttachmentBytes } from './gmailService';
 import { searchGmailMessageIds } from './gmailMessageSearch';
 import { getLocalStorageDirectory, storageDelete, storagePut, storagePutStream } from './storage';
@@ -690,45 +690,19 @@ function countWords(value: string): number {
  * Returns null when the user has no connected Gmail account.
  */
 async function getFreshGmailAccessToken(userId: string, accountId?: string): Promise<{ accessToken: string; accountId: string; email: string } | null> {
-  const db = await getDb();
-  if (!db) return null;
-
-  const rows = await db
-    .select()
-    .from(emailAccounts)
-    .where(and(
-      eq(emailAccounts.userId, userId),
-      eq(emailAccounts.provider, 'gmail'),
-      ...(accountId ? [eq(emailAccounts.id, accountId)] : []),
-    ))
-    .limit(2);
+  const rows = (await listProviderConnections(userId, 'gmail'))
+    .filter((account) => account.status === 'connected' && (!accountId || account.id === accountId));
 
   if (!accountId && rows.length > 1) {
     throw new Error('Multiple Google accounts are connected. Select the account to use.');
   }
   const account = rows[0];
-  if (!account || account.status !== 'connected' || !account.accessToken) return null;
-
-  let accessToken = decryptToken(account.accessToken);
-
-  // Refresh if expired (or within 60s of expiry).
-  const expiryMs = account.tokenExpiry ? new Date(account.tokenExpiry).getTime() : 0;
-  if (expiryMs && expiryMs - Date.now() < 60_000 && account.refreshToken) {
-    try {
-      const refreshed = await refreshGmailToken(decryptToken(account.refreshToken));
-      accessToken = refreshed.accessToken;
-      await db
-        .update(emailAccounts)
-        .set({
-          accessToken: encryptToken(accessToken),
-          tokenExpiry: new Date(refreshed.expiryDate),
-        })
-        .where(eq(emailAccounts.id, account.id));
-    } catch (err) {
-      console.warn('[AutoCollection] Gmail token refresh failed:', err);
-    }
-  }
-
+  if (!account) return null;
+  const accessToken = await getProviderAccessToken({
+    userId,
+    accountId: account.id,
+    provider: 'gmail',
+  });
   return { accessToken, accountId: account.id, email: account.email || '' };
 }
 

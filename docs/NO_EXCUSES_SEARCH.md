@@ -12,7 +12,7 @@ _Unambiguous unfinished-work markers: TODO / FIXME / HACK / XXX._
 
 None. ✅ No TODO/FIXME/HACK/XXX in server, src-main, or shared runtime code.
 
-## Review markers in RUNTIME code (21) — triaged, not failing
+## Review markers in RUNTIME code (20) — triaged, not failing
 
 Descriptive words (mock/stub/placeholder/fake) needing human judgement. Triage of the current hits: **all are honest** — descriptive comments (e.g. `env.ts` documenting insecure placeholder secrets, `gdpr.ts` SQL `?` placeholders), an explicit honest `{url: null, message}` in `evidenceFiles.ts` (no fake URL), and test-injection comments around outreach providers. Document analysis is persisted and source-grounded; optional provider enrichment fails closed. None of the current markers represents fake success.
 
@@ -22,15 +22,14 @@ Descriptive words (mock/stub/placeholder/fake) needing human judgement. Triage o
 | `server/_core/env.ts` | 108 | `* in production and the secrets are still the shipped placeholders (or empty),` |
 | `server/_core/env.ts` | 140 | `* to the insecure placeholder. Returns a list of non-fatal warnings (e.g.` |
 | `server/cronScheduler.ts` | 141 | `// Date.now via a helper so it is easy to reason about / stub if needed.` |
-| `server/gdpr.ts` | 166 | `const placeholders = userCaseIds.map(() => "?").join(",");` |
-| `server/gdpr.ts` | 168 | `const info = sqlite.prepare(`DELETE FROM "${table}" WHERE caseId IN (${placeholders})`).run(...userCaseIds);` |
+| `server/gdpr.ts` | 175 | `const placeholders = userCaseIds.map(() => "?").join(",");` |
+| `server/gdpr.ts` | 177 | `const info = sqlite.prepare(`DELETE FROM "${table}" WHERE caseId IN (${placeholders})`).run(...userCaseIds);` |
 | `server/managedStorage.ts` | 55 | `const placeholders = scope.caseIds.map(() => "?").join(",");` |
 | `server/managedStorage.ts` | 56 | `rows = sqlite.prepare(`SELECT ${select} FROM "${table}" WHERE caseId IN (${placeholders})`).all(...scope.caseIds);` |
 | `server/notifications.ts` | 10 | `* stub; this one persists user-facing notifications.` |
 | `server/outreachSend.ts` | 16 | `* The email sender is injectable so tests exercise the full path with a fake` |
 | `server/outreachSend.ts` | 297 | `* `sender` is injectable (tests pass a fake); production uses systemEmail.` |
 | `server/routers/cases.ts` | 197 | `// empty GDPR stub.` |
-| `server/routers/enhancedConnections.ts` | 103 | `// Honest unavailability — no fake auth URL.` |
 | `server/routers/extendedRouters.ts` | 6 | `* run. No fake success (Phase 014).` |
 | `server/routers/extendedRouters.ts` | 211 | `// provider is configured there is nothing to sync (honest, not a fake OK).` |
 | `server/routers/matching.ts` | 22 | `*  - If no lawyers are seeded/entered, the result is genuinely empty (no fakes).` |
@@ -40,7 +39,7 @@ Descriptive words (mock/stub/placeholder/fake) needing human judgement. Triage o
 | `server/storageDeletionQueue.ts` | 62 | `const placeholders = chunk.map(() => "?").join(",");` |
 | `server/storageDeletionQueue.ts` | 67 | `WHERE storageKey IN (${placeholders})` |
 
-## Markers in tests / scripts / renderer (403) — reported, not failing
+## Markers in tests / scripts / renderer (404) — reported, not failing
 
 These are informational and do not identify unsupported runtime behavior by themselves; test/script occurrences are usually the words "mock"/"fake" used descriptively.
 
@@ -88,6 +87,7 @@ These are informational and do not identify unsupported runtime behavior by them
 | `tests/backend/hostedOAuthReplayProtection.test.ts` | 2 |
 | `tests/backend/semanticDossierDiscovery.test.ts` | 2 |
 | `tests/frontend/productWebsite.test.ts` | 2 |
+| `tests/security/providerCredentialAtomicity.test.ts` | 2 |
 | `tests/security/trpcErrorBoundary.test.ts` | 2 |
 | `tests/smoke/noFakeSuccess.smoke.test.ts` | 2 |
 | `src/renderer/components/CaseReconstruction.tsx` | 1 |
@@ -116,7 +116,6 @@ These are informational and do not identify unsupported runtime behavior by them
 | `tests/e2e/workflow.e2e.test.ts` | 1 |
 | `tests/frontend/productionUiAccessibility.test.ts` | 1 |
 | `tests/security/mandatoryAuditDurability.test.ts` | 1 |
-| `tests/security/providerCredentialAtomicity.test.ts` | 1 |
 | `tests/smoke/configGuard.smoke.test.ts` | 1 |
 | `tests/smoke/phase021_030.smoke.test.ts` | 1 |
 

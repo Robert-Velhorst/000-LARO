@@ -17,7 +17,7 @@ export async function verifyGoogleAccounts(page, database, ownerId, origin, outp
     db.prepare('INSERT INTO auto_collection_settings (id,caseId,userId,keywords,emailAccountIds,metadata,autoDownloadAttachments,autoDownloadGoogleDriveFiles) VALUES (?,?,?,?,?,?,?,?)')
       .run('google-settings', 'google-case', ownerId, '["contract"]', '[]', JSON.stringify({ googleDriveSources: [{ accountId: 'google-one', folderIds: ['folder-one'], folderNames: ['Legal documents'] }] }), 0, 0);
     // Only Google's external consent and folder responses are controlled; accounts and settings use the real API/database.
-    await page.route('**/api/trpc/emailAccounts.getAuthUrl*', route => reply(route, { authUrl: `${origin}/test-google-consent?redirect_uri=${encodeURIComponent(`${origin}/api/oauth2/gmail/callback`)}` }));
+    await page.route('**/api/trpc/providerConnections.begin*', route => reply(route, { authUrl: `${origin}/test-google-consent?redirect_uri=${encodeURIComponent(`${origin}/api/oauth/gmail/callback`)}` }));
     await page.context().route('**/test-google-consent*', route => route.fulfill({ contentType: 'text/html', body: '<h1>Controlled Google consent boundary</h1>' }));
     await page.route('**/api/trpc/googleDrive.listFolders*', route => reply(route, { folders: [] }));
     await page.goto(`${origin}/evidence?view=connections&case=google-case`);
