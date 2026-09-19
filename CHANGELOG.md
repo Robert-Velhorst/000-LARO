@@ -7,6 +7,9 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Upgraded better-sqlite3 to its N-API release with bundled Windows, macOS, and
+  Linux binaries. Cross-platform packaging now preserves the target binary
+  instead of compiling or accidentally shipping the host platform module.
 - Reconciled third-round browser verification with the safe client-error
   envelope and mapped missing/reconnect-required Google source accounts to an
   actionable `google_access` recovery message instead of an unknown failure.

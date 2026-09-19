@@ -1,6 +1,6 @@
 # Supply Chain and Dependency Review
 
-Updated: 2026-08-08 | Branch: `agent/giant-goal-completion`
+Updated: 2026-09-19 | Branch: `milestone3/remediate-roadmap`
 
 ## Current result
 
@@ -12,15 +12,22 @@ transitive `js-yaml` 4.3.0 to 4.3.1. Both the complete dependency graph and
 `--omit=dev` runtime graph then reported zero known vulnerabilities. No major
 version or application API change was required.
 
-The remediation upgraded the supported runtime to Node 22.12+, Electron 43, Vite 8, Vitest 4, electron-builder 26, `@electron/rebuild` 4, Drizzle ORM 0.45, Nodemailer 9, and UUID 11. Unused `xlsx`, Stripe SDK, PDFKit, Tesseract, and their unused type packages were removed. `drizzle-kit` was also removed because its current dependency chain retained the final four advisories; checked-in SQL migrations remain the production migration source.
+The remediation upgraded the supported runtime to Node 22.12+, Electron 43, Vite 8, Vitest 4, electron-builder 26, better-sqlite3 13, Drizzle ORM 0.45, Nodemailer 9, and UUID 11. Unused `xlsx`, Stripe SDK, PDFKit, Tesseract, and their unused type packages were removed. `drizzle-kit` was also removed because its current dependency chain retained the final four advisories; checked-in SQL migrations remain the production migration source.
 
 ## Native module lifecycle
 
-`better-sqlite3` cannot use one binary for both Node and Electron ABIs. Installation no longer rebuilds it automatically for Electron.
+`better-sqlite3` 13 uses N-API and ships the supported Windows, macOS, Linux,
+and Linux-musl binaries in its npm package. Node and Electron therefore use the
+same stable native API, and Linux-hosted Windows packaging no longer risks
+copying a host ELF binary into the Windows application.
 
-- `npm run rebuild:node` prepares server and test execution.
-- `npm run rebuild:electron` prepares desktop execution and packaging.
-- CI runs the Node rebuild before gates; release packaging runs the Electron rebuild afterward.
+- `npm run rebuild:node` refreshes the installed native package before server
+  and test execution.
+- `npm run rebuild:electron` remains a compatible operator command but uses the
+  same N-API package instead of compiling an Electron-ABI-specific binary.
+- electron-builder's source rebuild is disabled so it preserves the
+  lockfile-integrity-checked platform prebuilts; Windows CI verifies the actual
+  Electron load and packaged native architecture.
 
 ## Release rule
 

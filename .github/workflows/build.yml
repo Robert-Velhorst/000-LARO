@@ -109,6 +109,8 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           CSC_LINK: ${{ startsWith(github.ref, 'refs/tags/') && vars.WINDOWS_SIGNING_PROVIDER == 'pfx' && secrets.WINDOWS_CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && vars.WINDOWS_SIGNING_PROVIDER == 'pfx' && secrets.WINDOWS_CSC_KEY_PASSWORD || '' }}
+      - name: Verify packaged native binaries
+        run: npm run verify:packaged:native
       - name: Resolve portable artifact
         id: portable
         shell: pwsh
