@@ -7,6 +7,9 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Reconciled third-round browser verification with the safe client-error
+  envelope and mapped missing/reconnect-required Google source accounts to an
+  actionable `google_access` recovery message instead of an unknown failure.
 - Removed the inert `analytics.enabled` and `demo.mode` flags and their stored
   rows. `DEMO_MODE` is now the sole, production-disabled demo decision, while
   the remaining outreach-send flag has a checked owner/consumer/test registry.

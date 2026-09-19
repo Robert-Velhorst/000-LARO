@@ -641,8 +641,12 @@ test("document obligations become reviewable source-backed actions without manua
   await expect(search).toBeEnabled();
   expect(matchingRequests).toEqual([]);
   await search.click();
-  // This provisional fixture has no classified legal area; failure occurs before a provider lookup.
-  await expect(page.getByRole("alert").filter({ hasText: "Case must have at least one legal area specified" })).toBeVisible();
+  // This provisional fixture has no classified legal area. The server detail
+  // must stay out of the client-facing envelope and browser console.
+  const safeMessage = "The request could not be completed. Please try again.";
+  await expect(page.getByRole("alert").filter({ hasText: safeMessage })).toBeVisible();
+  await expect(page.getByText("Case must have at least one legal area specified", { exact: true })).toHaveCount(0);
+  expect(errors.some((message) => message.includes("Case must have at least one legal area specified"))).toBe(false);
   expect(matchingRequests).toHaveLength(1);
 });
 
