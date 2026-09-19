@@ -128,6 +128,11 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   compact source controls that open the owning document.
 
 ### Fixed
+- Replaced count-derived evidence completeness and case-strength percentages
+  with a versioned coverage inventory that discloses exact inputs and revisions,
+  source availability, review state, duplicates, contradiction flags, unknowns,
+  and limitations. Existing score rows are retired by SQLite and hosted
+  PostgreSQL migrations instead of being reinterpreted.
 - Made approved outreach delivery reserve its idempotency guard atomically,
   commit the sent state and audit row together, reject concurrent sends before
   provider invocation, and fail closed on ambiguous provider exceptions.

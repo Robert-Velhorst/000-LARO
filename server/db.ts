@@ -507,6 +507,19 @@ export async function getDb() {
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0018_case_action_evidence.sql"), "utf8"));
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0019_case_shares.sql"), "utf8"));
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0020_account_email_identity.sql"), "utf8"));
+        // Legacy gap-analysis rows contain unsupported case-strength scores.
+        // Re-run this idempotent retirement even when an installed database has
+        // stale migration bookkeeping; current versioned coverage rows survive.
+        const coverageTables = [
+          "case_strength_analysis",
+          "communication_gaps",
+          "expected_documents",
+          "suspicious_patterns",
+          "legal_inferences",
+        ];
+        if (coverageTables.every((table) => tableExists(sqlite, table))) {
+          sqlite.exec(fs.readFileSync(path.join(foundFolder, "0027_retire_gap_scoring.sql"), "utf8"));
+        }
         // HAI credentials created before reviewed grants were unrestricted.
         // Ensure the additive grant schema exists even when an older install's
         // migration bookkeeping is incomplete, then revoke every unbound token.

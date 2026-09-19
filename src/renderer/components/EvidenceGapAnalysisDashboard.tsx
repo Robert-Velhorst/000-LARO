@@ -5,12 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Progress } from "@/components/ui/progress";
 import {
   AlertTriangle,
   FileWarning,
-  TrendingUp,
-  Shield,
   Clock,
   CheckCircle2,
   XCircle,
@@ -31,19 +28,6 @@ interface EvidenceGapAnalysisDashboardProps {
 export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDashboardProps) {
   const [analyzing, setAnalyzing] = useState(false);
 
-  const toStringArray = (value: unknown): string[] => {
-    if (Array.isArray(value)) return value.map(String);
-    if (typeof value === "string") {
-      try {
-        const parsed = JSON.parse(value);
-        return Array.isArray(parsed) ? parsed.map(String) : [];
-      } catch {
-        return [];
-      }
-    }
-    return [];
-  };
-
   // Fetch gap analysis data
   const { data: summary, refetch: refetchSummary, isLoading: summaryLoading } = trpc.gapAnalysis.getSummary.useQuery({
     caseId,
@@ -53,22 +37,18 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
   const { data: expectedDocs, refetch: refetchDocs } = trpc.gapAnalysis.getExpectedDocuments.useQuery({ caseId });
   const { data: patterns, refetch: refetchPatterns } = trpc.gapAnalysis.getPatterns.useQuery({ caseId });
   const { data: inferences, refetch: refetchInferences } = trpc.gapAnalysis.getInferences.useQuery({ caseId });
-  const { data: caseStrength, refetch: refetchStrength } = trpc.gapAnalysis.getCaseStrength.useQuery({ caseId });
+  const { data: coverage, refetch: refetchCoverage } = trpc.gapAnalysis.getCoverage.useQuery({ caseId });
 
   const normalizedGaps = ((gaps ?? []) as any[]);
   const normalizedExpectedDocs = ((expectedDocs ?? []) as any[]);
   const normalizedPatterns = ((patterns ?? []) as any[]);
   const normalizedInferences = ((inferences ?? []) as any[]);
-  const cs = ((caseStrength ?? {}) as any);
-
-  // Parse scores as numbers — they may be stored as strings in DB
-  const score = {
-    overall:         Number(cs.overallScore ?? 0),
-    directEvidence:  Number(cs.directEvidenceScore ?? 0),
-    circumstantial:  Number(cs.circumstantialEvidenceScore ?? 0),
-    legalBasis:      Number(cs.legalBasisScore ?? 0),
-    gapImpact:       Number(cs.gapAnalysisImpact ?? 0),
-  };
+  const coverageData = ((coverage ?? summary?.coverage ?? {}) as any);
+  const coverageInputs = (Array.isArray(coverageData.inputs) ? coverageData.inputs : []) as any[];
+  const coverageUnknowns = (Array.isArray(coverageData.unknowns) ? coverageData.unknowns : []) as any[];
+  const coverageLimitations = (Array.isArray(coverageData.limitations) ? coverageData.limitations : []) as string[];
+  const coverageActions = (Array.isArray(coverageData.reviewActions) ? coverageData.reviewActions : []) as string[];
+  const coverageCounts = (coverageData.counts ?? {}) as Record<string, number>;
 
   const analyzeMutation = trpc.gapAnalysis.analyze.useMutation({
     onSuccess: () => {
@@ -79,7 +59,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
       refetchDocs();
       refetchPatterns();
       refetchInferences();
-      refetchStrength();
+      refetchCoverage();
     },
     onError: (err) => {
       setAnalyzing(false);
@@ -89,11 +69,11 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
 
   // Auto-run analysis when caseId changes and no analysis exists yet
   useEffect(() => {
-    if (caseId && !summaryLoading && !summary?.hasAnalysis && !analyzing) {
+    if (caseId && !summaryLoading && summary?.analysisStatus === "none" && !analyzing) {
       setAnalyzing(true);
       analyzeMutation.mutate({ caseId });
     }
-  }, [caseId, summaryLoading, summary?.hasAnalysis]);
+  }, [caseId, summaryLoading, summary?.analysisStatus]);
 
   const handleAnalyze = () => {
     setAnalyzing(true);
@@ -109,7 +89,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
             Evidence Gap Analysis
           </CardTitle>
           <CardDescription>
-            Detect communication gaps, missing documents, and strengthen your case
+            Review source coverage, availability, missing context, and records requiring verification
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -117,12 +97,12 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
             <FileWarning className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
             <h3 className="text-lg font-semibold mb-2">No Analysis Yet</h3>
             <p className="text-muted-foreground mb-6">
-              Run gap analysis to identify evidence gaps, missing documents, and legal inferences
-              that strengthen your case.
+              Run a coverage review to inventory the exact records visible to LARO and identify
+              unknown or unavailable source context. This does not assess legal merit or outcome.
             </p>
             <Button onClick={handleAnalyze} disabled={analyzing}>
               {analyzing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {analyzing ? "Analyzing..." : "Run Gap Analysis"}
+              {analyzing ? "Reviewing..." : "Run Coverage Review"}
             </Button>
           </div>
         </CardContent>
@@ -133,11 +113,11 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
   const getSignificanceBadge = (significance: string) => {
     switch (significance) {
       case "critical":
-        return <Badge variant="destructive">Critical</Badge>;
+        return <Badge variant="destructive">High review priority</Badge>;
       case "important":
-        return <Badge className="bg-orange-500">Important</Badge>;
+        return <Badge className="bg-orange-500">Review priority</Badge>;
       default:
-        return <Badge variant="secondary">Notable</Badge>;
+        return <Badge variant="secondary">Context signal</Badge>;
     }
   };
 
@@ -147,21 +127,21 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
         return (
           <Badge variant="destructive" className="gap-1">
             <XCircle className="h-3 w-3" />
-            Missing
+            Not found in LARO
           </Badge>
         );
       case "delayed":
         return (
           <Badge className="bg-orange-500 gap-1">
             <Clock className="h-3 w-3" />
-            Delayed
+            Timing requires review
           </Badge>
         );
       case "received":
         return (
           <Badge variant="default" className="bg-green-600 gap-1">
             <CheckCircle2 className="h-3 w-3" />
-            Received
+            Found in LARO
           </Badge>
         );
       default:
@@ -169,173 +149,154 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
     }
   };
 
-  const getStrengthBadge = (strength: string) => (
-    <Badge variant="secondary">{strength === "review_required" ? "Review required" : "Unverified"}</Badge>
+  const getReviewBadge = (status: string) => (
+    <Badge variant="secondary">{status === "review_required" ? "Review required" : "Unverified"}</Badge>
   );
-
-  const strengths = toStringArray(cs.strengths);
-  const weaknesses = toStringArray(cs.weaknesses);
-  const recommendations = toStringArray(cs.recommendations);
 
   return (
     <div className="space-y-6">
-      {/* Evidence completeness overview */}
-      {caseStrength && (
+      {coverageData.contractStatus === "retired" ? (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Saved coverage review retired</AlertTitle>
+          <AlertDescription className="space-y-3">
+            <p>
+              {coverageData.retirementReason
+                || "This saved result used the retired scoring contract and is not shown."}
+            </p>
+            <Button onClick={handleAnalyze} disabled={analyzing} size="sm" variant="outline">
+              {analyzing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {analyzing ? "Reviewing..." : "Create current coverage review"}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : coverageData.contractStatus === "current" ? (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5" />
-              Evidence Completeness Analysis
+            <CardTitle role="heading" aria-level={2} className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              Evidence coverage and source availability
             </CardTitle>
+            <CardDescription>{coverageData.summary}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
-            {/* Overall Score */}
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {[
+                ["Input records", coverageCounts.inputRecords ?? 0],
+                ["Managed sources available", coverageCounts.sourceAvailable ?? 0],
+                ["Sources unavailable", coverageCounts.sourceUnavailable ?? 0],
+                ["Records unreviewed", coverageCounts.unreviewed ?? 0],
+              ].map(([label, value]) => (
+                <div key={String(label)} className="rounded-lg border p-3">
+                  <div className="text-2xl font-semibold">{value}</div>
+                  <div className="text-xs text-muted-foreground">{label}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+              <div><span className="font-medium">Exact duplicates:</span> {coverageCounts.exactDuplicateRecords ?? 0}</div>
+              <div><span className="font-medium">Contradiction flags:</span> {coverageCounts.automatedContradictionFlags ?? 0}</div>
+              <div><span className="font-medium">Missing-context items:</span> {coverageCounts.missingContextItems ?? 0}</div>
+              <div><span className="font-medium">External references unverified:</span> {coverageCounts.externalSourcesUnverified ?? 0}</div>
+            </div>
+
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Legal basis: Unknown</AlertTitle>
+              <AlertDescription>
+                {coverageData.legalBasis?.detail
+                  || "No reviewed legal-basis source is bound to this coverage snapshot."}
+              </AlertDescription>
+            </Alert>
+
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium">Completeness Score</span>
-                <span className="text-2xl font-bold">{score.overall}%</span>
-              </div>
-              <Progress aria-label="Overall evidence completeness" value={score.overall} className="h-3" />
-            </div>
-
-            {/* Score Breakdown */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="text-sm text-muted-foreground mb-1">Direct Evidence</div>
-                <div className="flex items-center gap-2">
-                  <Progress
-                    aria-label="Direct evidence strength"
-                    value={score.directEvidence}
-                    className="h-2 flex-1"
-                  />
-                  <span className="text-sm font-medium w-12 text-right">
-                    {score.directEvidence}%
-                  </span>
-                </div>
-              </div>
-              <div>
-                <div className="text-sm text-muted-foreground mb-1">Context Coverage</div>
-                <div className="flex items-center gap-2">
-                  <Progress
-                    aria-label="Context coverage"
-                    value={score.circumstantial}
-                    className="h-2 flex-1"
-                  />
-                  <span className="text-sm font-medium w-12 text-right">
-                    {score.circumstantial}%
-                  </span>
-                </div>
-              </div>
-              <div>
-                <div className="text-sm text-muted-foreground mb-1">Verified Legal Basis</div>
-                <div className="flex items-center gap-2">
-                  <Progress
-                    aria-label="Verified legal basis"
-                    value={score.legalBasis}
-                    className="h-2 flex-1"
-                  />
-                  <span className="text-sm font-medium w-12 text-right">
-                    {score.legalBasis}%
-                  </span>
-                </div>
-              </div>
-              <div>
-                <div className="text-sm text-muted-foreground mb-1">Gap Risk</div>
-                <div className="flex items-center gap-2">
-                  <Progress
-                    aria-label="Evidence gap risk"
-                    value={score.gapImpact}
-                    className="h-2 flex-1"
-                  />
-                  <span className="text-sm font-medium w-12 text-right">
-                    {score.gapImpact}%
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Narrative */}
-            {cs.analysisNarrative && (
-              <Alert>
-                <TrendingUp className="h-4 w-4" />
-                <AlertTitle>Analysis Summary</AlertTitle>
-                <AlertDescription>{cs.analysisNarrative}</AlertDescription>
-              </Alert>
-            )}
-
-            {/* Strengths & Weaknesses */}
-            <div className="grid md:grid-cols-2 gap-4">
-              {strengths.length > 0 && (
-                <div>
-                  <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    Available Evidence
-                  </h4>
-                  <ul className="space-y-1">
-                    {strengths.map((strength: string, idx: number) => (
-                      <li key={idx} className="text-sm text-muted-foreground">
-                        • {strength}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {weaknesses.length > 0 && (
-                <div>
-                  <h4 className="font-semibold text-sm mb-2 flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4 text-orange-500" />
-                    Areas to Improve
-                  </h4>
-                  <ul className="space-y-1">
-                    {weaknesses.map((weakness: string, idx: number) => (
-                      <li key={idx} className="text-sm text-muted-foreground">
-                        • {weakness}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-
-            {/* Recommendations */}
-            {recommendations.length > 0 && (
-              <div>
-                <h4 className="font-semibold text-sm mb-2">Recommended Actions</h4>
-                <div className="space-y-2">
-                  {recommendations.map(
-                    (recommendation: string, idx: number) => (
-                      <div
-                        key={idx}
-                        className="flex items-start gap-2 p-3 bg-muted/50 rounded-lg"
-                      >
-                        <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <span className="text-xs font-semibold text-primary">{idx + 1}</span>
+              <h4 className="mb-2 font-semibold">Unknowns requiring review</h4>
+              {coverageUnknowns.length > 0 ? (
+                <ul className="space-y-2">
+                  {coverageUnknowns.map((unknown: any) => (
+                    <li key={unknown.code} className="rounded-lg bg-muted/50 p-3 text-sm">
+                      <div className="font-medium">{String(unknown.code).replaceAll("_", " ")}</div>
+                      <div className="text-muted-foreground">{unknown.detail}</div>
+                      {Array.isArray(unknown.inputIds) && unknown.inputIds.length > 0 && (
+                        <div className="mt-1 break-all font-mono text-xs text-muted-foreground">
+                          Inputs: {unknown.inputIds.join(", ")}
                         </div>
-                        <p className="text-sm">{recommendation}</p>
-                      </div>
-                    )
-                  )}
-                </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted-foreground">No additional automated unknowns were recorded.</p>
+              )}
+            </div>
+
+            <details className="rounded-lg border p-4">
+              <summary className="cursor-pointer font-semibold">Exact inputs and revisions</summary>
+              <div className="mt-4 space-y-3">
+                {coverageInputs.length > 0 ? coverageInputs.map((input: any) => (
+                  <div key={`${input.inputType}:${input.id}`} className="rounded-md bg-muted/50 p-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{input.label}</span>
+                      <Badge variant="outline">{String(input.inputType).replaceAll("_", " ")}</Badge>
+                      <Badge variant="secondary">{String(input.sourceAvailability).replaceAll("_", " ")}</Badge>
+                      <Badge variant="secondary">{String(input.reviewStatus).replaceAll("_", " ")}</Badge>
+                    </div>
+                    <div className="mt-2 break-all font-mono text-xs text-muted-foreground">
+                      ID: {input.inputType}:{input.id}<br />
+                      Input revision: {input.revision}<br />
+                      Analysis: {String(input.analysisStatus).replaceAll("_", " ")}
+                      {input.analysisRevision ? <><br />Analysis revision: {input.analysisRevision}</> : null}
+                      {input.duplicateOf ? <><br />Exact duplicate of: {input.duplicateOf}</> : null}
+                      {Number(input.contradictionFlags) > 0
+                        ? <><br />Automated contradiction flags: {input.contradictionFlags}</>
+                        : null}
+                    </div>
+                  </div>
+                )) : (
+                  <p className="text-sm text-muted-foreground">No LARO inputs were present in this snapshot.</p>
+                )}
               </div>
-            )}
+            </details>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div>
+                <h4 className="mb-2 font-semibold">Limitations</h4>
+                <ul className="space-y-1 text-sm text-muted-foreground">
+                  {coverageLimitations.map((limitation, index) => <li key={index}>• {limitation}</li>)}
+                </ul>
+              </div>
+              <div>
+                <h4 className="mb-2 font-semibold">Review actions</h4>
+                <ol className="space-y-1 text-sm text-muted-foreground">
+                  {coverageActions.map((action, index) => <li key={index}>{index + 1}. {action}</li>)}
+                </ol>
+              </div>
+            </div>
+
+            <div className="break-all border-t pt-3 font-mono text-xs text-muted-foreground">
+              Contract: {coverageData.contractVersion}<br />
+              Source-set revision: {coverageData.sourceRevision}<br />
+              Snapshot revision: {coverageData.snapshotRevision}
+            </div>
           </CardContent>
         </Card>
-      )}
+      ) : null}
 
       {/* Detailed Analysis Tabs */}
       <Tabs defaultValue="gaps" className="w-full">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-2 group-data-[orientation=horizontal]/tabs:h-auto sm:grid-cols-3 lg:grid-cols-6">
           <TabsTrigger value="gaps" className="gap-2">
             <Clock className="h-4 w-4" />
-            Gaps ({summary?.gapsCount || 0})
+            Context ({summary?.gapsCount || 0})
           </TabsTrigger>
           <TabsTrigger value="documents" className="gap-2">
             <FileText className="h-4 w-4" />
-            Missing Docs ({summary?.missingDocsCount || 0})
+            Potential Records ({summary?.missingDocsCount || 0})
           </TabsTrigger>
           <TabsTrigger value="patterns" className="gap-2">
             <AlertTriangle className="h-4 w-4" />
-            Patterns ({summary?.patternsCount || 0})
+            Rule Checks ({summary?.patternsCount || 0})
           </TabsTrigger>
           <TabsTrigger value="inferences" className="gap-2">
             <Scale className="h-4 w-4" />
@@ -374,7 +335,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
                 <CardContent>
                   {gap.legalImplications && gap.legalImplications.length > 0 && (
                     <div>
-                      <h4 className="font-semibold text-sm mb-2">Legal Implications:</h4>
+                      <h4 className="font-semibold text-sm mb-2">Review prompts:</h4>
                       <ul className="space-y-1">
                         {gap.legalImplications.map((implication: string, idx: number) => (
                           <li key={idx} className="text-sm text-muted-foreground">
@@ -390,7 +351,8 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
           ) : (
             <Card>
               <CardContent className="py-8 text-center text-muted-foreground">
-                No communication gaps detected
+                No communication-gap signals were produced from current LARO inputs.
+                Records outside LARO remain unknown.
               </CardContent>
             </Card>
           )}
@@ -412,7 +374,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
                         {doc.legalRequirement && (
                           <Badge variant="outline" className="gap-1">
                             <Scale className="h-3 w-3" />
-                            Legal Requirement
+                            Claimed requirement — verify source
                           </Badge>
                         )}
                       </div>
@@ -423,7 +385,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
                 {doc.legalBasis && (
                   <CardContent>
                     <div className="text-sm">
-                      <span className="font-semibold">Legal Basis: </span>
+                      <span className="font-semibold">Claimed basis — verify source: </span>
                       <span className="text-muted-foreground">{doc.legalBasis}</span>
                     </div>
                   </CardContent>
@@ -433,7 +395,8 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
           ) : (
             <Card>
               <CardContent className="py-8 text-center text-muted-foreground">
-                No missing documents identified
+                No potentially relevant missing records were produced from current LARO inputs.
+                Records outside LARO remain unknown.
               </CardContent>
             </Card>
           )}
@@ -449,9 +412,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-1">
                         <CardTitle className="text-base">{pattern.description}</CardTitle>
-                        <Badge variant="outline">
-                          {pattern.confidence}% confidence
-                        </Badge>
+                        <Badge variant="outline">Rule match</Badge>
                       </div>
                       <CardDescription>
                         {pattern.patternType.replace("_", " ").toUpperCase()}
@@ -463,7 +424,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
                   <CardContent>
                     <Alert>
                       <AlertTriangle className="h-4 w-4" />
-                      <AlertTitle>Legal Significance</AlertTitle>
+                      <AlertTitle>Review note</AlertTitle>
                       <AlertDescription>{pattern.legalSignificance}</AlertDescription>
                     </Alert>
                   </CardContent>
@@ -473,7 +434,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
           ) : (
             <Card>
               <CardContent className="py-8 text-center text-muted-foreground">
-                No suspicious patterns detected
+                No rule-based patterns were produced from current LARO inputs.
               </CardContent>
             </Card>
           )}
@@ -489,7 +450,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-1">
                         <CardTitle className="text-base">{inference.inference}</CardTitle>
-                        {getStrengthBadge(inference.strength)}
+                        {getReviewBadge(inference.strength)}
                       </div>
                       {inference.category && (
                         <CardDescription>
@@ -502,13 +463,13 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
                 <CardContent className="space-y-4">
                   {inference.legalPrinciple && (
                     <div>
-                      <h4 className="font-semibold text-sm mb-1">Legal Principle:</h4>
+                      <h4 className="font-semibold text-sm mb-1">Review limitation:</h4>
                       <p className="text-sm text-muted-foreground">{inference.legalPrinciple}</p>
                     </div>
                   )}
                   {inference.supportingEvidence && inference.supportingEvidence.length > 0 && (
                     <div>
-                      <h4 className="font-semibold text-sm mb-2">Supporting Evidence:</h4>
+                      <h4 className="font-semibold text-sm mb-2">Related recorded facts:</h4>
                       <ul className="space-y-1">
                         {inference.supportingEvidence.map((evidence: string, idx: number) => (
                           <li key={idx} className="text-sm text-muted-foreground">
@@ -520,7 +481,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
                   )}
                   {inference.caselaw && inference.caselaw.length > 0 && (
                     <div>
-                      <h4 className="font-semibold text-sm mb-2">Case Law:</h4>
+                      <h4 className="font-semibold text-sm mb-2">Unverified legal references:</h4>
                       <ul className="space-y-1">
                         {inference.caselaw.map((law: string, idx: number) => (
                           <li key={idx} className="text-sm text-muted-foreground font-mono">
@@ -536,7 +497,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
           ) : (
             <Card>
               <CardContent className="py-8 text-center text-muted-foreground">
-                No legal inferences generated
+                No review questions were produced from current LARO inputs.
               </CardContent>
             </Card>
           )}
@@ -558,14 +519,14 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
         <CardContent className="py-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="font-semibold">Re-run Analysis</p>
+              <p className="font-semibold">Re-run coverage review</p>
               <p className="text-sm text-muted-foreground">
-                Update gap analysis with latest evidence
+                Rebuild the exact input, source-availability, and revision inventory
               </p>
             </div>
             <Button onClick={handleAnalyze} disabled={analyzing} variant="outline">
               {analyzing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {analyzing ? "Analyzing..." : "Re-analyze"}
+              {analyzing ? "Reviewing..." : "Re-run review"}
             </Button>
           </div>
         </CardContent>

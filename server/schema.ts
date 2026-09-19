@@ -932,7 +932,10 @@ export const legalInferences = sqliteTable("legal_inferences", {
   createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
 });
 
-export const caseStrengthAnalysis = sqliteTable("case_strength_analysis", {
+// The physical table name is retained for installed-database compatibility.
+// Rows now contain the versioned evidence-coverage contract; migration 0027
+// marks every row produced by the retired score contract before it can be read.
+export const evidenceCoverageAnalysis = sqliteTable("case_strength_analysis", {
   id: text("id").primaryKey(),
   caseId: text("caseId"),
   data: text("data"),

@@ -81,6 +81,10 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
   multi-draft approval either commits every draft and audit row or commits none.
 - Evidence analysis distinguishes source observations from inference and keeps
   document/source identifiers available to the user.
+- Evidence-gap review uses a versioned source-revision inventory. It exposes
+  exact inputs, availability, review state, unknowns, and limitations without
+  turning record counts into legal merit, claim support, or outcome estimates.
+  Legacy score rows are retired by both SQLite and hosted PostgreSQL migrations.
 - Version-4 backup sets place the database, desktop secrets, and bounded managed
   evidence bytes in one authenticated encrypted payload whose recovery key is
   separate from application secrets. S3 members preserve original keys and
@@ -116,6 +120,7 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
 | Provider identity normalization could duplicate historical mixed-case accounts | High | Provider lookup now occurs case-insensitively inside the credential/audit transaction; startup reconciliation preserves child references, normalizes identities, and creates a unique owner/provider/email index; concurrent reconnect tests converge on one row |
 | Trello and Telegram token operations lacked aggregate admission controls | High | Added persistent per-user/provider request quotas and shared bounded-read admission around provider calls; the 31st request is rejected before provider contact |
 | Linux cross-packaging omitted the Windows canvas binary used for scanned-PDF OCR | High | `dist:win` and Store builds stage the exact pinned Windows canvas package; CI repeats the step and packaged-native verification requires x64 PE SQLite and canvas bindings |
+| Gap analysis presented count-derived percentages as evidence completeness and case strength | High | Replaced the score contract with `evidence-coverage-v1`, exact source and analysis revisions, explicit unknown legal basis and limitations; legacy rows and their derived output are retired, and sparse/duplicate/contradictory/unavailable/well-documented plus desktop/mobile browser regressions are covered |
 
 ## Verdict
 

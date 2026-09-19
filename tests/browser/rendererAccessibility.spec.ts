@@ -1854,3 +1854,80 @@ test("global search opens every result on a registered, reload-safe deep link", 
   expect(pageErrors).toEqual([]);
   expect(requestFailures).toEqual([]);
 });
+
+test("coverage review renders exact revisions and unknown legal basis without merit scores", async ({ page }, testInfo) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badResponses: Array<{ status: number; url: string }> = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => {
+    const failure = request.failure()?.errorText ?? "unknown failure";
+    if (!failure.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
+  });
+  page.on("response", response => {
+    if (response.status() >= 400) badResponses.push({ status: response.status(), url: response.url() });
+  });
+
+  const email = await createAccount(page);
+  const caseId = `A11Y_COVERAGE_${randomUUID()}`;
+  const now = Math.floor(Date.now() / 1_000);
+  const started = now - (45 * 86_400);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const owner = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    database.prepare(
+      `INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, createdAt, updatedAt)
+       VALUES (?, ?, 'Coverage browser review', 'General records review', 'Revision-bound coverage fixture', 'Low', 'Intake', ?, ?)`,
+    ).run(caseId, owner.id, now, now);
+    database.prepare(
+      `INSERT INTO timeline (id, caseId, userId, eventType, title, description, eventAt, metadata, createdAt)
+       VALUES (?, ?, ?, 'request', 'Recorded information request', 'Request recorded in LARO', ?, ?, ?)`,
+    ).run(`${caseId}_START`, caseId, owner.id, started, JSON.stringify({ reviewStatus: "reviewed" }), started);
+    database.prepare(
+      `INSERT INTO timeline (id, caseId, userId, eventType, title, description, eventAt, metadata, createdAt)
+       VALUES (?, ?, ?, 'recorded_event', 'Later recorded event', 'Later event recorded in LARO', ?, ?, ?)`,
+    ).run(`${caseId}_END`, caseId, owner.id, now, JSON.stringify({ reviewStatus: "reviewed" }), now);
+    database.prepare(
+      `INSERT INTO evidence (id, caseId, userId, type, source, title, description, metadata, relevant, createdAt, updatedAt)
+       VALUES (?, ?, ?, 'document', 'manual', 'Reviewed browser record', 'Coverage browser source record', ?, 1, ?, ?)`,
+    ).run(
+      `${caseId}_EVIDENCE`,
+      caseId,
+      owner.id,
+      JSON.stringify({ reviewStatus: "reviewed", contentHash: "d".repeat(64) }),
+      now,
+      now,
+    );
+  } finally {
+    database.close();
+  }
+
+  const route = `/evidence?view=gaps&case=${caseId}`;
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    const response = await page.goto(route, { waitUntil: "networkidle" });
+    expect(response?.status()).toBe(200);
+    await expect(page.getByRole("heading", { name: "Evidence coverage and source availability" }))
+      .toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Legal basis: Unknown", { exact: true })).toBeVisible();
+    await expect(page.getByText("evidence-coverage-v1", { exact: false })).toBeVisible();
+    const revisions = page.locator("details").filter({ hasText: "Exact inputs and revisions" });
+    await revisions.locator("summary").click();
+    await expect(revisions).toContainText(`timeline_event:${caseId}_START`);
+    await expect(revisions).toContainText(`evidence_record:${caseId}_EVIDENCE`);
+    await expect(page.getByText("Completeness Score", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Case Strength", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("No critical gaps detected", { exact: true })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).include("#main-content").analyze();
+    expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`coverage-review-${viewport.name}.png`), fullPage: true });
+  }
+
+  expect(badResponses).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+});

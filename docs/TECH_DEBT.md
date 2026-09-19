@@ -1,6 +1,6 @@
 # Technical Debt Register
 
-Updated: 2026-08-14
+Updated: 2026-09-19
 
 | # | Debt | Impact | Status / next step |
 | --- | --- | --- | --- |
@@ -32,6 +32,7 @@ Updated: 2026-08-14
 | D26 | Flask ledger, auth, token-vault, and upload recovery is still separate from the Electron backup CLI | - | Resolved with a manifest-bound four-member recovery set, external-secret compatibility checks, upload-reference coverage, path rebasing, rollback-safe restore, and a blocking destructive drill |
 | D27 | Electron and Flask previously remained concurrent application runtimes with independent databases and authentication/session models | - | Resolved by making Electron authoritative and adding an offline owner-bound migration that operationally maps supported records, archives every owner-scoped source row with hashes/redaction, copies verified evidence, rejects changed reruns, and never migrates sessions or vault credentials |
 | D28 | Strict historical counters remain text-backed for installed-schema compatibility | Low | Production readiness now blocks malformed, unsafe, and impossible counter data using aggregate-only checks; convert columns only through a backup-tested migration |
+| D29 | Gap review derived completeness and case-strength percentages from record counts | - | Resolved with a versioned evidence-coverage inventory, exact source/analysis revisions, explicit unknowns and limitations, legacy-row retirement migrations, and backend/browser regression coverage |
 
 D10 is operationally contained without rewriting installed databases. A native
 foreign-key conversion remains migration work, not a release blocker while the

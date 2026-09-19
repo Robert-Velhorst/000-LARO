@@ -14,6 +14,9 @@ original phase-074 snapshot are mounted and typed.
 - Authentication, account security, privacy export, and erasure.
 - Owner-scoped cases, evidence, analysis, timelines, deadlines, notes, and export.
 - Owner-scoped evidence relevance scoring grounded in persisted case context and versioned document analysis.
+- Owner-scoped evidence coverage snapshots with exact input/source revisions,
+  availability, review state, unknowns, limitations, and no legal-merit or
+  outcome score.
 - Lawyer matching and reviewed media/organization target discovery.
 - Draft preparation, approval, explicit delivery, replies, and outreach analytics.
 - Gmail/Drive OAuth and evidence collection when configured.

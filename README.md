@@ -203,6 +203,15 @@ private-source accuracy or production-acceptance claim follows from this preview
 | Google Drive | Uses read-only OAuth, supports explicit account/folder selection, and exports Google-native documents to PDF before analysis |
 | Document inbox | Maintained desktop/API: case-neutral uploads and durable Gmail/Drive/native-folder imports, source analysis, reference-based or configured-model dossier discovery, incremental filing, explained exceptions and original downloads |
 
+The **Gap analysis** view is a versioned evidence-coverage review. It lists the
+exact LARO inputs and revisions, managed-source availability, explicit review
+state, exact duplicates, automated contradiction flags, missing context,
+unknowns, and limitations. These counts and signals do not measure claim
+support, legal merit, liability, or outcome. A legal basis remains **Unknown**
+until a reviewed legal source is explicitly bound to the snapshot. Saved results
+from the retired percentage-scoring contract are marked retired and must be
+re-run; they are never translated into a new score.
+
 #### Autonomous Inbox Boundaries
 
 The required end state is autonomous content-based dossier discovery, not a

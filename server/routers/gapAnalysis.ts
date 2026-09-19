@@ -13,10 +13,11 @@ import {
   expectedDocuments,
   suspiciousPatterns,
   legalInferences,
-  caseStrengthAnalysis,
+  evidenceCoverageAnalysis,
   cases,
 } from "../schema";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
+import { EVIDENCE_COVERAGE_CONTRACT_VERSION } from "../evidenceCoverage";
 
 const parseData = (raw: string | null) => {
   if (!raw) return {};
@@ -38,6 +39,56 @@ const parseStringArray = (value: unknown): string[] => {
     return [];
   }
 };
+
+const RETIRED_COVERAGE_REASON =
+  "This saved row was produced by the retired scoring contract. Re-run coverage review to create a source-revision inventory.";
+
+type NormalizedCoverageRow = Omit<typeof evidenceCoverageAnalysis.$inferSelect, "data"> & {
+  contractVersion: string;
+  contractStatus: "current" | "retired";
+  inputs?: unknown[];
+  retirementReason?: string;
+  [key: string]: unknown;
+};
+
+function normalizeCoverageRow(
+  row: typeof evidenceCoverageAnalysis.$inferSelect,
+): NormalizedCoverageRow {
+  const data = parseData(row.data) as Record<string, any>;
+  const { data: _rawData, ...record } = row;
+  if (
+    data.contractVersion === EVIDENCE_COVERAGE_CONTRACT_VERSION
+    && data.contractStatus === "current"
+    && Array.isArray(data.inputs)
+  ) {
+    return {
+      ...record,
+      contractVersion: EVIDENCE_COVERAGE_CONTRACT_VERSION,
+      contractStatus: "current",
+      generatedAt: data.generatedAt,
+      sourceRevision: data.sourceRevision,
+      snapshotRevision: data.snapshotRevision,
+      inputs: data.inputs,
+      counts: data.counts,
+      missingContext: data.missingContext,
+      legalBasis: data.legalBasis,
+      unknowns: data.unknowns,
+      limitations: data.limitations,
+      reviewActions: data.reviewActions,
+      summary: data.summary,
+    };
+  }
+  return {
+    ...record,
+    contractVersion: typeof data.contractVersion === "string"
+      ? data.contractVersion
+      : "legacy-case-strength-v0",
+    contractStatus: "retired" as const,
+    retirementReason: typeof data.retirementReason === "string"
+      ? data.retirementReason
+      : RETIRED_COVERAGE_REASON,
+  };
+}
 
 export const gapAnalysisRouter = router({
   /**
@@ -201,9 +252,9 @@ export const gapAnalysisRouter = router({
     }),
 
   /**
-   * Get case strength analysis
+   * Get the versioned source-coverage and availability inventory.
    */
-  getCaseStrength: protectedProcedure
+  getCoverage: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
       await assertCaseAccess(input.caseId, ctx.user.id);
@@ -212,21 +263,14 @@ export const gapAnalysisRouter = router({
 
       const analysis = await db
         .select()
-        .from(caseStrengthAnalysis)
-        .where(eq(caseStrengthAnalysis.caseId, input.caseId))
+        .from(evidenceCoverageAnalysis)
+        .where(eq(evidenceCoverageAnalysis.caseId, input.caseId))
+        .orderBy(desc(evidenceCoverageAnalysis.createdAt), desc(evidenceCoverageAnalysis.id))
         .limit(1);
 
       if (analysis.length === 0) return null;
 
-      const result = analysis[0];
-      const data = parseData(result.data);
-      return {
-        ...result,
-        ...data,
-        strengths: Array.isArray(data.strengths) ? data.strengths : [],
-        weaknesses: Array.isArray(data.weaknesses) ? data.weaknesses : [],
-        recommendations: Array.isArray(data.recommendations) ? data.recommendations : [],
-      };
+      return normalizeCoverageRow(analysis[0]);
     }),
 
   /**
@@ -245,11 +289,12 @@ export const gapAnalysisRouter = router({
           missingDocsCount: 0,
           patternsCount: 0,
           inferencesCount: 0,
-          caseStrength: null,
+          analysisStatus: "none" as const,
+          coverage: null,
         };
       }
 
-      const [gaps, expectedDocs, patterns, inferences, strength] = await Promise.all([
+      const [gaps, expectedDocs, patterns, inferences, coverageRows] = await Promise.all([
         db.select().from(communicationGaps).where(eq(communicationGaps.caseId, input.caseId)),
         db
           .select()
@@ -262,27 +307,35 @@ export const gapAnalysisRouter = router({
         db.select().from(legalInferences).where(eq(legalInferences.caseId, input.caseId)),
         db
           .select()
-          .from(caseStrengthAnalysis)
-          .where(eq(caseStrengthAnalysis.caseId, input.caseId))
+          .from(evidenceCoverageAnalysis)
+          .where(eq(evidenceCoverageAnalysis.caseId, input.caseId))
+          .orderBy(desc(evidenceCoverageAnalysis.createdAt), desc(evidenceCoverageAnalysis.id))
           .limit(1),
       ]);
 
       const normalizedGaps = gaps.map((g) => ({ ...g, ...parseData(g.data) }));
       const normalizedDocs = expectedDocs.map((d) => ({ ...d, ...parseData(d.data) }));
 
+      const coverage = coverageRows.length > 0 ? normalizeCoverageRow(coverageRows[0]) : null;
+      const hasDerivedRows = gaps.length > 0 || expectedDocs.length > 0 || patterns.length > 0 || inferences.length > 0;
+      const analysisStatus = coverage?.contractStatus === "current"
+        ? "current" as const
+        : coverage || hasDerivedRows ? "retired" as const : "none" as const;
+
       return {
         hasAnalysis:
-          gaps.length > 0 ||
-          expectedDocs.length > 0 ||
-          patterns.length > 0 ||
-          inferences.length > 0 ||
-          strength.length > 0,
+          hasDerivedRows || coverageRows.length > 0,
+        analysisStatus,
         gapsCount: gaps.length,
         criticalGapsCount: normalizedGaps.filter((g: any) => g.significance === "critical").length,
         missingDocsCount: normalizedDocs.filter((d: any) => d.status === "missing").length,
         patternsCount: patterns.length,
         inferencesCount: inferences.length,
-        caseStrength: strength.length > 0 ? strength[0] : null,
+        coverage: coverage || (hasDerivedRows ? {
+          contractVersion: "legacy-case-strength-v0",
+          contractStatus: "retired" as const,
+          retirementReason: RETIRED_COVERAGE_REASON,
+        } : null),
       };
     }),
 
