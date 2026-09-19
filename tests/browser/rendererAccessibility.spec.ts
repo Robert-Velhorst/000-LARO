@@ -1154,6 +1154,87 @@ test("a demo query parameter cannot bypass authentication", async ({ page }) => 
   await expect(page.getByRole("button", { name: /Open account menu|Accountmenu openen/ })).toHaveCount(0);
 });
 
+test("reviewed HAI credentials expose and enforce their case, field, and future-record scope", async ({ page }, testInfo) => {
+  const email = await createAccount(page);
+  const caseId = `HAI_UI_${randomUUID()}`;
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const owner = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    const now = Math.floor(Date.now() / 1000);
+    database.prepare("INSERT INTO cases (id, userId, caseType, status, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(caseId, owner.id, "HAI browser verification", "active", now, now);
+  } finally {
+    database.close();
+  }
+
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const failedRequests: string[] = [];
+  const badResponses: string[] = [];
+  page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("requestfailed", (request) => failedRequests.push(`${request.method()} ${request.url()} ${request.failure()?.errorText || "failed"}`));
+  page.on("response", (response) => { if (response.status() >= 400) badResponses.push(`${response.status()} ${response.url()}`); });
+
+  await page.goto("/settings?section=hai", { waitUntil: "networkidle" });
+  await expect(page.getByText("HAI connector", { exact: true })).toBeVisible();
+  await page.getByLabel(/HAI browser verification/).check();
+  await page.getByRole("switch", { name: "Include cases created later" }).click();
+  await page.getByRole("button", { name: "Review and create credential" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Confirm HAI credential scope" });
+  await expect(dialog).toContainText("1 explicitly selected");
+  await expect(dialog).toContainText("Future cases: Included automatically");
+  const create = dialog.getByRole("button", { name: "Create reviewed credential" });
+  await expect(create).toBeDisabled();
+  await dialog.getByLabel(/I reviewed the 1 selected case/).check();
+  await dialog.getByLabel("I reviewed the exported field categories shown above.").check();
+  await dialog.getByLabel("I reviewed whether future cases and analyses enter this grant automatically.").check();
+  await expect(create).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath("hai-reviewed-grant-dialog.png") });
+  await create.click();
+
+  await expect(page.getByRole("textbox", { name: "New HAI credential" })).toBeVisible();
+  const credential = page.getByRole("article", { name: "HAI credential HAI connected source" });
+  await expect(credential).toContainText("1 selected case");
+  await expect(credential).toContainText("Case overview, Analysis summary");
+  await expect(credential).toContainText("Future cases: included");
+  await expect(credential).toContainText("Future analyses: excluded");
+  await expect(credential).toContainText("Not used");
+  await expect(credential).toContainText("Revision 1");
+
+  await credential.getByRole("button", { name: "Edit scope" }).click();
+  await expect(page.getByRole("switch", { name: "Include cases created later" })).toBeChecked();
+  await page.getByRole("switch", { name: "Include cases created later" }).click();
+  await page.getByRole("button", { name: "Review scope update" }).click();
+  const updateDialog = page.getByRole("dialog", { name: "Confirm HAI scope update" });
+  await updateDialog.getByLabel(/I reviewed the 1 selected case/).check();
+  await updateDialog.getByLabel("I reviewed the exported field categories shown above.").check();
+  await updateDialog.getByLabel("I reviewed whether future cases and analyses enter this grant automatically.").check();
+  await updateDialog.getByRole("button", { name: "Update reviewed scope" }).click();
+  await expect(credential).toContainText("Future cases: excluded");
+  await expect(credential).toContainText("Revision 2");
+  await credential.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("hai-reviewed-credential-list.png") });
+  const desktopAudit = await new AxeBuilder({ page }).analyze();
+  expect(desktopAudit.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload({ waitUntil: "networkidle" });
+  const mobileCredential = page.getByRole("article", { name: "HAI credential HAI connected source" });
+  await expect(mobileCredential).toContainText("Revision 2");
+  await mobileCredential.scrollIntoViewIfNeeded();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("hai-reviewed-credential-mobile.png") });
+  const mobileAudit = await new AxeBuilder({ page }).analyze();
+  expect(mobileAudit.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(failedRequests).toEqual([]);
+  expect(badResponses).toEqual([]);
+});
+
 test("authentication exposes password visibility and preserves fields on an inline error", async ({ page }, testInfo) => {
   await page.goto("/", { waitUntil: "networkidle" });
   await page.getByLabel("Email Address", { exact: true }).fill("invalid-session@example.test");

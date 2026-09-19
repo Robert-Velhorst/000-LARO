@@ -34,7 +34,7 @@ migration artifacts.
 | Legacy import | Flask ledger and recovery tooling | Offline migration source only |
 | Evidence | Managed local or S3 bytes, hashes, extracted text, structured analysis, source links | Owner-scoped records and storage |
 | External providers | Google read-only evidence scopes and configured outbound email | Explicit credentials, consent, approval, and acceptance gates |
-| HAI bridge | Revocable `hai:read` credential plus bounded incremental feed | LARO owns authorization and minimization; HAI remains read-only |
+| HAI bridge | Revocable `hai:read` credential bound to a versioned case-and-field grant plus bounded incremental feed | LARO owns authorization and minimization; HAI remains read-only |
 
 Electron starts the same server modules used by the standalone API. The Flask
 runtime is not a second production authority: `scripts/migrate_flask_ledger.py`
@@ -100,7 +100,7 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
 | Fresh npm advisory feed blocked the gate on `nanoid` and `js-yaml` | High | Lockfile moved to patched 3.3.18 and 4.3.1 releases; full and runtime-only audits return zero findings |
 | Live provider acceptance depends on owner-controlled external state | External | Keep release status blocked until Google consent/read/revocation and approved outbound delivery evidence are recorded |
 | Windows package is intentionally unsigned | Accepted limitation | Publish checksum and unknown-publisher warning; do not claim platform publisher trust |
-| Generic HAI JSON feeds cannot authenticate safely | High | Added a dedicated LARO adapter and owner-scoped hashed credential instead of embedding a secret in a URL |
+| Generic HAI JSON feeds cannot authenticate or minimize safely | High | Added a dedicated LARO adapter whose hashed credential is bound to a reviewed, versioned grant for explicit cases, field categories, and future-record choices; legacy unrestricted tokens are revoked |
 | Frontend session checks could show the sign-in screen during a transient API outage | Medium | Added bounded retries for transient failures and a reconnecting state that does not discard the signed-in UI |
 | Browser account setup advanced before the signup request completed | Test defect | Route audit now waits for the authenticated account control; all 15 routes pass at desktop and mobile sizes |
 | Renderer-accessible scanner credentials expanded renderer authority | High | Scanner launch proof and session cookies remain in Electron main; renderer uploads request a fresh main-owned session for each batch |

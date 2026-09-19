@@ -907,8 +907,13 @@ Assigned free domains can change. A stable gateway path is recommended.
 
 `/api/integrations/hai/feed` serves the dedicated HAI adapter. Its token is
 owner-bound, `hai:read` only, stored as a digest, shown once, revocable, and
-limited to 365 days. The bounded feed includes case status and selected analysis
-summary fields, but excludes contacts, source bytes/quotes, and provider secrets.
+limited to 365 days. Issuing a token requires a reviewed grant with explicit
+owned cases, exported field categories, and separate choices for future cases
+and analyses. Existing unselected cases stay excluded even when future-case
+access is enabled. Scope edits advance a grant revision and invalidate old feed
+cursors; revocation blocks both the grant and credential. The bounded feed
+excludes contacts, source bytes/quotes, and provider secrets. Migration 0026
+revokes legacy active tokens that have no reviewed grant.
 
 ## Security, Privacy, and Recovery
 

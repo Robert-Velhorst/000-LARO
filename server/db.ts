@@ -507,6 +507,36 @@ export async function getDb() {
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0018_case_action_evidence.sql"), "utf8"));
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0019_case_shares.sql"), "utf8"));
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0020_account_email_identity.sql"), "utf8"));
+        // HAI credentials created before reviewed grants were unrestricted.
+        // Ensure the additive grant schema exists even when an older install's
+        // migration bookkeeping is incomplete, then revoke every unbound token.
+        sqlite.exec(`
+          CREATE TABLE IF NOT EXISTS hai_access_grants (
+            id text PRIMARY KEY NOT NULL,
+            userId text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            caseIds text NOT NULL CHECK (json_valid(caseIds) AND json_type(caseIds) = 'array'),
+            fieldCategories text NOT NULL CHECK (json_valid(fieldCategories) AND json_type(fieldCategories) = 'array'),
+            includeFutureCases integer NOT NULL DEFAULT 0,
+            includeFutureAnalyses integer NOT NULL DEFAULT 0,
+            revision integer NOT NULL DEFAULT 1 CHECK (revision >= 1),
+            reviewedAt integer NOT NULL,
+            createdAt integer NOT NULL,
+            updatedAt integer NOT NULL,
+            revokedAt integer
+          );
+          CREATE INDEX IF NOT EXISTS hai_access_grants_user_idx ON hai_access_grants(userId);
+          CREATE INDEX IF NOT EXISTS hai_access_grants_user_revoked_idx ON hai_access_grants(userId, revokedAt);
+        `);
+        const haiTokenColumns = new Set((sqlite.prepare('PRAGMA table_info("integration_access_tokens")').all() as Array<{ name: string }>).map((column) => column.name));
+        if (!haiTokenColumns.has("grantId")) {
+          sqlite.exec("ALTER TABLE integration_access_tokens ADD COLUMN grantId text REFERENCES hai_access_grants(id) ON DELETE SET NULL");
+        }
+        sqlite.exec(`
+          CREATE UNIQUE INDEX IF NOT EXISTS integration_access_tokens_grant_unique ON integration_access_tokens(grantId);
+          UPDATE integration_access_tokens
+          SET status = 'revoked', revokedAt = CAST(unixepoch('now') * 1000 AS integer)
+          WHERE status = 'active' AND grantId IS NULL;
+        `);
         const resetColumns = new Set((sqlite.prepare('PRAGMA table_info("users")').all() as Array<{ name: string }>).map((column) => column.name));
         if (!resetColumns.has("resetCodeFailures")) sqlite.exec("ALTER TABLE users ADD COLUMN resetCodeFailures integer NOT NULL DEFAULT 0");
         if (!resetColumns.has("resetCodeLockedUntil")) sqlite.exec("ALTER TABLE users ADD COLUMN resetCodeLockedUntil integer");

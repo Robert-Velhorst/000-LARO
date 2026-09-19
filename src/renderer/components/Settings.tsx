@@ -33,6 +33,11 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
+import {
+  HAI_FIELD_CATEGORIES,
+  HAI_FIELD_CATEGORY_LABELS,
+  type HaiFieldCategory,
+} from "../../../shared/haiGrant";
 import { EXTERNAL_DOCUMENT_SHARING_SCOPE } from "../../../shared/workflowConsent";
 
 type SettingsSection = "workflow" | "email" | "sources" | "hai" | "security";
@@ -103,6 +108,15 @@ export default function Settings() {
   const [haiTokenName, setHaiTokenName] = useState("HAI connected source");
   const [haiTokenDays, setHaiTokenDays] = useState("90");
   const [revealedHaiToken, setRevealedHaiToken] = useState<string | null>(null);
+  const [haiSelectedCaseIds, setHaiSelectedCaseIds] = useState<string[]>([]);
+  const [haiSelectedFields, setHaiSelectedFields] = useState<HaiFieldCategory[]>(["case_overview", "analysis_summary"]);
+  const [haiIncludeFutureCases, setHaiIncludeFutureCases] = useState(false);
+  const [haiIncludeFutureAnalyses, setHaiIncludeFutureAnalyses] = useState(false);
+  const [haiGrantDialogOpen, setHaiGrantDialogOpen] = useState(false);
+  const [haiEditingGrant, setHaiEditingGrant] = useState<{ tokenId: string; revision: number } | null>(null);
+  const [acknowledgeHaiCases, setAcknowledgeHaiCases] = useState(false);
+  const [acknowledgeHaiFields, setAcknowledgeHaiFields] = useState(false);
+  const [acknowledgeHaiFutureRecords, setAcknowledgeHaiFutureRecords] = useState(false);
   const [consentDialogOpen, setConsentDialogOpen] = useState(false);
   const [acknowledgeFullDocumentContent, setAcknowledgeFullDocumentContent] = useState(false);
   const [acknowledgeAutomaticImports, setAcknowledgeAutomaticImports] = useState(false);
@@ -130,7 +144,11 @@ export default function Settings() {
   const haiTokens = trpc.haiIntegration.listTokens.useQuery(undefined, {
     enabled: section === "hai",
   });
+  const haiEligibleCases = trpc.haiIntegration.listEligibleCases.useQuery(undefined, {
+    enabled: section === "hai",
+  });
   const createHaiTokenMutation = trpc.haiIntegration.createToken.useMutation();
+  const updateHaiGrantMutation = trpc.haiIntegration.updateGrant.useMutation();
   const revokeHaiTokenMutation = trpc.haiIntegration.revokeToken.useMutation();
 
   const consentMutationPending = grantExternalDocumentSharingMutation.isPending || revokeExternalDocumentSharingMutation.isPending;
@@ -278,18 +296,88 @@ export default function Settings() {
     }
   };
 
-  const handleCreateHaiToken = async () => {
-    try {
-      const result = await createHaiTokenMutation.mutateAsync({
-        name: haiTokenName.trim(),
-        expiresInDays: Number(haiTokenDays),
-      });
-      setRevealedHaiToken(result.token);
-      await utils.haiIntegration.listTokens.invalidate();
-      toast.success("HAI credential created");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "HAI credential could not be created");
+  const toggleHaiCase = (caseId: string, checked: boolean) => {
+    setHaiSelectedCaseIds((current) => checked
+      ? [...new Set([...current, caseId])]
+      : current.filter((id) => id !== caseId));
+  };
+
+  const toggleHaiField = (field: HaiFieldCategory, checked: boolean) => {
+    setHaiSelectedFields((current) => checked
+      ? [...new Set([...current, field])]
+      : current.filter((item) => item !== field));
+  };
+
+  const openHaiGrantReview = () => {
+    if (haiSelectedCaseIds.length < 1) {
+      toast.error("Select at least one case for this HAI grant");
+      return;
     }
+    if (haiSelectedFields.length < 1) {
+      toast.error("Select at least one field category for this HAI grant");
+      return;
+    }
+    setAcknowledgeHaiCases(false);
+    setAcknowledgeHaiFields(false);
+    setAcknowledgeHaiFutureRecords(false);
+    setHaiGrantDialogOpen(true);
+  };
+
+  const handleSaveHaiGrant = async () => {
+    const grant = {
+      caseIds: haiSelectedCaseIds,
+      fieldCategories: haiSelectedFields,
+      includeFutureCases: haiIncludeFutureCases,
+      includeFutureAnalyses: haiIncludeFutureAnalyses,
+      acknowledgeCaseScope: true as const,
+      acknowledgeFieldScope: true as const,
+      acknowledgeFutureRecords: true as const,
+    };
+    try {
+      if (haiEditingGrant) {
+        await updateHaiGrantMutation.mutateAsync({
+          tokenId: haiEditingGrant.tokenId,
+          expectedRevision: haiEditingGrant.revision,
+          grant,
+        });
+        toast.success("HAI grant scope updated");
+      } else {
+        const result = await createHaiTokenMutation.mutateAsync({
+          name: haiTokenName.trim(),
+          expiresInDays: Number(haiTokenDays),
+          grant,
+        });
+        setRevealedHaiToken(result.token);
+        toast.success("HAI credential created");
+      }
+      await utils.haiIntegration.listTokens.invalidate();
+      setHaiGrantDialogOpen(false);
+      setHaiEditingGrant(null);
+      setHaiSelectedCaseIds([]);
+      setHaiSelectedFields(["case_overview", "analysis_summary"]);
+      setHaiIncludeFutureCases(false);
+      setHaiIncludeFutureAnalyses(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "HAI grant could not be saved");
+    }
+  };
+
+  const handleEditHaiGrant = (credential: NonNullable<typeof haiTokens.data>[number]) => {
+    if (!credential.grant) return;
+    setHaiEditingGrant({ tokenId: credential.id, revision: credential.grant.revision });
+    setHaiSelectedCaseIds([...credential.grant.caseIds]);
+    setHaiSelectedFields([...credential.grant.fieldCategories]);
+    setHaiIncludeFutureCases(credential.grant.includeFutureCases);
+    setHaiIncludeFutureAnalyses(credential.grant.includeFutureAnalyses);
+    setRevealedHaiToken(null);
+  };
+
+  const cancelHaiGrantEdit = () => {
+    setHaiEditingGrant(null);
+    setHaiSelectedCaseIds([]);
+    setHaiSelectedFields(["case_overview", "analysis_summary"]);
+    setHaiIncludeFutureCases(false);
+    setHaiIncludeFutureAnalyses(false);
   };
 
   const handleRevokeHaiToken = async (tokenId: string) => {
@@ -664,36 +752,173 @@ export default function Settings() {
                   </Alert>
                 ) : null}
 
-                <div className="grid gap-4 border-t border-border/50 pt-4 md:grid-cols-[minmax(0,1fr)_180px_auto] md:items-end">
-                  <div className="space-y-2">
-                    <Label htmlFor="hai-token-name">Credential name</Label>
-                    <Input id="hai-token-name" value={haiTokenName} maxLength={80} onChange={(event) => setHaiTokenName(event.target.value)} />
+                <div className="space-y-5 border-t border-border/50 pt-4">
+                  <div>
+                    <h3 className="text-sm font-semibold">{haiEditingGrant ? "Edit reviewed access" : "Create reviewed access"}</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">A credential can read only the cases, record timing, and field categories confirmed below.</p>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="hai-token-expiry">Expires after</Label>
-                    <select
-                      id="hai-token-expiry"
-                      value={haiTokenDays}
-                      onChange={(event) => setHaiTokenDays(event.target.value)}
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      <option value="30">30 days</option>
-                      <option value="90">90 days</option>
-                      <option value="180">180 days</option>
-                      <option value="365">365 days</option>
-                    </select>
+                  {haiEditingGrant ? (
+                    <Alert>
+                      <Shield className="h-4 w-4" />
+                      <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+                        <span>You are changing an existing grant. Saving advances its revision and invalidates old feed cursors.</span>
+                        <Button type="button" size="sm" variant="ghost" onClick={cancelHaiGrantEdit}>Cancel edit</Button>
+                      </AlertDescription>
+                    </Alert>
+                  ) : (
+                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
+                      <div className="space-y-2">
+                        <Label htmlFor="hai-token-name">Credential name</Label>
+                        <Input id="hai-token-name" value={haiTokenName} maxLength={80} onChange={(event) => setHaiTokenName(event.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="hai-token-expiry">Expires after</Label>
+                        <select
+                          id="hai-token-expiry"
+                          value={haiTokenDays}
+                          onChange={(event) => setHaiTokenDays(event.target.value)}
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <option value="30">30 days</option>
+                          <option value="90">90 days</option>
+                          <option value="180">180 days</option>
+                          <option value="365">365 days</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  <fieldset className="space-y-3">
+                    <legend className="text-sm font-medium">Cases included now</legend>
+                    <p className="text-xs text-muted-foreground">Only cases owned by this account can be selected. Existing unselected cases stay excluded.</p>
+                    {haiEligibleCases.isLoading ? (
+                      <p className="text-sm text-muted-foreground">Loading cases...</p>
+                    ) : haiEligibleCases.error ? (
+                      <Alert variant="destructive"><AlertCircle className="h-4 w-4" /><AlertDescription>Cases could not be loaded.</AlertDescription></Alert>
+                    ) : (haiEligibleCases.data?.cases.length ?? 0) === 0 ? (
+                      <p className="text-sm text-muted-foreground">Create a case before creating HAI access.</p>
+                    ) : (
+                      <div className="max-h-64 space-y-2 overflow-y-auto border border-border/60 p-3">
+                        {haiEligibleCases.data?.cases.map((caseItem) => (
+                          <label key={caseItem.id} htmlFor={`hai-case-${caseItem.id}`} className="flex items-start gap-3 text-sm">
+                            <Checkbox
+                              id={`hai-case-${caseItem.id}`}
+                              checked={haiSelectedCaseIds.includes(caseItem.id)}
+                              onCheckedChange={(value) => toggleHaiCase(caseItem.id, value === true)}
+                            />
+                            <span className="min-w-0">
+                              <span className="block font-medium">{caseItem.caseType || "Untitled case"}</span>
+                              <span className="block break-all font-mono text-xs text-muted-foreground">{caseItem.id} · {caseItem.status || "unknown status"}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {haiEligibleCases.data?.truncated ? (
+                      <p className="text-xs text-destructive">Only the first {haiEligibleCases.data.maximumSelectable} owned cases are available. Narrow the account before granting access.</p>
+                    ) : null}
+                  </fieldset>
+
+                  <fieldset className="space-y-3">
+                    <legend className="text-sm font-medium">Fields exported</legend>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {HAI_FIELD_CATEGORIES.map((field) => (
+                        <label key={field} htmlFor={`hai-field-${field}`} className="flex items-center gap-3 border border-border/60 p-3 text-sm">
+                          <Checkbox
+                            id={`hai-field-${field}`}
+                            checked={haiSelectedFields.includes(field)}
+                            onCheckedChange={(value) => toggleHaiField(field, value === true)}
+                          />
+                          <span>{HAI_FIELD_CATEGORY_LABELS[field]}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="flex items-center justify-between gap-4 border border-border/60 p-4">
+                      <div>
+                        <Label htmlFor="hai-future-cases">Include cases created later</Label>
+                        <p className="mt-1 text-xs text-muted-foreground">Future owned cases enter this grant automatically. Current unselected cases do not.</p>
+                      </div>
+                      <Switch id="hai-future-cases" checked={haiIncludeFutureCases} onCheckedChange={setHaiIncludeFutureCases} />
+                    </div>
+                    <div className="flex items-center justify-between gap-4 border border-border/60 p-4">
+                      <div>
+                        <Label htmlFor="hai-future-analyses">Include analyses created later</Label>
+                        <p className="mt-1 text-xs text-muted-foreground">New analyses are exported only for cases allowed by this grant.</p>
+                      </div>
+                      <Switch id="hai-future-analyses" checked={haiIncludeFutureAnalyses} onCheckedChange={setHaiIncludeFutureAnalyses} />
+                    </div>
                   </div>
+
                   <Button
                     type="button"
-                    disabled={createHaiTokenMutation.isPending || haiTokenName.trim().length < 2}
-                    onClick={() => void handleCreateHaiToken()}
+                    disabled={
+                      createHaiTokenMutation.isPending || updateHaiGrantMutation.isPending ||
+                      (!haiEditingGrant && haiTokenName.trim().length < 2) ||
+                      haiSelectedCaseIds.length < 1 || haiSelectedFields.length < 1
+                    }
+                    onClick={openHaiGrantReview}
                   >
                     <KeyRound className="mr-2 h-4 w-4" />
-                    {createHaiTokenMutation.isPending ? "Creating..." : "Create credential"}
+                    {haiEditingGrant ? "Review scope update" : "Review and create credential"}
                   </Button>
                 </div>
               </CardContent>
             </Card>
+
+            <Dialog open={haiGrantDialogOpen} onOpenChange={(open) => {
+              setHaiGrantDialogOpen(open);
+              if (!open) {
+                setAcknowledgeHaiCases(false);
+                setAcknowledgeHaiFields(false);
+                setAcknowledgeHaiFutureRecords(false);
+              }
+            }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{haiEditingGrant ? "Confirm HAI scope update" : "Confirm HAI credential scope"}</DialogTitle>
+                  <DialogDescription>Review the exact records and fields this bearer credential will be able to read.</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div className="space-y-1 border border-border/60 p-3 text-sm">
+                    <p><span className="font-medium">Current cases:</span> {haiSelectedCaseIds.length} explicitly selected</p>
+                    <p><span className="font-medium">Fields:</span> {haiSelectedFields.map((field) => HAI_FIELD_CATEGORY_LABELS[field]).join(", ")}</p>
+                    <p><span className="font-medium">Future cases:</span> {haiIncludeFutureCases ? "Included automatically" : "Excluded"}</p>
+                    <p><span className="font-medium">Future analyses:</span> {haiIncludeFutureAnalyses ? "Included for allowed cases" : "Excluded"}</p>
+                    <p className="text-xs text-muted-foreground">Existing cases that are not selected remain outside this grant. Revocation blocks the credential immediately.</p>
+                  </div>
+                  <label className="flex items-start gap-3 text-sm" htmlFor="acknowledge-hai-cases">
+                    <Checkbox id="acknowledge-hai-cases" checked={acknowledgeHaiCases} onCheckedChange={(value) => setAcknowledgeHaiCases(value === true)} />
+                    <span>I reviewed the {haiSelectedCaseIds.length} selected case{haiSelectedCaseIds.length === 1 ? "" : "s"} and understand other current cases are excluded.</span>
+                  </label>
+                  <label className="flex items-start gap-3 text-sm" htmlFor="acknowledge-hai-fields">
+                    <Checkbox id="acknowledge-hai-fields" checked={acknowledgeHaiFields} onCheckedChange={(value) => setAcknowledgeHaiFields(value === true)} />
+                    <span>I reviewed the exported field categories shown above.</span>
+                  </label>
+                  <label className="flex items-start gap-3 text-sm" htmlFor="acknowledge-hai-future">
+                    <Checkbox id="acknowledge-hai-future" checked={acknowledgeHaiFutureRecords} onCheckedChange={(value) => setAcknowledgeHaiFutureRecords(value === true)} />
+                    <span>I reviewed whether future cases and analyses enter this grant automatically.</span>
+                  </label>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setHaiGrantDialogOpen(false)}>Cancel</Button>
+                  <Button
+                    type="button"
+                    disabled={
+                      !acknowledgeHaiCases || !acknowledgeHaiFields || !acknowledgeHaiFutureRecords ||
+                      createHaiTokenMutation.isPending || updateHaiGrantMutation.isPending
+                    }
+                    onClick={() => void handleSaveHaiGrant()}
+                  >
+                    {createHaiTokenMutation.isPending || updateHaiGrantMutation.isPending
+                      ? "Saving..."
+                      : haiEditingGrant ? "Update reviewed scope" : "Create reviewed credential"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
             <Card className="rounded-none border-0 border-t border-border bg-transparent shadow-none">
               <CardHeader className="px-0 py-5">
@@ -710,7 +935,7 @@ export default function Settings() {
                 ) : (
                   <div className="divide-y divide-border/50 border-y border-border/50">
                     {haiTokens.data?.map((credential) => (
-                      <div key={credential.id} className="grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                      <article key={credential.id} aria-label={`HAI credential ${credential.name}`} className="grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium">{credential.name}</p>
                           <p className="font-mono text-xs text-muted-foreground">{credential.tokenPrefix}...</p>
@@ -718,22 +943,45 @@ export default function Settings() {
                             Expires {new Date(credential.expiresAt).toLocaleDateString()}
                             {credential.lastUsedAt ? ` | Last used ${new Date(credential.lastUsedAt).toLocaleString()}` : " | Not used"}
                           </p>
+                          {credential.grant ? (
+                            <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                              <p>{credential.grant.caseCount} selected case{credential.grant.caseCount === 1 ? "" : "s"} · {credential.grant.fieldCategories.map((field) => HAI_FIELD_CATEGORY_LABELS[field]).join(", ")}</p>
+                              <p>
+                                Future cases: {credential.grant.includeFutureCases ? "included" : "excluded"}
+                                {" · "}Future analyses: {credential.grant.includeFutureAnalyses ? "included" : "excluded"}
+                              </p>
+                              <p>Reviewed {new Date(credential.grant.reviewedAt).toLocaleString()} · Revision {credential.grant.revision}</p>
+                            </div>
+                          ) : (
+                            <p className="mt-2 text-xs text-destructive">No reviewed grant. Legacy unrestricted access is disabled.</p>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 sm:justify-end">
                           <Badge variant={credential.status === "active" ? "default" : "outline"}>{credential.status}</Badge>
                           {credential.status === "active" ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={revokeHaiTokenMutation.isPending}
-                              onClick={() => void handleRevokeHaiToken(credential.id)}
-                            >
-                              Revoke
-                            </Button>
+                            <>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={!credential.grant || updateHaiGrantMutation.isPending}
+                                onClick={() => handleEditHaiGrant(credential)}
+                              >
+                                Edit scope
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={revokeHaiTokenMutation.isPending}
+                                onClick={() => void handleRevokeHaiToken(credential.id)}
+                              >
+                                Revoke
+                              </Button>
+                            </>
                           ) : null}
                         </div>
-                      </div>
+                      </article>
                     ))}
                   </div>
                 )}

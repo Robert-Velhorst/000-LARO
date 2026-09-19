@@ -739,6 +739,33 @@ export const auditLogs = sqliteTable(
 
 export type InsertAuditLog = typeof auditLogs.$inferInsert;
 
+// A reviewed HAI grant is the authorization boundary behind a credential. Case
+// and field selections are JSON arrays from closed vocabularies, validated on
+// every read and write. Keeping the grant separate lets scope changes advance a
+// revision and invalidate stale feed cursors without rotating the bearer token.
+export const haiAccessGrants = sqliteTable(
+  "hai_access_grants",
+  {
+    id: text("id").primaryKey(),
+    userId: text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    caseIds: text("caseIds").notNull(),
+    fieldCategories: text("fieldCategories").notNull(),
+    includeFutureCases: integer("includeFutureCases", { mode: "boolean" }).notNull().default(false),
+    includeFutureAnalyses: integer("includeFutureAnalyses", { mode: "boolean" }).notNull().default(false),
+    revision: integer("revision").notNull().default(1),
+    reviewedAt: integer("reviewedAt", { mode: "timestamp" }).notNull(),
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+    revokedAt: integer("revokedAt", { mode: "timestamp" }),
+  },
+  (table) => ({
+    userIdx: index("hai_access_grants_user_idx").on(table.userId),
+    userRevokedIdx: index("hai_access_grants_user_revoked_idx").on(table.userId, table.revokedAt),
+  }),
+);
+
+export type HaiAccessGrant = typeof haiAccessGrants.$inferSelect;
+
 // Read-only integration credentials. Only a SHA-256 digest and a short display
 // prefix are persisted; the bearer token is returned once when it is created.
 export const integrationAccessTokens = sqliteTable(
@@ -749,6 +776,7 @@ export const integrationAccessTokens = sqliteTable(
     name: text("name").notNull(),
     tokenPrefix: text("tokenPrefix").notNull(),
     tokenHash: text("tokenHash").notNull(),
+    grantId: text("grantId").references(() => haiAccessGrants.id, { onDelete: "set null" }),
     scope: text("scope").notNull(),
     status: text("status").notNull().default("active"),
     expiresAt: integer("expiresAt", { mode: "timestamp" }).notNull(),
@@ -758,6 +786,7 @@ export const integrationAccessTokens = sqliteTable(
   },
   (table) => ({
     tokenHashUnique: uniqueIndex("integration_access_tokens_hash_unique").on(table.tokenHash),
+    grantUnique: uniqueIndex("integration_access_tokens_grant_unique").on(table.grantId),
     userStatusIdx: index("integration_access_tokens_user_status_idx").on(table.userId, table.status),
   })
 );

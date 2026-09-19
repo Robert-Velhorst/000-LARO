@@ -80,11 +80,21 @@ suite("mandatory audit durability", () => {
 
   it("rolls back HAI credential creation and revocation when mandatory audit storage fails", async () => {
     const caller = app.makeCaller(owner);
+    const reviewedGrant = (fieldCategories: Array<"case_overview" | "analysis_summary"> = ["case_overview"]) => ({
+      caseIds: ["AUDIT_CASE"],
+      fieldCategories,
+      includeFutureCases: false,
+      includeFutureAnalyses: false,
+      acknowledgeCaseScope: true as const,
+      acknowledgeFieldScope: true as const,
+      acknowledgeFutureRecords: true as const,
+    });
     const releaseCreate = rejectAuditAction("integration.hai_token_created", "reject_hai_create_audit");
     try {
       await expect(caller.haiIntegration.createToken({
         name: "Audit rollback credential",
         expiresInDays: 30,
+        grant: reviewedGrant(),
       })).rejects.toThrow();
     } finally {
       releaseCreate();
@@ -98,7 +108,23 @@ suite("mandatory audit durability", () => {
     const created = await caller.haiIntegration.createToken({
       name: "Audited credential",
       expiresInDays: 30,
+      grant: reviewedGrant(),
     });
+    const releaseGrantUpdate = rejectAuditAction("integration.hai_grant_updated", "reject_hai_grant_update_audit");
+    try {
+      await expect(caller.haiIntegration.updateGrant({
+        tokenId: created.credential.id,
+        expectedRevision: 1,
+        grant: reviewedGrant(["case_overview", "analysis_summary"]),
+      })).rejects.toThrow();
+    } finally {
+      releaseGrantUpdate();
+    }
+    const [unchangedGrant] = await app.db.select().from(app.schema.haiAccessGrants)
+      .where(eq(app.schema.haiAccessGrants.id, created.credential.grant!.id));
+    expect(unchangedGrant.revision).toBe(1);
+    expect(JSON.parse(unchangedGrant.fieldCategories)).toEqual(["case_overview"]);
+
     const releaseRevoke = rejectAuditAction("integration.hai_token_revoked", "reject_hai_revoke_audit");
     try {
       await expect(caller.haiIntegration.revokeToken({ tokenId: created.credential.id })).rejects.toThrow();
