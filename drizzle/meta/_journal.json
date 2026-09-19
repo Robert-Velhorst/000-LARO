@@ -169,6 +169,13 @@
       "when": 1789704367141,
       "tag": "0023_atomic_outreach_initiation",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1789783000000,
+      "tag": "0024_retire_lawyer_rating",
+      "breakpoints": true
     }
   ]
 }

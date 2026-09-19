@@ -62,6 +62,7 @@ import { getElectronAPI, isElectron } from "@/lib/electronApiShim";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGoogleOAuthConnection } from "@/hooks/useGoogleOAuthConnection";
 import { QueryNotice } from "@/components/WorkspaceUi";
+import { MATCH_SCORE_MAX } from "../../../shared/lawyerMatching";
 
 const EvidenceCollection = lazy(() => import("@/components/EvidenceCollection").then((module) => ({ default: module.EvidenceCollection })));
 const TimelineView = lazy(() => import("@/components/TimelineView"));
@@ -1345,7 +1346,7 @@ export default function EnhancedCaseDetailsDialog({
                                 <div className="text-2xl font-bold bg-gradient-to-r from-orange-400 to-amber-400 bg-clip-text text-transparent">
                                   {lawyer.matchScore}
                                 </div>
-                                <p className="text-[10px] text-muted-foreground mb-2">Verified-data score (max 245)</p>
+                                <p className="text-[10px] text-muted-foreground mb-2">Verified-data score (max {MATCH_SCORE_MAX})</p>
                                 <div className="text-[11px] space-y-0.5">
                                   {lawyer.caseLoadScore !== undefined && <div className="flex justify-between gap-1"><span className="text-muted-foreground/70">Load</span><span className="text-emerald-400">{lawyer.caseLoadScore}/50</span></div>}
                                   {lawyer.responseTimeScore !== undefined && <div className="flex justify-between gap-1"><span className="text-muted-foreground/70">Response</span><span className="text-blue-400">{lawyer.responseTimeScore}/50</span></div>}

@@ -1409,6 +1409,7 @@ test("outreach initiation creates one reviewable draft set and remains idempoten
   await caseDialog.getByRole("button", { name: "Lawyers", exact: true }).click();
   await caseDialog.getByRole("button", { name: "Search NOvA", exact: true }).click();
   await expect(caseDialog.getByText("Atomic Review Lawyer", { exact: true })).toBeVisible({ timeout: 120_000 });
+  await expect(caseDialog.getByText("Verified-data score (max 230)", { exact: true })).toBeVisible();
 
   await caseDialog.getByRole("button", { name: "Start Outreach", exact: true }).click();
   await expect(page.getByText("1 outreach draft(s) prepared for review", { exact: true })).toBeVisible();

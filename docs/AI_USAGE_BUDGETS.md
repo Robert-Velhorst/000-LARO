@@ -8,7 +8,6 @@ Every maintained language-model call enters through `invokeLLM()` with an owner 
 | Hybrid case search | 12,000 | 300 | 300 |
 | Document analysis chunk | 75,000 | 4,096 | 4,096 |
 | Timeline correction | 160,000 | 1,400 | 1,400 |
-| Lawyer response rating | 24,000 | 1,200 | 1,200 |
 | Dossier comparison batch | 48,000 | 2,500 | 32,768 |
 | Dossier selection | 48,000 | 2,500 | 2,500 |
 

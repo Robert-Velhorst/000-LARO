@@ -12,7 +12,6 @@ export const LLM_OPERATIONS = [
   "hybrid_search",
   "document_analysis",
   "timeline_correction",
-  "lawyer_rating",
   "dossier_comparison",
   "dossier_discovery",
 ] as const;
@@ -36,7 +35,6 @@ export const LLM_OPERATION_PROFILES: Record<LLMOperation, LLMOperationProfile> =
   hybrid_search: { maxInputCharacters: 12_000, defaultOutputTokens: 300, maxOutputTokens: 300 },
   document_analysis: { maxInputCharacters: 75_000, defaultOutputTokens: 4_096, maxOutputTokens: 4_096 },
   timeline_correction: { maxInputCharacters: 160_000, defaultOutputTokens: 1_400, maxOutputTokens: 1_400 },
-  lawyer_rating: { maxInputCharacters: 24_000, defaultOutputTokens: 1_200, maxOutputTokens: 1_200 },
   dossier_comparison: { maxInputCharacters: 48_000, defaultOutputTokens: 2_500, maxOutputTokens: 32_768 },
   dossier_discovery: { maxInputCharacters: 48_000, defaultOutputTokens: 2_500, maxOutputTokens: 2_500 },
 };

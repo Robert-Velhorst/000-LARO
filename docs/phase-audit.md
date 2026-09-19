@@ -136,7 +136,7 @@ Critical path from the prompt: **User account → case intake → evidence inges
 | Send to lawyers | ❌ **Fake "sent"** — inserts `emailActivity` row, **never sends**; only password-reset/usage-alert mail is real | `server/workflow.ts:88-97`, `server/systemEmail.ts:31-77` |
 | Response tracking | ❌ **Dead code** — `handleLawyerResponse` uncalled; `getUnreadCount` returns 0; `markAsRead` no-op | `server/workflow.ts:268-351`, `server/routers/messages.ts:70-83` |
 | Outcome / state machine | ⚠️ **Partial** — free-form status strings, no enforced FSM; driving engine unwired | `server/routers/cases.ts:86,98`, `server/workflow.ts:319` |
-| Lawyer rating | ✅ **Implemented** — real LLM call (mock without key) | `server/routers/lawyerRating.ts:148` |
+| Lawyer rating | **Retired** — the unwired global rating and hidden matching boost were removed; outreach outcomes remain owner-scoped case records | `docs/LAWYER_RATING_DECISION.md` |
 | Evidence/export package | ❌ **Missing** — letter **text** only; `pdfkit`/`archiver`/`evidenceCompiler` unused | `server/legalDocumentGenerator.ts`, grep=0 |
 | Dashboard | ⚠️ **Mixed** — `stats`/`recentCases` real; `enhancedStats`/`activityFeed` **hardcoded fakes** | `server/routers/dashboard.ts:8-35` vs `:37-62` |
 

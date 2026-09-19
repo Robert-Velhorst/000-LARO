@@ -99,19 +99,19 @@ suite("canonical lawyer comparison", () => {
     });
   });
 
-  it("only returns canonical 245-point matches when an owned case is selected", async () => {
+  it("only returns canonical 230-point matches when an owned case is selected", async () => {
     const result = await app.makeCaller(owner).lawyers.compare({
       lawyerIds: ["COMPARE_CURRENT", "COMPARE_LEGACY"],
       caseId: "COMPARE_CASE",
     });
 
     expect(result.matchStatus).toBe("available");
-    expect(result.matchScoreMax).toBe(245);
+    expect(result.matchScoreMax).toBe(230);
     for (const lawyer of result.lawyers) {
-      expect(lawyer.caseMatch).toMatchObject({ maxScore: 245 });
+      expect(lawyer.caseMatch).toMatchObject({ maxScore: 230 });
       expect(lawyer.caseMatch!.score).toBeGreaterThanOrEqual(0);
-      expect(lawyer.caseMatch!.score).toBeLessThanOrEqual(245);
-      expect(lawyer.caseMatch!.percent).toBe(Math.round((lawyer.caseMatch!.score / 245) * 100));
+      expect(lawyer.caseMatch!.score).toBeLessThanOrEqual(230);
+      expect(lawyer.caseMatch!.percent).toBe(Math.round((lawyer.caseMatch!.score / 230) * 100));
     }
 
     // Comparison is read-only; outreach must still go through its maintained,

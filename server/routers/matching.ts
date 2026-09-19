@@ -12,7 +12,7 @@ import { findCaseLawyersWithOfficialDirectory, findMatchingLawyers, MATCH_SCORE_
  * hardcoded scores. The engine applies the mandatory filters (expertise,
  * bar-association standing, accepting-new-cases, distance) and the LARO scoring
  * system (case-load, response time, acceptance rate, distance, experience,
- * court-terminology keyword boost, AI rating boost).
+ * and court-terminology keyword boost).
  *
  * Honesty notes:
  *  - Both procedures require auth and verify the case belongs to the caller.

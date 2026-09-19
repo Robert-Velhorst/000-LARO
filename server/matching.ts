@@ -1,13 +1,13 @@
 // matching.ts
 import { getAllLawyers, getCaseById } from "./db";
-import { getLawyerRating } from "./routers/lawyerRating";
 import { syncNovaLawyersForCase, type NovaDirectoryReport } from "./novaDirectory";
 import { parseLegacyStringArray, parseStoredNumber } from "./lawyerData";
+import { MATCH_SCORE_MAX } from "../shared/lawyerMatching";
 
 import * as fs from "fs";
 import * as path from "path";
 
-export const MATCH_SCORE_MAX = 245;
+export { MATCH_SCORE_MAX };
 
 interface TaxonomyMapping {
   courtCategoryToSpecializations: Record<string, string[]>;
@@ -332,7 +332,7 @@ export async function findCaseLawyersWithOfficialDirectory(
  * 4. Not permanently filtered (0% response rate with 3+ contacts)
  * 5. Within maximum distance
  * 
- * SCORING SYSTEM (Max 245 points):
+ * SCORING SYSTEM (Max 230 points):
  * - Case-load: 0-50 points (PRIMARY)
  * - Response Time: 0-50 points (PRIMARY)
  * - Acceptance Rate: 0-50 points (PRIMARY)
@@ -341,7 +341,6 @@ export async function findCaseLawyersWithOfficialDirectory(
  * - Distance: 0-10 points (LOW)
  * - Experience: 0-10 points (LOW)
  * - Curated legal terminology: 0-20 points
- * - Evidence-backed interaction rating: 0-15 points
  * Unknown metrics receive zero points and remain visible as unavailable.
  */
 export async function findMatchingLawyers(
@@ -606,27 +605,6 @@ export async function findMatchingLawyers(
       );
     }
     matchScore += keywordBoostScore;
-
-    // AI RATING BOOST: Objective performance metrics (0-15 points)
-    let ratingBoostScore = 0;
-    try {
-      const rating = await getLawyerRating(lawyer.id);
-      if (rating && rating.ratingConfidence !== 'low') {
-        const overallRating = parseFloat(rating.overallRating);
-        // Scale 0-100 rating to 0-15 points
-        ratingBoostScore = (overallRating / 100) * 15;
-        if (overallRating >= 90) {
-          matchReasons.push(`Exceptional AI rating (${overallRating.toFixed(1)}/100)`);
-        } else if (overallRating >= 75) {
-          matchReasons.push(`Strong AI rating (${overallRating.toFixed(1)}/100)`);
-        } else if (overallRating >= 60) {
-          matchReasons.push(`Good AI rating (${overallRating.toFixed(1)}/100)`);
-        }
-      }
-    } catch (error) {
-      console.error('[Matching] Failed to get lawyer rating:', error);
-    }
-    matchScore += ratingBoostScore;
 
     matchedLawyers.push({
       id: lawyer.id,

@@ -4,7 +4,7 @@ import { applyHostedMigrations, readHostedMigrations } from '../../server/persis
 describe('hosted PostgreSQL migrations', () => {
   it('provides a PostgreSQL baseline for every core public-workspace domain', () => {
     const migrations = readHostedMigrations();
-    expect(migrations).toHaveLength(6);
+    expect(migrations).toHaveLength(7);
 
     const sql = migrations.map((migration) => migration.sql).join('\n');
     expect(migrations.every((migration) => /^[a-f0-9]{64}$/.test(migration.checksum))).toBe(true);
@@ -23,6 +23,8 @@ describe('hosted PostgreSQL migrations', () => {
       expect(sql).toContain(`CREATE TABLE IF NOT EXISTS "${table}"`);
     }
     expect(sql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "outreach_status_case_lawyer_unique"');
+    expect(migrations.at(-1)?.name).toBe('0007_retire_lawyer_rating.sql');
+    expect(migrations.at(-1)?.sql).toContain('DROP TABLE IF EXISTS "lawyer_ratings"');
     expect(sql).not.toContain('`');
     expect(sql).not.toMatch(/\bPRAGMA\b/i);
   });
@@ -46,12 +48,13 @@ describe('hosted PostgreSQL migrations', () => {
       '0004_password_reset_budget.sql',
       '0005_typed_clarifications.sql',
       '0006_atomic_outreach_initiation.sql',
+      '0007_retire_lawyer_rating.sql',
     ]);
     expect(queries[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS laro_schema_migrations');
     expect(queries.some((query) => query.sql.includes('CREATE TABLE IF NOT EXISTS "users"'))).toBe(true);
     expect(queries.at(-1)).toMatchObject({
       sql: expect.stringContaining('INSERT INTO laro_schema_migrations'),
-      values: ['0006_atomic_outreach_initiation.sql', expect.stringMatching(/^[a-f0-9]{64}$/)],
+      values: ['0007_retire_lawyer_rating.sql', expect.stringMatching(/^[a-f0-9]{64}$/)],
     });
   });
 

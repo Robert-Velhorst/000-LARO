@@ -189,8 +189,8 @@ function ensureIndexes(sqlite: InstanceType<typeof Database>) {
     console.warn("[Database] Could not reconcile or index keyed user preferences:", e);
   }
 
-  // Hot-path indexes for the highest-traffic lookups (outreach, evidence, email,
-  // messaging, lawyer rating). All idempotent.
+  // Hot-path indexes for the highest-traffic lookups (outreach, evidence,
+  // email, and messaging). All idempotent.
   const indexStatements = [
     // Phase 051: back the cases.list filters/sort (status, urgency, updatedAt).
     `CREATE INDEX IF NOT EXISTS cases_userId_status_idx ON cases(userId, status);`,
@@ -212,7 +212,6 @@ function ensureIndexes(sqlite: InstanceType<typeof Database>) {
     `CREATE INDEX IF NOT EXISTS outreach_status_status_idx ON outreach_status(status);`,
     `CREATE INDEX IF NOT EXISTS email_messages_accountId_idx ON email_messages(accountId);`,
     `CREATE INDEX IF NOT EXISTS email_activity_caseId_idx ON email_activity(caseId);`,
-    `CREATE INDEX IF NOT EXISTS lawyer_interactions_lawyerId_idx ON lawyer_interactions(lawyerId);`,
     `CREATE INDEX IF NOT EXISTS evidence_items_userId_idx ON evidence_items(userId);`,
     `CREATE INDEX IF NOT EXISTS unified_messages_userId_idx ON unified_messages(userId);`,
     `CREATE INDEX IF NOT EXISTS notifications_userId_idx ON notifications(userId);`,

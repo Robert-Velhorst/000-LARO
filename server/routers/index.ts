@@ -23,7 +23,6 @@ import { documentAnalysisRouter } from "./documentAnalysis";
 import { searchRouter } from "./search";
 import { messagesRouter } from "./messages";
 import { messageTemplatesRouter } from "./messageTemplates";
-import { lawyerRatingRouter } from "./lawyerRating";
 import { trelloEnhancedRouter } from "./trelloEnhanced";
 import { telegramEnhancedRouter } from "./telegramEnhanced";
 import { gapAnalysisRouter } from "./gapAnalysis";
@@ -110,7 +109,6 @@ export const appRouter = router({
   search: searchRouter,
   messages: messagesRouter,
   messageTemplates: messageTemplatesRouter,
-  lawyerRating: lawyerRatingRouter,
   trelloEnhanced: trelloEnhancedRouter,
   telegramEnhanced: telegramEnhancedRouter,
   gapAnalysis: gapAnalysisRouter,
