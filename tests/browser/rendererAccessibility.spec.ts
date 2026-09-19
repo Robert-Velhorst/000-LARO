@@ -522,7 +522,7 @@ test("keyboard navigation exposes the skip link, traps the mobile menu, and keep
   await page.screenshot({ path: testInfo.outputPath("desktop-faq-keyboard.png"), fullPage: false });
 });
 
-test("Settings presents an owned Flask migration without responsive overflow", async ({ page }) => {
+test("Settings exposes only operational controls and an owned Flask migration", async ({ page }) => {
   const email = await createAccount(page);
   const database = new Database(resolve(".laro-a11y.sqlite"));
   try {
@@ -552,11 +552,17 @@ test("Settings presents an owned Flask migration without responsive overflow", a
   for (const viewport of VIEWPORTS) {
     await page.setViewportSize(viewport);
     await page.goto("/settings", { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("Outreach Settings", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Notification Preferences", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Automatic matching", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Backup & restore", { exact: true })).toHaveCount(0);
     if (viewport.name === "mobile") {
       await page.getByRole("combobox", { name: "Settings sections" }).selectOption("security");
     } else {
       await page.getByRole("button", { name: "Security" }).click();
     }
+    await expect(page.getByText("Account archive", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Download archive" })).toBeVisible();
     await expect(page.getByText("reviewed-workspace")).toBeVisible();
     await expect(page.getByText("2 cases, 37 archived records, 5 files")).toBeVisible();
     await expect(page.getByText("Files verified")).toBeVisible();
@@ -1140,6 +1146,12 @@ test("case selectors search beyond the first hundred records and keep the chosen
     expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
     await page.screenshot({ path: testInfo.outputPath(`outreach-review-${viewport.name}.png`) });
   }
+});
+
+test("a demo query parameter cannot bypass authentication", async ({ page }) => {
+  await page.goto("/?demo=true", { waitUntil: "networkidle" });
+  await expect(page.getByRole("button", { name: "Sign In", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Open account menu|Accountmenu openen/ })).toHaveCount(0);
 });
 
 test("authentication exposes password visibility and preserves fields on an inline error", async ({ page }, testInfo) => {

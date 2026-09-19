@@ -21,8 +21,11 @@ The next delivery gates are deliberately separate:
 4. Deploy only after the owner supplies the current Hetzner, DNS, TLS,
    persistence, secret, backup, and existing-data migration inputs; then repeat
    browser and desktop acceptance against that public target.
-5. Address issue #179's acceptance-test path audit without weakening the #178
-   negative-path coverage.
+5. Push and review the local issue #179 acceptance-path audit. Maintained smoke
+   and acceptance tests now use executable product boundaries, with the policy
+   and regression inventory in
+   [`TEST_QUALITY_REVIEW.md`](TEST_QUALITY_REVIEW.md); GitHub issue closure still
+   requires the protected remote checks and review.
 
 ## Completed Production Path
 

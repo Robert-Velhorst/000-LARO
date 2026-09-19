@@ -56,6 +56,7 @@ import {
 import { consumeCaseZipDownloadTicket, createCaseZipStream } from './evidenceExport';
 import { AUDIT_ACTIONS, createAuditLog } from './audit';
 import { scannerUploadRouter } from './scannerUpload';
+import { securityHeaders } from './securityHeaders';
 
 // ─── Environment ──────────────────────────────────────────────────────────────
 
@@ -81,40 +82,9 @@ app.use(corsMiddleware);
 app.use(csrfGuard);
 
 // ─── Security headers (Phase 029) ───────────────────────────────────────────
-// Applied to every response. No external dependency (helmet) is required.
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('X-XSS-Protection', '0'); // rely on CSP, not the legacy auditor
-  // The renderer must retain its Google OAuth popup; API resources stay isolated.
-  res.setHeader('Cross-Origin-Opener-Policy', req.path.startsWith('/api/') ? 'same-origin' : 'same-origin-allow-popups');
-  res.setHeader(
-    'Permissions-Policy',
-    'geolocation=(), microphone=(), camera=(), payment=()'
-  );
-  // Content Security Policy. The renderer is a bundled SPA served from the same
-  // origin; connect-src allows the local API. 'unsafe-inline' is kept for styles
-  // only (Tailwind/Radix inject style tags). Tighten further in Phase 041.
-  res.setHeader(
-    'Content-Security-Policy',
-    [
-      "default-src 'self'",
-      "img-src 'self' data: https:",
-      "style-src 'self' 'unsafe-inline'",
-      "script-src 'self'",
-      "connect-src 'self' http://localhost:3000 ws://localhost:3000",
-      "frame-ancestors 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-    ].join('; ')
-  );
-  // HSTS only over real HTTPS in production (never on plain localhost).
-  if (ENV.isProd && (req.secure || req.headers['x-forwarded-proto'] === 'https')) {
-    res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
-  }
-  next();
-});
+// Applied to every response. The renderer retains its Google OAuth popup while
+// API resources remain isolated; HSTS is emitted only for production HTTPS.
+app.use(securityHeaders);
 
 app.use(cookieParser());
 // Scanner evidence uses a dedicated bounded binary route. Mount it before the

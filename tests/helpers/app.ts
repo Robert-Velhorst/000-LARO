@@ -1,9 +1,11 @@
 /**
- * Shared test harness (Phases 040–048).
+ * Shared test harness (Phases 040–048, S0-06, and S0-09).
  *
  * Boots the REAL app against a throwaway temp SQLite database (migrations run),
  * and provides `makeCaller(user)` — a real tRPC caller built from `appRouter`, so
  * tests exercise the actual API layer (auth, ownership, rate limits, audit).
+ * Security suites own hostile-boundary assertions; acceptance/smoke suites own
+ * successful product behavior. Both deliberately boot this same infrastructure.
  *
  * If the better-sqlite3 native binding is not built, `sqliteAvailable` is false
  * and suites should skip rather than fail.

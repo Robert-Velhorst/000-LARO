@@ -1,7 +1,10 @@
 # Acceptance Test Matrix
 
-Current as of 2026-08-14. Automated criteria exercise real tRPC procedures and
+Current as of 2026-09-19. Automated criteria exercise real tRPC procedures,
+HTTP middleware, renderer behavior, provider mocks at transport boundaries, and
 temporary SQLite databases; they do not contact external people or accounts.
+The evidence policy and per-test regression inventory are recorded in
+[`TEST_QUALITY_REVIEW.md`](TEST_QUALITY_REVIEW.md).
 
 | ID | Criterion | Evidence | Status |
 | --- | --- | --- | --- |
