@@ -562,7 +562,12 @@ and relevant lobbies.
 Candidates can be entered manually or found through bounded public searches.
 Discovery sends canonical legal-area queries, never private case prose. New
 candidates start pending, are deduplicated, and require review before case
-matching. Automatic mode may build a shortlist; it never sends a message.
+matching. Automatic mode reviews and matches only stable candidate IDs returned
+by that case's active discovery run; it does not sweep manual, historical, or
+another-case pending records. The run report lists created, refreshed,
+auto-reviewed, skipped, and still-pending target IDs. Provider failures and
+result bounds are visible partial outcomes rather than silent truncation.
+Automatic mode may build a shortlist; it never sends a message.
 
 This is a curated review aid, not a comprehensive or continuously verified
 database of every possible target on the internet.

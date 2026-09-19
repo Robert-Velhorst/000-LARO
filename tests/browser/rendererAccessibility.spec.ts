@@ -1111,6 +1111,19 @@ test("notes preserve a draft, save once and reveal the full text without sending
 });
 
 test("case selectors search beyond the first hundred records and keep the chosen context", async ({ page }, testInfo) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badResponses: Array<{ status: number; url: string }> = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => {
+    const failure = request.failure()?.errorText ?? "unknown failure";
+    if (!failure.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
+  });
+  page.on("response", response => {
+    if (response.status() >= 400) badResponses.push({ status: response.status(), url: response.url() });
+  });
   const email = await createAccount(page);
   const db = new Database(resolve(".laro-a11y.sqlite"));
   const caseIds: string[] = [];
@@ -1125,7 +1138,8 @@ test("case selectors search beyond the first hundred records and keep the chosen
       }
     })();
   } finally { db.close(); }
-  await page.goto("/outreach?view=media", { waitUntil: "networkidle" });
+  const response = await page.goto("/outreach?view=media", { waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
   await expect(page.getByRole("button", { name: "Discover", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "Case: Select a case", exact: true }).click();
   await page.getByLabel("Find a case").fill("Case 001");
@@ -1134,7 +1148,8 @@ test("case selectors search beyond the first hundred records and keep the chosen
   await expect(page.getByRole("button", { name: "Discover", exact: true })).toBeEnabled();
   await page.getByRole("tab", { name: "Organizations", exact: true }).click();
   await expect(page.getByRole("button", { name: "Case: Case 001", exact: true })).toBeVisible();
-  await page.reload({ waitUntil: "networkidle" });
+  const reloadResponse = await page.reload({ waitUntil: "networkidle" });
+  expect(reloadResponse?.status()).toBe(200);
   await expect(page.getByRole("button", { name: "Case: Case 001", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Add source", exact: true }).click();
   await page.getByLabel("Name", { exact: true }).fill("Review draft, not submitted");
@@ -1146,6 +1161,10 @@ test("case selectors search beyond the first hundred records and keep the chosen
     expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
     await page.screenshot({ path: testInfo.outputPath(`outreach-review-${viewport.name}.png`) });
   }
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+  expect(badResponses).toEqual([]);
 });
 
 test("a demo query parameter cannot bypass authentication", async ({ page }) => {

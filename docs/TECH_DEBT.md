@@ -33,6 +33,7 @@ Updated: 2026-09-19
 | D27 | Electron and Flask previously remained concurrent application runtimes with independent databases and authentication/session models | - | Resolved by making Electron authoritative and adding an offline owner-bound migration that operationally maps supported records, archives every owner-scoped source row with hashes/redaction, copies verified evidence, rejects changed reruns, and never migrates sessions or vault credentials |
 | D28 | Strict historical counters remain text-backed for installed-schema compatibility | Low | Production readiness now blocks malformed, unsafe, and impossible counter data using aggregate-only checks; convert columns only through a backup-tested migration |
 | D29 | Gap review derived completeness and case-strength percentages from record counts | - | Resolved with a versioned evidence-coverage inventory, exact source/analysis revisions, explicit unknowns and limitations, legacy-row retirement migrations, and backend/browser regression coverage |
+| D30 | Automatic outreach discovery approved an arbitrary owner-wide pending slice | - | Resolved with run IDs, stable candidate-ID dispositions, exact-ID transactional review/matching, manual and historical preservation, and explicit partial-bound reporting |
 
 D10 is operationally contained without rewriting installed databases. A native
 foreign-key conversion remains migration work, not a release blocker while the

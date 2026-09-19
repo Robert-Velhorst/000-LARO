@@ -96,9 +96,12 @@ export default function OutreachTargetWorkspace({ targetType }: { targetType: Ta
     onSuccess: async (report) => {
       await refreshWorkspace();
       if (report.reviewMode !== "automatic" && approved.length > 0 && caseId) matchMutation.mutate({ caseId, targetType });
-      const message = `${report.newCandidates} new, ${report.existingCandidates} existing candidates`;
+      const message = `${report.newCandidates} new, ${report.existingCandidates} existing, ${report.autoReviewed} auto-reviewed, ${report.leftPendingTargetIds.length} left pending`;
       if (report.status === "complete") toast.success(message);
-      else if (report.status === "partial") toast.warning(`Partial discovery: ${message}`);
+      else if (report.status === "partial") {
+        const reason = report.partialReasons[0] || report.errors[0] || "The provider returned only part of the requested result set.";
+        toast.warning(`Partial discovery: ${message}. ${reason}`);
+      }
       else toast.error(report.errors[0] || "Public discovery unavailable");
     },
     onError: (error) => toast.error(error.message),

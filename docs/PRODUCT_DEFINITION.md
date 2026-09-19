@@ -46,7 +46,7 @@ provide definitive legal advice.
 | Document intelligence | Desktop TXT/CSV/HTML/EML/PDF/DOCX extraction plus Dutch/English image OCR, versioned persisted findings, automatic import analysis, and citation-validated optional deep analysis are implemented; legacy Flask analysis remains reviewable before owner-bound migration; scanned PDFs require image conversion before OCR |
 | Evidence timeline | Implemented with story, horizontal, and vertical views plus direct source access |
 | Lawyer matching | Implemented against persisted lawyer records and case-derived legal fields |
-| Media and organization matching | Implemented as reviewable target matching; discovery is not represented as exhaustive |
+| Media and organization matching | Implemented as reviewable target matching; automatic review is scoped to stable IDs from the active case discovery run, and bounded/partial discovery is explicit rather than exhaustive |
 | Outreach drafting and approval | Implemented with separate prepare, review, approve, reject, and send states |
 | Provider delivery | Implemented but disabled by default and conditional on target provider configuration |
 | Response and outreach analytics | Implemented from owned persisted records |

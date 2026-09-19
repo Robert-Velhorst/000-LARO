@@ -7,6 +7,11 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Scoped automatic media/organization shortlist review to the stable target IDs
+  returned by the active case discovery run. Reports now enumerate created,
+  refreshed, reviewed, skipped, and pending targets, preserve manual and
+  unrelated historical records, and expose provider/result bounds as partial
+  outcomes instead of silently truncating approval.
 - Replaced plaintext recovery directories with a version-4 AES-256-GCM envelope
   protected by an independently escrowed recovery key. Validation now rejects
   copied or tampered payloads, wrong keys, and retired version-1 through

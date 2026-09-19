@@ -17,7 +17,10 @@ original phase-074 snapshot are mounted and typed.
 - Owner-scoped evidence coverage snapshots with exact input/source revisions,
   availability, review state, unknowns, limitations, and no legal-merit or
   outcome score.
-- Lawyer matching and reviewed media/organization target discovery.
+- Lawyer matching and reviewed media/organization target discovery. Automatic
+  review is bound to stable IDs from one active case discovery run; the response
+  enumerates every created, refreshed, reviewed, skipped, and pending target and
+  reports provider/result bounds as partial.
 - Draft preparation, approval, explicit delivery, replies, and outreach analytics.
 - Gmail/Drive OAuth and evidence collection when configured.
 - Operator diagnostics, readiness, recovery, retention, reconciliation,

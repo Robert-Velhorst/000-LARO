@@ -121,6 +121,7 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
 | Trello and Telegram token operations lacked aggregate admission controls | High | Added persistent per-user/provider request quotas and shared bounded-read admission around provider calls; the 31st request is rejected before provider contact |
 | Linux cross-packaging omitted the Windows canvas binary used for scanned-PDF OCR | High | `dist:win` and Store builds stage the exact pinned Windows canvas package; CI repeats the step and packaged-native verification requires x64 PE SQLite and canvas bindings |
 | Gap analysis presented count-derived percentages as evidence completeness and case strength | High | Replaced the score contract with `evidence-coverage-v1`, exact source and analysis revisions, explicit unknown legal basis and limitations; legacy rows and their derived output are retired, and sparse/duplicate/contradictory/unavailable/well-documented plus desktop/mobile browser regressions are covered |
+| Automatic target discovery reviewed an arbitrary owner-wide pending slice | High | Discovery now returns stable run-scoped IDs and exact dispositions; automatic review and matching use only created/refreshed IDs from that run, preserve manual and unrelated historical records, and expose provider/result overflow as partial |
 
 ## Verdict
 

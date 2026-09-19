@@ -41,7 +41,9 @@ reports and email-automation routes are not mounted in the production router.
 The Outreach tabs use progressive disclosure: Overview shows current results,
 Lawyers embeds the official NOvA-backed directory, and Media/Organizations expose
 case selection, bounded discovery, manual source import, review, matching, and
-shortlist controls. Mutations invalidate the relevant queries so users do not
+shortlist controls. Discovery feedback names automatic-review and pending
+counts and explains provider/result bounds when a run is partial. Mutations
+invalidate the relevant queries so users do not
 need to reload the page. The workspace is verified without horizontal overflow
 at 390x844 and 1280x800.
 
