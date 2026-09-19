@@ -54,6 +54,11 @@ with owner-visible case labels, explains source-record retention or removal, and
 states that collected documents and other accounts remain. Cancellation sends no
 mutation, and a failed or stale confirmation keeps the review open for retry.
 
+The case Evidence coverage view renders derived gaps only when the saved review
+matches the current case/input revision. Stale, running, failed, unavailable,
+and retired states have distinct recovery cards, and no non-current state exposes
+old gaps, patterns, inferences, or generated-document actions as current.
+
 ## Scanner boundary
 
 - The scanner reuses the authenticated main-window session; it never creates an

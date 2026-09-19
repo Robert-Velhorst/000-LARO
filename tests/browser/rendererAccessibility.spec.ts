@@ -2227,3 +2227,105 @@ test("coverage review renders exact revisions and unknown legal basis without me
   expect(pageErrors).toEqual([]);
   expect(requestFailures).toEqual([]);
 });
+
+test("coverage review hides derived results and distinguishes stale, running, failed, and unavailable states", async ({ page }, testInfo) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badResponses: Array<{ status: number; url: string }> = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => {
+    const failure = request.failure()?.errorText ?? "unknown failure";
+    if (!failure.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
+  });
+  page.on("response", response => {
+    if (response.status() >= 400) badResponses.push({ status: response.status(), url: response.url() });
+  });
+
+  const email = await createAccount(page);
+  const caseId = `A11Y_GAP_FRESHNESS_${randomUUID()}`;
+  const runId = `${caseId}_RUN`;
+  const now = Math.floor(Date.now() / 1_000);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const owner = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    database.prepare(
+      `INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, createdAt, updatedAt)
+       VALUES (?, ?, 'Freshness state review', 'Records review', 'Gap-analysis state fixture', 'Low', 'Intake', ?, ?)`,
+    ).run(caseId, owner.id, now, now);
+    database.prepare(
+      `INSERT INTO communication_gaps (id, caseId, data, createdAt) VALUES (?, ?, ?, ?)`,
+    ).run(`${caseId}_HIDDEN_GAP`, caseId, JSON.stringify({
+      context: "STALE DERIVED GAP MUST STAY HIDDEN",
+      significance: "critical",
+    }), now);
+    database.prepare(
+      `INSERT INTO case_strength_analysis (id, caseId, data, createdAt) VALUES (?, ?, ?, ?)`,
+    ).run(runId, caseId, JSON.stringify({
+      contractVersion: "evidence-coverage-v1",
+      contractStatus: "current",
+      analysisStatus: "stale",
+      inputRevision: "1".repeat(64),
+      caseRevision: "2".repeat(64),
+      sourceRevision: "3".repeat(64),
+      inputs: [],
+      staleReason: "inputs_changed",
+    }), now);
+  } finally {
+    database.close();
+  }
+
+  const setState = (analysisStatus: "running" | "failed" | "unavailable", extra: Record<string, unknown> = {}) => {
+    const stateDatabase = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+    try {
+      stateDatabase.prepare("UPDATE case_strength_analysis SET data = ? WHERE id = ?").run(JSON.stringify({
+        contractVersion: "evidence-coverage-v1",
+        contractStatus: "current",
+        analysisStatus,
+        inputRevision: "1".repeat(64),
+        caseRevision: "2".repeat(64),
+        sourceRevision: "3".repeat(64),
+        inputs: [],
+        ...extra,
+      }), runId);
+    } finally {
+      stateDatabase.close();
+    }
+  };
+
+  const response = await page.goto(`/evidence?view=gaps&case=${caseId}`, { waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  await expect(page.getByTestId("gap-analysis-state-stale")).toContainText("Coverage review is stale");
+  await expect(page.getByText("STALE DERIVED GAP MUST STAY HIDDEN", { exact: true })).toHaveCount(0);
+
+  setState("running");
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.getByTestId("gap-analysis-state-running")).toContainText("Coverage review is running");
+
+  setState("failed", {
+    failureCode: "analysis_failed",
+    failureMessage: "The coverage review failed before a current result was saved.",
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.getByTestId("gap-analysis-state-failed")).toContainText("Coverage review failed");
+  await expect(page.getByTestId("gap-analysis-state-failed")).toContainText("Earlier derived results remain hidden");
+
+  setState("unavailable");
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(page.getByTestId("gap-analysis-state-unavailable")).toContainText("Coverage review is unavailable");
+  await expect(page.getByText("STALE DERIVED GAP MUST STAY HIDDEN", { exact: true })).toHaveCount(0);
+
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).include("#main-content").analyze();
+    expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`gap-analysis-state-${viewport.name}.png`), fullPage: true });
+  }
+
+  expect(badResponses).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+});

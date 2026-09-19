@@ -12,12 +12,21 @@ import {
   evidenceFiles,
   emailAccounts,
 } from "./schema";
-import { eq, asc } from "drizzle-orm";
+import { eq, asc, desc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
+  buildGapAnalysisInputSnapshot,
   buildEvidenceCoverage,
+  EVIDENCE_COVERAGE_CONTRACT_VERSION,
   type EvidenceCoverageAnalysis,
 } from "./evidenceCoverage";
+
+export class GapAnalysisInputsChangedError extends Error {
+  constructor() {
+    super("The case inputs changed while the coverage review was running. Re-run the review.");
+    this.name = "GapAnalysisInputsChangedError";
+  }
+}
 
 interface TimelineEvent {
   id: string;
@@ -108,44 +117,100 @@ export class GapDetectionService {
     const caseData = await db.select().from(cases).where(eq(cases.id, caseId)).limit(1);
     if (caseData.length === 0) throw new Error("Case not found");
     const caseInfo = caseData[0];
-
-    // Build timeline from multiple sources
-    const timelineEvents = await this.buildTimeline(caseId);
-
-    // Detect communication gaps
-    const gaps = await this.detectCommunicationGaps(caseId, timelineEvents);
-
-    // Identify expected documents based on case type
-    const expectedDocs = await this.identifyExpectedDocuments(caseId, caseInfo, timelineEvents);
-
-    // Detect suspicious patterns
-    const patterns = await this.detectSuspiciousPatterns(caseId, timelineEvents, gaps, expectedDocs);
-
-    // Generate legal inferences
-    const inferences = await this.generateLegalInferences(caseId, gaps, expectedDocs, patterns);
-
-    // Inventory exact source revisions and availability without turning counts
-    // into a legal-merit, claim-support, or outcome score.
-    const coverage = await buildEvidenceCoverage(caseId, {
-      gaps: gaps.map(({ id, context, precedingEvents }) => ({ id, context, precedingEvents })),
-      expectedDocuments: expectedDocs.map(({ id, documentType, status, reason }) => ({
-        id,
-        documentType,
-        status,
-        reason,
-      })),
+    const inputSnapshot = await buildGapAnalysisInputSnapshot(caseId);
+    const runId = nanoid();
+    const [previousRun] = await db.select({ createdAt: evidenceCoverageAnalysis.createdAt })
+      .from(evidenceCoverageAnalysis)
+      .where(eq(evidenceCoverageAnalysis.caseId, caseId))
+      .orderBy(desc(evidenceCoverageAnalysis.createdAt), desc(evidenceCoverageAnalysis.id))
+      .limit(1);
+    const startedAt = new Date(Math.max(
+      Date.now(),
+      // SQLite's timestamp mode stores whole seconds. Advance by a full second
+      // so rapid consecutive runs still have an unambiguous newest row.
+      previousRun?.createdAt instanceof Date ? previousRun.createdAt.getTime() + 1_000 : 0,
+    ));
+    const runningRecord = {
+      contractVersion: EVIDENCE_COVERAGE_CONTRACT_VERSION,
+      contractStatus: "current" as const,
+      analysisStatus: "running" as const,
+      inputContractVersion: inputSnapshot.contractVersion,
+      caseRevision: inputSnapshot.caseRevision,
+      sourceRevision: inputSnapshot.sourceRevision,
+      inputRevision: inputSnapshot.inputRevision,
+      inputs: inputSnapshot.inputs,
+      startedAt: startedAt.toISOString(),
+    };
+    await db.insert(evidenceCoverageAnalysis).values({
+      id: runId,
+      caseId,
+      data: JSON.stringify(runningRecord),
+      createdAt: startedAt,
     });
 
-    // Save all results to database
-    await this.saveResults(caseId, gaps, expectedDocs, patterns, inferences, coverage);
+    try {
+      // Build timeline from multiple sources
+      const timelineEvents = await this.buildTimeline(caseId);
 
-    return {
-      gaps,
-      expectedDocs,
-      patterns,
-      inferences,
-      coverage,
-    };
+      // Detect communication gaps
+      const gaps = await this.detectCommunicationGaps(caseId, timelineEvents);
+
+      // Identify expected documents based on case type
+      const expectedDocs = await this.identifyExpectedDocuments(caseId, caseInfo, timelineEvents);
+
+      // Detect suspicious patterns
+      const patterns = await this.detectSuspiciousPatterns(caseId, timelineEvents, gaps, expectedDocs);
+
+      // Generate legal inferences
+      const inferences = await this.generateLegalInferences(caseId, gaps, expectedDocs, patterns);
+
+      // Inventory exact source revisions and availability without turning counts
+      // into a legal-merit, claim-support, or outcome score.
+      const coverage = await buildEvidenceCoverage(caseId, {
+        gaps: gaps.map(({ id, context, precedingEvents }) => ({ id, context, precedingEvents })),
+        expectedDocuments: expectedDocs.map(({ id, documentType, status, reason }) => ({
+          id,
+          documentType,
+          status,
+          reason,
+        })),
+      });
+      if (coverage.inputRevision !== inputSnapshot.inputRevision) {
+        await db.update(evidenceCoverageAnalysis).set({
+          data: JSON.stringify({
+            ...runningRecord,
+            analysisStatus: "stale",
+            staleReason: "inputs_changed_during_review",
+            completedAt: new Date().toISOString(),
+          }),
+        }).where(eq(evidenceCoverageAnalysis.id, runId));
+        throw new GapAnalysisInputsChangedError();
+      }
+
+      // Save all results to database
+      await this.saveResults(caseId, runId, gaps, expectedDocs, patterns, inferences, coverage);
+
+      return {
+        gaps,
+        expectedDocs,
+        patterns,
+        inferences,
+        coverage,
+      };
+    } catch (error) {
+      if (!(error instanceof GapAnalysisInputsChangedError)) {
+        await db.update(evidenceCoverageAnalysis).set({
+          data: JSON.stringify({
+            ...runningRecord,
+            analysisStatus: "failed",
+            failureCode: "analysis_failed",
+            failureMessage: "The coverage review failed before a current result was saved.",
+            completedAt: new Date().toISOString(),
+          }),
+        }).where(eq(evidenceCoverageAnalysis.id, runId));
+      }
+      throw error;
+    }
   }
 
   /**
@@ -585,6 +650,7 @@ export class GapDetectionService {
    */
   private async saveResults(
     caseId: string,
+    runId: string,
     gaps: CommunicationGap[],
     expectedDocs: ExpectedDocument[],
     patterns: SuspiciousPattern[],
@@ -599,7 +665,6 @@ export class GapDetectionService {
       tx.delete(expectedDocuments).where(eq(expectedDocuments.caseId, caseId)).run();
       tx.delete(suspiciousPatterns).where(eq(suspiciousPatterns.caseId, caseId)).run();
       tx.delete(legalInferences).where(eq(legalInferences.caseId, caseId)).run();
-      tx.delete(evidenceCoverageAnalysis).where(eq(evidenceCoverageAnalysis.caseId, caseId)).run();
 
       // Save gaps into generic `data` column schema
       if (gaps.length > 0) {
@@ -687,12 +752,9 @@ export class GapDetectionService {
 
       // The installed table keeps its historical physical name, but every new row
       // is an explicit, versioned evidence-coverage snapshot with no score fields.
-      tx.insert(evidenceCoverageAnalysis).values({
-        id: nanoid(),
-        caseId,
+      tx.update(evidenceCoverageAnalysis).set({
         data: JSON.stringify(coverage),
-        createdAt: new Date(),
-      }).run();
+      }).where(eq(evidenceCoverageAnalysis.id, runId)).run();
     });
   }
 

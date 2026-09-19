@@ -212,6 +212,14 @@ until a reviewed legal source is explicitly bound to the snapshot. Saved results
 from the retired percentage-scoring contract are marked retired and must be
 re-run; they are never translated into a new score.
 
+Each completed review is also bound to an exact case revision and input manifest,
+including evidence IDs, content hashes where available, source-analysis revisions,
+communications, and timeline events. Adding, deleting, revising, or materially
+correcting one of those inputs makes the saved review stale. LARO then hides its
+derived gaps, patterns, inferences, and document suggestions until a recomputation
+finishes successfully. The view distinguishes fresh, stale, running, failed,
+unavailable, and retired states instead of presenting an old result as current.
+
 #### Autonomous Inbox Boundaries
 
 The required end state is autonomous content-based dossier discovery, not a

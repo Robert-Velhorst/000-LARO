@@ -1,7 +1,8 @@
 import { router, protectedProcedure } from "../_core/trpc";
 import { assertCaseAccess, assertCaseOwnership } from "../_core/authz";
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { gapDetectionService } from "../gapDetection";
+import { GapAnalysisInputsChangedError, gapDetectionService } from "../gapDetection";
 import { kvkIntegrationService } from "../kvkIntegration";
 import { rechtspraakIntegrationService } from "../rechtspraakIntegration";
 import { searchOfficialLegislation } from "../wettenOverheid";
@@ -22,7 +23,10 @@ import {
   cases,
 } from "../schema";
 import { desc, eq } from "drizzle-orm";
-import { EVIDENCE_COVERAGE_CONTRACT_VERSION } from "../evidenceCoverage";
+import {
+  buildGapAnalysisInputSnapshot,
+  EVIDENCE_COVERAGE_CONTRACT_VERSION,
+} from "../evidenceCoverage";
 
 const parseData = (raw: string | null) => {
   if (!raw) return {};
@@ -51,6 +55,8 @@ const RETIRED_COVERAGE_REASON =
 type NormalizedCoverageRow = Omit<typeof evidenceCoverageAnalysis.$inferSelect, "data"> & {
   contractVersion: string;
   contractStatus: "current" | "retired";
+  analysisStatus?: "fresh" | "stale" | "running" | "failed" | "unavailable";
+  inputRevision?: string;
   inputs?: unknown[];
   retirementReason?: string;
   [key: string]: unknown;
@@ -70,7 +76,14 @@ function normalizeCoverageRow(
       ...record,
       contractVersion: EVIDENCE_COVERAGE_CONTRACT_VERSION,
       contractStatus: "current",
+      analysisStatus: ["fresh", "stale", "running", "failed", "unavailable"].includes(data.analysisStatus)
+        ? data.analysisStatus
+        : typeof data.inputRevision === "string" ? "fresh" : "stale",
+      startedAt: data.startedAt,
       generatedAt: data.generatedAt,
+      completedAt: data.completedAt,
+      caseRevision: data.caseRevision,
+      inputRevision: data.inputRevision,
       sourceRevision: data.sourceRevision,
       snapshotRevision: data.snapshotRevision,
       inputs: data.inputs,
@@ -81,6 +94,9 @@ function normalizeCoverageRow(
       limitations: data.limitations,
       reviewActions: data.reviewActions,
       summary: data.summary,
+      staleReason: data.staleReason,
+      failureCode: data.failureCode,
+      failureMessage: data.failureMessage,
     };
   }
   return {
@@ -95,6 +111,66 @@ function normalizeCoverageRow(
   };
 }
 
+type GapAnalysisState = {
+  status: "none" | "fresh" | "stale" | "running" | "failed" | "unavailable" | "retired";
+  coverage: NormalizedCoverageRow | null;
+  reason?: string;
+};
+
+async function resolveGapAnalysisState(caseId: string): Promise<GapAnalysisState> {
+  const db = await getDb();
+  if (!db) return {
+    status: "unavailable",
+    coverage: null,
+    reason: "The analysis store is unavailable.",
+  };
+  const rows = await db.select().from(evidenceCoverageAnalysis)
+    .where(eq(evidenceCoverageAnalysis.caseId, caseId))
+    .orderBy(desc(evidenceCoverageAnalysis.createdAt), desc(evidenceCoverageAnalysis.id))
+    .limit(1);
+  if (rows.length === 0) return { status: "none", coverage: null };
+
+  const coverage = normalizeCoverageRow(rows[0]);
+  if (coverage.contractStatus === "retired") return {
+    status: "retired",
+    coverage,
+    reason: coverage.retirementReason,
+  };
+  if (coverage.analysisStatus === "running") return { status: "running", coverage };
+  if (coverage.analysisStatus === "failed") return {
+    status: "failed",
+    coverage,
+    reason: typeof coverage.failureMessage === "string"
+      ? coverage.failureMessage
+      : "The latest coverage review failed.",
+  };
+  if (coverage.analysisStatus === "unavailable") return {
+    status: "unavailable",
+    coverage,
+    reason: "LARO could not verify whether the saved review matches the current inputs.",
+  };
+  if (coverage.analysisStatus === "stale" || !coverage.inputRevision) return {
+    status: "stale",
+    coverage: { ...coverage, analysisStatus: "stale" },
+    reason: "The saved review is not bound to the current case inputs.",
+  };
+  try {
+    const current = await buildGapAnalysisInputSnapshot(caseId);
+    if (current.inputRevision !== coverage.inputRevision) return {
+      status: "stale",
+      coverage: { ...coverage, analysisStatus: "stale" },
+      reason: "Case, evidence, source-analysis, or timeline inputs changed after this review.",
+    };
+    return { status: "fresh", coverage: { ...coverage, analysisStatus: "fresh" } };
+  } catch {
+    return {
+      status: "unavailable",
+      coverage,
+      reason: "LARO could not verify whether the saved review matches the current inputs.",
+    };
+  }
+}
+
 export const gapAnalysisRouter = router({
   /**
    * Run gap analysis for a case
@@ -103,8 +179,14 @@ export const gapAnalysisRouter = router({
     .input(z.object({ caseId: z.string() }))
     .mutation(async ({ input, ctx }) => {
       await assertCaseOwnership(input.caseId, ctx.user.id); // Phase 008
-      const result = await gapDetectionService.analyzeCase(input.caseId);
-      return result;
+      try {
+        return await gapDetectionService.analyzeCase(input.caseId);
+      } catch (error) {
+        if (error instanceof GapAnalysisInputsChangedError) {
+          throw new TRPCError({ code: "CONFLICT", message: error.message });
+        }
+        throw error;
+      }
     }),
 
   /**
@@ -114,6 +196,7 @@ export const gapAnalysisRouter = router({
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
       await assertCaseAccess(input.caseId, ctx.user.id);
+      if ((await resolveGapAnalysisState(input.caseId)).status !== "fresh") return [];
       const db = await getDb();
       if (!db) return [];
 
@@ -161,6 +244,7 @@ export const gapAnalysisRouter = router({
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
       await assertCaseAccess(input.caseId, ctx.user.id);
+      if ((await resolveGapAnalysisState(input.caseId)).status !== "fresh") return [];
       const db = await getDb();
       if (!db) return [];
 
@@ -182,6 +266,7 @@ export const gapAnalysisRouter = router({
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
       await assertCaseAccess(input.caseId, ctx.user.id);
+      if ((await resolveGapAnalysisState(input.caseId)).status !== "fresh") return [];
       const db = await getDb();
       if (!db) return [];
 
@@ -216,6 +301,7 @@ export const gapAnalysisRouter = router({
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
       await assertCaseAccess(input.caseId, ctx.user.id);
+      if ((await resolveGapAnalysisState(input.caseId)).status !== "fresh") return [];
       const db = await getDb();
       if (!db) return [];
 
@@ -263,19 +349,12 @@ export const gapAnalysisRouter = router({
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
       await assertCaseAccess(input.caseId, ctx.user.id);
-      const db = await getDb();
-      if (!db) return null;
-
-      const analysis = await db
-        .select()
-        .from(evidenceCoverageAnalysis)
-        .where(eq(evidenceCoverageAnalysis.caseId, input.caseId))
-        .orderBy(desc(evidenceCoverageAnalysis.createdAt), desc(evidenceCoverageAnalysis.id))
-        .limit(1);
-
-      if (analysis.length === 0) return null;
-
-      return normalizeCoverageRow(analysis[0]);
+      const state = await resolveGapAnalysisState(input.caseId);
+      return state.coverage ? {
+        ...state.coverage,
+        analysisStatus: state.status,
+        statusReason: state.reason,
+      } : null;
     }),
 
   /**
@@ -294,12 +373,14 @@ export const gapAnalysisRouter = router({
           missingDocsCount: 0,
           patternsCount: 0,
           inferencesCount: 0,
-          analysisStatus: "none" as const,
+          analysisStatus: "unavailable" as const,
+          statusReason: "The analysis store is unavailable.",
           coverage: null,
         };
       }
 
-      const [gaps, expectedDocs, patterns, inferences, coverageRows] = await Promise.all([
+      const [state, gaps, expectedDocs, patterns, inferences] = await Promise.all([
+        resolveGapAnalysisState(input.caseId),
         db.select().from(communicationGaps).where(eq(communicationGaps.caseId, input.caseId)),
         db
           .select()
@@ -310,37 +391,34 @@ export const gapAnalysisRouter = router({
           .from(suspiciousPatterns)
           .where(eq(suspiciousPatterns.caseId, input.caseId)),
         db.select().from(legalInferences).where(eq(legalInferences.caseId, input.caseId)),
-        db
-          .select()
-          .from(evidenceCoverageAnalysis)
-          .where(eq(evidenceCoverageAnalysis.caseId, input.caseId))
-          .orderBy(desc(evidenceCoverageAnalysis.createdAt), desc(evidenceCoverageAnalysis.id))
-          .limit(1),
       ]);
 
       const normalizedGaps = gaps.map((g) => ({ ...g, ...parseData(g.data) }));
       const normalizedDocs = expectedDocs.map((d) => ({ ...d, ...parseData(d.data) }));
 
-      const coverage = coverageRows.length > 0 ? normalizeCoverageRow(coverageRows[0]) : null;
       const hasDerivedRows = gaps.length > 0 || expectedDocs.length > 0 || patterns.length > 0 || inferences.length > 0;
-      const analysisStatus = coverage?.contractStatus === "current"
-        ? "current" as const
-        : coverage || hasDerivedRows ? "retired" as const : "none" as const;
+      const analysisStatus = state.status === "none" && hasDerivedRows ? "retired" as const : state.status;
+      const exposeDerived = analysisStatus === "fresh";
+      const coverage = state.coverage || (hasDerivedRows ? {
+        contractVersion: "legacy-case-strength-v0",
+        contractStatus: "retired" as const,
+        retirementReason: RETIRED_COVERAGE_REASON,
+      } : null);
 
       return {
-        hasAnalysis:
-          hasDerivedRows || coverageRows.length > 0,
+        hasAnalysis: hasDerivedRows || state.coverage !== null,
         analysisStatus,
-        gapsCount: gaps.length,
-        criticalGapsCount: normalizedGaps.filter((g: any) => g.significance === "critical").length,
-        missingDocsCount: normalizedDocs.filter((d: any) => d.status === "missing").length,
-        patternsCount: patterns.length,
-        inferencesCount: inferences.length,
-        coverage: coverage || (hasDerivedRows ? {
-          contractVersion: "legacy-case-strength-v0",
-          contractStatus: "retired" as const,
-          retirementReason: RETIRED_COVERAGE_REASON,
-        } : null),
+        statusReason: state.reason,
+        gapsCount: exposeDerived ? gaps.length : 0,
+        criticalGapsCount: exposeDerived
+          ? normalizedGaps.filter((g: any) => g.significance === "critical").length
+          : 0,
+        missingDocsCount: exposeDerived
+          ? normalizedDocs.filter((d: any) => d.status === "missing").length
+          : 0,
+        patternsCount: exposeDerived ? patterns.length : 0,
+        inferencesCount: exposeDerived ? inferences.length : 0,
+        coverage: coverage ? { ...coverage, analysisStatus } : null,
       };
     }),
 
@@ -612,6 +690,13 @@ export const gapAnalysisRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       await assertCaseOwnership(input.caseId, ctx.user.id); // Phase 008
+      const analysisState = await resolveGapAnalysisState(input.caseId);
+      if (analysisState.status !== "fresh") {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Run a current coverage review before generating a document from gap-analysis results.",
+        });
+      }
       const db = await getDb();
       if (!db) {
         return {

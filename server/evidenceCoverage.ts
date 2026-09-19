@@ -4,8 +4,10 @@ import { MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 import { getDb } from './db';
 import { managedStorageKeyFromMetadata } from './managedStorage';
 import {
+  cases,
   communications,
   documentAnalyses,
+  emailAccounts,
   evidence,
   evidenceFiles,
   timeline,
@@ -24,6 +26,7 @@ export interface EvidenceCoverageInput {
   id: string;
   label: string;
   revision: string;
+  contentHash: string | null;
   sourceAvailability: SourceAvailability;
   reviewStatus: CoverageReviewStatus;
   analysisStatus: CoverageAnalysisStatus;
@@ -48,7 +51,11 @@ export interface MissingContextItem {
 export interface EvidenceCoverageAnalysis {
   contractVersion: typeof EVIDENCE_COVERAGE_CONTRACT_VERSION;
   contractStatus: 'current';
+  analysisStatus: 'fresh';
   generatedAt: string;
+  completedAt: string;
+  caseRevision: string;
+  inputRevision: string;
   sourceRevision: string;
   snapshotRevision: string;
   inputs: EvidenceCoverageInput[];
@@ -75,6 +82,23 @@ export interface EvidenceCoverageAnalysis {
   limitations: string[];
   reviewActions: string[];
   summary: string;
+}
+
+export const GAP_ANALYSIS_INPUT_CONTRACT_VERSION = 'gap-analysis-input-v1' as const;
+
+export interface GapAnalysisInputSnapshot {
+  contractVersion: typeof GAP_ANALYSIS_INPUT_CONTRACT_VERSION;
+  caseId: string;
+  caseRevision: string;
+  sourceRevision: string;
+  inputRevision: string;
+  inputs: Array<{
+    inputType: CoverageInputType;
+    id: string;
+    revision: string;
+    contentHash: string | null;
+    analysisRevision: string | null;
+  }>;
 }
 
 export interface EvidenceCoverageFindings {
@@ -134,6 +158,12 @@ function contentIdentity(metadata: Record<string, unknown>, storageKey: string |
   return storageKey ? `storage:${storageKey}` : null;
 }
 
+function metadataContentHash(metadata: Record<string, unknown>): string | null {
+  return typeof metadata.contentHash === 'string' && /^[a-f0-9]{32,}$/i.test(metadata.contentHash)
+    ? metadata.contentHash.toLowerCase()
+    : null;
+}
+
 function parsedPrecedingEvents(value: string): string[] {
   try {
     const parsed = JSON.parse(value);
@@ -168,6 +198,133 @@ async function inspectManagedSources(inputs: DraftInput[]): Promise<void> {
   }
 }
 
+/**
+ * Build the deterministic input identity used to decide whether a saved gap
+ * analysis still describes the case. This intentionally performs no provider
+ * or object-storage reads, so freshness checks stay local and bounded.
+ */
+export async function buildGapAnalysisInputSnapshot(caseId: string): Promise<GapAnalysisInputSnapshot> {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+
+  const [caseRows, communicationRows, timelineRows, evidenceRows, fileRows, analysisRows] = await Promise.all([
+    db.select().from(cases).where(eq(cases.id, caseId)).limit(1),
+    db.select().from(communications).where(eq(communications.caseId, caseId)).orderBy(asc(communications.id)),
+    db.select().from(timeline).where(eq(timeline.caseId, caseId)).orderBy(asc(timeline.id)),
+    db.select().from(evidence).where(eq(evidence.caseId, caseId)).orderBy(asc(evidence.id)),
+    db.select().from(evidenceFiles).where(eq(evidenceFiles.caseId, caseId)).orderBy(asc(evidenceFiles.id)),
+    db.select().from(documentAnalyses).where(eq(documentAnalyses.caseId, caseId))
+      .orderBy(desc(documentAnalyses.updatedAt), desc(documentAnalyses.id)),
+  ]);
+  const caseRow = caseRows[0];
+  if (!caseRow) throw new Error('Case not found');
+  const accountRows = await db.select({
+    id: emailAccounts.id,
+    provider: emailAccounts.provider,
+    email: emailAccounts.email,
+    status: emailAccounts.status,
+    updatedAt: emailAccounts.updatedAt,
+  }).from(emailAccounts).where(eq(emailAccounts.userId, caseRow.userId)).orderBy(asc(emailAccounts.id));
+
+  const latestAnalysis = new Map<string, typeof analysisRows[number]>();
+  for (const analysis of analysisRows) {
+    if (!latestAnalysis.has(analysis.evidenceId)) latestAnalysis.set(analysis.evidenceId, analysis);
+  }
+
+  const inputs: GapAnalysisInputSnapshot['inputs'] = [];
+  for (const row of communicationRows) {
+    const metadata = parseObject(row.metadata);
+    inputs.push({
+      inputType: 'communication',
+      id: row.id,
+      revision: digest([
+        'communication', row.id, row.channel, row.type, row.direction, row.subject,
+        row.body, row.content, row.metadata, timestamp(row.timestamp), timestamp(row.createdAt),
+      ]),
+      contentHash: metadataContentHash(metadata),
+      analysisRevision: null,
+    });
+  }
+  for (const row of timelineRows) {
+    const metadata = parseObject(row.metadata);
+    inputs.push({
+      inputType: 'timeline_event',
+      id: row.id,
+      revision: digest([
+        'timeline_event', row.id, row.eventType, row.title, row.description,
+        row.metadata, timestamp(row.eventAt), timestamp(row.createdAt),
+      ]),
+      contentHash: metadataContentHash(metadata),
+      analysisRevision: null,
+    });
+  }
+  for (const row of evidenceRows) {
+    const metadata = parseObject(row.metadata);
+    const analysis = latestAnalysis.get(row.id);
+    inputs.push({
+      inputType: 'evidence_record',
+      id: row.id,
+      revision: digest([
+        'evidence_record', row.id, row.type, row.source, row.title, row.description,
+        row.fileUrl, row.fileName, row.fileSize, row.mimeType, row.metadata,
+        row.tags, row.relevant, timestamp(row.createdAt), timestamp(row.updatedAt),
+      ]),
+      contentHash: metadataContentHash(metadata),
+      analysisRevision: analysis ? digest([
+        analysis.id, analysis.analysisVersion, analysis.contentHash, analysis.status,
+        analysis.result, timestamp(analysis.updatedAt),
+      ]) : null,
+    });
+  }
+  for (const row of fileRows) {
+    inputs.push({
+      inputType: 'evidence_file',
+      id: row.id,
+      revision: digest([
+        'evidence_file', row.id, row.fileType, row.fileSize, row.uploadSource,
+        row.fileName, row.mimeType, row.storageKey, timestamp(row.uploadedAt),
+      ]),
+      contentHash: null,
+      analysisRevision: null,
+    });
+  }
+  inputs.sort((left, right) => inputKey(left).localeCompare(inputKey(right)));
+
+  const caseRevision = digest([
+    caseRow.id,
+    caseRow.userId,
+    caseRow.clientName,
+    caseRow.clientEmail,
+    caseRow.clientPhone,
+    caseRow.clientAddress,
+    caseRow.caseType,
+    caseRow.caseSummary,
+    caseRow.urgency,
+    caseRow.status,
+    caseRow.legalAreas,
+    caseRow.preferredLanguages,
+    caseRow.metadata,
+    timestamp(caseRow.createdAt),
+    timestamp(caseRow.updatedAt),
+    accountRows.map((account) => [
+      account.id,
+      account.provider,
+      account.email?.normalize('NFKC').trim().toLocaleLowerCase('en-US') ?? null,
+      account.status,
+      timestamp(account.updatedAt),
+    ]),
+  ]);
+  const sourceRevision = digest(inputs);
+  return {
+    contractVersion: GAP_ANALYSIS_INPUT_CONTRACT_VERSION,
+    caseId,
+    caseRevision,
+    sourceRevision,
+    inputRevision: digest([GAP_ANALYSIS_INPUT_CONTRACT_VERSION, caseRevision, sourceRevision]),
+    inputs,
+  };
+}
+
 export async function buildEvidenceCoverage(
   caseId: string,
   findings: EvidenceCoverageFindings,
@@ -194,6 +351,9 @@ export async function buildEvidenceCoverage(
   for (const row of communicationRows) {
     const metadata = parseObject(row.metadata);
     const storageKey = managedStorageKeyFromMetadata(row.metadata);
+    const inputContentHash = contentIdentity(metadata, storageKey)?.startsWith('hash:')
+      ? contentIdentity(metadata, storageKey)!.slice(5)
+      : null;
     inputs.push({
       inputType: 'communication',
       id: row.id,
@@ -202,6 +362,7 @@ export async function buildEvidenceCoverage(
         'communication', row.id, row.channel, row.type, row.direction, row.subject,
         row.body, row.content, row.metadata, timestamp(row.timestamp), timestamp(row.createdAt),
       ]),
+      contentHash: inputContentHash,
       sourceAvailability: storageKey ? 'unavailable' : 'record_only',
       reviewStatus: reviewStatus(metadata),
       analysisStatus: 'not_applicable',
@@ -216,6 +377,9 @@ export async function buildEvidenceCoverage(
   for (const row of timelineRows) {
     const metadata = parseObject(row.metadata);
     const storageKey = managedStorageKeyFromMetadata(row.metadata);
+    const inputContentHash = contentIdentity(metadata, storageKey)?.startsWith('hash:')
+      ? contentIdentity(metadata, storageKey)!.slice(5)
+      : null;
     inputs.push({
       inputType: 'timeline_event',
       id: row.id,
@@ -224,6 +388,7 @@ export async function buildEvidenceCoverage(
         'timeline_event', row.id, row.eventType, row.title, row.description,
         row.metadata, timestamp(row.eventAt), timestamp(row.createdAt),
       ]),
+      contentHash: inputContentHash,
       sourceAvailability: storageKey ? 'unavailable' : 'record_only',
       reviewStatus: reviewStatus(metadata),
       analysisStatus: 'not_applicable',
@@ -239,9 +404,7 @@ export async function buildEvidenceCoverage(
     const metadata = parseObject(row.metadata);
     const storageKey = managedStorageKeyFromMetadata(row.metadata);
     const analysis = latestAnalysis.get(row.id);
-    const metadataHash = typeof metadata.contentHash === 'string' && /^[a-f0-9]{32,}$/i.test(metadata.contentHash)
-      ? metadata.contentHash.toLowerCase()
-      : null;
+    const metadataHash = metadataContentHash(metadata);
     const analysisCurrent = !!analysis
       && metadataHash !== null
       && metadataHash === analysis.contentHash.toLowerCase();
@@ -260,6 +423,7 @@ export async function buildEvidenceCoverage(
         row.fileUrl, row.fileName, row.fileSize, row.mimeType, row.metadata,
         row.tags, row.relevant, timestamp(row.createdAt), timestamp(row.updatedAt),
       ]),
+      contentHash: metadataHash,
       sourceAvailability: storageKey
         ? 'unavailable'
         : row.fileUrl ? 'external_unverified' : 'record_only',
@@ -288,6 +452,7 @@ export async function buildEvidenceCoverage(
         'evidence_file', row.id, row.fileType, row.fileSize, row.uploadSource,
         row.fileName, row.mimeType, row.storageKey, timestamp(row.uploadedAt),
       ]),
+      contentHash: null,
       sourceAvailability: 'unavailable',
       reviewStatus: 'unreviewed',
       analysisStatus: 'not_analyzed',
@@ -443,10 +608,16 @@ export async function buildEvidenceCoverage(
     'Ask a qualified lawyer to identify and review the applicable legal-basis sources.',
   ];
 
+  const gapAnalysisInput = await buildGapAnalysisInputSnapshot(caseId);
+  const completedAt = new Date().toISOString();
   return {
     contractVersion: EVIDENCE_COVERAGE_CONTRACT_VERSION,
     contractStatus: 'current',
-    generatedAt: new Date().toISOString(),
+    analysisStatus: 'fresh',
+    generatedAt: completedAt,
+    completedAt,
+    caseRevision: gapAnalysisInput.caseRevision,
+    inputRevision: gapAnalysisInput.inputRevision,
     sourceRevision,
     snapshotRevision,
     inputs: publicInputs,

@@ -27,16 +27,18 @@ interface EvidenceGapAnalysisDashboardProps {
 
 export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDashboardProps) {
   const [analyzing, setAnalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   // Fetch gap analysis data
   const { data: summary, refetch: refetchSummary, isLoading: summaryLoading } = trpc.gapAnalysis.getSummary.useQuery({
     caseId,
   });
 
-  const { data: gaps, refetch: refetchGaps } = trpc.gapAnalysis.getGaps.useQuery({ caseId });
-  const { data: expectedDocs, refetch: refetchDocs } = trpc.gapAnalysis.getExpectedDocuments.useQuery({ caseId });
-  const { data: patterns, refetch: refetchPatterns } = trpc.gapAnalysis.getPatterns.useQuery({ caseId });
-  const { data: inferences, refetch: refetchInferences } = trpc.gapAnalysis.getInferences.useQuery({ caseId });
+  const freshAnalysis = summary?.analysisStatus === "fresh";
+  const { data: gaps, refetch: refetchGaps } = trpc.gapAnalysis.getGaps.useQuery({ caseId }, { enabled: freshAnalysis });
+  const { data: expectedDocs, refetch: refetchDocs } = trpc.gapAnalysis.getExpectedDocuments.useQuery({ caseId }, { enabled: freshAnalysis });
+  const { data: patterns, refetch: refetchPatterns } = trpc.gapAnalysis.getPatterns.useQuery({ caseId }, { enabled: freshAnalysis });
+  const { data: inferences, refetch: refetchInferences } = trpc.gapAnalysis.getInferences.useQuery({ caseId }, { enabled: freshAnalysis });
   const { data: coverage, refetch: refetchCoverage } = trpc.gapAnalysis.getCoverage.useQuery({ caseId });
 
   const normalizedGaps = ((gaps ?? []) as any[]);
@@ -53,6 +55,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
   const analyzeMutation = trpc.gapAnalysis.analyze.useMutation({
     onSuccess: () => {
       setAnalyzing(false);
+      setAnalysisError(null);
       // Refetch all gap analysis data
       refetchSummary();
       refetchGaps();
@@ -63,7 +66,9 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
     },
     onError: (err) => {
       setAnalyzing(false);
-      console.error("[GapAnalysis] Analysis failed:", err);
+      setAnalysisError(err.message || "The coverage review failed.");
+      void refetchSummary();
+      void refetchCoverage();
     },
   });
 
@@ -76,9 +81,59 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
   }, [caseId, summaryLoading, summary?.analysisStatus]);
 
   const handleAnalyze = () => {
+    setAnalysisError(null);
     setAnalyzing(true);
     analyzeMutation.mutate({ caseId });
   };
+
+  const nonFreshStatus = summary?.analysisStatus;
+  if (nonFreshStatus && nonFreshStatus !== "none" && nonFreshStatus !== "fresh") {
+    const state = {
+      stale: {
+        title: "Coverage review is stale",
+        detail: "Case, evidence, source-analysis, or timeline inputs changed after the saved review. Saved gaps and patterns are hidden until recomputed.",
+      },
+      running: {
+        title: "Coverage review is running",
+        detail: "LARO is rebuilding the review against the recorded input revision. Earlier derived results are hidden while it runs.",
+      },
+      failed: {
+        title: "Coverage review failed",
+        detail: "The latest recomputation did not produce a current result. Earlier derived results remain hidden.",
+      },
+      unavailable: {
+        title: "Coverage review is unavailable",
+        detail: "LARO could not verify the saved review against the current case inputs. No saved gaps or patterns are presented as current.",
+      },
+      retired: {
+        title: "Saved coverage review retired",
+        detail: "This saved result used the retired scoring contract and is not shown.",
+      },
+    }[nonFreshStatus];
+    return (
+      <Card data-testid={`gap-analysis-state-${nonFreshStatus}`}>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            {nonFreshStatus === "running"
+              ? <Loader2 className="h-5 w-5 animate-spin" />
+              : <AlertTriangle className="h-5 w-5" />}
+            {state.title}
+          </CardTitle>
+          <CardDescription>{summary?.statusReason || state.detail}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {analysisError ? <Alert variant="destructive"><AlertDescription>{analysisError}</AlertDescription></Alert> : null}
+          <p className="text-sm text-muted-foreground">{state.detail}</p>
+          {nonFreshStatus !== "running" ? (
+            <Button onClick={handleAnalyze} disabled={analyzing}>
+              {analyzing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {analyzing ? "Reviewing..." : "Recompute coverage review"}
+            </Button>
+          ) : null}
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (!summary?.hasAnalysis) {
     return (
@@ -171,11 +226,12 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
           </AlertDescription>
         </Alert>
       ) : coverageData.contractStatus === "current" ? (
-        <Card>
+        <Card data-testid="gap-analysis-state-fresh">
           <CardHeader>
             <CardTitle role="heading" aria-level={2} className="flex items-center gap-2">
               <FileText className="h-5 w-5" />
               Evidence coverage and source availability
+              <Badge variant="outline">Current input revision</Badge>
             </CardTitle>
             <CardDescription>{coverageData.summary}</CardDescription>
           </CardHeader>
@@ -245,6 +301,7 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
                     <div className="mt-2 break-all font-mono text-xs text-muted-foreground">
                       ID: {input.inputType}:{input.id}<br />
                       Input revision: {input.revision}<br />
+                      {input.contentHash ? <>Content hash: {input.contentHash}<br /></> : null}
                       Analysis: {String(input.analysisStatus).replaceAll("_", " ")}
                       {input.analysisRevision ? <><br />Analysis revision: {input.analysisRevision}</> : null}
                       {input.duplicateOf ? <><br />Exact duplicate of: {input.duplicateOf}</> : null}
@@ -276,6 +333,8 @@ export function EvidenceGapAnalysisDashboard({ caseId }: EvidenceGapAnalysisDash
 
             <div className="break-all border-t pt-3 font-mono text-xs text-muted-foreground">
               Contract: {coverageData.contractVersion}<br />
+              Analysis input revision: {coverageData.inputRevision}<br />
+              Case revision: {coverageData.caseRevision}<br />
               Source-set revision: {coverageData.sourceRevision}<br />
               Snapshot revision: {coverageData.snapshotRevision}
             </div>

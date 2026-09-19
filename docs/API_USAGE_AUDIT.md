@@ -16,7 +16,9 @@ original phase-074 snapshot are mounted and typed.
 - Owner-scoped evidence relevance scoring grounded in persisted case context and versioned document analysis.
 - Owner-scoped evidence coverage snapshots with exact input/source revisions,
   availability, review state, unknowns, limitations, and no legal-merit or
-  outcome score.
+  outcome score. Every run records its exact case and input manifest; derived
+  results from the case-scoped coverage routes are returned only while that
+  revision remains current.
 - Lawyer matching and reviewed media/organization target discovery. Automatic
   review is bound to stable IDs from one active case discovery run; the response
   enumerates every created, refreshed, reviewed, skipped, and pending target and
@@ -53,3 +55,6 @@ original phase-074 snapshot are mounted and typed.
 - Public-source lookup tests reject cross-owner access before network contact and
   cover successful results, authoritative empty results, partial zeroes, and
   provider failure without storing provider result content in audit history.
+- Gap-analysis reads revalidate the saved input revision. Evidence create,
+  delete, same-source revision, timeline correction, concurrent input change,
+  and failed recomputation regressions keep old derived results hidden.

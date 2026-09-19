@@ -7,6 +7,11 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Bound every evidence-coverage review to an exact case and input revision,
+  including evidence IDs/content hashes, source-analysis revisions,
+  communications, and timeline events. Input changes now make saved results
+  stale; stale, running, failed, unavailable, and retired reviews hide derived
+  gaps and require a successful recomputation before downstream document use.
 - Made KvK, Rechtspraak, and KOOP public-source research case-owned and
   failure-aware. Every attempt now stores a durable metadata-only receipt with
   the normalized query, retrieval time, result count, and completeness, while

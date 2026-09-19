@@ -78,7 +78,9 @@ suite("core product paths", () => {
   it("returns generated legal content with the required disclaimer", async () => {
     const { LEGAL_DISCLAIMER } = await import("../../shared/const");
     const created = await createCase(owner, "Document Client");
-    const result = await app.makeCaller(owner).gapAnalysis.generateDocument({
+    const caller = app.makeCaller(owner);
+    await caller.gapAnalysis.analyze({ caseId: created.id });
+    const result = await caller.gapAnalysis.generateDocument({
       caseId: created.id,
       documentType: "demand_letter",
     });
