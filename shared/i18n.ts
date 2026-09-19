@@ -44,6 +44,7 @@ export const messages = {
   "nav.expandSidebar": { nl: "Zijbalk uitklappen", en: "Expand sidebar" },
   "nav.collapseSidebar": { nl: "Zijbalk inklappen", en: "Collapse sidebar" },
   "nav.accountMenu": { nl: "Accountmenu openen", en: "Open account menu" },
+  "nav.setupGuide": { nl: "Instelhulp", en: "Setup guide" },
   "route.notFound": { nl: "Pagina niet gevonden", en: "Page not found" },
   "route.notFoundHint": { nl: "Gebruik de zijbalk om te navigeren.", en: "Use the sidebar to navigate." },
   "legal.noticeLabel": { nl: "Melding juridische ondersteuning", en: "Legal assistance notice" },

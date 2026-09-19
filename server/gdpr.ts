@@ -98,6 +98,10 @@ function redactExportRows(rows: unknown[]): unknown[] {
   return rows.map((row) => redactExportValue(row)).filter((row) => row !== OMIT_FROM_EXPORT);
 }
 
+function onboardingConfigKeys(userId: string): [string, string] {
+  return [`onboarding:state:${userId}`, `onboarding:complete:${userId}`];
+}
+
 /**
  * Export every row owned by the user. Returns a structured object keyed by table
  * name. Tables with a `userId` column are exported by owner; the user's own row
@@ -127,6 +131,12 @@ export async function exportUserData(userId: string): Promise<Record<string, any
       console.warn(`[GDPR] export: skipped ${table}:`, e instanceof Error ? e.message : e);
     }
   }
+  // Onboarding presentation state is owner-scoped through its config key rather
+  // than a userId column, so include it explicitly in access and erasure rights.
+  const ownerConfig = sqlite.prepare(
+    "SELECT * FROM system_config WHERE configKey IN (?, ?)",
+  ).all(...onboardingConfigKeys(userId));
+  if (ownerConfig.length > 0) out.system_config = redactExportRows(ownerConfig);
   return out;
 }
 
@@ -184,6 +194,12 @@ export async function deleteUserData(userId: string): Promise<{
       const info = sqlite.prepare(`DELETE FROM "${table}" WHERE userId = ?`).run(userId);
       if (info.changes) deleted[table] = (deleted[table] ?? 0) + info.changes;
     }
+
+    // Presentation state has no userId column but still belongs to this owner.
+    const configInfo = sqlite.prepare(
+      "DELETE FROM system_config WHERE configKey IN (?, ?)",
+    ).run(...onboardingConfigKeys(userId));
+    if (configInfo.changes) deleted.system_config = configInfo.changes;
 
     // 3. Delete the user record itself.
     const userInfo = sqlite.prepare(`DELETE FROM "users" WHERE id = ?`).run(userId);

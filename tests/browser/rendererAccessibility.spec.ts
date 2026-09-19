@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import jwt from "jsonwebtoken";
+import bcrypt from "bcryptjs";
 import { COOKIE_NAME } from "../../shared/const";
 
 const ROUTES = [
@@ -39,18 +40,35 @@ async function createAccountThroughSignup(page: Page) {
   await page.getByLabel("Password", { exact: true }).fill("A11yAudit!2026");
   await page.getByRole("button", { name: "Sign Up", exact: true }).click();
   await expect(page.getByRole("button", { name: /Open account menu|Accountmenu openen/ })).toBeVisible();
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const user = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    database.prepare(`INSERT INTO system_config (configKey, configValue, updatedAt) VALUES (?, ?, ?)
+      ON CONFLICT(configKey) DO UPDATE SET configValue = excluded.configValue, updatedAt = excluded.updatedAt`)
+      .run(`onboarding:state:${user.id}`, JSON.stringify({ status: "complete", currentStepKey: "outreach" }), Math.floor(Date.now() / 1000));
+  } finally {
+    database.close();
+  }
+  await page.reload({ waitUntil: "networkidle" });
   await page.waitForLoadState("networkidle");
   return email;
 }
 
-async function createAccount(page: Page) {
+async function createAccount(
+  page: Page,
+  options: { onboarding?: "active" | "complete"; password?: string } = {},
+) {
   // Feature tests get isolated sessions without exhausting the real signup guard.
   const id = `A11Y_${randomUUID()}`;
   const email = `${id.toLowerCase()}@example.test`;
   const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
   try {
-    database.prepare("INSERT INTO users (id, email, name, role, createdAt) VALUES (?, ?, ?, 'user', ?)")
-      .run(id, email, "Accessibility Audit", Math.floor(Date.now() / 1000));
+    database.prepare("INSERT INTO users (id, email, name, password, role, createdAt) VALUES (?, ?, ?, ?, 'user', ?)")
+      .run(id, email, "Accessibility Audit", options.password ? bcrypt.hashSync(options.password, 4) : null, Math.floor(Date.now() / 1000));
+    if (options.onboarding !== "active") {
+      database.prepare("INSERT INTO system_config (configKey, configValue, updatedAt) VALUES (?, ?, ?)")
+        .run(`onboarding:state:${id}`, JSON.stringify({ status: "complete", currentStepKey: "outreach" }), Math.floor(Date.now() / 1000));
+    }
   } finally {
     database.close();
   }
@@ -59,7 +77,11 @@ async function createAccount(page: Page) {
     name: COOKIE_NAME, value: token, url: "http://127.0.0.1:5181", httpOnly: true, sameSite: "Lax",
   }]);
   await page.goto("/", { waitUntil: "networkidle" });
-  await expect(page.getByRole("button", { name: /Open account menu|Accountmenu openen/ })).toBeVisible();
+  if (options.onboarding === "active") {
+    await expect(page.getByRole("dialog", { name: /Set up your LARO workspace|Uw LARO-werkruimte instellen/ })).toBeVisible();
+  } else {
+    await expect(page.getByRole("button", { name: /Open account menu|Accountmenu openen/ })).toBeVisible();
+  }
   return email;
 }
 
@@ -229,6 +251,140 @@ test("language selection changes the mounted shell and persists across reloads",
   await page.getByRole("group", { name: "Taal" }).getByRole("button", { name: "en", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await expect(page.getByText("My Cases", { exact: true })).toBeVisible();
+});
+
+test("onboarding resumes, skips, completes, resets, and stays isolated across accounts", async ({ page }, testInfo) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("requestfailed", (request) => {
+    const failure = request.failure()?.errorText ?? "unknown failure";
+    if (!failure.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
+  });
+  await page.addInitScript(() => localStorage.setItem("laro.locale", "en"));
+
+  const password = "Onboarding!2026";
+  const firstEmail = await createAccount(page, { onboarding: "active", password });
+  const guide = page.getByRole("dialog", { name: "Set up your LARO workspace" });
+  await expect(guide).toBeVisible();
+  await expect(guide.getByText("Step 1 of 3", { exact: true })).toBeVisible();
+  await expect(guide.getByText("0 of 3 setup steps completed", { exact: true })).toBeVisible();
+
+  await guide.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(guide.getByText("Step 2 of 3", { exact: true })).toBeVisible();
+  await guide.getByRole("button", { name: "Continue later", exact: true }).click();
+  await expect(guide).toBeHidden();
+  const resumeResponse = await page.reload({ waitUntil: "networkidle" });
+  expect(resumeResponse?.status()).toBe(200);
+  await expect(guide).toBeVisible();
+  await expect(guide.getByText("Step 2 of 3", { exact: true })).toBeVisible();
+  await guide.getByRole("button", { name: "Skip setup", exact: true }).click();
+  await expect(guide).toBeHidden();
+  const skippedResponse = await page.reload({ waitUntil: "networkidle" });
+  expect(skippedResponse?.status()).toBe(200);
+  await expect(guide).toBeHidden();
+
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  const secondId = `A11Y_${randomUUID()}`;
+  const secondEmail = `${secondId.toLowerCase()}@example.test`;
+  const lawyerId = `A11Y_LAWYER_${randomUUID()}`;
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    database.prepare("INSERT INTO users (id, email, name, password, role, createdAt) VALUES (?, ?, 'Second onboarding account', ?, 'user', ?)")
+      .run(secondId, secondEmail, bcrypt.hashSync(password, 4), now);
+    database.prepare("INSERT INTO lawyers (id, name, email, createdAt, updatedAt) VALUES (?, 'Onboarding Lawyer', ?, ?, ?)")
+      .run(lawyerId, `${lawyerId.toLowerCase()}@law.example.test`, now, now);
+  } finally {
+    database.close();
+  }
+
+  const signOut = async () => {
+    const accountMenu = page.getByRole("button", { name: "Open account menu" });
+    if (!await accountMenu.isVisible()) {
+      await page.getByRole("button", { name: "Toggle sidebar" }).click();
+      await expect(accountMenu).toBeVisible();
+    }
+    await accountMenu.click();
+    await page.getByRole("menuitem", { name: "Sign out", exact: true }).click();
+    await expect(page.getByLabel("Email Address", { exact: true })).toBeVisible();
+  };
+  const signIn = async (email: string) => {
+    await page.getByLabel("Email Address", { exact: true }).fill(email);
+    await page.getByLabel("Password", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "Sign In", exact: true }).click();
+    await expect(page.locator("#main-content")).toBeVisible();
+    await page.waitForLoadState("networkidle");
+  };
+
+  await signOut();
+  await signIn(firstEmail);
+  await expect(guide).toBeHidden();
+  await signOut();
+  await signIn(secondEmail);
+  await expect(guide).toBeVisible();
+  await expect(guide.getByText("Step 1 of 3", { exact: true })).toBeVisible();
+  await expect(guide.getByText("0 of 3 setup steps completed", { exact: true })).toBeVisible();
+
+  const milestoneDb = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const caseId = `A11Y_ONBOARDING_CASE_${randomUUID()}`;
+    milestoneDb.prepare(`INSERT INTO cases
+      (id, userId, clientName, caseType, caseSummary, urgency, status, createdAt, updatedAt)
+      VALUES (?, ?, 'Onboarding case', 'Contract', 'Browser onboarding verification', 'Low', 'Intake', ?, ?)`)
+      .run(caseId, secondId, now, now);
+    milestoneDb.prepare(`INSERT INTO evidence
+      (id, caseId, userId, type, source, title, relevant, createdAt, updatedAt)
+      VALUES (?, ?, ?, 'document', 'manual', 'Reviewed setup evidence', 1, ?, ?)`)
+      .run(`A11Y_ONBOARDING_EVIDENCE_${randomUUID()}`, caseId, secondId, now, now);
+    milestoneDb.prepare(`INSERT INTO outreach_status
+      (id, caseId, lawyerId, status, createdAt, updatedAt)
+      VALUES (?, ?, ?, 'PendingApproval', ?, ?)`)
+      .run(`A11Y_ONBOARDING_OUTREACH_${randomUUID()}`, caseId, lawyerId, now, now);
+  } finally {
+    milestoneDb.close();
+  }
+
+  const readyResponse = await page.reload({ waitUntil: "networkidle" });
+  expect(readyResponse?.status()).toBe(200);
+  await expect(guide.getByText("3 of 3 setup steps completed", { exact: true })).toBeVisible();
+  await guide.getByRole("button", { name: /Prepare outreach for review/ }).click();
+  await expect(guide.getByText("Step 3 of 3", { exact: true })).toBeVisible();
+  await expect(guide.getByRole("button", { name: "Finish setup", exact: true })).toBeEnabled();
+  await guide.getByRole("button", { name: "Finish setup", exact: true }).click();
+  await expect(guide).toBeHidden();
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(guide).toBeHidden();
+
+  await page.getByRole("button", { name: "Open account menu" }).click();
+  await page.getByRole("menuitem", { name: "Setup guide", exact: true }).click();
+  await expect(guide).toBeVisible();
+  await expect(guide.getByText("Step 1 of 3", { exact: true })).toBeVisible();
+  await expect(guide.getByText("3 of 3 setup steps completed", { exact: true })).toBeVisible();
+
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await expectInsideViewport(guide);
+    for (const action of ["Skip setup", "Continue later", "Next"]) {
+      const control = guide.getByRole("button", { name: action, exact: true });
+      await expect(control).toBeVisible();
+      await expectInsideViewport(control);
+    }
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).include('[role="dialog"]').analyze();
+    expect(audit.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`onboarding-${viewport.name}.png`), fullPage: false });
+  }
+
+  await guide.getByRole("button", { name: "Continue later", exact: true }).click();
+  await signOut();
+  await signIn(firstEmail);
+  await expect(guide).toBeHidden();
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+  expect(consoleErrors).toEqual([]);
 });
 
 test("core workflows reflow at 200 percent zoom and remain operable in forced colors", async ({ page }) => {

@@ -37,6 +37,7 @@ suite('Phase 040 — critical-path backend integration', () => {
   let gdpr: any;
   let authz: any;
   let classification: any;
+  let onboarding: any;
   const userId = 'USER_BE01';
   const otherUserId = 'USER_BE02';
   let caseId: string;
@@ -53,6 +54,7 @@ suite('Phase 040 — critical-path backend integration', () => {
     gdpr = await import('../../server/gdpr');
     authz = await import('../../server/_core/authz');
     classification = await import('../../server/classification');
+    onboarding = await import('../../server/onboarding');
 
     db = await dbmod.getDb(); // runs migrations against the fresh temp DB
     expect(db).toBeTruthy();
@@ -124,17 +126,25 @@ suite('Phase 040 — critical-path backend integration', () => {
   });
 
   it('GDPR export returns the user data (Phase 028)', async () => {
+    await onboarding.setOnboardingCurrentStep(userId, 'evidence');
     const data = await gdpr.exportUserData(userId);
     expect(Array.isArray(data.users)).toBe(true);
     expect(data.cases?.some((c: any) => c.id === caseId)).toBe(true);
     // Password material is redacted.
     expect(data.users[0].password).toBeUndefined();
+    expect(data.system_config).toEqual(expect.arrayContaining([
+      expect.objectContaining({ configKey: `onboarding:state:${userId}` }),
+    ]));
   });
 
   it('GDPR erasure deletes the user data (Phase 028)', async () => {
     const { deleted } = await gdpr.deleteUserData(userId);
     expect(deleted.cases).toBeGreaterThanOrEqual(1);
     expect(deleted.users).toBe(1);
+    expect(deleted.system_config).toBe(1);
+    expect((await db.select().from(schema.systemConfig)).some(
+      (row: any) => row.configKey === `onboarding:state:${userId}`,
+    )).toBe(false);
 
     // The other user's data is untouched.
     const remaining = await gdpr.exportUserData(otherUserId);

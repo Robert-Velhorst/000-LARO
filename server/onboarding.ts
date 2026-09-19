@@ -1,51 +1,196 @@
 /**
- * Phase 105 — onboarding & first-run experience.
+ * Canonical, owner-scoped first-run lifecycle.
  *
- * Defines the ordered first-run steps and tracks, per user, whether onboarding
- * has been completed. Completion is stored in system_config under a per-user key
- * so the renderer can decide whether to show the first-run wizard. The step
- * content is real and mirrors the user guide (Phase 071).
+ * Only presentation state is persisted. Progress is derived from the user's
+ * real workspace so the desktop and hosted renderers cannot drift from the
+ * underlying case, evidence, and outreach records.
  */
-import { getSystemSwitch, setSystemSwitch } from "./systemState";
+import { and, eq } from "drizzle-orm";
+import { getDb } from "./db";
+import { cases, evidence, outreachStatus, systemConfig } from "./schema";
+
+export const ONBOARDING_STEP_KEYS = ["case", "evidence", "outreach"] as const;
+export type OnboardingStepKey = (typeof ONBOARDING_STEP_KEYS)[number];
+export type OnboardingStatus = "active" | "skipped" | "complete";
 
 export interface OnboardingStep {
-  key: string;
-  title: string;
-  body: string;
-  order: number;
+  key: OnboardingStepKey;
+  route: "/cases" | "/evidence" | "/outreach";
+  complete: boolean;
 }
 
-export const ONBOARDING_STEPS: OnboardingStep[] = [
-  { key: "welcome", order: 1, title: "Welcome to LARO",
-    body: "LARO helps you understand your legal issue, find suitable lawyers, and prepare outreach. It never contacts anyone without your explicit approval." },
-  { key: "privacy", order: 2, title: "Your data stays yours",
-    body: "Your data is stored locally. You can export it or erase the live account from Settings → Privacy; recovery copies expire under the configured backup-retention policy." },
-  { key: "create-case", order: 3, title: "Describe your case",
-    body: "Create a case and describe the problem in plain words. LARO classifies it into legal areas automatically." },
-  { key: "evidence", order: 4, title: "Add evidence",
-    body: "Upload documents, or connect a source if configured. Each item keeps its origin and a content hash." },
-  { key: "approve", order: 5, title: "You are always in control",
-    body: "LARO prepares outreach drafts, but YOU review and approve each one. Nothing is sent automatically." },
-  { key: "disclaimer", order: 6, title: "Not legal advice",
-    body: "LARO assists and prepares; it is not a substitute for a qualified lawyer. Have important documents reviewed." },
+export interface OnboardingState {
+  status: OnboardingStatus;
+  complete: boolean;
+  currentStepKey: OnboardingStepKey;
+  completedSteps: number;
+  totalSteps: number;
+  canComplete: boolean;
+  steps: OnboardingStep[];
+}
+
+type PersistedOnboardingState = {
+  status: OnboardingStatus;
+  currentStepKey: OnboardingStepKey;
+};
+
+const STEP_DEFINITIONS: ReadonlyArray<Omit<OnboardingStep, "complete">> = [
+  { key: "case", route: "/cases" },
+  { key: "evidence", route: "/evidence" },
+  { key: "outreach", route: "/outreach" },
 ];
 
-export function listOnboardingSteps(): OnboardingStep[] {
-  return [...ONBOARDING_STEPS].sort((a, b) => a.order - b.order);
+function stateKey(userId: string): string {
+  return `onboarding:state:${userId}`;
 }
 
-function completeKey(userId: string): string {
+function legacyCompleteKey(userId: string): string {
   return `onboarding:complete:${userId}`;
 }
 
-export async function isOnboardingComplete(userId: string): Promise<boolean> {
-  return getSystemSwitch(completeKey(userId));
+function isStepKey(value: unknown): value is OnboardingStepKey {
+  return typeof value === "string" && (ONBOARDING_STEP_KEYS as readonly string[]).includes(value);
 }
 
-export async function setOnboardingComplete(userId: string, complete: boolean): Promise<void> {
-  await setSystemSwitch(completeKey(userId), complete);
+function isStatus(value: unknown): value is OnboardingStatus {
+  return value === "active" || value === "skipped" || value === "complete";
 }
 
-export async function getOnboardingState(userId: string): Promise<{ complete: boolean; steps: OnboardingStep[] }> {
-  return { complete: await isOnboardingComplete(userId), steps: listOnboardingSteps() };
+function parsePersistedState(value: string | null | undefined): PersistedOnboardingState | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (!isStatus(parsed.status) || !isStepKey(parsed.currentStepKey)) return null;
+    return { status: parsed.status, currentStepKey: parsed.currentStepKey };
+  } catch {
+    return null;
+  }
+}
+
+function defaultPersistedState(): PersistedOnboardingState {
+  return { status: "active", currentStepKey: ONBOARDING_STEP_KEYS[0] };
+}
+
+async function writePersistedState(userId: string, state: PersistedOnboardingState): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const updatedAt = new Date();
+  db.transaction((tx) => {
+    tx.insert(systemConfig)
+      .values({ configKey: stateKey(userId), configValue: JSON.stringify(state), updatedAt } as any)
+      .onConflictDoUpdate({
+        target: systemConfig.configKey,
+        set: { configValue: JSON.stringify(state), updatedAt },
+      })
+      .run();
+    tx.delete(systemConfig).where(eq(systemConfig.configKey, legacyCompleteKey(userId))).run();
+  });
+}
+
+async function readPersistedState(userId: string): Promise<PersistedOnboardingState> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = await db
+    .select({ key: systemConfig.configKey, value: systemConfig.configValue })
+    .from(systemConfig)
+    .where(eq(systemConfig.configKey, stateKey(userId)))
+    .limit(1);
+  const parsed = parsePersistedState(rows[0]?.value);
+  if (parsed) return parsed;
+
+  const legacyRows = await db
+    .select({ value: systemConfig.configValue })
+    .from(systemConfig)
+    .where(eq(systemConfig.configKey, legacyCompleteKey(userId)))
+    .limit(1);
+  const migrated = legacyRows[0]
+    ? {
+        status: legacyRows[0].value === "true" ? "complete" as const : "active" as const,
+        currentStepKey: ONBOARDING_STEP_KEYS[0],
+      }
+    : defaultPersistedState();
+
+  // Rewrite malformed current values and migrate the legacy boolean shape.
+  if (rows[0] || legacyRows[0]) await writePersistedState(userId, migrated);
+  return migrated;
+}
+
+async function deriveCompletedSteps(userId: string): Promise<Record<OnboardingStepKey, boolean>> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const [caseRows, evidenceRows, outreachRows] = await Promise.all([
+    db.select({ id: cases.id })
+      .from(cases)
+      .where(eq(cases.userId, userId))
+      .limit(1),
+    db.select({ id: evidence.id })
+      .from(evidence)
+      .innerJoin(cases, and(eq(cases.id, evidence.caseId), eq(cases.userId, userId)))
+      .where(eq(evidence.userId, userId))
+      .limit(1),
+    db.select({ id: outreachStatus.id })
+      .from(outreachStatus)
+      .innerJoin(cases, and(eq(cases.id, outreachStatus.caseId), eq(cases.userId, userId)))
+      .limit(1),
+  ]);
+
+  return {
+    case: caseRows.length > 0,
+    evidence: evidenceRows.length > 0,
+    outreach: outreachRows.length > 0,
+  };
+}
+
+async function buildState(userId: string, persisted?: PersistedOnboardingState): Promise<OnboardingState> {
+  const current = persisted ?? await readPersistedState(userId);
+  const completed = await deriveCompletedSteps(userId);
+  const completedSteps = ONBOARDING_STEP_KEYS.filter((key) => completed[key]).length;
+  const steps = STEP_DEFINITIONS.map((step) => ({ ...step, complete: completed[step.key] }));
+  return {
+    status: current.status,
+    complete: current.status === "complete",
+    currentStepKey: current.currentStepKey,
+    completedSteps,
+    totalSteps: steps.length,
+    canComplete: completedSteps === steps.length,
+    steps,
+  };
+}
+
+export function getOnboardingState(userId: string): Promise<OnboardingState> {
+  return buildState(userId);
+}
+
+export async function setOnboardingCurrentStep(
+  userId: string,
+  currentStepKey: OnboardingStepKey,
+): Promise<OnboardingState> {
+  const current = await readPersistedState(userId);
+  const next = { status: "active" as const, currentStepKey };
+  if (current.status !== next.status || current.currentStepKey !== next.currentStepKey) {
+    await writePersistedState(userId, next);
+  }
+  return buildState(userId, next);
+}
+
+export async function skipOnboarding(userId: string): Promise<OnboardingState> {
+  const current = await readPersistedState(userId);
+  const next = { ...current, status: "skipped" as const };
+  await writePersistedState(userId, next);
+  return buildState(userId, next);
+}
+
+export async function resetOnboarding(userId: string): Promise<OnboardingState> {
+  const next = defaultPersistedState();
+  await writePersistedState(userId, next);
+  return buildState(userId, next);
+}
+
+export async function completeOnboarding(userId: string): Promise<OnboardingState | null> {
+  const current = await buildState(userId);
+  if (!current.canComplete) return null;
+  const next = { status: "complete" as const, currentStepKey: "outreach" as const };
+  await writePersistedState(userId, next);
+  return buildState(userId, next);
 }

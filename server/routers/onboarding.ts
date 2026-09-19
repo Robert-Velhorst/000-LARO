@@ -1,17 +1,31 @@
-import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
-import { listOnboardingSteps, getOnboardingState, setOnboardingComplete } from "../onboarding";
+import { TRPCError } from "@trpc/server";
+import { z } from "zod";
+import { protectedProcedure, router } from "../_core/trpc";
+import {
+  ONBOARDING_STEP_KEYS,
+  completeOnboarding,
+  getOnboardingState,
+  resetOnboarding,
+  setOnboardingCurrentStep,
+  skipOnboarding,
+} from "../onboarding";
 
-/**
- * Phase 105 — onboarding & first-run wizard.
- *
- * Steps are public (they are generic guidance); per-user completion state is
- * protected. The renderer uses `state` to decide whether to show the wizard.
- */
+/** Owner-scoped onboarding contract shared by the desktop and hosted renderer. */
 export const onboardingRouter = router({
-  steps: publicProcedure.query(() => listOnboardingSteps()),
   state: protectedProcedure.query(({ ctx }) => getOnboardingState(ctx.user.id)),
+  setCurrentStep: protectedProcedure
+    .input(z.object({ stepKey: z.enum(ONBOARDING_STEP_KEYS) }))
+    .mutation(({ ctx, input }) => setOnboardingCurrentStep(ctx.user.id, input.stepKey)),
+  skip: protectedProcedure.mutation(({ ctx }) => skipOnboarding(ctx.user.id)),
+  reset: protectedProcedure.mutation(({ ctx }) => resetOnboarding(ctx.user.id)),
   complete: protectedProcedure.mutation(async ({ ctx }) => {
-    await setOnboardingComplete(ctx.user.id, true);
-    return { complete: true as const };
+    const state = await completeOnboarding(ctx.user.id);
+    if (!state) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "Complete the case, evidence, and outreach setup steps before finishing the guide.",
+      });
+    }
+    return state;
   }),
 });

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation } from "wouter";
-import { Briefcase, ChevronDown, FileSearch, HelpCircle, Home, LogOut, Megaphone, MessageSquare, PanelLeft, Settings, Shield, StickyNote } from "lucide-react";
+import { Briefcase, ChevronDown, FileSearch, HelpCircle, Home, ListChecks, LogOut, Megaphone, MessageSquare, PanelLeft, Settings, Shield, StickyNote } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useI18n } from "@/contexts/I18nContext";
 import { APP_LOGO, APP_TITLE } from "@/const";
@@ -140,6 +140,7 @@ function WorkspaceFrame({ children, width, setWidth }: { children: ReactNode; wi
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <div className="border-b border-border p-2"><LanguageSelector /></div>
+              <DropdownMenuItem onClick={() => window.dispatchEvent(new Event("laro:open-onboarding"))}><ListChecks className="mr-2 h-4 w-4" />{t("nav.setupGuide")}</DropdownMenuItem>
               <DropdownMenuItem onClick={() => navigate("/settings")}><Settings className="mr-2 h-4 w-4" />{t("nav.settings")}</DropdownMenuItem>
               <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive"><LogOut className="mr-2 h-4 w-4" />{t("nav.signOut")}</DropdownMenuItem>
             </DropdownMenuContent>

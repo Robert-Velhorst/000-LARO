@@ -117,7 +117,7 @@ None — every artifact cited in the matrix exists. ✅
 | 102 | Data retention & archival policy | Implemented | ✅ `server/retention.ts`<br>✅ `tests/backend/retentionConfiguration.test.ts`<br>✅ `tests/backend/phase101_115.test.ts` |
 | 103 | Prototype → production migration | Implemented | ✅ `scripts/prod-preflight.mjs`<br>✅ `docs/PROD_MIGRATION.md` |
 | 104 | Operator safety stop / emergency controls | Implemented | ✅ `server/systemState.ts` |
-| 105 | Onboarding & first-run | Implemented | ✅ `server/onboarding.ts` |
+| 105 | Onboarding & first-run | Implemented | ✅ `server/onboarding.ts`<br>✅ `server/routers/onboarding.ts`<br>✅ `src/renderer/components/OnboardingFlow.tsx`<br>✅ `tests/backend/onboardingLifecycle.test.ts`<br>✅ `tests/browser/rendererAccessibility.spec.ts` |
 | 106 | Role-based settings & permissions | Implemented | ✅ `server/_core/roles.ts`<br>✅ `server/teams.ts` |
 | 107 | Quality scoring & confidence display | Implemented | ✅ `server/confidence.ts` |
 | 108 | Human decision minimization | Implemented | ✅ `docs/DECISION_MINIMIZATION.md` |

@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import SkipNavigation from "@/components/SkipNavigation";
 import DashboardLayout from "@/components/DashboardLayout";
 import WorkspaceIdentity from "@/components/WorkspaceIdentity";
+import OnboardingFlow from "@/components/OnboardingFlow";
 
 const Home = lazy(() => import("@/components/Home"));
 const Cases = lazy(() => import("@/components/Cases"));
@@ -69,6 +70,7 @@ export default function DashboardApp() {
       <SkipNavigation />
       <WebSocketProvider>
         <Router {...(fileProtocol ? { hook: useHashLocation } : {})}>
+          <OnboardingFlow key={user.id} />
           <DashboardLayout>
           <Suspense fallback={<div role="status" className="py-12 text-center text-muted-foreground">{t("common.loading")}</div>}>
             <Switch>

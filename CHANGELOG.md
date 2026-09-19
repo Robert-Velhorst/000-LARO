@@ -7,6 +7,10 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Replaced the disconnected local-storage onboarding prototype and boolean-only
+  backend flag with one mounted, owner-scoped desktop/browser setup flow. Real
+  case, evidence, and outreach records now drive completion; resume, skip,
+  reset, account switching, and legacy-state migration are covered end to end.
 - Replaced API-only evidence `file://` links with short-lived signed HTTP links
   that enforce authenticated issuance, expiry, signature validation, and
   content-hash integrity without exposing container paths. Desktop-local links
