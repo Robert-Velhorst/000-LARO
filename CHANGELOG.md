@@ -7,6 +7,12 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Made KvK, Rechtspraak, and KOOP public-source research case-owned and
+  failure-aware. Every attempt now stores a durable metadata-only receipt with
+  the normalized query, retrieval time, result count, and completeness, while
+  the UI distinguishes complete, genuine empty, partial, unavailable, and
+  failed responses without turning provider failures or partial zeroes into
+  absence or good-standing claims.
 - Represented Gmail and Google Drive as capabilities of one Google account
   grant. Disconnect now requires a versioned impact review naming the account,
   both capabilities, affected scheduled collection, and local source-record

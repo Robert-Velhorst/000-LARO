@@ -13,7 +13,9 @@ Date: 2026-09-19
 | Telegram | Message evidence | `TELEGRAM_BOT_TOKEN` | Available when configured |
 | Trello | Board evidence | API credentials plus secure token persistence | Disabled; secure token persistence is not implemented |
 | Slack | Message evidence | not applicable | Unavailable |
+| KvK open dataset | Basic Dutch business-register fields | public open-data endpoint | Available; exact-number lookup with field provenance and explicit completeness |
 | Rechtspraak | Recently published court-decision discovery | public RSS search | Available; structured XML parsing, bounded requests, ECLI metadata, and direct source links |
+| KOOP Basiswettenbestand | Consolidated Dutch legislation | public SRU 2.0 search | Available; validity-date search with provider-total completeness checks |
 
 Google requests only Gmail read, Drive read, and account-email identity scopes.
 It does not request Gmail send or label-write access. Outlook OAuth does not
@@ -72,10 +74,21 @@ aliases were removed; collection jobs cannot manually refresh a grant.
   receipt but cannot block local erasure; the owner may still need to revoke the
   application in the provider account when that summary reports a failure.
 
+KvK, Rechtspraak, and KOOP research requires an owned case. Every attempt stores
+a mandatory metadata-only receipt containing the case, source, normalized query,
+retrieval time, result count, and completeness; provider result content is not
+copied into research history. Complete, genuine-empty, partial, unavailable, and
+failed states remain distinct throughout the provider, API, and renderer layers.
+
 Rechtspraak lookup uses the official HTTPS RSS search for published decisions.
-Returned entries are discovery leads, not a complete litigation-history register.
+Returned entries are discovery leads, not a complete litigation-history register,
+so even a successful zero-result RSS response remains partial and inconclusive.
 LARO keeps the decision date, ECLI, summary, court, and source link together and
 does not treat an empty query or a lexical relevance score as a legal conclusion.
+KvK similarly does not infer good standing from a missing or unsupported
+insolvency-status field. KOOP reports a complete result only when the response
+declares a provider total and every declared row is represented in the bounded
+result; otherwise its successful result is partial.
 
 For the Windows ngrok API deployment, `scripts/configure-live-providers.ps1`
 stores Google and authenticated SMTP secrets with DPAPI `CurrentUser`

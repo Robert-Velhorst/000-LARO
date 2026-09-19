@@ -21,6 +21,11 @@
 
 import { load } from "cheerio";
 import { readBoundedResponseText, withBoundedHttpResponse } from "./boundedHttpResponse";
+import {
+  classifyPublicResearchError,
+  providerHttpError,
+  type PublicResearchProviderOutcome,
+} from "./publicResearch";
 
 interface ECLIMetadata {
   ecli: string; // European Case Law Identifier (e.g., ECLI:NL:RBAMS:2024:1234)
@@ -49,10 +54,27 @@ export interface CourtDecision {
 
 export interface RechtspraakSearchResult {
   success: boolean;
-  totalResults: number;
+  outcome: Exclude<PublicResearchProviderOutcome, "empty">;
+  totalResults: number | null;
   decisions: CourtDecision[];
+  retrievedAt: string;
   error?: string;
+  failureCode?: string;
   legalSignificance?: string;
+  coverageNotice?: string;
+}
+
+export interface OpponentHistoryResult {
+  success: boolean;
+  outcome: Exclude<PublicResearchProviderOutcome, "empty">;
+  totalCases: number | null;
+  wonCases: number | null;
+  lostCases: number | null;
+  recentCases: CourtDecision[];
+  patterns: string[];
+  retrievedAt: string;
+  error?: string;
+  failureCode?: string;
   coverageNotice?: string;
 }
 
@@ -135,9 +157,7 @@ export class RechtspraakIntegrationService {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       }),
       async (response) => {
-        if (!response.ok) {
-          throw new Error(`Rechtspraak API error: ${response.status} ${response.statusText}`);
-        }
+        if (!response.ok) throw providerHttpError("Rechtspraak.nl", response.status);
         return readBoundedResponseText(response, {
           maxBytes: MAX_FEED_BYTES,
           label: "Rechtspraak response",
@@ -160,18 +180,24 @@ export class RechtspraakIntegrationService {
 
       return {
         success: true,
+        outcome: "partial",
         totalResults: decisions.length,
         decisions: decisions.slice(0, limit),
+        retrievedAt: new Date().toISOString(),
         legalSignificance: this.determineLegalSignificance(companyName, decisions),
         coverageNotice: this.coverageNotice(),
       };
     } catch (error) {
       console.error("[Rechtspraak Integration] Error:", error);
+      const failure = classifyPublicResearchError(error, "Rechtspraak.nl");
       return {
         success: false,
-        totalResults: 0,
+        outcome: failure.outcome,
+        totalResults: null,
         decisions: [],
-        error: error instanceof Error ? error.message : "Unknown error occurred",
+        retrievedAt: new Date().toISOString(),
+        error: failure.message,
+        failureCode: failure.code,
       };
     }
   }
@@ -203,8 +229,10 @@ export class RechtspraakIntegrationService {
 
       return {
         success: true,
+        outcome: "partial",
         totalResults: scoredDecisions.length,
         decisions: scoredDecisions.slice(0, limit),
+        retrievedAt: new Date().toISOString(),
         legalSignificance:
           `Returned ${scoredDecisions.length} recently published decisions matching "${legalIssue}". ` +
           "Relevance scores are lexical triage only; verify each source before relying on it.",
@@ -214,11 +242,15 @@ export class RechtspraakIntegrationService {
       };
     } catch (error) {
       console.error("[Rechtspraak Integration] Error:", error);
+      const failure = classifyPublicResearchError(error, "Rechtspraak.nl");
       return {
         success: false,
-        totalResults: 0,
+        outcome: failure.outcome,
+        totalResults: null,
         decisions: [],
-        error: error instanceof Error ? error.message : "Unknown error occurred",
+        retrievedAt: new Date().toISOString(),
+        error: failure.message,
+        failureCode: failure.code,
       };
     }
   }
@@ -226,22 +258,24 @@ export class RechtspraakIntegrationService {
   /**
    * Get opponent's litigation history
    */
-  async getOpponentHistory(companyName: string): Promise<{
-    totalCases: number;
-    wonCases: number;
-    lostCases: number;
-    recentCases: CourtDecision[];
-    patterns: string[];
-  }> {
+  async getOpponentHistory(companyName: string): Promise<OpponentHistoryResult> {
     const searchResult = await this.searchByCompany(companyName, 50);
+    return this.summarizeOpponentHistory(searchResult);
+  }
 
+  summarizeOpponentHistory(searchResult: RechtspraakSearchResult): OpponentHistoryResult {
     if (!searchResult.success) {
       return {
-        totalCases: 0,
-        wonCases: 0,
-        lostCases: 0,
+        success: false,
+        outcome: searchResult.outcome,
+        totalCases: null,
+        wonCases: null,
+        lostCases: null,
         recentCases: [],
         patterns: [],
+        retrievedAt: searchResult.retrievedAt,
+        error: searchResult.error,
+        failureCode: searchResult.failureCode,
       };
     }
 
@@ -253,11 +287,15 @@ export class RechtspraakIntegrationService {
     const patterns = this.identifyLitigationPatterns(searchResult.decisions);
 
     return {
+      success: true,
+      outcome: searchResult.outcome,
       totalCases: searchResult.totalResults,
       wonCases,
       lostCases,
       recentCases: searchResult.decisions.slice(0, 5),
       patterns,
+      retrievedAt: searchResult.retrievedAt,
+      coverageNotice: searchResult.coverageNotice,
     };
   }
 
@@ -362,4 +400,3 @@ export class RechtspraakIntegrationService {
 }
 
 export const rechtspraakIntegrationService = new RechtspraakIntegrationService();
-

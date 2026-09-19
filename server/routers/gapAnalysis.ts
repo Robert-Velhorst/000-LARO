@@ -5,7 +5,12 @@ import { gapDetectionService } from "../gapDetection";
 import { kvkIntegrationService } from "../kvkIntegration";
 import { rechtspraakIntegrationService } from "../rechtspraakIntegration";
 import { searchOfficialLegislation } from "../wettenOverheid";
-import { createAuditLog } from "../audit";
+import {
+  classifyPublicResearchError,
+  normalizePublicResearchQuery,
+  recordPublicResearch,
+  researchStateFromOutcome,
+} from "../publicResearch";
 import { legalDocumentGeneratorService } from "../legalDocumentGenerator";
 import { getDb } from "../db";
 import {
@@ -446,35 +451,26 @@ export const gapAnalysisRouter = router({
   lookupCompany: protectedProcedure
     .input(
       z.object({
-        kvkNumber: z.string().optional(),
-        caseText: z.string().optional(), // Extract KvK numbers from case description
+        caseId: z.string().trim().min(1).max(128),
+        kvkNumber: z.string().regex(/^\d{8}$/, "KvK number must contain exactly 8 digits"),
       })
     )
-    .mutation(async ({ input }) => {
-      // If KvK number provided, look it up directly
-      if (input.kvkNumber) {
-        return await kvkIntegrationService.lookupByKvKNumber(input.kvkNumber);
-      }
-
-      // If case text provided, extract KvK numbers
-      if (input.caseText) {
-        const kvkNumbers = kvkIntegrationService.extractKvKNumbers(input.caseText);
-        
-        if (kvkNumbers.length === 0) {
-          return {
-            success: false,
-            error: "No KvK numbers found in case text.",
-          };
-        }
-
-        // Look up first KvK number found
-        return await kvkIntegrationService.lookupByKvKNumber(kvkNumbers[0]);
-      }
-
-      return {
-        success: false,
-        error: "Please provide either a KvK number or case text to search.",
-      };
+    .mutation(async ({ input, ctx }) => {
+      await assertCaseOwnership(input.caseId, ctx.user.id);
+      const normalizedQuery = input.kvkNumber;
+      const result = await kvkIntegrationService.lookupByKvKNumber(normalizedQuery);
+      const state = researchStateFromOutcome(result.outcome);
+      const research = await recordPublicResearch({
+        userId: ctx.user.id,
+        caseId: input.caseId,
+        source: "kvk_open_dataset",
+        normalizedQuery,
+        retrievedAt: result.source?.retrievedAt ?? new Date().toISOString(),
+        resultCount: result.success ? 1 : state.empty ? 0 : null,
+        completeness: state.completeness,
+        empty: state.empty,
+      });
+      return { ...result, research };
     }),
 
   /**
@@ -483,17 +479,39 @@ export const gapAnalysisRouter = router({
   searchCourtRecords: protectedProcedure
     .input(
       z.object({
+        caseId: z.string().trim().min(1).max(128),
         companyName: z.string().trim().min(3).max(200),
         searchType: z.enum(["company_history", "precedents"]).default("company_history"),
         legalIssue: z.string().trim().min(3).max(500).optional(),
       })
     )
-    .mutation(async ({ input }) => {
-      if (input.searchType === "precedents" && input.legalIssue) {
-        return await rechtspraakIntegrationService.searchPrecedents(input.legalIssue);
-      }
-
-      return await rechtspraakIntegrationService.searchByCompany(input.companyName);
+    .mutation(async ({ input, ctx }) => {
+      await assertCaseOwnership(input.caseId, ctx.user.id);
+      const researchQuery = input.searchType === "precedents" && input.legalIssue
+        ? input.legalIssue
+        : input.companyName;
+      const normalizedQuery = normalizePublicResearchQuery(researchQuery);
+      const result = input.searchType === "precedents" && input.legalIssue
+        ? await rechtspraakIntegrationService.searchPrecedents(input.legalIssue)
+        : await rechtspraakIntegrationService.searchByCompany(input.companyName, 50);
+      const state = researchStateFromOutcome(result.outcome);
+      const research = await recordPublicResearch({
+        userId: ctx.user.id,
+        caseId: input.caseId,
+        source: "rechtspraak_rss",
+        normalizedQuery,
+        retrievedAt: result.retrievedAt,
+        resultCount: result.success ? result.totalResults : null,
+        completeness: state.completeness,
+        context: { searchType: input.searchType },
+      });
+      return {
+        ...result,
+        opponentHistory: input.searchType === "company_history"
+          ? rechtspraakIntegrationService.summarizeOpponentHistory(result)
+          : null,
+        research,
+      };
     }),
 
   searchLegislation: protectedProcedure
@@ -505,24 +523,75 @@ export const gapAnalysisRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       await assertCaseOwnership(input.caseId, ctx.user.id);
-      const result = await searchOfficialLegislation(input);
-      await createAuditLog({
-        userId: ctx.user.id,
-        action: "legal_source.legislation_searched",
-        entityType: "case",
-        entityId: input.caseId,
-        details: { query: input.query, asOfDate: result.asOfDate, resultCount: result.results.length, source: result.source },
-      });
-      return result;
+      const normalizedQuery = normalizePublicResearchQuery(input.query);
+      try {
+        const result = await searchOfficialLegislation(input);
+        const research = await recordPublicResearch({
+          userId: ctx.user.id,
+          caseId: input.caseId,
+          source: "koop_bwb_sru",
+          normalizedQuery,
+          retrievedAt: result.retrievedAt,
+          resultCount: result.results.length,
+          completeness: result.completeness,
+          empty: result.completeness === "complete" && result.results.length === 0,
+          context: { asOfDate: result.asOfDate },
+        });
+        return { ...result, research };
+      } catch (error) {
+        const failure = classifyPublicResearchError(error, "KOOP legislation search");
+        const retrievedAt = new Date().toISOString();
+        const asOfDate = input.asOfDate || retrievedAt.slice(0, 10);
+        const research = await recordPublicResearch({
+          userId: ctx.user.id,
+          caseId: input.caseId,
+          source: "koop_bwb_sru",
+          normalizedQuery,
+          retrievedAt,
+          resultCount: null,
+          completeness: failure.outcome,
+          context: { asOfDate },
+        });
+        return {
+          success: false as const,
+          query: normalizedQuery,
+          asOfDate,
+          retrievedAt,
+          results: [],
+          totalAvailable: null,
+          completeness: failure.outcome,
+          source: "KOOP Basiswettenbestand SRU 2.0" as const,
+          coverageNotice: "No legal-source conclusion is available from this failed provider attempt.",
+          error: failure.message,
+          failureCode: failure.code,
+          research,
+        };
+      }
     }),
 
   /**
    * Get opponent's complete litigation history
    */
   getOpponentHistory: protectedProcedure
-    .input(z.object({ companyName: z.string().trim().min(3).max(200) }))
-    .query(async ({ input }) => {
-      return await rechtspraakIntegrationService.getOpponentHistory(input.companyName);
+    .input(z.object({
+      caseId: z.string().trim().min(1).max(128),
+      companyName: z.string().trim().min(3).max(200),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      await assertCaseOwnership(input.caseId, ctx.user.id);
+      const result = await rechtspraakIntegrationService.getOpponentHistory(input.companyName);
+      const state = researchStateFromOutcome(result.outcome);
+      const research = await recordPublicResearch({
+        userId: ctx.user.id,
+        caseId: input.caseId,
+        source: "rechtspraak_rss",
+        normalizedQuery: normalizePublicResearchQuery(input.companyName),
+        retrievedAt: result.retrievedAt,
+        resultCount: result.success ? result.totalCases : null,
+        completeness: state.completeness,
+        context: { searchType: "company_history" },
+      });
+      return { ...result, research };
     }),
 
   /**

@@ -782,11 +782,21 @@ Credentials make a provider available; they do not prove live acceptance.
 | SMTP and SendGrid | Implemented; sending disabled by default |
 | AWS S3 | Optional managed evidence storage |
 | HAI | Owner-bound, revocable, read-only feed |
-| KvK public records | Supported official open-data contract |
+| KvK public records | Supported official open-data contract with case-owned research receipts |
+| Rechtspraak published decisions | Supported bounded RSS discovery; coverage is always partial |
+| KOOP legislation | Supported official Basiswettenbestand search with completeness reporting |
 | Telegram | Bounded bot/API and desktop-export import paths are available when configured; bot history is limited by Telegram and target verification is still required |
 | Microsoft/OneDrive/Outlook | Reserved configuration; collection unavailable |
 | Trello OAuth | Unavailable until durable token lifecycle is complete |
 | Google Calendar/Contacts | Not implemented as LARO evidence connectors |
+
+Public-source research is attached to an owned case. Each KvK, Rechtspraak, or
+KOOP attempt stores only its source, normalized query, retrieval time, result
+count, and completeness in durable audit history; provider result content is
+not copied there. The renderer labels complete, genuine-empty, partial,
+unavailable, and failed outcomes separately. A provider failure never appears
+as zero results, and a partial zero never proves that a record, decision, or
+insolvency warning is absent.
 
 ## Google and Outbound Email
 

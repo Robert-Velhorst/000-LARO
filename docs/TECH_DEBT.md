@@ -35,6 +35,7 @@ Updated: 2026-09-19
 | D29 | Gap review derived completeness and case-strength percentages from record counts | - | Resolved with a versioned evidence-coverage inventory, exact source/analysis revisions, explicit unknowns and limitations, legacy-row retirement migrations, and backend/browser regression coverage |
 | D30 | Automatic outreach discovery approved an arbitrary owner-wide pending slice | - | Resolved with run IDs, stable candidate-ID dispositions, exact-ID transactional review/matching, manual and historical preservation, and explicit partial-bound reporting |
 | D31 | Separate Gmail and Drive disconnect language concealed revocation of their shared Google grant | - | Resolved with one versioned impact review, explicit shared-capability confirmation, stale-review rejection before provider contact, full-state retry on provider failure, transactional schedule/source cleanup, and browser/backend regressions |
+| D32 | Public-record searches were not case-owned and provider failures could resemble zero-result history | - | Resolved with pre-fetch ownership checks, metadata-only mandatory receipts, explicit completeness states, null failure counts, and backend/browser regressions across KvK, Rechtspraak, and KOOP |
 
 D10 is operationally contained without rewriting installed databases. A native
 foreign-key conversion remains migration work, not a release blocker while the

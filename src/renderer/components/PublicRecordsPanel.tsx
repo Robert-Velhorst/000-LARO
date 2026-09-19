@@ -42,17 +42,11 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
   const courtRecordsSearch = trpc.gapAnalysis.searchCourtRecords.useMutation();
   const legislationSearch = trpc.gapAnalysis.searchLegislation.useMutation();
 
-  // Opponent history query
-  const { data: opponentHistory, refetch: refetchHistory } =
-    trpc.gapAnalysis.getOpponentHistory.useQuery(
-      { companyName: searchCompany },
-      { enabled: false }
-    );
-
   const handleKvkLookup = async () => {
     if (!searchKvk) return;
 
     await kvkLookup.mutateAsync({
+      caseId,
       kvkNumber: searchKvk,
     });
   };
@@ -61,13 +55,13 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
     if (!searchCompany) return;
 
     await courtRecordsSearch.mutateAsync({
+      caseId,
       companyName: searchCompany,
       searchType: "company_history",
     });
-
-    // Also fetch detailed history
-    await refetchHistory();
   };
+
+  const opponentHistory = courtRecordsSearch.data?.opponentHistory;
 
   return (
     <div className="space-y-6">
@@ -122,7 +116,12 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
               {/* KvK Results */}
               {kvkLookup.data && (
                 <div className="mt-4 space-y-4">
-                  {kvkLookup.data.success ? (
+                  <ResearchStatus
+                    research={kvkLookup.data.research}
+                    error={kvkLookup.data.error}
+                    emptyMessage="The complete KvK response contained no matching company record. No activity or insolvency conclusion can be drawn."
+                  />
+                  {kvkLookup.data.research.empty ? null : kvkLookup.data.success ? (
                     <>
                       <Alert>
                         <CheckCircle className="h-4 w-4" />
@@ -231,14 +230,25 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                         </Card>
                       </div>
 
-                      {/* Insolvency Warning */}
-                      {kvkLookup.data.data?.insolvencyStatus && (
+                      {/* Insolvency status is explicit; a missing field never means no warning exists. */}
+                      {kvkLookup.data.data?.insolvencyStatus ? (
                         <Alert variant="destructive">
                           <AlertTriangle className="h-4 w-4" />
                           <AlertDescription>
                             <div className="font-semibold">Registry special legal status</div>
                             <div className="mt-1">{kvkLookup.data.data.insolvencyStatus.label}</div>
                             <SourceField {...kvkLookup.data.data.fieldProvenance.insolvencyStatus} />
+                          </AlertDescription>
+                        </Alert>
+                      ) : (
+                        <Alert>
+                          <AlertTriangle className="h-4 w-4" />
+                          <AlertDescription>
+                            <div className="font-semibold">Insolvency/status warning not established</div>
+                            <div className="mt-1">
+                              The open-dataset response did not provide a supported special-status value. This is not evidence that no insolvency or status warning exists.
+                            </div>
+                            <SourceField {...kvkLookup.data.data!.fieldProvenance.insolvencyStatus} />
                           </AlertDescription>
                         </Alert>
                       )}
@@ -305,10 +315,6 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                     </>
                   ) : (
                     <div className="space-y-3">
-                      <Alert variant="destructive">
-                        <XCircle className="h-4 w-4" />
-                        <AlertDescription>{kvkLookup.data.error}</AlertDescription>
-                      </Alert>
                       {kvkLookup.data.source && (
                         <p className="text-xs text-muted-foreground">
                           Source: {kvkLookup.data.source.provider} · retrieved {new Date(kvkLookup.data.source.retrievedAt).toLocaleString()}
@@ -351,10 +357,18 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                 {courtRecordsSearch.isPending ? "Searching..." : "Search Court Records"}
               </Button>
 
+              {courtRecordsSearch.data && (
+                <ResearchStatus
+                  research={courtRecordsSearch.data.research}
+                  error={courtRecordsSearch.data.error}
+                  emptyMessage="The complete Rechtspraak response contained no matching published decisions."
+                />
+              )}
+
               {/* Opponent History Summary */}
-              {opponentHistory && (
+              {opponentHistory?.success && (
                 <div className="mt-4 space-y-4">
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div className="rounded-md border border-border/60 p-3">
                       <p className="text-sm font-semibold">Published results</p>
                       <p className="mt-2 text-2xl font-bold">{opponentHistory.totalCases}</p>
@@ -366,7 +380,7 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                           Classified outcomes
                       </p>
                       <p className="mt-2 text-2xl font-bold">
-                        {opponentHistory.wonCases + opponentHistory.lostCases}
+                        {(opponentHistory.wonCases ?? 0) + (opponentHistory.lostCases ?? 0)}
                       </p>
                     </div>
 
@@ -460,31 +474,29 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
               )}
 
               {/* Court Records Search Results */}
-              {courtRecordsSearch.data && (
+              {courtRecordsSearch.data?.success && (
                 <div className="mt-4">
-                  {courtRecordsSearch.data.success ? (
-                    <Alert>
-                      <CheckCircle className="h-4 w-4" />
-                      <AlertDescription>
-                        Returned {courtRecordsSearch.data.totalResults} recently published decisions
-                        {courtRecordsSearch.data.legalSignificance && (
-                          <div className="mt-2 text-sm">
-                            {courtRecordsSearch.data.legalSignificance}
-                          </div>
-                        )}
-                        {courtRecordsSearch.data.coverageNotice && (
-                          <div className="mt-2 text-xs text-muted-foreground">
-                            {courtRecordsSearch.data.coverageNotice}
-                          </div>
-                        )}
-                      </AlertDescription>
-                    </Alert>
-                  ) : (
-                    <Alert variant="destructive">
-                      <XCircle className="h-4 w-4" />
-                      <AlertDescription>{courtRecordsSearch.data.error}</AlertDescription>
-                    </Alert>
-                  )}
+                  <Alert>
+                    <CheckCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      The partial RSS response returned {courtRecordsSearch.data.totalResults} recently published decision(s).
+                      {courtRecordsSearch.data.totalResults === 0 && (
+                        <div className="mt-2 text-sm font-medium">
+                          Zero in this partial source is not evidence that no published decisions exist.
+                        </div>
+                      )}
+                      {courtRecordsSearch.data.legalSignificance && (
+                        <div className="mt-2 text-sm">
+                          {courtRecordsSearch.data.legalSignificance}
+                        </div>
+                      )}
+                      {courtRecordsSearch.data.coverageNotice && (
+                        <div className="mt-2 text-xs text-muted-foreground">
+                          {courtRecordsSearch.data.coverageNotice}
+                        </div>
+                      )}
+                    </AlertDescription>
+                  </Alert>
                 </div>
               )}
             </CardContent>
@@ -520,8 +532,13 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
             ) : null}
             {legislationSearch.data ? (
               <div className="mt-5 space-y-3">
-                <p className="text-xs text-muted-foreground">{legislationSearch.data.coverageNotice}</p>
-                {legislationSearch.data.results.length ? legislationSearch.data.results.map((result) => (
+                <ResearchStatus
+                  research={legislationSearch.data.research}
+                  error={legislationSearch.data.success ? undefined : legislationSearch.data.error}
+                  emptyMessage="The complete KOOP response contained no legislation matching this title and validity date."
+                />
+                {legislationSearch.data.success && <p className="text-xs text-muted-foreground">{legislationSearch.data.coverageNotice}</p>}
+                {legislationSearch.data.success && legislationSearch.data.results.map((result) => (
                   <article key={result.identifier} className="border-t border-border/60 pt-3">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -536,7 +553,7 @@ export function PublicRecordsPanel({ caseId, companyName, kvkNumber }: PublicRec
                       </a>
                     </div>
                   </article>
-                )) : <p className="text-sm text-muted-foreground">No legislation matched this title and validity date.</p>}
+                ))}
               </div>
             ) : null}
           </section>
@@ -551,5 +568,85 @@ function SourceField({ sourceField, rawValue }: { sourceField: string; rawValue:
     <p className="text-xs text-muted-foreground">
       Source field: <code>{sourceField}</code>{rawValue === null ? " (not returned)" : ` = ${rawValue}`}
     </p>
+  );
+}
+
+type ResearchReceipt = {
+  completeness: "complete" | "partial" | "unavailable" | "failed";
+  empty: boolean;
+  resultCount: number | null;
+  retrievedAt: string;
+  source: "kvk_open_dataset" | "rechtspraak_rss" | "koop_bwb_sru";
+};
+
+function ResearchStatus({
+  research,
+  error,
+  emptyMessage,
+}: {
+  research: ResearchReceipt;
+  error?: string;
+  emptyMessage: string;
+}) {
+  const renderedState = research.empty ? "empty" : research.completeness;
+  const source = research.source === "kvk_open_dataset"
+    ? "KvK open dataset"
+    : research.source === "rechtspraak_rss"
+      ? "Rechtspraak.nl RSS"
+      : "KOOP Basiswettenbestand";
+  if (research.empty) {
+    return (
+      <Alert data-testid="research-state-empty">
+        <CheckCircle className="h-4 w-4" />
+        <AlertDescription>
+          <p className="font-semibold">Complete response — no matches</p>
+          <p className="mt-1">{emptyMessage}</p>
+          <p className="mt-2 text-xs text-muted-foreground">{source} · retrieved {new Date(research.retrievedAt).toLocaleString()}</p>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  if (research.completeness === "complete") {
+    return (
+      <Alert data-testid="research-state-complete">
+        <CheckCircle className="h-4 w-4" />
+        <AlertDescription>
+          <p className="font-semibold">Complete provider response</p>
+          <p className="mt-1">Recorded {research.resultCount ?? 0} matching result(s) for this bounded query.</p>
+          <p className="mt-2 text-xs text-muted-foreground">{source} · retrieved {new Date(research.retrievedAt).toLocaleString()}</p>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  if (research.completeness === "partial") {
+    return (
+      <Alert data-testid="research-state-partial">
+        <AlertTriangle className="h-4 w-4" />
+        <AlertDescription>
+          <p className="font-semibold">Partial provider response</p>
+          <p className="mt-1">
+            {research.resultCount === 0
+              ? "The source returned zero matches, but its coverage is partial; absence is not established."
+              : `Recorded ${research.resultCount ?? 0} result(s), but the source or returned fields are incomplete.`}
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground">{source} · retrieved {new Date(research.retrievedAt).toLocaleString()}</p>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  return (
+    <Alert variant="destructive" data-testid={`research-state-${renderedState}`}>
+      {research.completeness === "unavailable"
+        ? <AlertTriangle className="h-4 w-4" />
+        : <XCircle className="h-4 w-4" />}
+      <AlertDescription>
+        <p className="font-semibold">
+          {research.completeness === "unavailable" ? "Provider unavailable" : "Research failed"}
+        </p>
+        <p className="mt-1">{error || "The provider response could not be used."}</p>
+        <p className="mt-1">No zero-result, status, insolvency, or absence conclusion was recorded.</p>
+        <p className="mt-2 text-xs">{source} · attempted {new Date(research.retrievedAt).toLocaleString()}</p>
+      </AlertDescription>
+    </Alert>
   );
 }

@@ -41,6 +41,7 @@ const MANDATORY_AUDIT_ACTIONS = new Set([
   "outreach.directory_batch_reviewed",
   "outreach.targets_matched",
   "outreach.target_match_status_changed",
+  "legal_source.public_research_recorded",
   "provider.connected",
   "provider.credentials_invalidated",
   "provider.credentials_refreshed",
@@ -258,6 +259,9 @@ export const AUDIT_ACTIONS = {
   PROVIDER_DISCONNECT_REVOKED: "provider.disconnect_revoked",
   PROVIDER_DISCONNECT_FAILED: "provider.disconnect_failed",
   PROVIDER_ACCEPTANCE_RECORDED: "provider.acceptance_recorded",
+
+  // Case-scoped public-source research
+  PUBLIC_RESEARCH_RECORDED: "legal_source.public_research_recorded",
 
   // Evidence actions
   EVIDENCE_EXPORTED: "evidence.exported",

@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import Database from "better-sqlite3";
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
@@ -143,6 +143,16 @@ async function expectInsideViewport(locator: Locator) {
         && rect.bottom <= window.innerHeight + 1,
     };
   })).toEqual({ hasSize: true, insideViewport: true });
+}
+
+async function fulfillTrpc(route: Route, json: unknown) {
+  const result = { result: { data: { json } } };
+  const batch = new URL(route.request().url()).searchParams.has("batch");
+  await route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify(batch ? [result] : result),
+  });
 }
 
 function analysisResult(options: { party: string; date: string; title: string; text: string }) {
@@ -1971,6 +1981,174 @@ test("global search opens every result on a registered, reload-safe deep link", 
   expect(consoleErrors).toEqual([]);
   expect(pageErrors).toEqual([]);
   expect(requestFailures).toEqual([]);
+});
+
+test("public research renders complete, empty, partial, unavailable, and failed states without false absence claims", async ({ page }, testInfo) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badResponses: Array<{ status: number; url: string }> = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => requestFailures.push(`${request.method()} ${request.url()}`));
+  page.on("response", response => { if (response.status() >= 400) badResponses.push({ status: response.status(), url: response.url() }); });
+
+  const email = await createAccount(page);
+  const caseId = `A11Y_PUBLIC_RESEARCH_${randomUUID()}`;
+  const now = Math.floor(Date.now() / 1_000);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const owner = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    database.prepare(
+      `INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, createdAt, updatedAt)
+       VALUES (?, ?, 'Public research browser review', 'Company records', 'Case-scoped public research fixture', 'Low', 'Intake', ?, ?)`,
+    ).run(caseId, owner.id, now, now);
+  } finally {
+    database.close();
+  }
+
+  const receipt = (
+    source: "kvk_open_dataset" | "rechtspraak_rss" | "koop_bwb_sru",
+    completeness: "complete" | "partial" | "unavailable" | "failed",
+    resultCount: number | null,
+    empty = false,
+  ) => ({
+    contractVersion: "case-public-research-v1",
+    recordId: `RESEARCH_${source}_${completeness}_${resultCount}`,
+    caseId,
+    source,
+    normalizedQuery: source === "kvk_open_dataset" ? "12345678" : "example query",
+    retrievedAt: "2026-09-19T12:00:00.000Z",
+    resultCount,
+    completeness,
+    empty,
+  });
+  let kvkAttempt = 0;
+  await page.route("**/api/trpc/gapAnalysis.lookupCompany*", async route => {
+    kvkAttempt += 1;
+    if (kvkAttempt === 1) {
+      await fulfillTrpc(route, {
+        success: false,
+        outcome: "unavailable",
+        error: "The KvK open dataset is temporarily unavailable. Retry the research later.",
+        failureCode: "http_503",
+        research: receipt("kvk_open_dataset", "unavailable", null),
+      });
+      return;
+    }
+    if (kvkAttempt === 2) {
+      await fulfillTrpc(route, {
+        success: false,
+        outcome: "empty",
+        error: "No company record matched this KvK number.",
+        failureCode: "not_found",
+        research: receipt("kvk_open_dataset", "complete", 0, true),
+      });
+      return;
+    }
+    await fulfillTrpc(route, {
+      success: true,
+      outcome: "complete",
+      data: {
+        kvkNumber: "12345678",
+        startDate: "2010-01-01",
+        isActive: false,
+        insolvencyStatus: { type: "bankruptcy", code: "FAIL", label: "Bankruptcy (Faillissement)" },
+        legalForm: "BV",
+        postalCodeRegion: "10",
+        activities: [],
+        fieldProvenance: {
+          startDate: { sourceField: "datumAanvang", rawValue: "20100101" },
+          activityStatus: { sourceField: "actief", rawValue: "N" },
+          insolvencyStatus: { sourceField: "insolventieCode", rawValue: "FAIL" },
+          legalForm: { sourceField: "rechtsvormCode", rawValue: "BV" },
+          postalCodeRegion: { sourceField: "postcodeRegio", rawValue: "10" },
+        },
+      },
+      source: {
+        provider: "Kamer van Koophandel (KvK)",
+        dataset: "Business Register Open Dataset - Basic Company Information",
+        recordUrl: "https://opendata.kvk.nl/example",
+        documentationUrl: "https://developers.kvk.nl/documentation/open-dataset-basis-bedrijfsgegevens-api",
+        retrievedAt: "2026-09-19T12:00:00.000Z",
+      },
+      limitations: [],
+      reviewTriage: [],
+      research: receipt("kvk_open_dataset", "complete", 1),
+    });
+  });
+  await page.route("**/api/trpc/gapAnalysis.searchCourtRecords*", route => fulfillTrpc(route, {
+    success: true,
+    outcome: "partial",
+    totalResults: 0,
+    decisions: [],
+    retrievedAt: "2026-09-19T12:00:00.000Z",
+    legalSignificance: "No matching published decisions were returned. This does not prove that no litigation exists.",
+    coverageNotice: "The RSS source is not a complete litigation-history register.",
+    opponentHistory: {
+      success: true,
+      outcome: "partial",
+      totalCases: 0,
+      wonCases: 0,
+      lostCases: 0,
+      recentCases: [],
+      patterns: [],
+      retrievedAt: "2026-09-19T12:00:00.000Z",
+    },
+    research: receipt("rechtspraak_rss", "partial", 0),
+  }));
+  await page.route("**/api/trpc/gapAnalysis.searchLegislation*", route => fulfillTrpc(route, {
+    success: false,
+    query: "bestuursrecht",
+    asOfDate: "2026-09-19",
+    retrievedAt: "2026-09-19T12:00:00.000Z",
+    results: [],
+    totalAvailable: null,
+    completeness: "failed",
+    source: "KOOP Basiswettenbestand SRU 2.0",
+    coverageNotice: "No legal-source conclusion is available from this failed provider attempt.",
+    error: "KOOP legislation search returned a response LARO could not safely use. No conclusion was recorded.",
+    failureCode: "invalid_provider_response",
+    research: receipt("koop_bwb_sru", "failed", null),
+  }));
+
+  const response = await page.goto(`/evidence?view=gaps&case=${caseId}`, { waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "Evidence coverage and source availability" })).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("tab", { name: "Public Records", exact: true }).click();
+  await page.getByLabel("KvK Number").fill("12345678");
+  await page.getByRole("button", { name: "Search KvK Registry", exact: true }).click();
+  await expect(page.getByTestId("research-state-unavailable")).toContainText("No zero-result, status, insolvency, or absence conclusion was recorded.");
+  await page.getByRole("button", { name: "Search KvK Registry", exact: true }).click();
+  await expect(page.getByTestId("research-state-empty")).toContainText("Complete response — no matches");
+  await page.getByRole("button", { name: "Search KvK Registry", exact: true }).click();
+  await expect(page.getByTestId("research-state-complete")).toContainText("Complete provider response");
+  await expect(page.getByText("Bankruptcy (Faillissement)", { exact: true })).toBeVisible();
+
+  await page.getByRole("tab", { name: "Court Records", exact: true }).click();
+  await page.getByLabel("Company Name").fill("No Published Match BV");
+  await page.getByRole("button", { name: "Search Court Records", exact: true }).click();
+  await expect(page.getByTestId("research-state-partial")).toContainText("absence is not established");
+  await expect(page.getByText("Zero in this partial source is not evidence that no published decisions exist.", { exact: true })).toBeVisible();
+
+  await page.getByRole("tab", { name: "Legislation", exact: true }).click();
+  await page.getByLabel("Law or regulation").fill("bestuursrecht");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(page.getByTestId("research-state-failed")).toContainText("Research failed");
+  await expect(page.getByTestId("research-state-failed")).toContainText("No zero-result, status, insolvency, or absence conclusion was recorded.");
+
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).include("#main-content").analyze();
+    expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`public-research-${viewport.name}.png`), fullPage: true });
+  }
+
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+  expect(badResponses).toEqual([]);
 });
 
 test("coverage review renders exact revisions and unknown legal basis without merit scores", async ({ page }, testInfo) => {

@@ -24,6 +24,9 @@ original phase-074 snapshot are mounted and typed.
 - Draft preparation, approval, explicit delivery, replies, and outreach analytics.
 - Gmail/Drive OAuth and evidence collection when configured, including a
   versioned shared-grant disconnect review and one confirmed cleanup operation.
+- Case-owned KvK, Rechtspraak, and KOOP research with durable metadata-only
+  receipts and explicit complete, empty, partial, unavailable, and failed
+  outcomes; failures carry null counts rather than fabricated zero results.
 - Operator diagnostics, readiness, recovery, retention, reconciliation,
   emergency stop, and feature flags.
 
@@ -47,3 +50,6 @@ original phase-074 snapshot are mounted and typed.
 - Google disconnect confirmation is bound to the reviewed account, capabilities,
   scheduled collection, source-record disposition, and current owner state;
   changed state must be reviewed again before provider contact.
+- Public-source lookup tests reject cross-owner access before network contact and
+  cover successful results, authoritative empty results, partial zeroes, and
+  provider failure without storing provider result content in audit history.

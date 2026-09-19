@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import type { AnyNode } from "domhandler";
 import { readBoundedResponseText, withBoundedHttpResponse } from "./boundedHttpResponse";
+import { providerHttpError } from "./publicResearch";
 
 const BWB_SRU_URL = "https://zoekservice.overheid.nl/sru/Search";
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
@@ -24,6 +25,8 @@ export type LegislationSearchResult = {
   asOfDate: string;
   retrievedAt: string;
   results: LegislationResult[];
+  totalAvailable: number | null;
+  completeness: "complete" | "partial";
   source: "KOOP Basiswettenbestand SRU 2.0";
   coverageNotice: string;
 };
@@ -36,11 +39,19 @@ function text($record: cheerio.Cheerio<AnyNode>, selector: string): string | nul
   return $record.find(selector).first().text().trim() || null;
 }
 
-export function parseBwbSruResponse(xml: string, limit: number): LegislationResult[] {
+function parseBwbSruEnvelope(xml: string, limit: number): {
+  results: LegislationResult[];
+  totalAvailable: number | null;
+} {
   if (Buffer.byteLength(xml, "utf8") > MAX_RESPONSE_BYTES) throw new Error("KOOP legislation response exceeded the 5 MB safety limit");
   const $ = cheerio.load(xml, { xmlMode: true });
   const diagnostic = $("diagnostic message").first().text().trim();
   if (diagnostic) throw new Error(`KOOP legislation search rejected the query: ${diagnostic}`);
+  const rawTotal = $("numberOfRecords").first().text().trim();
+  const parsedTotal = Number(rawTotal);
+  const totalAvailable = rawTotal !== "" && Number.isSafeInteger(parsedTotal) && parsedTotal >= 0
+    ? parsedTotal
+    : null;
   const seen = new Set<string>();
   const results: LegislationResult[] = [];
   $("record").each((_, node) => {
@@ -63,7 +74,11 @@ export function parseBwbSruResponse(xml: string, limit: number): LegislationResu
       versionUrl: versionUrl?.replace(/^http:/, "https:") || null,
     });
   });
-  return results;
+  return { results, totalAvailable };
+}
+
+export function parseBwbSruResponse(xml: string, limit: number): LegislationResult[] {
+  return parseBwbSruEnvelope(xml, limit).results;
 }
 
 export async function searchOfficialLegislation(options: {
@@ -92,19 +107,24 @@ export async function searchOfficialLegislation(options: {
       signal: AbortSignal.timeout(15_000),
     }),
     async (response) => {
-      if (!response.ok) throw new Error(`KOOP legislation search returned HTTP ${response.status}`);
+      if (!response.ok) throw providerHttpError("KOOP legislation search", response.status);
       return readBoundedResponseText(response, {
         maxBytes: MAX_RESPONSE_BYTES,
         label: "KOOP legislation response",
       });
     },
   );
+  const parsed = parseBwbSruEnvelope(xml, limit);
   return {
     success: true,
     query,
     asOfDate,
     retrievedAt: new Date().toISOString(),
-    results: parseBwbSruResponse(xml, limit),
+    results: parsed.results,
+    totalAvailable: parsed.totalAvailable,
+    completeness: parsed.totalAvailable !== null && parsed.totalAvailable <= parsed.results.length
+      ? "complete"
+      : "partial",
     source: "KOOP Basiswettenbestand SRU 2.0",
     coverageNotice: "Results are official consolidated Dutch legislation valid on the selected date. Relevance and applicability still require legal review.",
   };

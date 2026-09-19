@@ -15,6 +15,12 @@
  */
 
 import { readBoundedResponseJson, withBoundedHttpResponse } from "./boundedHttpResponse";
+import {
+  classifyPublicResearchError,
+  providerHttpError,
+  PublicResearchProviderError,
+  type PublicResearchProviderOutcome,
+} from "./publicResearch";
 
 interface KvKCompanyData {
   datumAanvang?: unknown; // Start date (YYYYMMDD format, may contain zeros for unknown parts)
@@ -49,6 +55,7 @@ export interface KvKReviewTriage {
 
 export interface KvKLookupResult {
   success: boolean;
+  outcome: PublicResearchProviderOutcome;
   data?: {
     kvkNumber: string;
     startDate: string | null;
@@ -74,6 +81,7 @@ export interface KvKLookupResult {
     };
   };
   error?: string;
+  failureCode?: string;
   source?: KvKSourceProvenance;
   limitations?: string[];
   reviewTriage?: KvKReviewTriage[];
@@ -100,10 +108,7 @@ class KvKIntegrationService {
         signal: AbortSignal.timeout(this.REQUEST_TIMEOUT_MS),
       }),
       async (response) => {
-        if (response.status === 404) throw new Error("Company not found in KvK registry.");
-        if (!response.ok) {
-          throw new Error(`KvK API error: ${response.status} ${response.statusText}`);
-        }
+        if (!response.ok) throw providerHttpError("The KvK open dataset", response.status);
         return readBoundedResponseJson<KvKCompanyData>(response, {
           maxBytes: this.MAX_RESPONSE_BYTES,
           label: "KVK response",
@@ -122,7 +127,9 @@ class KvKIntegrationService {
       if (!this.checkRateLimit()) {
         return {
           success: false,
+          outcome: "unavailable",
           error: "Rate limit exceeded. Please try again in a few minutes.",
+          failureCode: "local_rate_limit",
         };
       }
 
@@ -131,7 +138,9 @@ class KvKIntegrationService {
       if (cleanKvK.length !== 8) {
         return {
           success: false,
+          outcome: "failed",
           error: "Invalid KvK number. Must be 8 digits.",
+          failureCode: "invalid_query",
         };
       }
 
@@ -192,8 +201,11 @@ class KvKIntegrationService {
       ].filter((field): field is string => Boolean(field));
       const limitations = [
         "This open dataset contains selected basic registry fields only; it is not a complete legal or financial due-diligence report.",
-        ...(!insolvencyStatus
+        ...(!insolvencyCode
           ? ["No insolventieCode was returned in this response. This does not verify good standing or prove that no insolvency proceeding exists."]
+          : []),
+        ...(insolvencyCode && !insolvencyStatus
+          ? [`The source returned an unsupported insolventieCode (${insolvencyCode}); LARO did not infer its meaning.`]
           : []),
         ...(missingFields.length
           ? [`The source did not return usable values for: ${missingFields.join(", ")}.`]
@@ -209,6 +221,7 @@ class KvKIntegrationService {
 
       return {
         success: true,
+        outcome: missingFields.length === 0 && Boolean(insolvencyStatus) ? "complete" : "partial",
         data: {
           kvkNumber: cleanKvK,
           startDate: this.formatKvKDate(startDateRaw),
@@ -230,10 +243,22 @@ class KvKIntegrationService {
         reviewTriage,
       };
     } catch (error) {
+      if (error instanceof PublicResearchProviderError && error.outcome === "empty") {
+        return {
+          success: false,
+          outcome: "empty",
+          error: "No company record matched this KvK number.",
+          failureCode: error.code,
+          source,
+        };
+      }
       console.error("[KvK Integration] Error:", error);
+      const failure = classifyPublicResearchError(error, "The KvK open dataset");
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error occurred",
+        outcome: failure.outcome,
+        error: failure.message,
+        failureCode: failure.code,
         source,
       };
     }

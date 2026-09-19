@@ -60,7 +60,9 @@ describe('KvK open-dataset integration', () => {
 
     expect(result).toEqual({
       success: false,
+      outcome: 'failed',
       error: 'Invalid KvK number. Must be 8 digits.',
+      failureCode: 'invalid_query',
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -141,7 +143,8 @@ describe('KvK open-dataset integration', () => {
 
     expect(result).toMatchObject({
       success: false,
-      error: 'Company not found in KvK registry.',
+      outcome: 'empty',
+      error: 'No company record matched this KvK number.',
       source: {
         provider: 'Kamer van Koophandel (KvK)',
         retrievedAt: expect.any(String),

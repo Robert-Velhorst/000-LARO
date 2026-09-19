@@ -14,6 +14,12 @@ Date: 2026-09-19
   in Electron main; the session is re-resolved for every upload batch so logout
   stops subsequent uploads.
 - Case-scoped operations use authenticated ownership checks. Lawyer creation is admin-only; lawyer reads, local messages, transactional email tests, and agent controls require authentication.
+- KvK, Rechtspraak, and KOOP public-source research verifies case ownership
+  before provider contact. Every attempt must persist a mandatory audit receipt,
+  but that history contains only bounded metadata (source, normalized query,
+  retrieval time, count, and completeness), not returned provider content.
+  Transport/provider failure retains a null count and cannot be represented as
+  an empty search, missing insolvency warning, or absence conclusion.
 - OAuth authorization URLs are created by protected tRPC procedures. OAuth flows use encrypted, time-limited state plus PKCE; the callback no longer accepts a caller-supplied user ID. The enabled Google evidence connector requests read-only Gmail/Drive scopes and account email only; delegated mail sending and label writes are excluded.
 - OAuth tokens use authenticated AES-256-GCM storage. Callback pages escape provider data and use a nonce-bound script under a route-specific CSP.
 - Desktop provider authorization runs in a dedicated sandboxed,
