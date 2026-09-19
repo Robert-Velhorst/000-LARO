@@ -11,6 +11,7 @@ import { createCaseId } from './ids';
 import { normalizeAccountEmail } from './emailIdentity';
 import { ensureRelationshipIntegrityTriggers } from './relationshipIntegrity';
 import { assertDatabaseRuntimeIsSupported } from './persistence/hostedPersistenceGuard';
+import { normalizeLiteralSearchText } from './literalSearch';
 
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 
@@ -53,6 +54,12 @@ function applyConnectionPragmas(sqlite: InstanceType<typeof Database>) {
   } catch (e) {
     console.warn("[Database] Could not apply connection PRAGMAs:", e);
   }
+}
+
+function registerConnectionFunctions(sqlite: InstanceType<typeof Database>) {
+  sqlite.function("laro_search_normalize", { deterministic: true }, (value: unknown) =>
+    normalizeLiteralSearchText(value)
+  );
 }
 
 /**
@@ -469,6 +476,7 @@ export async function getDb() {
       const sqlite = new Database(dbPath);
       _sqlite = sqlite;
       _db = drizzle(sqlite);
+      registerConnectionFunctions(sqlite);
       applyConnectionPragmas(sqlite); // Phase 005: WAL, foreign_keys, busy_timeout
       console.log("[Database] SQLite initialized at:", dbPath);
 

@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
-import { globalSearch, getSearchSuggestions, resolveSearchResult } from "../globalSearch";
+import {
+  getSearchSuggestionsDetailed,
+  globalSearchDetailed,
+  resolveSearchResult,
+} from "../globalSearch";
 import { checkRateLimit, getRateLimitIdentifier, RATE_LIMITS } from "../rateLimit";
 import { hybridCaseSearch } from "../casesHybridSearch";
 import { SEARCH_RESULT_TYPES } from "../../shared/globalSearch";
@@ -27,7 +31,7 @@ export const searchRouter = router({
       const identifier = getRateLimitIdentifier(ctx);
       checkRateLimit(identifier, RATE_LIMITS.general);
 
-      const results = await globalSearch(input.query, {
+      const outcome = await globalSearchDetailed(input.query, {
         types: input.types,
         limit: input.limit,
         userId: ctx.user.id,
@@ -35,8 +39,10 @@ export const searchRouter = router({
 
       return {
         query: input.query,
-        results,
-        total: results.length,
+        normalizedQuery: outcome.normalizedQuery,
+        results: outcome.results,
+        total: outcome.results.length,
+        completeness: outcome.completeness,
       };
     }),
 
@@ -66,11 +72,13 @@ export const searchRouter = router({
       const identifier = getRateLimitIdentifier(ctx);
       checkRateLimit(identifier, RATE_LIMITS.general);
 
-      const suggestions = await getSearchSuggestions(input.query, input.limit, ctx.user.id);
+      const outcome = await getSearchSuggestionsDetailed(input.query, input.limit, ctx.user.id);
 
       return {
         query: input.query,
-        suggestions,
+        normalizedQuery: outcome.normalizedQuery,
+        suggestions: outcome.suggestions,
+        completeness: outcome.completeness,
       };
     }),
 });

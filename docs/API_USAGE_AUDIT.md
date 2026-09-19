@@ -1,6 +1,6 @@
 # Backend Endpoint Usage Audit
 
-Updated: 2026-09-19
+Updated: 2026-09-20
 
 ## Current contract
 
@@ -13,6 +13,10 @@ original phase-074 snapshot are mounted and typed.
 
 - Authentication, account security, privacy export, and erasure.
 - Owner-scoped cases, evidence, analysis, timelines, deadlines, notes, and export.
+- Literal-safe global, case, evidence, timeline, lawyer, suggestion, hybrid,
+  and saved-search paths use `literal-search-v1`; global and suggestion APIs
+  return requested/completed/partial/failed scope metadata without raw storage
+  errors.
 - Owner-scoped evidence relevance scoring grounded in persisted case context and versioned document analysis.
 - Owner-scoped evidence coverage snapshots with exact input/source revisions,
   availability, review state, unknowns, limitations, and no legal-merit or

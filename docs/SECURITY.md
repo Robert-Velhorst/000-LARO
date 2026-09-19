@@ -53,7 +53,7 @@ Date: 2026-09-19
 - Destructive evidence operations use an atomic SQLite outbox: metadata deletion and cleanup scheduling commit together, active shared references prevent premature object removal, failed local/S3 deletion remains durably queued and degrades worker health, and evidence, case, and account responses expose pending cleanup instead of reporting complete erasure.
 - The Flask runtime has no seeded users. It persists Werkzeug password hashes and SHA-256 digests of bearer/reset tokens in an ignored SQLite auth database; reset tokens are short-lived, single-use, and never returned by the API.
 - Flask investor access requires an operator-provisioned password. The dashboard does not fabricate investor metrics when no verified metrics source exists.
-- Email account list responses exclude encrypted access and refresh tokens. Sync jobs, global document search, search suggestions, and unified inbox writes are caller-scoped.
+- Email account list responses exclude encrypted access and refresh tokens. Sync jobs, global document search, search suggestions, and unified inbox writes are caller-scoped. Local text search normalizes through `literal-search-v1`, escapes LIKE control characters, never builds a regular expression from user text, and returns only stable completeness reason codes rather than raw database errors.
 - Auto-collection settings, logs, keyword matches, local folders, synchronous
   pulls, and persisted pull jobs all enforce case access before reading or
   mutating data; job-status reads are additionally scoped to the creating user.

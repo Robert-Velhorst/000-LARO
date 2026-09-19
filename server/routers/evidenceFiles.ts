@@ -38,7 +38,7 @@ export const evidenceFilesRouter = router({
   search: protectedProcedure
     .input(z.object({
       caseId: z.string().optional(),
-      query:  z.string().optional(),
+      query:  z.string().max(500).optional(),
       limit:  z.number().optional(),
       offset: z.number().optional(),
     }).optional())

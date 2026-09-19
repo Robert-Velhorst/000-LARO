@@ -188,6 +188,9 @@ private-source accuracy or production-acceptance claim follows from this preview
   positions, deadlines, obligations, risks, notes, and audit history.
 - Draft autosave and restore during case intake.
 - Search, filtering, saved searches, notifications, and activity history.
+- Literal-safe global and workspace search with one Unicode/case normalization
+  contract and explicit category completeness; see
+  [Literal Search Contract](docs/SEARCH_CONTRACT.md).
 - Case-scoped checks on documents, analysis, timelines, matching, outreach,
   exports, and destructive actions.
 - Case and account data exports.

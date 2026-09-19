@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Briefcase, File, FileText, Loader2, MessageSquare, Scale, Search } from "lucide-react";
+import { AlertTriangle, Briefcase, File, FileText, Loader2, MessageSquare, Scale, Search } from "lucide-react";
 import { useLocation } from "wouter";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,8 @@ export default function GlobalSearch() {
     { query: normalizedQuery, limit: 20 },
     { enabled: open && normalizedQuery.length >= 2, keepPreviousData: false },
   );
+  const completeness = results.data?.completeness;
+  const incomplete = completeness && completeness.status !== "complete";
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -81,7 +83,22 @@ export default function GlobalSearch() {
             <p className="font-medium">{nl ? "Zoeken is tijdelijk niet beschikbaar" : "Search is temporarily unavailable"}</p>
             <Button type="button" variant="outline" className="mt-3" onClick={() => void results.refetch()}>{nl ? "Opnieuw proberen" : "Retry"}</Button>
           </div>}
-          {!results.isFetching && !results.error && normalizedQuery.length >= 2 && results.data?.results.length === 0 && <p className="py-12 text-center text-sm text-muted-foreground">
+          {!results.isFetching && !results.error && normalizedQuery.length >= 2 && incomplete && <div
+            role="status"
+            data-testid="global-search-incomplete"
+            className="mt-3 flex flex-wrap items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <span className="min-w-0 flex-1">
+              {nl
+                ? "De zoekopdracht is onvolledig. Sommige categorieën of records konden niet volledig worden verwerkt."
+                : "Search is incomplete. Some categories or records could not be fully processed."}
+            </span>
+            <Button type="button" size="sm" variant="outline" onClick={() => void results.refetch()}>
+              {nl ? "Opnieuw proberen" : "Retry"}
+            </Button>
+          </div>}
+          {!results.isFetching && !results.error && normalizedQuery.length >= 2 && completeness?.status === "complete" && results.data?.results.length === 0 && <p className="py-12 text-center text-sm text-muted-foreground">
             {nl ? "Geen resultaten gevonden." : "No results found."}
           </p>}
           {!results.isFetching && !results.error && normalizedQuery.length >= 2 && !!results.data?.results.length && <div className="space-y-2 py-3">

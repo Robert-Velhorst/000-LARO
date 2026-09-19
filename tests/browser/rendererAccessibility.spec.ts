@@ -1983,6 +1983,67 @@ test("global search opens every result on a registered, reload-safe deep link", 
   expect(requestFailures).toEqual([]);
 });
 
+test("global search renders literal results as incomplete instead of a false empty state", async ({ page }, testInfo) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badResponses: Array<{ status: number; url: string }> = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => {
+    const failure = request.failure()?.errorText ?? "unknown failure";
+    if (!failure.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
+  });
+  page.on("response", response => {
+    if (response.status() >= 400) badResponses.push({ status: response.status(), url: response.url() });
+  });
+
+  const email = await createAccount(page);
+  const marker = `Browser%_Literal${randomUUID().replaceAll("-", "").slice(0, 10)}`;
+  const caseId = randomUUID();
+  const lawyerId = randomUUID();
+  const now = Math.floor(Date.now() / 1_000);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const owner = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    database.prepare("INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, createdAt, updatedAt) VALUES (?, ?, ?, 'Contract', 'Literal partial-state case', 'Low', 'Intake', ?, ?)")
+      .run(caseId, owner.id, `${marker} Case`, now, now);
+    database.prepare("INSERT INTO lawyers (id, name, firmName, city, legalAreas, languages, createdAt, updatedAt) VALUES (?, ?, 'Legacy Firm', 'Amsterdam', '{malformed', '[]', ?, ?)")
+      .run(lawyerId, `${marker} Lawyer`, now, now);
+  } finally {
+    database.close();
+  }
+
+  const response = await page.goto("/", { waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  await page.keyboard.press("Control+K");
+  const dialog = page.getByRole("dialog");
+  const query = dialog.getByRole("textbox", { name: "Search query", exact: true });
+  await query.fill(marker);
+  await expect(dialog.getByTestId("global-search-incomplete")).toContainText("Search is incomplete");
+  await expect(dialog.getByTestId("global-search-incomplete").getByRole("button", { name: "Retry" })).toBeVisible();
+  await expect(dialog.getByRole("button").filter({ hasText: `${marker} Case` })).toBeVisible();
+  await expect(dialog.getByRole("button").filter({ hasText: `${marker} Lawyer` })).toBeVisible();
+  await expect(dialog.getByText("No results found.", { exact: true })).toHaveCount(0);
+
+  const audit = await new AxeBuilder({ page }).include('[role="dialog"]').analyze();
+  expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+  await dialog.screenshot({ path: testInfo.outputPath("global-search-partial-desktop.png") });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectInsideViewport(dialog);
+  await dialog.screenshot({ path: testInfo.outputPath("global-search-partial-mobile.png") });
+
+  await query.fill(`NoCompleteMatch${randomUUID().replaceAll("-", "")}`);
+  await expect(dialog.getByText("No results found.", { exact: true })).toBeVisible();
+  await expect(dialog.getByTestId("global-search-incomplete")).toHaveCount(0);
+
+  expect(badResponses).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+});
+
 test("public research renders complete, empty, partial, unavailable, and failed states without false absence claims", async ({ page }, testInfo) => {
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];

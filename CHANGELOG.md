@@ -7,6 +7,11 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Unified global, case, evidence, timeline, lawyer, suggestion, hybrid, and
+  saved-search execution under `literal-search-v1`. LIKE/regex metacharacters
+  are now literal, Unicode/case normalization is consistent, malformed rows are
+  isolated, and APIs/renderers distinguish complete, partial, failed, and
+  unavailable search scopes instead of reporting a false empty result.
 - Bound every evidence-coverage review to an exact case and input revision,
   including evidence IDs/content hashes, source-analysis revisions,
   communications, and timeline events. Input changes now make saved results

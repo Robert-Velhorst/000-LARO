@@ -1,10 +1,11 @@
-import { and, eq, like, or } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import { getDb } from "./db";
 import { cases } from "./schema";
 import { invokeLLM, isLLMProviderConfigured } from "./llm";
 import { globalSearch } from "./globalSearch";
 import { documentContentAuthorizationToken, getWorkflowPreferences } from "./workflowPreferences";
 import { isLLMUsageLimitError } from "./llmUsageBudget";
+import { literalSearchCondition, normalizeLiteralSearchText } from "./literalSearch";
 
 const STOP = new Set([
   "the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "my", "is", "are", "was", "were",
@@ -85,16 +86,13 @@ export async function hybridCaseSearch(query: string, userId: string): Promise<s
   const db = await getDb();
   if (db) {
     const termConditions = terms
-      .map((term) => term.replace(/[%_]/g, "").trim())
-      .filter((term) => term.length >= 2)
-      .map((term) => {
-        const pattern = `%${term}%`;
-        return or(
-          like(cases.clientName, pattern),
-          like(cases.caseType, pattern),
-          like(cases.caseSummary, pattern),
-        );
-      });
+      .map(normalizeLiteralSearchText)
+      .filter(Boolean)
+      .map((term) => or(
+        literalSearchCondition(cases.clientName, term),
+        literalSearchCondition(cases.caseType, term),
+        literalSearchCondition(cases.caseSummary, term),
+      ));
     if (termConditions.length) {
       try {
         const rows = await db

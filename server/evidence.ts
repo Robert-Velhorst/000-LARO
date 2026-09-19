@@ -1,10 +1,11 @@
 import { randomUUID } from "crypto";
-import { and, desc, eq, like, or, sql } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import { getDb } from "./db";
 import { evidence } from "./schema";
 import { emitRealtimeDataChange } from "./realtime";
 import { managedStorageKeyFromMetadata } from "./managedStorage";
 import { enqueueStorageDeletions } from "./storageDeletionQueue";
+import { literalSearchCondition } from "./literalSearch";
 
 export type EvidenceFileRow = typeof evidence.$inferSelect;
 export type EvidenceFileView = EvidenceFileRow & {
@@ -37,8 +38,11 @@ export async function searchEvidenceFiles(opts: {
   const conditions = [eq(evidence.userId, opts.userId)];
   if (opts.caseId) conditions.push(eq(evidence.caseId, opts.caseId));
   if (opts.query?.trim()) {
-    const q = `%${opts.query.trim()}%`;
-    conditions.push(or(like(evidence.title, q), like(evidence.description, q), like(evidence.fileName, q))!);
+    conditions.push(or(
+      literalSearchCondition(evidence.title, opts.query),
+      literalSearchCondition(evidence.description, opts.query),
+      literalSearchCondition(evidence.fileName, opts.query),
+    )!);
   }
 
   const whereClause = and(...conditions);

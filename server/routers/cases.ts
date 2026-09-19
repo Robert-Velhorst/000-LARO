@@ -19,6 +19,7 @@ import { emitRealtimeDataChange } from "../realtime";
 import { encodeCsvRows } from "../../shared/csv";
 import { inspectCaseZipCompleteness, projectEvidenceForExport } from "../evidenceExport";
 import { getCaseAuthorization } from "../teams";
+import { literalSearchCondition } from "../literalSearch";
 
 export const casesRouter = router({
   // Phase 022 — search, filters, sorting, pagination. All server-side and
@@ -31,7 +32,7 @@ export const casesRouter = router({
       status: z.string().optional(),
       statusGroup: z.enum(["open", "in_progress", "waiting_for_lawyer", "closed"]).optional(),
       urgency: z.enum(["Low", "Medium", "High"]).optional(),
-      search: z.string().optional(),
+      search: z.string().max(500).optional(),
       matchingIds: z.array(z.string()).max(500).optional(),
       legalArea: z.string().max(200).optional(),
       createdWithin: z.enum(["today", "week", "month", "year"]).optional(),
@@ -68,8 +69,11 @@ export const casesRouter = router({
       }
       if (input?.urgency) conditions.push(eq(casesTable.urgency, input.urgency));
       if (input?.search?.trim()) {
-        const q = `%${input.search.trim().toLowerCase()}%`;
-        const keyword = sql`(lower(${casesTable.clientName}) LIKE ${q} OR lower(${casesTable.caseSummary}) LIKE ${q} OR lower(${casesTable.caseType}) LIKE ${q})`;
+        const keyword = or(
+          literalSearchCondition(casesTable.clientName, input.search),
+          literalSearchCondition(casesTable.caseSummary, input.search),
+          literalSearchCondition(casesTable.caseType, input.search),
+        )!;
         // The owner condition still applies to every expanded result before pagination.
         conditions.push(input.matchingIds?.length ? or(keyword, inArray(casesTable.id, input.matchingIds))! : keyword);
       }
@@ -82,8 +86,11 @@ export const casesRouter = router({
           "real-estate": ["real estate", "property", "huur", "tenancy", "huurrecht", "landlord"],
         };
         conditions.push(or(...(aliases[area] || [area]).map(term => {
-          const pattern = `%${term}%`;
-          return sql`(lower(${casesTable.caseType}) LIKE ${pattern} OR lower(${casesTable.caseSummary}) LIKE ${pattern} OR lower(${casesTable.legalAreas}) LIKE ${pattern})`;
+          return or(
+            literalSearchCondition(casesTable.caseType, term),
+            literalSearchCondition(casesTable.caseSummary, term),
+            literalSearchCondition(casesTable.legalAreas, term),
+          )!;
         }))!);
       }
       if (input?.createdWithin) {

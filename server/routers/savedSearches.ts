@@ -5,12 +5,14 @@ import { savedSearches } from "../schema";
 import { eq, and } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { TRPCError } from "@trpc/server";
+import { LITERAL_SEARCH_CONTRACT_VERSION } from "../literalSearch";
 
 /** Stored in `saved_searches.queryJson` — table has no separate searchType/filters columns. */
 type SavedSearchPayload = {
   searchType?: "cases" | "lawyers" | "evidence";
   query?: string;
   filters?: Record<string, unknown>;
+  queryContractVersion?: typeof LITERAL_SEARCH_CONTRACT_VERSION;
 };
 
 function parseSavedSearchRow(search: typeof savedSearches.$inferSelect) {
@@ -37,6 +39,7 @@ function parseSavedSearchRow(search: typeof savedSearches.$inferSelect) {
     query,
     filters,
     searchType,
+    queryContractVersion: LITERAL_SEARCH_CONTRACT_VERSION,
     createdAt: search.createdAt,
     queryJson: search.queryJson,
   };
@@ -108,6 +111,7 @@ export const savedSearchesRouter = router({
         searchType: input.searchType,
         query: input.query ?? "",
         filters: input.filters,
+        queryContractVersion: LITERAL_SEARCH_CONTRACT_VERSION,
       } satisfies SavedSearchPayload & { filters: Record<string, unknown> });
       await db.insert(savedSearches).values({
         id,
@@ -152,6 +156,7 @@ export const savedSearchesRouter = router({
         searchType: parsed.searchType,
         query: parsed.query,
         filters: parsed.filters,
+        queryContractVersion: LITERAL_SEARCH_CONTRACT_VERSION,
       };
       if (updates.query !== undefined) nextPayload.query = updates.query;
       if (updates.filters !== undefined) nextPayload.filters = updates.filters;
@@ -163,6 +168,7 @@ export const savedSearchesRouter = router({
           searchType: nextPayload.searchType,
           query: nextPayload.query ?? "",
           filters: nextPayload.filters ?? {},
+          queryContractVersion: LITERAL_SEARCH_CONTRACT_VERSION,
         });
       }
 
@@ -202,4 +208,3 @@ export const savedSearchesRouter = router({
       return { success: true };
     }),
 });
-

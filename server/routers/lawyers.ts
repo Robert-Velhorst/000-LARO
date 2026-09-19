@@ -2,17 +2,14 @@ import { z } from "zod";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { lawyers as lawyersTable } from '../schema';
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, or, sql } from "drizzle-orm";
 import { createLawyerId, isGeneratedIdCollision } from "../ids";
 import { assertCaseAccess } from "../_core/authz";
 import { getLawyerComparison } from "../lawyerComparison";
+import { literalSearchCondition } from "../literalSearch";
 
 const experienceFilter = z.enum(["0-5", "6-10", "11-20", "20+"]);
 const acceptingFilter = z.enum(["Yes", "Limited", "No", "Unknown"]);
-
-function likePattern(value: string): string {
-  return `%${value.trim().toLowerCase().replace(/[\\%_]/g, "\\$&")}%`;
-}
 
 function experienceCondition(filter: z.infer<typeof experienceFilter>) {
   const numericYears = sql`CAST(TRIM(${lawyersTable.experienceYears}) AS INTEGER)`;
@@ -52,29 +49,27 @@ export const lawyersRouter = router({
 
       const conditions: any[] = [];
       if (input?.query) {
-        const pattern = likePattern(input.query);
-        conditions.push(sql`(
-          LOWER(COALESCE(${lawyersTable.name}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.firm}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.firmName}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.email}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.phone}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.website}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.address}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.city}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.legalAreas}, '')) LIKE ${pattern} ESCAPE '\\'
-        )`);
+        conditions.push(or(
+          literalSearchCondition(lawyersTable.name, input.query),
+          literalSearchCondition(lawyersTable.firm, input.query),
+          literalSearchCondition(lawyersTable.firmName, input.query),
+          literalSearchCondition(lawyersTable.email, input.query),
+          literalSearchCondition(lawyersTable.phone, input.query),
+          literalSearchCondition(lawyersTable.website, input.query),
+          literalSearchCondition(lawyersTable.address, input.query),
+          literalSearchCondition(lawyersTable.city, input.query),
+          literalSearchCondition(lawyersTable.legalAreas, input.query),
+        ));
       }
       if (input?.legalArea) {
-        const pattern = likePattern(input.legalArea);
         conditions.push(sql`(
           (JSON_VALID(${lawyersTable.legalAreas}) AND EXISTS (
             SELECT 1
             FROM JSON_EACH(${lawyersTable.legalAreas}) AS area
-            WHERE LOWER(CAST(area.value AS TEXT)) LIKE ${pattern} ESCAPE '\\'
+            WHERE ${literalSearchCondition(sql`CAST(area.value AS TEXT)`, input.legalArea)}
           ))
           OR (NOT JSON_VALID(${lawyersTable.legalAreas})
-            AND LOWER(COALESCE(${lawyersTable.legalAreas}, '')) LIKE ${pattern} ESCAPE '\\')
+            AND ${literalSearchCondition(lawyersTable.legalAreas, input.legalArea)})
         )`);
       }
       if (input?.experience) conditions.push(experienceCondition(input.experience));

@@ -1,6 +1,6 @@
 # Frontend Architecture
 
-Current as of 2026-09-19.
+Current as of 2026-09-20.
 
 ## Shipped surfaces
 
@@ -58,6 +58,11 @@ The case Evidence coverage view renders derived gaps only when the saved review
 matches the current case/input revision. Stale, running, failed, unavailable,
 and retired states have distinct recovery cards, and no non-current state exposes
 old gaps, patterns, inferences, or generated-document actions as current.
+
+The global search dialog consumes the server's category-completeness contract.
+It renders a complete no-result message only when every requested category
+completed; partial and failed responses keep successful results visible and show
+a retryable incomplete-state notice at desktop and mobile widths.
 
 ## Scanner boundary
 
