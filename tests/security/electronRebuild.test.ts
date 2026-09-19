@@ -26,11 +26,14 @@ describe('portable native SQLite packaging', () => {
     expect([...linux.subarray(0, 4)]).toEqual([0x7f, 0x45, 0x4c, 0x46]);
   });
 
-  it('keeps electron-builder from replacing the shipped cross-platform N-API binaries', () => {
+  it('keeps electron-builder from replacing or omitting required cross-platform N-API binaries', () => {
     const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
     expect(pkg.dependencies['better-sqlite3']).toMatch(/^\^13\./);
     expect(pkg.devDependencies['@electron/rebuild']).toBeUndefined();
     expect(pkg.scripts['rebuild:electron']).toBe('npm rebuild better-sqlite3');
+    expect(pkg.scripts['stage:windows-native']).toBe('node scripts/stage-windows-native.mjs');
+    expect(pkg.scripts['dist:win']).toContain('npm run stage:windows-native');
+    expect(pkg.scripts['dist:store']).toContain('npm run stage:windows-native');
     expect(pkg.scripts['verify:packaged:native']).toBe('node scripts/verify-packaged-native.mjs');
     expect(pkg.build.npmRebuild).toBe(false);
   });

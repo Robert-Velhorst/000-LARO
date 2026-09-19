@@ -19,6 +19,18 @@ const resources = path.join(
 );
 const windowsBinding = path.join(resources, 'prebuilds', 'win32-x64.node');
 const legacyBinding = path.join(resources, 'build', 'Release', 'better_sqlite3.node');
+const canvasBinding = path.join(
+  ROOT,
+  'release',
+  project.version,
+  'win-unpacked',
+  'resources',
+  'app.asar.unpacked',
+  'node_modules',
+  '@napi-rs',
+  'canvas-win32-x64-msvc',
+  'skia.win32-x64-msvc.node',
+);
 const portable = path.join(ROOT, 'release', project.version, `LARO Desktop ${project.version}.exe`);
 
 function peMachine(file) {
@@ -42,5 +54,11 @@ assert.equal(
   false,
   'Package contains a host-compiled legacy SQLite binding',
 );
+assert.ok(existsSync(canvasBinding), `Packaged Win64 canvas binding is missing: ${canvasBinding}`);
+assert.equal(
+  peMachine(canvasBinding),
+  0x8664,
+  'Packaged canvas binding is not x86-64 Windows PE',
+);
 
-console.log('PASS packaged Windows executable and SQLite binding are PE/x64 candidates');
+console.log('PASS packaged Windows executable, SQLite binding, and canvas binding are PE/x64 candidates');

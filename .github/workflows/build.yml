@@ -101,6 +101,8 @@ jobs:
         run: node node_modules/electron/install.js
       - name: Rebuild native modules for Electron
         run: npm run rebuild:electron
+      - name: Stage Windows native modules
+        run: npm run stage:windows-native
       - name: Verify Electron native database binding
         run: npm run verify:electron-native
       - name: Package Windows portable application
