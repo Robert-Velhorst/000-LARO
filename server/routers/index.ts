@@ -33,7 +33,6 @@ import { bulkImportRouter } from "./bulkImport";
 import { supportRouter } from "./support";
 import { evidenceAnalyticsRouter } from "./evidenceAnalytics";
 import { autoCollectionRouter } from "./autoCollection";
-import { googleDriveRouter } from "./googleDrive";
 import { notificationsRouter } from "./notifications";
 import { relevanceScoringRouter } from "./relevanceScoring";
 import { featureFlagsRouter } from "./featureFlags";
@@ -119,7 +118,6 @@ export const appRouter = router({
   evidenceAnalytics: evidenceAnalyticsRouter,
   support: supportRouter,
   autoCollection: autoCollectionRouter,
-  googleDrive: googleDriveRouter,
   notifications: notificationsRouter,
   featureFlags: featureFlagsRouter, // Phase 058
   help: helpRouter, // Phase 071/072

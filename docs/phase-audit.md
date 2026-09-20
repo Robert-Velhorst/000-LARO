@@ -107,7 +107,7 @@ The bad news, measured against the prompt's non-negotiable "no false completion"
 | `.env` with all secrets bundled into shipped desktop artifact | **Critical** | `package.json:151-154`, `build.yml` |
 | `adminProcedure` defined but applied to **zero** endpoints; signup hardcodes `role:"user"` | **Medium** | `server/_core/trpc.ts:22-27`, `server/routers/index.ts:166` |
 
-**Genuinely enforced** (protected + `ctx.user.id` filter): `cases` CRUD, `savedSearches`, `emailAccounts`, `notifications`, `googleDrive`, `telegram/trello enhanced`, `dashboard.stats/recentCases`.
+**Genuinely enforced** (protected + `ctx.user.id` filter): `cases` CRUD, `savedSearches`, `emailAccounts`, `notifications`, canonical Drive auto-collection, `telegram/trello enhanced`, `dashboard.stats/recentCases`.
 
 ---
 
@@ -122,7 +122,7 @@ Critical path from the prompt: **User account → case intake → evidence inges
 | Bulk import (CSV) | ✅ **Implemented** | `server/routers/bulkImport.ts:102,166` |
 | Evidence — manual DB record | ⚠️ **Partial** — row only, no hash/provenance; `getDownloadUrl` returns null placeholder | `server/evidence.ts:57-83`, `server/routers/evidenceFiles.ts:108-109` |
 | Evidence — desktop scanner/uploader | ⚠️ **Partial / fake** — metadata only; **S3 upload simulated**, bytes never sent | `src-main/scanner.ts:212-250`, `src-main/uploader.ts:206-208` |
-| Evidence — Gmail/Drive auto-collect | ✅ **Implemented (needs config)** — real API + S3; still **no sha256 integrity hash** | `server/gmailService.ts:327-435`, `server/routers/googleDrive.ts:258,355` |
+| Evidence — Gmail/Drive auto-collect | ✅ **Implemented (needs config)** — real API, managed storage, SHA-256 provenance, and revision-aware canonical evidence | `server/autoCollectionService.ts`, `server/googleDriveService.ts` |
 | File parsing (pdf-parse/mammoth/tesseract) | ❌ **Missing** — deps present, **zero usages** | `package.json:75,81,93` vs grep=0 |
 | Legal-area classification | ❌ **Missing / fake** — `legalAreas = JSON.stringify([caseType])` | `server/db.ts:419`, `src/renderer/components/NewCaseDialog.tsx:61` |
 | LLM infra (Manus Forge) | ✅ **Implemented as infra** — real HTTP; **canned mock when no key** | `server/llm.ts:212-215,269-321` |

@@ -54,6 +54,13 @@ with owner-visible case labels, explains source-record retention or removal, and
 states that collected documents and other accounts remain. Cancellation sends no
 mutation, and a failed or stale confirmation keeps the review open for retry.
 
+Auto-Collection Settings mounts `GoogleDriveSourceSelector` for read-only
+account/folder selection. It can navigate folders and select My Drive, but it
+does not preview files or trigger a second direct-import workflow. Saving or
+running collection sends the selection through the canonical bounded keyword
+collector, and partial or failed runs render warning/error feedback rather than
+a false success state.
+
 The case Evidence coverage view renders derived gaps only when the saved review
 matches the current case/input revision. Stale, running, failed, unavailable,
 and retired states have distinct recovery cards, and no non-current state exposes

@@ -7,6 +7,11 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Retired the second Google Drive browse/preview/direct-import/sync router and
+  its parallel tracking writes. Folder selection now uses the maintained
+  auto-collection API; canonical evidence owns Drive provenance, SHA-256,
+  account-plus-file identity, provider revisions, unchanged skips, changed
+  versions, bounded partial outcomes, and retry-safe failures.
 - Replaced title-only notification writes and split reminder guards with typed,
   owner-validated notification records. Kinds, context, metadata, registered
   destinations, and deduplication keys now persist together; writers report
@@ -61,7 +66,7 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   that enforce authenticated issuance, expiry, signature validation, and
   content-hash integrity without exposing container paths. Desktop-local links
   remain bound to the local server, while API links use the configured gateway.
-- Made every Google Drive browse, preview, search, import, keyword-pull, and
+- Made every maintained Google Drive source-selection, keyword-pull, and
   provider-acceptance operation account-specific. Multi-account owners must
   select the Drive account instead of silently using the first stored token.
 - Updated the Socket.IO parser lock to 4.2.7 to resolve its zero-attachment

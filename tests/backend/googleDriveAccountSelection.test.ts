@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { Readable } from "node:stream";
-import { buildCase, buildEvidence, buildUser } from "../factories";
+import { buildCase, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 
 const googleMocks = vi.hoisted(() => ({
@@ -265,77 +264,19 @@ suite("Google Drive account selection", () => {
     );
   });
 
-  it("rejects mismatched Drive import arrays before contacting the provider", async () => {
-    const caller = app.makeCaller({ id: userId, role: "user" });
-
-    await expect(caller.googleDrive.importFiles({
-      caseId: "CASE_DRIVE_ACCOUNT_SELECTION",
-      accountId: "GOOGLE_DRIVE_SECOND",
-      fileIds: ["file-one"],
-      fileNames: ["One.pdf", "Two.pdf"],
-    })).rejects.toMatchObject({ code: "BAD_REQUEST" });
-  });
-
-  it("returns bounded partial completion instead of downloading beyond the Drive import budget", async () => {
-    const { PROVIDER_LIMITS } = await import("../../server/providerLimits");
-    const count = PROVIDER_LIMITS.googleDrive.maxImportFiles + 1;
-    googleMocks.getRequests.length = 0;
-    googleMocks.getResponses.push(...Array.from({ length: PROVIDER_LIMITS.googleDrive.maxImportFiles }, (_, index) => [
-      { data: { name: `bounded-${index}.mp4`, mimeType: "video/mp4", size: "1" } },
-      { data: Readable.from([Buffer.from([index])]) },
-    ]).flat());
-    const caller = app.makeCaller({ id: userId, role: "user" });
-
-    const result = await caller.googleDrive.importFiles({
-      caseId: "CASE_DRIVE_ACCOUNT_SELECTION",
-      accountId: "GOOGLE_DRIVE_SECOND",
-      fileIds: Array.from({ length: count }, (_, index) => `bounded-file-${index}`),
-      fileNames: Array.from({ length: count }, (_, index) => `bounded-${index}.mp4`),
-    });
-
-    expect(result).toMatchObject({
-      success: false,
-      outcome: "partial",
-      imported: PROVIDER_LIMITS.googleDrive.maxImportFiles,
-      errors: [],
-      ingestion: {
-        processedItems: PROVIDER_LIMITS.googleDrive.maxImportFiles,
-        skippedItems: 1,
-        reasons: [{ source: "google_drive", code: "job_item_limit", count: 1 }],
-      },
-    });
-    expect(googleMocks.getRequests).toHaveLength(PROVIDER_LIMITS.googleDrive.maxImportFiles * 2);
-  });
-
-  it("allows large folder resyncs when every discovered file was already imported", async () => {
-    const { PROVIDER_LIMITS } = await import("../../server/providerLimits");
-    const count = PROVIDER_LIMITS.googleDrive.maxImportFiles + 1;
-    const files = Array.from(
-      { length: count },
-      (_, index) => ({ id: `existing-drive-${index}`, name: `Existing ${index}.pdf`, mimeType: "application/pdf" }),
-    );
-    await app.db.insert(app.schema.evidence).values(files.map((file, index) => buildEvidence({
-      id: `EXISTING_DRIVE_EVIDENCE_${index}`,
-      caseId: "CASE_DRIVE_ACCOUNT_SELECTION",
-      userId,
-      source: "google_drive",
-      metadata: JSON.stringify({ driveFileId: file.id }),
-    })));
+  it("lists source-selector folders through the maintained auto-collection router", async () => {
     googleMocks.listRequests.length = 0;
-    googleMocks.listResponses.push({ data: { files } });
+    googleMocks.listResponses.push({
+      data: { files: [{ id: "canonical-folder", name: "Canonical folder" }] },
+    });
     const caller = app.makeCaller({ id: userId, role: "user" });
 
-    await expect(caller.googleDrive.importFolder({
-      caseId: "CASE_DRIVE_ACCOUNT_SELECTION",
-      folderId: "incremental-folder",
-      folderName: "Incremental folder",
-      recursive: false,
+    await expect(caller.autoCollection.listDriveFolders({
       accountId: "GOOGLE_DRIVE_SECOND",
-    })).resolves.toMatchObject({
-      success: true,
-      imported: 0,
-      skipped: count,
+    })).resolves.toEqual({
+      folders: [{ id: "canonical-folder", name: "Canonical folder" }],
     });
+    expect(googleMocks.credentials.at(-1)).toEqual({ access_token: "second-access-token" });
   });
 
   it("finds exact Drive names globally across every result page", async () => {

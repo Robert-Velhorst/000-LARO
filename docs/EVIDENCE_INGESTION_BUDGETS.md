@@ -15,9 +15,10 @@ desktop-scanner uploads.
 | Automatic analyses per job | 20 |
 | Reserved local-storage headroom after a write | 256 MiB |
 
-Provider discovery limits can be lower. Google Drive interactive imports, for
-example, admit at most 14 new provider objects per operation. Additional
-objects are reported as deferred partial work rather than silently succeeding.
+Provider discovery limits can be lower. The maintained Google Drive keyword
+collector shares the global item and byte budget; it has no separate direct or
+folder-import procedure. Additional objects are reported as deferred partial
+work rather than silently succeeding.
 
 ## Admission and storage
 

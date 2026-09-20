@@ -325,6 +325,25 @@ describe('production readiness regressions', () => {
     expect(existsSync(join(ROOT, 'src/renderer/components/GoogleDriveIntegration.tsx'))).toBe(false);
   });
 
+  it('keeps one maintained Google Drive ingestion path', () => {
+    const routerIndex = readFileSync(join(ROOT, 'server/routers/index.ts'), 'utf8');
+    const collector = readFileSync(join(ROOT, 'server/autoCollectionService.ts'), 'utf8');
+    const selector = readFileSync(join(ROOT, 'src/renderer/components/GoogleDriveSourceSelector.tsx'), 'utf8');
+    const settings = readFileSync(join(ROOT, 'src/renderer/components/AutoCollectionSettings.tsx'), 'utf8');
+
+    expect(existsSync(join(ROOT, 'server/routers/googleDrive.ts'))).toBe(false);
+    expect(existsSync(join(ROOT, 'src/renderer/components/GoogleDriveFolderBrowser.tsx'))).toBe(false);
+    expect(routerIndex).not.toContain('googleDriveRouter');
+    expect(routerIndex).not.toContain('googleDrive:');
+    expect(collector).not.toContain('googleDriveFiles');
+    expect(collector).not.toContain('runAutoCollectionLegacy');
+    expect(selector).toContain('trpc.autoCollection.listDriveFolders.useQuery');
+    expect(selector).not.toContain('trpc.googleDrive');
+    expect(selector).not.toContain('importFolder');
+    expect(selector).not.toContain('getFilesInFolder');
+    expect(settings).toContain('GoogleDriveSourceSelector');
+  });
+
   it('discloses bounded backup retention instead of promising immediate permanent erasure', () => {
     const privacy = readFileSync(join(ROOT, 'src/renderer/components/Privacy.tsx'), 'utf8');
     const cases = readFileSync(join(ROOT, 'src/renderer/components/Cases.tsx'), 'utf8');

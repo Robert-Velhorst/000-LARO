@@ -205,7 +205,7 @@ private-source accuracy or production-acceptance claim follows from this preview
 | Desktop folder | Uses the native folder picker, requires a case, presents files for review, and uploads only selected files |
 | Standalone folder | Accepts only paths under operator-configured `LOCAL_SCAN_ROOTS` |
 | Gmail | Uses read-only Google OAuth, imports messages/attachments, retains Gmail identity, and supports bounded filtered pulls |
-| Google Drive | Uses read-only OAuth, supports explicit account/folder selection, and exports Google-native documents to PDF before analysis |
+| Google Drive | Uses read-only OAuth and one bounded auto-collection path; explicit account/folder selection feeds canonical revisioned evidence, and Google-native documents are exported to PDF before analysis |
 | Document inbox | Maintained desktop/API: case-neutral uploads and durable Gmail/Drive/native-folder imports, source analysis, reference-based or configured-model dossier discovery, incremental filing, explained exceptions and original downloads |
 
 The **Gap analysis** view is a versioned evidence-coverage review. It lists the
@@ -848,7 +848,9 @@ will succeed; expired or revoked grants may require reconnection.
 
 For each case, **Auto-Collection Settings > Sources** selects the Gmail accounts
 to search and the Drive folders to search under each Google account. **Browse
-Google Drive** lets you switch accounts; adding folders from a second account
+Google Drive** is a source selector, not a direct-import screen: it lets you
+switch accounts and choose monitored folders, while collection still runs
+through the saved keyword workflow. Adding folders from a second account
 retains the first selection. **Select all of My Drive** explicitly selects that
 account's My Drive tree, not every shared drive in a Workspace organization.
 Removing the final selected folder disables Drive collection for that selection;
@@ -858,7 +860,10 @@ Drive selections are stored as `metadata.googleDriveSources`, with an account ID
 and folder IDs per entry. Existing single-account settings remain readable.
 Legacy folders without an account identity must be assigned explicitly before
 saving. Ownership is checked before collection, and imported evidence records
-the account used. A failed Drive account is reported without suppressing later
+the account used, provider revision, canonical source identity, prior revision
+IDs, managed storage key, and SHA-256 hash. Unchanged revisions are skipped;
+changed revisions create a new evidence version; a failed replacement preserves
+the prior version. A failed Drive account is reported without suppressing later
 selected accounts. Disconnect confirmation names the account and both Gmail and
 Drive consequences. Only that account is removed from scheduled selections.
 Shared source connection records remain while another Google account exists;

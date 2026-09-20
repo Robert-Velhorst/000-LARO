@@ -20,6 +20,9 @@ import { getDb } from "../db";
 import { emailAccounts } from "../schema";
 import { and, eq } from "drizzle-orm";
 import { googleDriveSourcesSchema } from "../../shared/googleDriveSources";
+import { listGoogleDriveFolders } from "../googleDriveService";
+
+const driveId = z.string().trim().min(1).max(256);
 
 const keywordPullInput = z.object({
   caseId: z.string(),
@@ -31,9 +34,32 @@ const keywordPullInput = z.object({
   localFolderPaths: z.array(z.string()).optional(),
   dateStart: z.coerce.date().optional(),
   dateEnd: z.coerce.date().optional(),
+  includeGmail: z.boolean().optional(),
+  includeGmailAttachments: z.boolean().optional(),
+  includeDrive: z.boolean().optional(),
+  includeLocal: z.boolean().optional(),
 });
 
 export const autoCollectionRouter = router({
+  listDriveFolders: protectedProcedure
+    .input(z.object({
+      parentId: driveId.optional(),
+      accountId: driveId,
+    }))
+    .query(async ({ input, ctx }) => {
+      try {
+        return {
+          folders: await listGoogleDriveFolders(ctx.user.id, input.parentId, input.accountId),
+        };
+      } catch (error) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Google Drive folders could not be loaded.",
+        });
+      }
+    }),
+
   getSettings: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
@@ -100,7 +126,7 @@ export const autoCollectionRouter = router({
       await assertCaseOwnership(input.caseId, ctx.user.id);
       try {
         const result = await runAutoCollection(input.caseId);
-        return { success: true, result };
+        return { success: result.errors.length === 0, result };
       } catch (error) {
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
@@ -146,8 +172,16 @@ export const autoCollectionRouter = router({
           localFolderPaths: input.localFolderPaths,
           dateStart: input.dateStart,
           dateEnd: input.dateEnd,
+          includeGmail: input.includeGmail,
+          includeGmailAttachments: input.includeGmailAttachments,
+          includeDrive: input.includeDrive,
+          includeLocal: input.includeLocal,
         });
-        return { success: true, result };
+        return {
+          success: result.errors.length === 0 && result.outcome === "completed",
+          outcome: result.outcome,
+          result,
+        };
       } catch (error) {
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",

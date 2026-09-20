@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, Plus, X, Search, Calendar, Mail, Play, Settings2, Sparkles, Folder, Cloud } from "lucide-react";
 import { toast } from "sonner";
-import { GoogleDriveFolderBrowser } from "./GoogleDriveFolderBrowser";
+import { GoogleDriveSourceSelector } from "./GoogleDriveSourceSelector";
 import { savedGoogleDriveSources, type GoogleDriveSource } from "../../../shared/googleDriveSources";
 
 interface AutoCollectionSettingsProps {
@@ -64,10 +64,9 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
 
   const runCollectionMutation = trpc.autoCollection.runCollection.useMutation({
     onSuccess: (data) => {
-      toast.success(
-        `Collection complete: ${data.result.emailsProcessed} emails, ${data.result.filesDownloaded} files`
-      );
-      if (data.result.errors.length) toast.error(data.result.errors.join("; "));
+      const summary = `Collection processed ${data.result.emailsProcessed} emails and ${data.result.filesDownloaded} files`;
+      if (data.success) toast.success(summary);
+      else toast.warning(`${summary} with errors`, { description: data.result.errors[0] });
     },
     onError: (error) => {
       toast.error(`Collection failed: ${error.message}`);
@@ -202,8 +201,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
           >
             ← Back to Settings
           </Button>
-          <GoogleDriveFolderBrowser
-            caseId={caseId}
+          <GoogleDriveSourceSelector
             initialAccountId={selectedDriveAccountId}
             onFoldersSelected={handleFoldersSelected}
             multiSelect={true}

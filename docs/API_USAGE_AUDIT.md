@@ -31,8 +31,12 @@ original phase-074 snapshot are mounted and typed.
 - Typed owner-scoped notifications with registered case, evidence, and lawyer
   destinations. The canonical writer returns durable created/already-exists/
   failure outcomes, and reminder deduplication is the notification row itself.
-- Gmail/Drive OAuth and evidence collection when configured, including a
-  versioned shared-grant disconnect review and one confirmed cleanup operation.
+- Gmail/Drive OAuth and one canonical Drive evidence-collection path when
+  configured. `autoCollection.listDriveFolders` performs read-only source
+  selection; `pullEvidenceByKeywords` owns bounded download, account-plus-file
+  deduplication, revisioning, analysis policy, explicit outcomes, and canonical
+  evidence provenance. Shared-grant disconnect retains its versioned review and
+  one confirmed cleanup operation.
 - Case-owned KvK, Rechtspraak, and KOOP research with durable metadata-only
   receipts and explicit complete, empty, partial, unavailable, and failed
   outcomes; failures carry null counts rather than fabricated zero results.
@@ -68,3 +72,6 @@ original phase-074 snapshot are mounted and typed.
 - Notification reads batch-revalidate current owner context. Cross-owner,
   deleted, or non-registered destinations expose no action or entity identity;
   concurrent and failed reminder writes are covered behaviorally.
+- Repository controls reject restoration of the retired `googleDrive` router,
+  direct folder preview/import controls, parallel `google_drive_files` writes,
+  and the legacy collection coordinator.

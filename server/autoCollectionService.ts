@@ -1,13 +1,11 @@
 import { getDb } from './db';
-import { eq, and, desc, gt, lt } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import { notifyOwner } from './notification';
 import {
   autoCollectionSettings,
   autoCollectionLogs,
   keywordPullJobs,
   keywordMatches,
-  emailMessages,
-  googleDriveFiles,
   emailAccounts,
   evidence as evidenceTable,
   cases as casesTable,
@@ -18,7 +16,7 @@ import {
   downloadAndUploadGoogleDriveFile,
   findGoogleDriveFilesByExactName,
   getAllFilesInFolder,
-  getGoogleDriveFileMetadata,
+  googleDriveProviderRevision,
 } from './googleDriveService';
 import { getProviderAccessToken, listProviderConnections } from './providerConnections';
 import { getGmailMessage, getGmailAttachmentBytes } from './gmailService';
@@ -176,334 +174,6 @@ function matchesKeywords(text: string, keywords: string[], mode: 'all' | 'any'):
   } else {
     return matchedKeywords.length > 0;
   }
-}
-
-/**
- * Run auto-collection for a case
- */
-async function runAutoCollectionLegacy(caseId: string): Promise<{
-  emailsFound: number;
-  emailsProcessed: number;
-  filesFound: number;
-  filesDownloaded: number;
-  errors: string[];
-}> {
-  const db = await getDb();
-  if (!db) {
-    throw new Error('Database not available');
-  }
-
-  const settings = await getAutoCollectionSettings(caseId);
-  if (!settings) {
-    throw new Error('Auto-collection settings not found for case');
-  }
-
-  const logId = uuidv4();
-  const startTime = new Date();
-  const errors: string[] = [];
-
-  let emailsFound = 0;
-  let emailsProcessed = 0;
-  let filesFound = 0;
-  let filesDownloaded = 0;
-
-  try {
-    const keywords = JSON.parse(settings.keywords || '[]');
-    const emailAccountIds = JSON.parse(settings.emailAccountIds || '[]');
-    const keywordMatchMode = (settings.keywordMatchMode as 'all' | 'any') || 'any';
-
-    // Collect emails from Gmail
-    for (const accountId of emailAccountIds) {
-      try {
-        const emailsResult = await collectEmailsFromGmail(
-          caseId,
-          accountId,
-          keywords,
-          keywordMatchMode,
-          settings.dateRangeStart || undefined,
-          settings.dateRangeEnd || undefined
-        );
-        emailsFound += emailsResult.found;
-        emailsProcessed += emailsResult.processed;
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : 'Unknown error collecting emails';
-        errors.push(`Email collection error for account ${accountId}: ${errorMsg}`);
-      }
-    }
-
-    // Collect files from Google Drive
-    if (settings.autoDownloadGoogleDriveFiles) {
-      const googleDriveFolderIds = settings.googleDriveFolderIds
-        ? JSON.parse(settings.googleDriveFolderIds)
-        : [];
-
-      for (const folderId of googleDriveFolderIds) {
-        try {
-          const filesResult = await collectFilesFromGoogleDrive(
-            caseId,
-            folderId,
-            keywords,
-            keywordMatchMode
-          );
-          filesFound += filesResult.found;
-          filesDownloaded += filesResult.downloaded;
-        } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : 'Unknown error collecting files';
-          errors.push(`File collection error for folder ${folderId}: ${errorMsg}`);
-        }
-      }
-    }
-
-    // Save log
-    const executionTime = (new Date().getTime() - startTime.getTime()) / 1000;
-    await db.insert(autoCollectionLogs).values({
-      id: logId,
-      caseId,
-      settingsId: settings.id,
-      userId: settings.userId,
-      runStartedAt: startTime,
-      runCompletedAt: new Date(),
-      status: 'completed',
-      emailsFound: String(emailsFound),
-      emailsProcessed: String(emailsProcessed),
-      filesFound: String(filesFound),
-      filesDownloaded: String(filesDownloaded),
-      errorCount: String(errors.length),
-      executionTimeSeconds: String(Math.round(executionTime)),
-    });
-
-    // Update settings
-    await db
-      .update(autoCollectionSettings)
-      .set({
-        lastRunAt: new Date(),
-        totalItemsCollected: String(emailsProcessed + filesDownloaded),
-        totalEmailsCollected: String(emailsProcessed),
-        totalFilesCollected: String(filesDownloaded),
-      })
-      .where(eq(autoCollectionSettings.caseId, caseId));
-
-    return {
-      emailsFound,
-      emailsProcessed,
-      filesFound,
-      filesDownloaded,
-      errors,
-    };
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-    errors.push(errorMsg);
-
-    // Save failed log
-    const executionTime = (new Date().getTime() - startTime.getTime()) / 1000;
-    await db.insert(autoCollectionLogs).values({
-      id: logId,
-      caseId,
-      settingsId: settings.id,
-      userId: settings.userId,
-      runStartedAt: startTime,
-      runCompletedAt: new Date(),
-      status: 'failed',
-      errorMessage: errorMsg,
-      errorCount: String(errors.length),
-      executionTimeSeconds: String(Math.round(executionTime)),
-    });
-
-    throw error;
-  }
-}
-
-/**
- * Collect emails from Gmail based on keywords
- */
-async function collectEmailsFromGmail(
-  caseId: string,
-  accountId: string,
-  keywords: string[],
-  matchMode: 'all' | 'any',
-  dateRangeStart?: Date,
-  dateRangeEnd?: Date
-): Promise<{
-  found: number;
-  processed: number;
-}> {
-  const db = await getDb();
-  if (!db) {
-    throw new Error('Database not available');
-  }
-
-  const conditions = [eq(emailMessages.accountId, accountId)];
-  
-  if (dateRangeStart) {
-    conditions.push(gt(emailMessages.date, dateRangeStart));
-  }
-  if (dateRangeEnd) {
-    conditions.push(lt(emailMessages.date, dateRangeEnd));
-  }
-  
-  const messages = await db.select().from(emailMessages).where(and(...conditions));
-
-  let found = 0;
-  let processed = 0;
-
-  for (const message of messages) {
-    // Check if message matches keywords
-    const searchText = `${message.subject || ''} ${message.body || ''} ${message.snippet || ''}`;
-    const matches = matchesKeywords(searchText, keywords, matchMode);
-
-    if (matches) {
-      found++;
-
-      // Link message to case if not already linked
-      if (!message.caseId) {
-        await db
-          .update(emailMessages)
-          .set({ caseId })
-          .where(eq(emailMessages.id, message.id));
-        processed++;
-      }
-
-      // Record keyword match
-      const matchedKeywords = keywords.filter((kw) => searchText.toLowerCase().includes(kw.toLowerCase()));
-      if (matchedKeywords.length > 0) {
-        await db.insert(keywordMatches).values({
-          id: uuidv4(),
-          caseId,
-          itemId: message.id,
-          itemType: 'email',
-          matchedKeywords: JSON.stringify(matchedKeywords),
-          matchCount: String(matchedKeywords.length),
-        });
-      }
-    }
-  }
-
-  return { found, processed };
-}
-
-/**
- * Collect files from Google Drive based on keywords
- */
-async function collectFilesFromGoogleDrive(
-  caseId: string,
-  folderId: string,
-  keywords: string[],
-  matchMode: 'all' | 'any'
-): Promise<{
-  found: number;
-  downloaded: number;
-}> {
-  const db = await getDb();
-  if (!db) throw new Error('Database not available');
-
-  const { evidence } = await import('./schema');
-
-  let found = 0;
-  let downloaded = 0;
-
-  try {
-    // Resolve the owner before opening Drive so background collection cannot
-    // fall back to an unrelated connected Google account.
-    const { cases } = await import('./schema');
-    const caseData = await db.select().from(cases).where(eq(cases.id, caseId)).limit(1);
-    if (!caseData[0]) throw new Error(`Case ${caseId} not found`);
-    const userId = caseData[0].userId;
-    if (!userId) throw new Error(`Case ${caseId} has no owner`);
-
-    // 1. Get file list from folder
-    const files = await getGoogleDriveFileMetadata(folderId, userId);
-    
-    for (const file of files) {
-      if (!file.name) continue;
-
-      // 2. Check file names against keywords
-      const matches = matchesKeywords(file.name, keywords, matchMode);
-      
-      if (matches) {
-        found++;
-
-        // 3. Check if already downloaded/exists in evidence table
-        const existingEvidence = await db
-          .select()
-          .from(evidence)
-          .where(and(
-            eq(evidence.caseId, caseId),
-            eq(evidence.source, 'google_drive')
-          ));
-
-        const alreadyImported = existingEvidence.some(e => {
-          const metadata = e.metadata ? JSON.parse(e.metadata) : {};
-          return metadata.driveFileId === file.id;
-        });
-
-        if (alreadyImported) {
-          console.log(`[AutoCollection] File ${file.name} already imported, skipping`);
-          continue;
-        }
-
-        try {
-          // 4. Download and upload to local storage/S3
-          const fileData = await downloadAndUploadGoogleDriveFile(file.id!, caseId, userId);
-          
-          // 5. Create evidence record
-          const evidenceId = uuidv4();
-          await db.insert(evidence).values({
-            id: evidenceId,
-            caseId,
-            userId,
-            type: determineEvidenceType(fileData.mimeType),
-            source: 'google_drive',
-            title: file.name,
-            description: `Auto-collected from Google Drive`,
-            fileUrl: fileData.url,
-            fileName: fileData.fileName,
-            fileSize: fileData.size,
-            mimeType: fileData.mimeType,
-            metadata: JSON.stringify({
-              driveFileId: file.id,
-              folderId,
-              autoCollected: true,
-              collectedAt: new Date().toISOString(),
-              modifiedTime: fileData.modifiedTime,
-            }),
-            relevant: true,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          });
-
-          // Also insert into googleDriveFiles for tracking
-          await db.insert(googleDriveFiles).values({
-            id: uuidv4(),
-            userId,
-            caseId,
-            googleFileId: file.id,
-            fileName: fileData.fileName,
-            mimeType: fileData.mimeType,
-            fileSize: fileData.size,
-            s3Key: fileData.key,
-            s3Url: fileData.url,
-            googleWebViewLink: file.webViewLink || null,
-            googleModifiedTime: fileData.modifiedTime,
-            evidenceType: determineEvidenceType(fileData.mimeType),
-            isIncluded: 'Yes',
-            metadata: JSON.stringify({
-              folderId,
-              sourceMimeType: fileData.sourceMimeType,
-            }),
-          });
-          
-          downloaded++;
-          console.log(`[AutoCollection] Downloaded and created evidence for: ${file.name}`);
-        } catch (downloadError) {
-          console.error(`[AutoCollection] Failed to download ${file.name}:`, downloadError);
-        }
-      }
-    }
-  } catch (error) {
-    console.error(`[AutoCollection] Google Drive scan failed for folder ${folderId}:`, error);
-  }
-
-  return { found, downloaded };
 }
 
 /**
@@ -1036,6 +706,26 @@ async function pullFromGmail(
  * Pull files from Google Drive that match keywords by filename.
  * If folderIds is empty, falls back to scanning the user's "root" folder.
  */
+interface StoredDriveRevision {
+  id: string;
+  sourceRevision: string | null;
+  revisionNumber: number;
+}
+
+function driveSourceIdentity(accountId: string, fileId: string): string {
+  return JSON.stringify(['google_drive', accountId, fileId]);
+}
+
+function readMetadataObject(value: string | null): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 async function pullFromDrive(
   caseId: string,
   userId: string,
@@ -1063,6 +753,34 @@ async function pullFromDrive(
     ? ['exact-name-query']
     : folderIds.length > 0 ? folderIds : ['root'];
   let downloaded = 0;
+
+  // Canonical evidence is the only Drive ingestion store. Load its version
+  // state once so every candidate avoids a per-file full-table scan.
+  const existingEvidence = await db
+    .select({ id: evidenceTable.id, metadata: evidenceTable.metadata })
+    .from(evidenceTable)
+    .where(and(
+      eq(evidenceTable.caseId, caseId),
+      eq(evidenceTable.userId, userId),
+      eq(evidenceTable.source, 'google_drive'),
+    ));
+  const storedByIdentity = new Map<string, StoredDriveRevision[]>();
+  for (const row of existingEvidence) {
+    const metadata = readMetadataObject(row.metadata);
+    const driveFileId = typeof metadata.driveFileId === 'string' ? metadata.driveFileId : null;
+    const driveAccountId = typeof metadata.driveAccountId === 'string' ? metadata.driveAccountId : null;
+    if (!driveFileId || driveAccountId !== cred.accountId) continue;
+    const identity = driveSourceIdentity(driveAccountId, driveFileId);
+    const revisions = storedByIdentity.get(identity) ?? [];
+    revisions.push({
+      id: row.id,
+      sourceRevision: typeof metadata.sourceRevision === 'string' ? metadata.sourceRevision : null,
+      revisionNumber: Number.isSafeInteger(metadata.revisionNumber) && Number(metadata.revisionNumber) > 0
+        ? Number(metadata.revisionNumber)
+        : 1,
+    });
+    storedByIdentity.set(identity, revisions);
+  }
 
   for (const folderId of folders) {
     try {
@@ -1099,19 +817,10 @@ async function pullFromDrive(
         if (!file.name || !file.id) continue;
         let fileWords = 0;
         try {
-          const existing = await db
-            .select()
-            .from(evidenceTable)
-            .where(and(eq(evidenceTable.caseId, caseId), eq(evidenceTable.source, 'google_drive')));
-          const already = existing.some((e) => {
-            try {
-              const meta = e.metadata ? JSON.parse(e.metadata) : {};
-              return meta.driveFileId === file.id;
-            } catch {
-              return false;
-            }
-          });
-          if (already) {
+          const sourceIdentity = driveSourceIdentity(cred.accountId, file.id);
+          const priorVersions = storedByIdentity.get(sourceIdentity) ?? [];
+          const listedRevision = googleDriveProviderRevision(file);
+          if (listedRevision && priorVersions.some((version) => version.sourceRevision === listedRevision)) {
             budget.recordSkip('google_drive', 'duplicate');
             continue;
           }
@@ -1119,8 +828,19 @@ async function pullFromDrive(
           const fileData = await downloadAndUploadGoogleDriveFile(
             file.id, caseId, userId, cred.accountId, { budget, signal: budget.signal },
           );
+          const sourceRevision = fileData.providerRevision ?? listedRevision;
+          if (sourceRevision && priorVersions.some((version) => version.sourceRevision === sourceRevision)) {
+            await storageDelete(fileData.key).catch(() => undefined);
+            budget.recordSkip('google_drive', 'duplicate');
+            continue;
+          }
           await budget.run(async () => {
             let evidenceId: string;
+            const previousVersionIds = priorVersions.map((version) => version.id);
+            const revisionNumber = priorVersions.reduce(
+              (highest, version) => Math.max(highest, version.revisionNumber),
+              0,
+            ) + 1;
             try {
               evidenceId = await createEvidenceFile(userId, {
               caseId,
@@ -1136,8 +856,15 @@ async function pullFromDrive(
                 storageKey: fileData.key,
                 driveFileId: file.id,
                 driveAccountId: cred.accountId,
+                sourceIdentity,
+                sourceRevision,
+                revisionNumber,
+                isCurrent: true,
+                previousVersionIds,
                 folderId,
                 sourceMimeType: fileData.sourceMimeType,
+                providerVersion: fileData.providerVersion,
+                md5Checksum: fileData.md5Checksum,
                 autoCollected: true,
                 collectedAt: new Date().toISOString(),
                 modifiedTime: fileData.modifiedTime,
@@ -1153,23 +880,11 @@ async function pullFromDrive(
               evidenceId, userId, fileData.mimeType, file.name, errors,
               autoAnalyzeImports, budget, 'google_drive',
             );
-            await db.insert(googleDriveFiles).values({
-              id: uuidv4(),
-              userId,
-              caseId,
-              accountId: cred.accountId,
-              googleFileId: file.id,
-              fileName: fileData.fileName,
-              mimeType: fileData.mimeType,
-              fileSize: fileData.size,
-              s3Key: fileData.key,
-              s3Url: fileData.url,
-              googleWebViewLink: file.webViewLink || null,
-              googleModifiedTime: fileData.modifiedTime,
-              evidenceType: determineEvidenceType(fileData.mimeType),
-              isIncluded: 'Yes',
-              metadata: JSON.stringify({ sourceMimeType: fileData.sourceMimeType }),
-              });
+            storedByIdentity.set(sourceIdentity, [...priorVersions, {
+              id: evidenceId,
+              sourceRevision,
+              revisionNumber,
+            }]);
             downloaded++;
           });
         } catch (err) {

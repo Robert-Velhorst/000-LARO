@@ -138,7 +138,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   // The account control is inside the closed mobile sidebar, not visible here.
-  await page.getByRole('heading', { level: 1 }).waitFor();
+  await page.locator('#main-content').waitFor();
   assert.equal((await me(a)).email, 'access@example.test');
   await page.screenshot({ path: path.join(runtime, 'mobile.png') });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));

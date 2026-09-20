@@ -26,6 +26,11 @@ Date: 2026-09-20
   an empty search, missing insolvency warning, or absence conclusion.
 - OAuth authorization URLs are created by protected tRPC procedures. OAuth flows use encrypted, time-limited state plus PKCE; the callback no longer accepts a caller-supplied user ID. The enabled Google evidence connector requests read-only Gmail/Drive scopes and account email only; delegated mail sending and label writes are excluded.
 - OAuth tokens use authenticated AES-256-GCM storage. Callback pages escape provider data and use a nonce-bound script under a route-specific CSP.
+- Google Drive folder navigation is read-only source selection. There is no
+  separately callable preview/direct-import/sync router: the owner-scoped
+  auto-collection service is the sole download path and persists account-bound
+  source identity, provider revision, managed storage provenance, and SHA-256
+  in canonical evidence.
 - Desktop provider authorization runs in a dedicated sandboxed,
   context-isolated, Node-disabled child window. Top-level navigation is limited
   to the approved provider hosts and LARO's loopback callback, allowing the
