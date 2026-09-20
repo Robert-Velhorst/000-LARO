@@ -344,6 +344,28 @@ describe('production readiness regressions', () => {
     expect(settings).toContain('GoogleDriveSourceSelector');
   });
 
+  it('downloads only persisted reviewed legal-draft snapshots', () => {
+    const router = readFileSync(join(ROOT, 'server/routers/gapAnalysis.ts'), 'utf8');
+    const snapshots = readFileSync(join(ROOT, 'server/legalDraftSnapshots.ts'), 'utf8');
+    const server = readFileSync(join(ROOT, 'server/index.ts'), 'utf8');
+    const renderer = readFileSync(join(ROOT, 'src/renderer/components/LegalDocumentGenerator.tsx'), 'utf8');
+    const migration = readFileSync(join(ROOT, 'drizzle/0029_reviewed_legal_draft_snapshots.sql'), 'utf8');
+
+    expect(router).toContain('saveReviewedRecipient: protectedProcedure');
+    expect(router).toContain('reviewLegalDraft: protectedProcedure');
+    expect(router).toContain('prepareLegalDraftDownload: protectedProcedure');
+    expect(router).toContain('recipientRevisionId');
+    expect(snapshots).toContain('contentBase64');
+    expect(snapshots).toContain('generationRevision');
+    expect(snapshots).toContain('recordReviewedLegalDraftDownload');
+    expect(server).toContain("app.get('/api/legal-draft/:ticket.txt'");
+    expect(renderer).toContain('Download exact persisted text');
+    expect(renderer).not.toContain('new Blob');
+    expect(renderer).not.toContain('URL.createObjectURL');
+    expect(migration).toContain('CREATE TABLE IF NOT EXISTS `legal_draft_recipients`');
+    expect(migration).toContain('CREATE TABLE IF NOT EXISTS `legal_draft_snapshots`');
+  });
+
   it('discloses bounded backup retention instead of promising immediate permanent erasure', () => {
     const privacy = readFileSync(join(ROOT, 'src/renderer/components/Privacy.tsx'), 'utf8');
     const cases = readFileSync(join(ROOT, 'src/renderer/components/Cases.tsx'), 'utf8');

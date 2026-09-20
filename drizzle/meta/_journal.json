@@ -204,6 +204,13 @@
       "when": 1790128600000,
       "tag": "0028_typed_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1790215000000,
+      "tag": "0029_reviewed_legal_draft_snapshots",
+      "breakpoints": true
     }
   ]
 }

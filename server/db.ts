@@ -517,6 +517,10 @@ export async function getDb() {
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0018_case_action_evidence.sql"), "utf8"));
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0019_case_shares.sql"), "utf8"));
         sqlite.exec(fs.readFileSync(path.join(foundFolder, "0020_account_email_identity.sql"), "utf8"));
+        // Legal-draft downloads must never fall back to transient renderer
+        // blobs when an installed database has stale migration bookkeeping.
+        // The migration is additive and idempotent, so replay it on every boot.
+        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0029_reviewed_legal_draft_snapshots.sql"), "utf8"));
         // Legacy gap-analysis rows contain unsupported case-strength scores.
         // Re-run this idempotent retirement even when an installed database has
         // stale migration bookkeeping; current versioned coverage rows survive.

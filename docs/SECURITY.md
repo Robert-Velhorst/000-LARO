@@ -59,6 +59,12 @@ Date: 2026-09-20
 - Evidence-coverage runs persist their exact case/input revision and fail closed:
   changed or unverifiable inputs, an active run, and failed recomputation all
   suppress previously derived gaps and downstream document generation.
+- Legal-draft recipients are owner-scoped, explicitly reviewed revisions with
+  owner-entered or evidence-linked provenance. Generated drafts persist exact
+  bytes and SHA-256 alongside case/source/analysis/recipient revisions. Review
+  fails when any current revision changed; only reviewed snapshots receive a
+  short-lived one-use download ticket. The server rechecks ownership and byte
+  integrity and writes a mandatory metadata-only audit before dispatch.
 - Destructive evidence operations use an atomic SQLite outbox: metadata deletion and cleanup scheduling commit together, active shared references prevent premature object removal, failed local/S3 deletion remains durably queued and degrades worker health, and evidence, case, and account responses expose pending cleanup instead of reporting complete erasure.
 - The Flask runtime has no seeded users. It persists Werkzeug password hashes and SHA-256 digests of bearer/reset tokens in an ignored SQLite auth database; reset tokens are short-lived, single-use, and never returned by the API.
 - Flask investor access requires an operator-provisioned password. The dashboard does not fabricate investor metrics when no verified metrics source exists.

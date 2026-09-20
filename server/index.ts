@@ -57,6 +57,11 @@ import { consumeCaseZipDownloadTicket, createCaseZipStream } from './evidenceExp
 import { AUDIT_ACTIONS, createAuditLog } from './audit';
 import { scannerUploadRouter } from './scannerUpload';
 import { securityHeaders } from './securityHeaders';
+import {
+  consumeLegalDraftDownloadTicket,
+  LegalDraftPreconditionError,
+  recordReviewedLegalDraftDownload,
+} from './legalDraftSnapshots';
 
 // ─── Environment ──────────────────────────────────────────────────────────────
 
@@ -173,6 +178,33 @@ app.get('/api/case-export/:ticket.zip', async (req, res) => {
     const message = error instanceof Error ? error.message : 'Evidence export failed';
     const status = /invalid or expired/i.test(message) ? 403 : /not found/i.test(message) ? 404 : /queue is full/i.test(message) ? 429 : 500;
     res.status(status).json({ error: status === 500 ? 'Evidence export failed' : message });
+  }
+});
+
+app.get('/api/legal-draft/:ticket.txt', async (req, res) => {
+  try {
+    const ctx = await createContext({ req, res });
+    if (!ctx.user || ctx.authScope !== 'session') {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const draftId = consumeLegalDraftDownloadTicket(req.params.ticket, ctx.user.id);
+    const source = await recordReviewedLegalDraftDownload(ctx.user.id, draftId);
+    const fileName = encodeURIComponent(sanitizeFilename(source.filename));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Length', String(source.bytes.length));
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
+    res.status(200).send(source.bytes);
+  } catch (error) {
+    const status = error instanceof LegalDraftPreconditionError ? 403 : 500;
+    res.status(status).json({
+      error: status === 500
+        ? 'Legal draft could not be downloaded'
+        : (error as LegalDraftPreconditionError).message,
+    });
   }
 });
 

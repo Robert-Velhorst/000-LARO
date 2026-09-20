@@ -4,7 +4,7 @@ import { applyHostedMigrations, readHostedMigrations } from '../../server/persis
 describe('hosted PostgreSQL migrations', () => {
   it('provides a PostgreSQL baseline for every core public-workspace domain', () => {
     const migrations = readHostedMigrations();
-    expect(migrations).toHaveLength(9);
+    expect(migrations).toHaveLength(10);
 
     const sql = migrations.map((migration) => migration.sql).join('\n');
     expect(migrations.every((migration) => /^[a-f0-9]{64}$/.test(migration.checksum))).toBe(true);
@@ -19,13 +19,15 @@ describe('hosted PostgreSQL migrations', () => {
       'storage_deletion_queue',
       'case_shares',
       'account_email_conflicts',
+      'legal_draft_recipients',
+      'legal_draft_snapshots',
     ]) {
       expect(sql).toContain(`CREATE TABLE IF NOT EXISTS "${table}"`);
     }
     expect(sql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "outreach_status_case_lawyer_unique"');
-    expect(migrations.at(-1)?.name).toBe('0009_retire_gap_scoring.sql');
-    expect(migrations.at(-1)?.sql).toContain("'legacy-case-strength-v0'");
-    expect(migrations.at(-1)?.sql).toContain("evidence-coverage-v1");
+    expect(migrations.at(-1)?.name).toBe('0010_reviewed_legal_draft_snapshots.sql');
+    expect(migrations.at(-2)?.sql).toContain("'legacy-case-strength-v0'");
+    expect(migrations.at(-2)?.sql).toContain("evidence-coverage-v1");
     expect(sql).not.toContain('`');
     expect(sql).not.toMatch(/\bPRAGMA\b/i);
   });
@@ -52,12 +54,13 @@ describe('hosted PostgreSQL migrations', () => {
       '0007_retire_lawyer_rating.sql',
       '0008_remove_dead_feature_flags.sql',
       '0009_retire_gap_scoring.sql',
+      '0010_reviewed_legal_draft_snapshots.sql',
     ]);
     expect(queries[0]?.sql).toContain('CREATE TABLE IF NOT EXISTS laro_schema_migrations');
     expect(queries.some((query) => query.sql.includes('CREATE TABLE IF NOT EXISTS "users"'))).toBe(true);
     expect(queries.at(-1)).toMatchObject({
       sql: expect.stringContaining('INSERT INTO laro_schema_migrations'),
-      values: ['0009_retire_gap_scoring.sql', expect.stringMatching(/^[a-f0-9]{64}$/)],
+      values: ['0010_reviewed_legal_draft_snapshots.sql', expect.stringMatching(/^[a-f0-9]{64}$/)],
     });
   });
 

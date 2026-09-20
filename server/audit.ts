@@ -42,6 +42,9 @@ const MANDATORY_AUDIT_ACTIONS = new Set([
   "outreach.targets_matched",
   "outreach.target_match_status_changed",
   "legal_source.public_research_recorded",
+  "legal_draft.recipient_reviewed",
+  "legal_draft.reviewed",
+  "legal_draft.downloaded",
   "provider.connected",
   "provider.credentials_invalidated",
   "provider.credentials_refreshed",
@@ -262,6 +265,11 @@ export const AUDIT_ACTIONS = {
 
   // Case-scoped public-source research
   PUBLIC_RESEARCH_RECORDED: "legal_source.public_research_recorded",
+
+  // Immutable reviewed legal-draft snapshots
+  LEGAL_DRAFT_RECIPIENT_REVIEWED: "legal_draft.recipient_reviewed",
+  LEGAL_DRAFT_REVIEWED: "legal_draft.reviewed",
+  LEGAL_DRAFT_DOWNLOADED: "legal_draft.downloaded",
 
   // Evidence actions
   EVIDENCE_EXPORTED: "evidence.exported",

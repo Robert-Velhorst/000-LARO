@@ -1,5 +1,5 @@
 import { router, protectedProcedure } from "../_core/trpc";
-import { assertCaseAccess, assertCaseOwnership } from "../_core/authz";
+import { assertCaseAccess, assertCaseOwner, assertCaseOwnership } from "../_core/authz";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { GapAnalysisInputsChangedError, gapDetectionService } from "../gapDetection";
@@ -27,6 +27,16 @@ import {
   buildGapAnalysisInputSnapshot,
   EVIDENCE_COVERAGE_CONTRACT_VERSION,
 } from "../evidenceCoverage";
+import {
+  createLegalDraftSnapshot,
+  getCurrentReviewedRecipient,
+  issueLegalDraftDownloadTicket,
+  LegalDraftPreconditionError,
+  listLegalDraftSnapshots,
+  loadCurrentDraftRevisionState,
+  reviewLegalDraftSnapshot,
+  saveReviewedRecipient,
+} from "../legalDraftSnapshots";
 
 const parseData = (raw: string | null) => {
   if (!raw) return {};
@@ -673,6 +683,98 @@ export const gapAnalysisRouter = router({
     }),
 
   /**
+   * Persist an explicitly reviewed recipient revision before any legal draft
+   * can become downloadable.
+   */
+  getReviewedRecipient: protectedProcedure
+    .input(z.object({ caseId: z.string().trim().min(1).max(128) }))
+    .query(async ({ input, ctx }) => {
+      await assertCaseOwner(input.caseId, ctx.user.id);
+      return getCurrentReviewedRecipient(ctx.user.id, input.caseId);
+    }),
+
+  saveReviewedRecipient: protectedProcedure
+    .input(z.object({
+      caseId: z.string().trim().min(1).max(128),
+      name: z.string().trim().min(1).max(300),
+      address: z.string().trim().min(3).max(2_000),
+      provenanceType: z.enum(["owner_entered", "evidence_derived"]),
+      evidenceId: z.string().trim().min(1).max(256).optional(),
+      confirmed: z.literal(true),
+    }).superRefine((input, refinement) => {
+      if (input.provenanceType === "evidence_derived" && !input.evidenceId) {
+        refinement.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["evidenceId"],
+          message: "Select the evidence supporting this recipient.",
+        });
+      }
+    }))
+    .mutation(async ({ input, ctx }) => {
+      await assertCaseOwner(input.caseId, ctx.user.id);
+      try {
+        return await saveReviewedRecipient({
+          userId: ctx.user.id,
+          caseId: input.caseId,
+          name: input.name,
+          address: input.address,
+          provenanceType: input.provenanceType,
+          evidenceId: input.evidenceId,
+        });
+      } catch (error) {
+        if (error instanceof LegalDraftPreconditionError) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: error.message });
+        }
+        throw error;
+      }
+    }),
+
+  listLegalDrafts: protectedProcedure
+    .input(z.object({ caseId: z.string().trim().min(1).max(128) }))
+    .query(async ({ input, ctx }) => {
+      await assertCaseOwner(input.caseId, ctx.user.id);
+      return listLegalDraftSnapshots(ctx.user.id, input.caseId);
+    }),
+
+  reviewLegalDraft: protectedProcedure
+    .input(z.object({
+      draftId: z.string().trim().min(1).max(128),
+      contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+      confirmed: z.literal(true),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        return await reviewLegalDraftSnapshot({
+          userId: ctx.user.id,
+          draftId: input.draftId,
+          contentHash: input.contentHash,
+        });
+      } catch (error) {
+        if (error instanceof LegalDraftPreconditionError) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: error.message });
+        }
+        throw error;
+      }
+    }),
+
+  prepareLegalDraftDownload: protectedProcedure
+    .input(z.object({ draftId: z.string().trim().min(1).max(128) }))
+    .mutation(async ({ input, ctx }) => {
+      try {
+        const ticket = await issueLegalDraftDownloadTicket(ctx.user.id, input.draftId);
+        return {
+          url: `/api/legal-draft/${ticket.token}.txt`,
+          filename: ticket.filename,
+        };
+      } catch (error) {
+        if (error instanceof LegalDraftPreconditionError) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: error.message });
+        }
+        throw error;
+      }
+    }),
+
+  /**
    * Generate legal document based on gap analysis
    */
   generateDocument: protectedProcedure
@@ -686,10 +788,11 @@ export const gapAnalysisRouter = router({
           "demand_letter",
         ]),
         demandAmount: z.number().finite().positive().max(1_000_000_000).optional(),
+        recipientRevisionId: z.string().trim().min(1).max(128),
       })
     )
     .mutation(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id); // Phase 008
+      await assertCaseOwner(input.caseId, ctx.user.id);
       const analysisState = await resolveGapAnalysisState(input.caseId);
       if (analysisState.status !== "fresh") {
         throw new TRPCError({
@@ -715,32 +818,33 @@ export const gapAnalysisRouter = router({
         };
       }
 
-      // Get gap analysis data
-      const [gaps, expectedDocs, patterns] = await Promise.all([
-        db
-          .select()
-          .from(communicationGaps)
-          .where(eq(communicationGaps.caseId, input.caseId)),
-        db
-          .select()
-          .from(expectedDocuments)
-          .where(eq(expectedDocuments.caseId, input.caseId)),
-        db
-          .select()
-          .from(suspiciousPatterns)
-          .where(eq(suspiciousPatterns.caseId, input.caseId)),
-      ]);
+      const recipient = await getCurrentReviewedRecipient(ctx.user.id, input.caseId);
+      if (!recipient || recipient.id !== input.recipientRevisionId) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Review the current recipient before generating this draft.",
+        });
+      }
+      let revisionState;
+      try {
+        revisionState = await loadCurrentDraftRevisionState(input.caseId);
+      } catch (error) {
+        if (error instanceof LegalDraftPreconditionError) {
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: error.message });
+        }
+        throw error;
+      }
 
-      const normalizedGaps = gaps.map((g) => ({ ...g, ...parseData(g.data) })) as any[];
-      const normalizedDocs = expectedDocs.map((d) => ({ ...d, ...parseData(d.data) })) as any[];
-      const normalizedPatterns = patterns.map((p) => ({ ...p, ...parseData(p.data) })) as any[];
+      const normalizedGaps = revisionState.gaps.map((row) => ({ id: row.id, ...row.data })) as any[];
+      const normalizedDocs = revisionState.expectedDocuments.map((row) => ({ id: row.id, ...row.data })) as any[];
+      const normalizedPatterns = revisionState.suspiciousPatterns.map((row) => ({ id: row.id, ...row.data })) as any[];
 
       // Prepare gap analysis data
       const gapAnalysisData = {
         caseId: input.caseId,
         clientName: caseData.clientName || "Client",
-        opponentName: (caseData as any).opponentName || "Opponent",
-        opponentAddress: (caseData as any).opponentAddress,
+        recipientName: recipient.name,
+        recipientAddress: recipient.address,
         gaps: normalizedGaps.map((g) => ({
           type: g.gapType || g.type || "gap",
           description: g.context || g.description || "",
@@ -804,9 +908,31 @@ export const gapAnalysisRouter = router({
         };
       }
 
+      const snapshot = await createLegalDraftSnapshot({
+        userId: ctx.user.id,
+        caseId: input.caseId,
+        document,
+        demandAmount: input.demandAmount,
+        recipient,
+        revisionState,
+      });
+
       return {
         success: true,
-        document,
+        document: snapshot.document,
+        snapshot: {
+          id: snapshot.id,
+          version: snapshot.version,
+          status: snapshot.status,
+          contentHash: snapshot.contentHash,
+          byteLength: snapshot.byteLength,
+          fileName: snapshot.fileName,
+          inputRevision: snapshot.inputRevision,
+          sourceRevision: snapshot.sourceRevision,
+          analysisRevision: snapshot.analysisRevision,
+          recipientRevision: snapshot.recipientRevision,
+          recipient: snapshot.recipient,
+        },
         disclaimer: (await import("../../shared/const")).LEGAL_DISCLAIMER,
       };
     }),

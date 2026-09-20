@@ -69,6 +69,8 @@ loopback-only entry path using your existing account and encryption keys.
 - Searches and ranks lawyers through the official Dutch NOvA public directory.
 - Maintains reviewable directories for media and support organizations.
 - Prepares outreach and tracks responses without silently contacting anyone.
+- Generates review drafts only after the owner confirms a complete recipient;
+  reviewed versions retain exact bytes, hashes, and source/input provenance.
 - Exports evidence and provenance in reviewable packages.
 
 ### What It Does Not Do
@@ -1268,6 +1270,7 @@ See [Troubleshooting](docs/TROUBLESHOOTING.md) and in-app Help.
 - [Traceability](docs/TRACEABILITY.md)
 - [Final Verification Report](docs/FINAL_VERIFICATION_REPORT.md)
 - [Acceptance Tests](docs/ACCEPTANCE_TESTS.md)
+- [Reviewed Legal Draft Snapshot Contract](docs/LEGAL_DRAFT_SNAPSHOT_CONTRACT.md)
 - [Manual Verification](docs/MANUAL_VERIFICATION.md)
 - [Definition of Done](docs/DEFINITION_OF_DONE.md)
 - [Changelog](CHANGELOG.md)

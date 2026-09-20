@@ -66,6 +66,14 @@ matches the current case/input revision. Stale, running, failed, unavailable,
 and retired states have distinct recovery cards, and no non-current state exposes
 old gaps, patterns, inferences, or generated-document actions as current.
 
+The Legal documents tab first captures a complete reviewed recipient. The UI
+labels owner-provided and evidence-linked provenance, clears confirmation after
+any edit, and disables generation until the saved revision matches the form.
+Generation opens a preview of a server-persisted snapshot with its version and
+SHA-256. A second explicit confirmation locks that exact snapshot; download then
+uses a one-use server URL. Version history labels stale inputs as historical and
+never reconstructs a file with `Blob` or mutable renderer state.
+
 The global search dialog consumes the server's category-completeness contract.
 It renders a complete no-result message only when every requested category
 completed; partial and failed responses keep successful results visible and show

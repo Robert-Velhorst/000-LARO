@@ -956,6 +956,98 @@ export const evidenceCoverageAnalysis = sqliteTable("case_strength_analysis", {
   createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
 });
 
+/**
+ * Immutable recipient revisions and generated legal-draft byte snapshots.
+ *
+ * A recipient edit creates another row instead of overwriting the reviewed
+ * identity that an older draft references. Draft content/provenance is likewise
+ * append-only; only the review fields transition from pending to reviewed.
+ */
+export const legalDraftRecipients = sqliteTable(
+  "legal_draft_recipients",
+  {
+    id: text("id").primaryKey(),
+    recipientId: text("recipientId").notNull(),
+    userId: text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    caseId: text("caseId").notNull().references(() => cases.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    name: text("name").notNull(),
+    address: text("address").notNull(),
+    provenanceType: text("provenanceType").notNull(),
+    evidenceId: text("evidenceId").references(() => evidence.id, { onDelete: "set null" }),
+    sourceReference: text("sourceReference").notNull(),
+    revisionHash: text("revisionHash").notNull(),
+    reviewedBy: text("reviewedBy").notNull(),
+    reviewedAt: integer("reviewedAt", { mode: "timestamp" }).notNull(),
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  },
+  (table) => ({
+    recipientRevisionUnique: uniqueIndex("legal_draft_recipients_revision_unique").on(
+      table.recipientId,
+      table.revision,
+    ),
+    ownerCaseRevisionIdx: index("legal_draft_recipients_owner_case_revision_idx").on(
+      table.userId,
+      table.caseId,
+      table.revision,
+    ),
+  }),
+);
+
+export const legalDraftSnapshots = sqliteTable(
+  "legal_draft_snapshots",
+  {
+    id: text("id").primaryKey(),
+    userId: text("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    caseId: text("caseId").notNull().references(() => cases.id, { onDelete: "cascade" }),
+    documentType: text("documentType").notNull(),
+    version: integer("version").notNull(),
+    status: text("status").notNull().default("pending_review"),
+    generationRevision: text("generationRevision").notNull(),
+    inputRevision: text("inputRevision").notNull(),
+    sourceRevision: text("sourceRevision").notNull(),
+    caseRevision: text("caseRevision").notNull(),
+    analysisRevision: text("analysisRevision").notNull(),
+    coverageAnalysisId: text("coverageAnalysisId").notNull(),
+    recipientRevisionId: text("recipientRevisionId").notNull(),
+    recipientRevision: integer("recipientRevision").notNull(),
+    recipientRevisionHash: text("recipientRevisionHash").notNull(),
+    recipientSnapshot: text("recipientSnapshot").notNull(),
+    ownerInputRevision: text("ownerInputRevision").notNull(),
+    provenance: text("provenance").notNull(),
+    previewJson: text("previewJson").notNull(),
+    contentBase64: text("contentBase64").notNull(),
+    contentHash: text("contentHash").notNull(),
+    byteLength: integer("byteLength").notNull(),
+    fileName: text("fileName").notNull(),
+    reviewedBy: text("reviewedBy"),
+    reviewedAt: integer("reviewedAt", { mode: "timestamp" }),
+    createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  },
+  (table) => ({
+    generationUnique: uniqueIndex("legal_draft_snapshots_generation_unique").on(
+      table.userId,
+      table.caseId,
+      table.documentType,
+      table.generationRevision,
+    ),
+    ownerCaseVersionUnique: uniqueIndex("legal_draft_snapshots_owner_case_type_version_unique").on(
+      table.userId,
+      table.caseId,
+      table.documentType,
+      table.version,
+    ),
+    ownerCaseCreatedIdx: index("legal_draft_snapshots_owner_case_created_idx").on(
+      table.userId,
+      table.caseId,
+      table.createdAt,
+    ),
+  }),
+);
+
+export type LegalDraftRecipient = typeof legalDraftRecipients.$inferSelect;
+export type LegalDraftSnapshot = typeof legalDraftSnapshots.$inferSelect;
+
 export const timeline = sqliteTable("timeline", {
   id: text("id").primaryKey(),
   caseId: text("caseId"),

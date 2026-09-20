@@ -3,7 +3,7 @@ import { expect, test, type Locator, type Page, type Route } from "@playwright/t
 import Database from "better-sqlite3";
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { COOKIE_NAME } from "../../shared/const";
@@ -2384,6 +2384,125 @@ test("coverage review hides derived results and distinguishes stale, running, fa
     expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
     await page.screenshot({ path: testInfo.outputPath(`gap-analysis-state-${viewport.name}.png`), fullPage: true });
   }
+
+  expect(badResponses).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+});
+
+test("reviewed legal draft persists and downloads the exact immutable snapshot", async ({ page }, testInfo) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badResponses: Array<{ status: number; url: string }> = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => {
+    const failure = request.failure()?.errorText ?? "unknown failure";
+    if (!failure.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
+  });
+  page.on("response", response => {
+    if (response.status() >= 400) badResponses.push({ status: response.status(), url: response.url() });
+  });
+  await page.addInitScript(() => localStorage.setItem("laro.locale", "en"));
+
+  const email = await createAccount(page);
+  const caseId = `A11Y_LEGAL_DRAFT_${randomUUID()}`;
+  const now = Math.floor(Date.now() / 1_000);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const owner = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    database.prepare(
+      `INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, createdAt, updatedAt)
+       VALUES (?, ?, 'Reviewed draft browser case', 'Records review', 'Immutable draft download fixture', 'Low', 'Intake', ?, ?)`,
+    ).run(caseId, owner.id, now, now);
+  } finally {
+    database.close();
+  }
+
+  const response = await page.goto(`/evidence?view=gaps&case=${caseId}`, { waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "Evidence coverage and source availability" }))
+    .toBeVisible({ timeout: 30_000 });
+  await page.getByRole("tab", { name: "Legal Docs", exact: true }).click();
+
+  await page.getByLabel("Recipient name or organization").fill("Reviewed Browser Records Office");
+  await page.getByLabel("Complete postal address").fill("Snapshot Street 19\n1234 AB Utrecht\nNetherlands");
+  await page.getByLabel("I verified this exact name, complete address, and provenance for the intended recipient.")
+    .check();
+  await page.getByRole("button", { name: "Save reviewed recipient", exact: true }).click();
+  await expect(page.getByText(/Revision 1 reviewed/)).toBeVisible();
+
+  await page.getByRole("button", { name: "Generate persisted preview", exact: true }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Records Request" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Reviewed Browser Records Office");
+  await expect(dialog).toContainText("Snapshot Street 19");
+  await expect(dialog.getByText(/^SHA-256 [a-f0-9]{64}$/)).toBeVisible();
+  await dialog.getByLabel("I reviewed this exact recipient, content, source revision, and SHA-256 snapshot.")
+    .check();
+  await dialog.getByRole("button", { name: "Confirm review and lock snapshot", exact: true }).click();
+  const exactDownload = dialog.getByRole("button", { name: "Download exact persisted text", exact: true });
+  await expect(exactDownload).toBeVisible();
+
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    const audit = await new AxeBuilder({ page }).include('[role="dialog"]').analyze();
+    expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`reviewed-legal-draft-${viewport.name}.png`), fullPage: true });
+  }
+
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    exactDownload.click(),
+  ]);
+  const downloadPath = await download.path();
+  expect(downloadPath).toBeTruthy();
+  const downloadedBytes = readFileSync(downloadPath!);
+
+  const verificationDatabase = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const snapshot = verificationDatabase.prepare(
+      `SELECT id, status, contentBase64, contentHash, byteLength, fileName
+       FROM legal_draft_snapshots WHERE caseId = ?`,
+    ).get(caseId) as {
+      id: string;
+      status: string;
+      contentBase64: string;
+      contentHash: string;
+      byteLength: number;
+      fileName: string;
+    };
+    expect(snapshot.status).toBe("reviewed");
+    expect(download.suggestedFilename()).toBe(snapshot.fileName);
+    expect(downloadedBytes).toEqual(Buffer.from(snapshot.contentBase64, "base64"));
+    expect(downloadedBytes).toHaveLength(snapshot.byteLength);
+    expect(createHash("sha256").update(downloadedBytes).digest("hex")).toBe(snapshot.contentHash);
+
+    const owner = verificationDatabase.prepare("SELECT id FROM users WHERE email = ?")
+      .get(email) as { id: string };
+    const audits = verificationDatabase.prepare(
+      `SELECT action, details FROM audit_logs
+       WHERE userId = ?
+         AND action IN ('legal_draft.recipient_reviewed', 'legal_draft.reviewed', 'legal_draft.downloaded')`,
+    ).all(owner.id) as Array<{ action: string; details: string }>;
+    expect(audits.map(item => item.action).sort()).toEqual([
+      "legal_draft.downloaded",
+      "legal_draft.recipient_reviewed",
+      "legal_draft.reviewed",
+    ]);
+    expect(audits.map(item => item.details).join(" ")).not.toContain("Reviewed Browser Records Office");
+    expect(audits.map(item => item.details).join(" ")).not.toContain("Snapshot Street 19");
+  } finally {
+    verificationDatabase.close();
+  }
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("Draft version history", { exact: true })).toBeVisible();
+  await expect(page.getByText("reviewed", { exact: true })).toBeVisible();
 
   expect(badResponses).toEqual([]);
   expect(consoleErrors).toEqual([]);

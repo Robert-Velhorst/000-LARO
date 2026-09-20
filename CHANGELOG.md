@@ -7,6 +7,11 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Replaced transient client-side legal-draft downloads and unchecked recipient
+  fallbacks with reviewed recipient revisions and immutable server snapshots.
+  Every version records exact bytes and SHA-256 plus case, evidence/source,
+  analysis, owner-input, and recipient revisions; changed inputs require a new
+  review while earlier reviewed versions remain explicitly historical.
 - Retired the second Google Drive browse/preview/direct-import/sync router and
   its parallel tracking writes. Folder selection now uses the maintained
   auto-collection API; canonical evidence owns Drive provenance, SHA-256,
@@ -80,6 +85,10 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   credential and refreshing status immediately.
 
 ### Added
+- Added a short-lived, one-use legal-draft download route that rechecks session
+  ownership and byte integrity, writes a mandatory content-free audit event,
+  and serves only the exact persisted reviewed snapshot. Owner export and case/
+  account erasure include recipient and draft version history.
 - Added a resumable live Google evidence acceptance command. It reuses the
   owner-only outbound test message, proves real Gmail persistence, deterministic
   content analysis, signed source retrieval, hash equality, and source-open

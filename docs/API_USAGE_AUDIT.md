@@ -28,6 +28,10 @@ original phase-074 snapshot are mounted and typed.
   enumerates every created, refreshed, reviewed, skipped, and pending target and
   reports provider/result bounds as partial.
 - Draft preparation, approval, explicit delivery, replies, and outreach analytics.
+- Owner-only reviewed legal-draft snapshots. Recipient revisions retain manual
+  or evidence-linked provenance; generation persists exact bytes plus case,
+  source, analysis, and recipient revisions; review revalidates those inputs;
+  and a one-use server route serves only the reviewed snapshot.
 - Typed owner-scoped notifications with registered case, evidence, and lawyer
   destinations. The canonical writer returns durable created/already-exists/
   failure outcomes, and reminder deduplication is the notification row itself.
@@ -75,3 +79,6 @@ original phase-074 snapshot are mounted and typed.
 - Repository controls reject restoration of the retired `googleDrive` router,
   direct folder preview/import controls, parallel `google_drive_files` writes,
   and the legacy collection coordinator.
+- Legal-draft regressions reject client-created download blobs, placeholder
+  recipients, unreviewed download tickets, cross-owner access, stale review,
+  content-bearing audit events, and account erasure gaps.

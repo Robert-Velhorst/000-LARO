@@ -80,9 +80,17 @@ suite("core product paths", () => {
     const created = await createCase(owner, "Document Client");
     const caller = app.makeCaller(owner);
     await caller.gapAnalysis.analyze({ caseId: created.id });
+    const recipient = await caller.gapAnalysis.saveReviewedRecipient({
+      caseId: created.id,
+      name: "Acceptance Recipient",
+      address: "Review Street 1\n1000 AA Amsterdam\nNetherlands",
+      provenanceType: "owner_entered",
+      confirmed: true,
+    });
     const result = await caller.gapAnalysis.generateDocument({
       caseId: created.id,
       documentType: "demand_letter",
+      recipientRevisionId: recipient.id,
     });
 
     expect(result.success).toBe(true);

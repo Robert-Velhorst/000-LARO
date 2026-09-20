@@ -83,6 +83,10 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
 - Required audit evidence is written in the same transaction as consequential
   case and outreach changes. Audit failure rolls back the state change, and
   multi-draft approval either commits every draft and audit row or commits none.
+- Legal-document generation now stores the exact preview/download bytes with a
+  SHA-256, reviewed recipient revision, case/source input revision, derived
+  analysis revision, and evidence references. A changed input makes a pending
+  review unusable; reviewed historical bytes remain owner-only and auditable.
 - Evidence analysis distinguishes source observations from inference and keeps
   document/source identifiers available to the user.
 - Evidence-gap review uses a versioned source-revision inventory. It exposes
@@ -131,6 +135,7 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
 | Automatic target discovery reviewed an arbitrary owner-wide pending slice | High | Discovery now returns stable run-scoped IDs and exact dispositions; automatic review and matching use only created/refreshed IDs from that run, preserve manual and unrelated historical records, and expose provider/result overflow as partial |
 | Gmail and Drive disconnect controls hid the consequence of revoking their shared Google grant | High | One versioned pre-action review now names the account, shared credential, both capabilities, affected schedules, and source disposition; stale review and provider failure preserve local state, while confirmed transactional cleanup retains other accounts and collected documents |
 | Duplicate Drive browse/import/sync code retained a second ingestion, deduplication, analysis, and provider-tracking contract | High | Removed the exported duplicate router and direct preview/import controls; read-only source selection now feeds one canonical bounded collector whose evidence metadata records account-plus-file identity, provider revision, history, storage key, and hash |
+| Generated legal drafts used unchecked recipient placeholders and transient browser-created files | High | Added reviewed owner/evidence-linked recipient revisions, persisted exact-byte draft versions with case/source/analysis provenance, stale confirmation rejection, server-owned one-use download, metadata-only mandatory audit, historical retrieval, and erasure tests |
 
 ## Verdict
 
