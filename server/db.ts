@@ -12,6 +12,11 @@ import { normalizeAccountEmail } from './emailIdentity';
 import { ensureRelationshipIntegrityTriggers } from './relationshipIntegrity';
 import { assertDatabaseRuntimeIsSupported } from './persistence/hostedPersistenceGuard';
 import { normalizeLiteralSearchText } from './literalSearch';
+import {
+  PRIVACY_CONSENT_PREFERENCE_KEY,
+  parsePrivacyPreferences,
+  serializePrivacyPreferences,
+} from './privacyPreferenceValue';
 
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 
@@ -60,6 +65,31 @@ function registerConnectionFunctions(sqlite: InstanceType<typeof Database>) {
   sqlite.function("laro_search_normalize", { deterministic: true }, (value: unknown) =>
     normalizeLiteralSearchText(value)
   );
+}
+
+function normalizeLegacyPrivacyPreferences(sqlite: InstanceType<typeof Database>) {
+  try {
+    const rows = sqlite.prepare(
+      'SELECT id, value FROM user_preferences WHERE key = ?',
+    ).all(PRIVACY_CONSENT_PREFERENCE_KEY) as Array<{ id: string; value: string | null }>;
+    const update = sqlite.prepare('UPDATE user_preferences SET value = ?, updatedAt = ? WHERE id = ?');
+    const now = Math.floor(Date.now() / 1_000);
+    const normalize = sqlite.transaction(() => {
+      let changed = 0;
+      for (const row of rows) {
+        const canonicalValue = serializePrivacyPreferences(parsePrivacyPreferences(row.value));
+        if (row.value === canonicalValue) continue;
+        changed += update.run(canonicalValue, now, row.id).changes;
+      }
+      return changed;
+    });
+    const changed = normalize();
+    if (changed > 0) {
+      console.log(`[Database] Removed unsupported fields from ${changed} privacy preference row(s).`);
+    }
+  } catch (error) {
+    console.warn('[Database] Could not normalize privacy preference rows:', error);
+  }
 }
 
 /**
@@ -614,6 +644,7 @@ export async function getDb() {
       // Phase 005: create integrity indexes + unique email constraint AFTER the
       // tables exist. Idempotent, so safe on every boot.
       ensureIndexes(sqlite);
+      normalizeLegacyPrivacyPreferences(sqlite);
 
       // Enforce relationships in legacy tables without rebuilding installed
       // databases. Existing inconsistencies remain visible to reconciliation;

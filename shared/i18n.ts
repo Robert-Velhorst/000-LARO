@@ -39,6 +39,7 @@ export const messages = {
   "nav.adminPanel": { nl: "Beheerpaneel", en: "Admin Panel" },
   "nav.analytics": { nl: "Analyse", en: "Analytics" },
   "nav.settings": { nl: "Instellingen", en: "Settings" },
+  "nav.privacy": { nl: "Privacy en gegevens", en: "Privacy and data" },
   "nav.signOut": { nl: "Afmelden", en: "Sign out" },
   "nav.skipToContent": { nl: "Ga naar de hoofdinhoud", en: "Skip to main content" },
   "nav.expandSidebar": { nl: "Zijbalk uitklappen", en: "Expand sidebar" },

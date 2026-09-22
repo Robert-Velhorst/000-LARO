@@ -1701,6 +1701,66 @@ test("default scanner folder paths stay with their account after a live switch",
   expect(requestFailures).toEqual([]);
 });
 
+test("privacy navigation and analytics consent stay bound to the signed-in account", async ({ page }, testInfo) => {
+  const email = await createAccount(page);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  const ownerA = (database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string }).id;
+  const ownerB = `A11Y_${randomUUID()}`;
+  const now = Math.floor(Date.now() / 1_000);
+  database.prepare("INSERT INTO users (id, email, name, password, role, createdAt) VALUES (?, ?, ?, NULL, 'user', ?)")
+    .run(ownerB, `${ownerB.toLowerCase()}@example.test`, "Second owner", now);
+  database.prepare("INSERT INTO system_config (configKey, configValue, updatedAt) VALUES (?, ?, ?)")
+    .run(`onboarding:state:${ownerB}`, JSON.stringify({ status: "complete", currentStepKey: "outreach" }), now);
+  const insertPreference = database.prepare(
+    "INSERT INTO user_preferences (id, userId, key, value, updatedAt) VALUES (?, ?, 'privacy-consent', ?, ?)",
+  );
+  insertPreference.run(randomUUID(), ownerA, JSON.stringify({ analytics: true }), now);
+  insertPreference.run(randomUUID(), ownerB, JSON.stringify({ analytics: false }), now);
+  database.close();
+
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badResponses: Array<{ status: number; url: string }> = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => requestFailures.push(`${request.method()} ${request.url()}`));
+  page.on("response", response => {
+    if (response.status() >= 400) badResponses.push({ status: response.status(), url: response.url() });
+  });
+
+  await page.getByRole("button", { name: /Open account menu|Accountmenu openen/ }).click();
+  await page.getByRole("menuitem", { name: /Privacy and data|Privacy en gegevens/ }).click();
+  await expect(page).toHaveURL(/\/privacy$/);
+  const response = await page.reload({ waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "Privacy and data" })).toBeVisible();
+  const analyticsSwitch = page.getByRole("switch", { name: "Allow usage analytics" });
+  await expect(analyticsSwitch).toBeChecked();
+  await expect(page.getByText("Marketing communication", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Security and resource integrity", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("privacy-owner-a-opted-in.png"), fullPage: true });
+
+  const tokenB = jwt.sign({ userId: ownerB }, "laro-a11y-jwt-secret-32-characters-minimum", { expiresIn: "1h" });
+  await page.context().addCookies([{
+    name: COOKIE_NAME, value: tokenB, url: "http://127.0.0.1:5181", httpOnly: true, sameSite: "Lax",
+  }]);
+  await page.evaluate(() => window.dispatchEvent(new Event("laro:scanner-session-changed")));
+  await expect(page.getByText("Second owner", { exact: true })).toBeVisible();
+  await expect(analyticsSwitch).not.toBeChecked();
+  await expect(analyticsSwitch).toBeEnabled();
+  await analyticsSwitch.click();
+  await expect(analyticsSwitch).toBeChecked();
+  await analyticsSwitch.click();
+  await expect(analyticsSwitch).not.toBeChecked();
+  await page.screenshot({ path: testInfo.outputPath("privacy-owner-b-opted-out.png"), fullPage: true });
+
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+  expect(badResponses).toEqual([]);
+});
+
 test("lawyer comparison normalizes legacy rows and only shows a canonical match with a case", async ({ page }, testInfo) => {
   const email = await createAccount(page);
   const marker = `CompareBeacon${randomUUID().replaceAll("-", "").slice(0, 10)}`;

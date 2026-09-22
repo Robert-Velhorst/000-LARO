@@ -559,7 +559,7 @@ export const documents = sqliteTable("documents", {
   createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
 });
 
-// ─── Billing & usage ─────────────────────────────────────────────────────────
+// ─── Legacy billing tables and optional owner usage analytics ────────────────
 
 export const billingPeriods = sqliteTable("billing_periods", {
   id: text("id").primaryKey(),

@@ -20,6 +20,7 @@ match relevant lawyers, prepare human-reviewed outreach, and track outcomes.
 | Reviewed HAI grants | Allowed cases/fields, future-record choice, expiry | Authorization metadata | `hai_access_grants`, `hai_api_credentials` |
 | Reviewed legal drafts | Recipient revision, exact document bytes, source/review versions | Potentially special-category | `legal_draft_recipients`, `legal_draft_snapshots` |
 | Audit | Actions, timestamps, IP and user agent | Personal | `audit_logs` |
+| Optional usage analytics | Operation type, count, outcome/provenance metadata, timestamp | Personal metadata | `usage_tracking` |
 
 ## Lawfulness and rights
 
@@ -35,7 +36,11 @@ match relevant lawyers, prepare human-reviewed outreach, and track outcomes.
   versioned opt-in; account creation or provider connection is insufficient.
 - HAI reads require a reviewed case-and-field grant and are re-scoped on every
   request. Public research verifies owned case context before external contact.
-- No marketing tracker or third-party product telemetry is enabled.
+- Optional local usage analytics defaults off and is enforced at its canonical
+  writer; required audit, session-security, and resource-integrity state is
+  classified separately and remains active.
+- No marketing delivery path, marketing tracker, or third-party product
+  telemetry is enabled, so LARO presents no marketing preference.
 
 ## Data flow and storage
 

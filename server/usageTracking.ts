@@ -2,13 +2,15 @@ import crypto from 'crypto';
 import { and, eq, gte, lte } from 'drizzle-orm';
 import { getDb } from './db';
 import { usageTracking } from './schema';
+import { isUsageAnalyticsEnabled } from './privacyPreferences';
 
 /**
- * Observational resource counters for local operator analytics.
+ * Optional owner-scoped product-usage analytics.
  *
  * LARO does not enforce paid tiers or block core actions. Historical billing
  * columns remain nullable for installed-database compatibility, but new usage
- * records contain quantities and provenance only.
+ * records contain quantities and provenance only. Required audit, security,
+ * and resource-budget state use separate stores and are never gated here.
  */
 export const RESOURCE_TYPES = [
   'ai_model_invocation',
@@ -24,13 +26,17 @@ export const RESOURCE_TYPES = [
 
 export type ResourceType = typeof RESOURCE_TYPES[number];
 
+export type UsageTrackingResult =
+  | { success: true; recorded: true; usageId: string; quantity: number }
+  | { success: true; recorded: false; usageId: null; quantity: number; reason: 'analytics_disabled' };
+
 export async function trackUsage(params: {
   userId: string;
   resourceType: ResourceType;
   quantity?: number;
   metadata?: Record<string, unknown>;
   caseId?: string;
-}): Promise<{ success: true; usageId: string; quantity: number }> {
+}): Promise<UsageTrackingResult> {
   const db = await getDb();
   if (!db) throw new Error('Database not available');
 
@@ -40,20 +46,31 @@ export async function trackUsage(params: {
   }
 
   const usageId = crypto.randomBytes(16).toString('hex');
-  await db.insert(usageTracking).values({
-    id: usageId,
-    userId: params.userId,
-    resourceType: params.resourceType,
-    quantity: String(quantity),
-    baseCost: null,
-    billedCost: null,
-    metadata: params.metadata ? JSON.stringify(params.metadata) : null,
-    caseId: params.caseId,
-    timestamp: new Date(),
+  const recorded = db.transaction((tx) => {
+    // The consent read and optional write share one SQLite transaction. A
+    // concurrent opt-out therefore linearizes before or after this operation;
+    // no writer can observe disabled consent and still insert a row.
+    if (!isUsageAnalyticsEnabled(tx, params.userId)) return false;
+    tx.insert(usageTracking).values({
+      id: usageId,
+      userId: params.userId,
+      resourceType: params.resourceType,
+      quantity: String(quantity),
+      baseCost: null,
+      billedCost: null,
+      metadata: params.metadata ? JSON.stringify(params.metadata) : null,
+      caseId: params.caseId,
+      timestamp: new Date(),
+    }).run();
+    return true;
   });
 
+  if (!recorded) {
+    return { success: true, recorded: false, usageId: null, quantity, reason: 'analytics_disabled' };
+  }
+
   console.log(`[USAGE_TRACKING] Tracked ${params.resourceType} for user ${params.userId}: ${quantity} units`);
-  return { success: true, usageId, quantity };
+  return { success: true, recorded: true, usageId, quantity };
 }
 
 export async function getUserUsage(

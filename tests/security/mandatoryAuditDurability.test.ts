@@ -149,11 +149,11 @@ suite("mandatory audit durability", () => {
   it("rolls back consent and share capability changes when their audit insert fails", async () => {
     const releaseConsent = rejectAuditAction("gdpr.consent_updated", "reject_consent_audit");
     try {
-      await expect(app.makeCaller(owner).gdpr.updateConsent({ marketing: true })).rejects.toThrow();
+      await expect(app.makeCaller(owner).gdpr.updateConsent({ analytics: true })).rejects.toThrow();
     } finally {
       releaseConsent();
     }
-    expect((await app.makeCaller(owner).gdpr.getConsent()).marketing).toBe(false);
+    expect((await app.makeCaller(owner).gdpr.getConsent()).analytics).toBe(false);
 
     const releaseShare = rejectAuditAction("case.share_invited", "reject_share_invite_audit");
     try {

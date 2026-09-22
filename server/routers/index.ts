@@ -141,8 +141,9 @@ export const appRouter = router({
   trello: trelloRouter,
   unifiedInbox: unifiedInboxRouter,
 
-  // Local operation has no paid tier or quota gate. Usage is observational and
-  // helps the owner understand workload without blocking a core action.
+  // Local operation has no paid tier or checkout gate. The returned usage
+  // summary contains only owner-opted-in analytics; required safety budgets are
+  // maintained separately and never presented as billing.
   billing: router({
     status: protectedProcedure.query(async ({ ctx }) => {
       let usage: unknown = null;
@@ -601,16 +602,22 @@ export const appRouter = router({
 
   // GDPR procedures — Phase 028: real access + erasure (were empty stubs).
   gdpr: router({
-    getConsent: protectedProcedure.query(async ({ ctx }) => {
-      const { getPrivacyPreferences } = await import('../privacyPreferences');
-      const preferences = await getPrivacyPreferences(ctx.user.id);
-      return {
-        // This describes required service processing, not proof of a GDPR legal
-        // basis. The deployment operator must document that basis separately.
-        dataProcessing: true,
-        ...preferences,
-      };
-    }),
+    getConsent: protectedProcedure
+      .input(z.object({ expectedUserId: z.string().trim().min(1).max(256) }).strict().optional())
+      .query(async ({ ctx, input }) => {
+        if (input?.expectedUserId !== undefined && input.expectedUserId !== ctx.user.id) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Account changed while loading privacy preferences' });
+        }
+        const { getPrivacyPreferences } = await import('../privacyPreferences');
+        const preferences = await getPrivacyPreferences(ctx.user.id);
+        return {
+          ownerId: ctx.user.id,
+          // This describes required service processing, not proof of a GDPR legal
+          // basis. The deployment operator must document that basis separately.
+          dataProcessing: true,
+          ...preferences,
+        };
+      }),
     // Full data export (right of access). Returns every row owned by the user.
     exportData: protectedProcedure.mutation(async ({ ctx }) => {
       const { exportUserData } = await import("../gdpr");
@@ -643,15 +650,22 @@ export const appRouter = router({
       }),
     updateConsent: protectedProcedure
       .input(
-        z.object({ marketing: z.boolean().optional(), analytics: z.boolean().optional() })
-          .refine((input) => input.marketing !== undefined || input.analytics !== undefined, {
-            message: 'At least one privacy preference is required',
-          })
+        z.object({
+          analytics: z.boolean(),
+          expectedUserId: z.string().trim().min(1).max(256).optional(),
+        }).strict()
       )
       .mutation(async ({ ctx, input }) => {
+        if (input.expectedUserId && input.expectedUserId !== ctx.user.id) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Account changed during privacy preference update' });
+        }
         const { updatePrivacyPreferences } = await import('../privacyPreferences');
-        const preferences = await updatePrivacyPreferences(ctx.user.id, input, { mandatoryAudit: true });
-        return { success: true, ...preferences };
+        const preferences = await updatePrivacyPreferences(
+          ctx.user.id,
+          { analytics: input.analytics },
+          { mandatoryAudit: true },
+        );
+        return { success: true, ownerId: ctx.user.id, ...preferences };
       }),
   }),
 

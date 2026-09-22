@@ -142,6 +142,7 @@ function WorkspaceFrame({ children, width, setWidth }: { children: ReactNode; wi
               <div className="border-b border-border p-2"><LanguageSelector /></div>
               <DropdownMenuItem onClick={() => window.dispatchEvent(new Event("laro:open-onboarding"))}><ListChecks className="mr-2 h-4 w-4" />{t("nav.setupGuide")}</DropdownMenuItem>
               <DropdownMenuItem onClick={() => navigate("/settings")}><Settings className="mr-2 h-4 w-4" />{t("nav.settings")}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/privacy")}><Shield className="mr-2 h-4 w-4" />{t("nav.privacy")}</DropdownMenuItem>
               <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive"><LogOut className="mr-2 h-4 w-4" />{t("nav.signOut")}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

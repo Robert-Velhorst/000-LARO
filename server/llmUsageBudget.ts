@@ -60,6 +60,11 @@ type MetricSpec = { key: string; metric: BudgetMetric; cost: number; maximum: nu
 const memoryCounters = new Map<string, CounterState>();
 const activeByOwner = new Map<string, number>();
 
+// These counters are required resource-integrity controls. They prevent one
+// owner from exhausting local or hosted model capacity and remain active when
+// optional usage analytics is disabled. Optional observations are written only
+// by recordLLMUsageTelemetry through the consent-aware usageTracking boundary.
+
 export class LLMUsageLimitError extends TRPCError {
   readonly limit: BudgetLimit;
 

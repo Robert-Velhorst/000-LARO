@@ -27,6 +27,8 @@ suite("non-sensitive model usage telemetry", () => {
   afterAll(() => app?.cleanup());
 
   it("records operation, provider class, quantity and outcome without prompt text or secrets", async () => {
+    await app.makeCaller({ id: owner.id, email: owner.email, role: "user" })
+      .gdpr.updateConsent({ analytics: true, expectedUserId: owner.id });
     vi.stubEnv("GROQ_API_KEY", "TOP_SECRET_PROVIDER_KEY");
     vi.stubEnv("LARO_GROQ_MODEL", "telemetry-test-model");
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({

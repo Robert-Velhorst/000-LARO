@@ -89,17 +89,16 @@ suite("private data boundaries", () => {
   });
 
   it("persists privacy preferences per owner and includes them in export", async () => {
-    expect(await app.makeCaller(B).gdpr.getConsent()).toMatchObject({ marketing: false, analytics: false });
-    await Promise.all([
-      app.makeCaller(B).gdpr.updateConsent({ marketing: true }),
-      app.makeCaller(B).gdpr.updateConsent({ analytics: true }),
-    ]);
-    expect(await app.makeCaller(B).gdpr.getConsent()).toMatchObject({ marketing: true, analytics: true });
-    expect(await app.makeCaller(A).gdpr.getConsent()).toMatchObject({ marketing: false, analytics: false });
+    expect(await app.makeCaller(B).gdpr.getConsent()).toMatchObject({ ownerId: B.id, analytics: false });
+    await app.makeCaller(B).gdpr.updateConsent({ analytics: true, expectedUserId: B.id });
+    const ownerBConsent = await app.makeCaller(B).gdpr.getConsent();
+    expect(ownerBConsent).toMatchObject({ ownerId: B.id, analytics: true });
+    expect(ownerBConsent).not.toHaveProperty("marketing");
+    expect(await app.makeCaller(A).gdpr.getConsent()).toMatchObject({ ownerId: A.id, analytics: false });
 
     const { data: exported } = await app.makeCaller(B).gdpr.exportData();
     expect(exported.user_preferences?.some((row: any) =>
-      row.key === 'privacy-consent' && JSON.parse(row.value).marketing === true && JSON.parse(row.value).analytics === true
+      row.key === 'privacy-consent' && JSON.stringify(JSON.parse(row.value)) === JSON.stringify({ analytics: true })
     )).toBe(true);
   });
 

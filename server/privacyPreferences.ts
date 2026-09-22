@@ -3,41 +3,47 @@ import { nanoid } from 'nanoid';
 import { getDb } from './db';
 import { userPreferences } from './schema';
 import { writeAuditLogOrThrow } from './audit';
+import {
+  PRIVACY_CONSENT_PREFERENCE_KEY,
+  parsePrivacyPreferences,
+  serializePrivacyPreferences,
+  type PrivacyPreferences,
+} from './privacyPreferenceValue';
 
-const PRIVACY_PREFERENCE_KEY = 'privacy-consent';
-
-export interface PrivacyPreferences {
-  marketing: boolean;
-  analytics: boolean;
+function readPreferences(store: any, userId: string): { row: { id: string; value: string | null } | undefined; preferences: PrivacyPreferences } {
+  const row = store
+    .select({ id: userPreferences.id, value: userPreferences.value })
+    .from(userPreferences)
+    .where(and(
+      eq(userPreferences.userId, userId),
+      eq(userPreferences.key, PRIVACY_CONSENT_PREFERENCE_KEY),
+    ))
+    .limit(1)
+    .get();
+  return { row, preferences: parsePrivacyPreferences(row?.value) };
 }
 
-const DEFAULT_PRIVACY_PREFERENCES: PrivacyPreferences = {
-  marketing: false,
-  analytics: false,
-};
-
-function parsePreferences(value: string | null | undefined): PrivacyPreferences {
-  if (!value) return { ...DEFAULT_PRIVACY_PREFERENCES };
-  try {
-    const parsed = JSON.parse(value) as Partial<PrivacyPreferences>;
-    return {
-      marketing: parsed.marketing === true,
-      analytics: parsed.analytics === true,
-    };
-  } catch {
-    return { ...DEFAULT_PRIVACY_PREFERENCES };
-  }
+/** Read-only transaction helper used by optional-processing writers. */
+export function isUsageAnalyticsEnabled(store: any, userId: string): boolean {
+  return readPreferences(store, userId).preferences.analytics;
 }
 
 export async function getPrivacyPreferences(userId: string): Promise<PrivacyPreferences> {
   const db = await getDb();
   if (!db) throw new Error('Database not available');
-  const [row] = await db
-    .select({ value: userPreferences.value })
-    .from(userPreferences)
-    .where(and(eq(userPreferences.userId, userId), eq(userPreferences.key, PRIVACY_PREFERENCE_KEY)))
-    .limit(1);
-  return parsePreferences(row?.value);
+  return db.transaction((tx) => {
+    const { row, preferences } = readPreferences(tx, userId);
+    const canonicalValue = serializePrivacyPreferences(preferences);
+    // Drop removed legacy fields (notably the unsupported marketing toggle)
+    // without overwriting a newer concurrent preference revision.
+    if (row && row.value !== canonicalValue) {
+      tx.update(userPreferences)
+        .set({ value: canonicalValue, updatedAt: new Date() })
+        .where(eq(userPreferences.id, row.id))
+        .run();
+    }
+    return preferences;
+  });
 }
 
 export async function updatePrivacyPreferences(
@@ -48,30 +54,25 @@ export async function updatePrivacyPreferences(
   const db = await getDb();
   if (!db) throw new Error('Database not available');
   return db.transaction((tx) => {
-    const row = tx
-      .select({ value: userPreferences.value })
-      .from(userPreferences)
-      .where(and(eq(userPreferences.userId, userId), eq(userPreferences.key, PRIVACY_PREFERENCE_KEY)))
-      .limit(1)
-      .get();
-    const current = parsePreferences(row?.value);
+    const { row, preferences: current } = readPreferences(tx, userId);
     const next: PrivacyPreferences = {
-      marketing: updates.marketing ?? current.marketing,
       analytics: updates.analytics ?? current.analytics,
     };
-    if (next.marketing === current.marketing && next.analytics === current.analytics) return next;
+    const value = serializePrivacyPreferences(next);
+    const needsCanonicalization = Boolean(row && row.value !== value);
+    if (next.analytics === current.analytics && !needsCanonicalization) return next;
     const now = new Date();
     tx.insert(userPreferences).values({
       id: nanoid(),
       userId,
-      key: PRIVACY_PREFERENCE_KEY,
-      value: JSON.stringify(next),
+      key: PRIVACY_CONSENT_PREFERENCE_KEY,
+      value,
       updatedAt: now,
     }).onConflictDoUpdate({
       target: [userPreferences.userId, userPreferences.key],
-      set: { value: JSON.stringify(next), updatedAt: now },
+      set: { value, updatedAt: now },
     }).run();
-    if (options?.mandatoryAudit) {
+    if (options?.mandatoryAudit && next.analytics !== current.analytics) {
       writeAuditLogOrThrow(tx, {
         userId,
         action: 'gdpr.consent_updated',
@@ -84,4 +85,5 @@ export async function updatePrivacyPreferences(
   });
 }
 
-export const PRIVACY_CONSENT_PREFERENCE_KEY = PRIVACY_PREFERENCE_KEY;
+export { PRIVACY_CONSENT_PREFERENCE_KEY } from './privacyPreferenceValue';
+export type { PrivacyPreferences } from './privacyPreferenceValue';

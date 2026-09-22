@@ -8,7 +8,7 @@ import { buildUser } from '../factories';
 const suite = sqliteAvailable ? describe : describe.skip;
 const ROOT = process.cwd();
 
-suite('local usage telemetry without fabricated billing', () => {
+suite('optional local usage analytics without fabricated billing', () => {
   let app: TestApp;
   const user = { id: 'USER_USAGE_LOCAL', name: 'Local owner', role: 'user', email: 'usage-local@example.com' };
 
@@ -21,13 +21,28 @@ suite('local usage telemetry without fabricated billing', () => {
 
   it('persists operation counts without inventing charges', async () => {
     const { trackUsage, getUsageSummary } = await import('../../server/usageTracking');
+    const skipped = await trackUsage({
+      userId: user.id,
+      resourceType: 'document_generation',
+      quantity: 1,
+    });
+    expect(skipped).toEqual({
+      success: true,
+      recorded: false,
+      usageId: null,
+      quantity: 1,
+      reason: 'analytics_disabled',
+    });
+
+    await app.makeCaller(user).gdpr.updateConsent({ analytics: true, expectedUserId: user.id });
     const tracked = await trackUsage({
       userId: user.id,
       resourceType: 'document_generation',
       quantity: 3,
       metadata: { documentType: 'demand_letter' },
     });
-    expect(tracked).toMatchObject({ success: true, quantity: 3 });
+    expect(tracked).toMatchObject({ success: true, recorded: true, quantity: 3 });
+    if (!tracked.recorded) throw new Error('Expected opted-in usage analytics to be recorded');
 
     const [row] = await app.db
       .select()

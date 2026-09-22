@@ -6,6 +6,7 @@
  * stale AC numbers or treating constants/source strings as acceptance evidence.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { and, eq } from "drizzle-orm";
 import { buildLawyer, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 
@@ -96,6 +97,11 @@ suite("core product paths", () => {
     expect(result.success).toBe(true);
     expect(result.disclaimer).toBe(LEGAL_DISCLAIMER);
     expect(result.document?.content).toContain(LEGAL_DISCLAIMER);
+    const optionalUsageRows = await app.db.select().from(app.schema.usageTracking).where(and(
+      eq(app.schema.usageTracking.userId, owner.id),
+      eq(app.schema.usageTracking.caseId, created.id),
+    ));
+    expect(optionalUsageRows).toEqual([]);
   });
 
   it("exports owned data and erases it through the GDPR routes", async () => {

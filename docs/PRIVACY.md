@@ -54,6 +54,34 @@ persists metadata-only attempt receipts. Legal-draft recipients and immutable
 reviewed versions are owner/case scoped, included in export and erasure, and
 audited without storing recipient text or document content in the audit log.
 
+## Optional usage analytics
+
+The only general privacy preference retained by LARO is `analytics`. It defaults
+to off and is consumed by the canonical `server/usageTracking.ts` writer. When
+off, document-generation and model-operation paths do not create new
+`usage_tracking` rows, including when those paths are called directly through
+the API instead of through the renderer. When on, the local row contains an
+operation type, count, outcome/provenance metadata, owner, optional case ID, and
+timestamp; it does not contain prompts, evidence text, provider credentials, or
+billing charges.
+
+The consent check and optional insert run in one database transaction so an
+opt-out and a concurrent writer have a defined order. Existing rows are retained
+until account erasure; opting out stops future collection. Preference changes
+are mandatory-audited and the preference participates in export and erasure.
+
+Required operational records are separate and are not disabled by this choice:
+
+- audit receipts preserve security, privacy, and irreversible-action history;
+- authentication/session records protect account access;
+- hashed AI budget counters prevent resource exhaustion and unsafe concurrency;
+- business records requested by the owner support cases, evidence, and outreach.
+
+LARO has no maintained marketing-delivery or marketing-tracking path. The former
+marketing switch was therefore removed instead of presenting an inert control;
+legacy `marketing` values are discarded during database startup or the next
+privacy-preference read.
+
 ## Verification
 
 - GDPR export and erasure are covered by backend and isolation tests.
@@ -65,3 +93,5 @@ audited without storing recipient text or document content in the audit log.
   shared-Google disconnect consequences, public-research failure states, and
   exact reviewed-draft export/erasure behavior. The consolidated exact-commit
   evidence is in `FOURTH_ROUND_VERIFICATION.md`.
+- Privacy-processing tests cover the default, opt-in, opt-out, concurrent
+  changes, account isolation, direct API use, and required-record separation.
