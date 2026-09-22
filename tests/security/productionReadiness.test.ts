@@ -915,6 +915,7 @@ describe('production readiness regressions', () => {
     const scan = readFileSync(join(ROOT, 'src/renderer/pages/ScanPage.tsx'), 'utf8');
     const translations = readFileSync(join(ROOT, 'shared/i18n.ts'), 'utf8');
     const uploader = readFileSync(join(ROOT, 'src-main/uploader.ts'), 'utf8');
+    const scannerOwner = readFileSync(join(ROOT, 'src-main/scannerOwner.ts'), 'utf8');
     const scannerUpload = readFileSync(join(ROOT, 'server/scannerUpload.ts'), 'utf8');
     const routers = readFileSync(join(ROOT, 'server/routers/index.ts'), 'utf8');
 
@@ -930,7 +931,9 @@ describe('production readiness regressions', () => {
     expect(scan).toContain('t("scanner.uploadSelected")');
     expect(translations).toContain('"scanner.uploadSelected"');
     expect(main).toContain('approvedScanFolders');
-    expect(main).toContain('getDesktopScannerAuth');
+    expect(main).toContain('resolveScannerOwner');
+    expect(main).toContain('owner.getAuth()');
+    expect(scannerOwner).toContain('getDesktopScannerAuth');
     expect(main).not.toContain('agentConfig.token');
     expect(main).toContain("autoUpload: false");
     expect(main).toContain("process.env.HOST = '127.0.0.1'");

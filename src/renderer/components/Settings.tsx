@@ -39,6 +39,8 @@ import {
   type HaiFieldCategory,
 } from "../../../shared/haiGrant";
 import { EXTERNAL_DOCUMENT_SHARING_SCOPE } from "../../../shared/workflowConsent";
+import { includeConnectedDesktopScanner } from "@/lib/scannerPrivacy";
+import { readDefaultScannerFolders, writeDefaultScannerFolders } from "@/lib/scannerDefaultFolders";
 
 type SettingsSection = "workflow" | "email" | "sources" | "hai" | "security";
 type ExternalAnalysisProvider = "forge" | "openai" | "anthropic" | "google" | "deepseek" | "groq" | "together";
@@ -55,23 +57,6 @@ const NAV_ITEMS: Array<{
   { id: "hai", label: "HAI", description: "Read-only case intelligence connector", icon: Link2 },
   { id: "security", label: "Security", description: "Account data and activity", icon: Shield },
 ];
-
-const LARO_FOLDERS_KEY = "laroDefaultLocalScanFolders";
-
-function readDefaultFolders(): string[] {
-  try {
-    const raw = localStorage.getItem(LARO_FOLDERS_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeDefaultFolders(paths: string[]) {
-  localStorage.setItem(LARO_FOLDERS_KEY, JSON.stringify(paths));
-  window.dispatchEvent(new CustomEvent("laro:default-folders-changed"));
-}
 
 function downloadJsonFile(name: string, payload: unknown) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -104,7 +89,11 @@ export default function Settings() {
   const [isTesting, setIsTesting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isDownloadingActivity, setIsDownloadingActivity] = useState(false);
-  const [scannerFolders, setScannerFolders] = useState<string[]>(readDefaultFolders);
+  const [scannerFolderState, setScannerFolderState] = useState<{ ownerId: string; paths: string[] }>({ ownerId: "", paths: [] });
+  const scannerFolders = scannerFolderState.ownerId === user?.id ? scannerFolderState.paths : [];
+  useEffect(() => {
+    setScannerFolderState({ ownerId: user?.id ?? "", paths: readDefaultScannerFolders(user?.id) });
+  }, [user?.id]);
   const [haiTokenName, setHaiTokenName] = useState("HAI connected source");
   const [haiTokenDays, setHaiTokenDays] = useState("90");
   const [revealedHaiToken, setRevealedHaiToken] = useState<string | null>(null);
@@ -217,6 +206,8 @@ export default function Settings() {
 
   const openScanner = useCallback(async () => {
     try {
+      const ownerId = user?.id;
+      if (!ownerId) throw new Error("Sign in before selecting scanner folders");
       if (!window.electronAPI?.selectFolder) {
         toast.message("Folder picker requires LARO Desktop");
         return;
@@ -224,19 +215,21 @@ export default function Settings() {
       const result = await window.electronAPI.selectFolder();
       const picked = Array.isArray(result) ? result : result ? [String(result)] : [];
       if (picked.length === 0) return;
-      const merged = Array.from(new Set([...readDefaultFolders(), ...picked]));
-      writeDefaultFolders(merged);
-      setScannerFolders(merged);
+      const merged = Array.from(new Set([...readDefaultScannerFolders(ownerId), ...picked]));
+      writeDefaultScannerFolders(ownerId, merged);
+      setScannerFolderState({ ownerId, paths: merged });
       toast.success(picked.length === 1 ? "Folder added" : `${picked.length} folders added`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not open the folder picker");
     }
-  }, []);
+  }, [user?.id]);
 
   const removeScannerFolder = (path: string) => {
+    const ownerId = user?.id;
+    if (!ownerId) return;
     const next = scannerFolders.filter((folder) => folder !== path);
-    writeDefaultFolders(next);
-    setScannerFolders(next);
+    writeDefaultScannerFolders(ownerId, next);
+    setScannerFolderState({ ownerId, paths: next });
   };
 
   const handleTestEmail = async () => {
@@ -260,7 +253,7 @@ export default function Settings() {
   const handleAccountExport = async () => {
     setIsExporting(true);
     try {
-      const archive = await exportDataMutation.mutateAsync();
+      const archive = await includeConnectedDesktopScanner(await exportDataMutation.mutateAsync());
       downloadJsonFile(`laro-account-archive-${new Date().toISOString().slice(0, 10)}.json`, archive);
       toast.success("Account archive downloaded");
     } catch (error) {

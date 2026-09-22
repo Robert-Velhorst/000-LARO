@@ -29,8 +29,10 @@ import { EVIDENCE_INGESTION_LIMITS } from '../shared/evidenceIngestion';
 
 export interface UploaderOptions {
   scanId: string;
+  ownerId: string;
   apiUrl: string;
   resolveAuth: () => Promise<{ sessionCookie: string; scannerSecret: string }>;
+  authorize: () => Promise<void>;
   remote?: boolean;
   concurrency?: number; // Number of parallel uploads
   maxRetries?: number;
@@ -55,6 +57,7 @@ class ScannerUploadRequestError extends Error {
 
 export class FileUploader extends EventEmitter {
   private scanId: string;
+  private ownerId: string;
   private apiUrl: string;
   private concurrency: number;
   private maxRetries: number;
@@ -73,17 +76,20 @@ export class FileUploader extends EventEmitter {
   private activeUploads: Set<string> = new Set();
   private activeRequests: Map<string, AbortController> = new Map();
   private resolveHeaders: () => Promise<Record<string, string>>;
+  private authorize: () => Promise<void>;
   private fetchImpl: typeof fetch;
   private wait: (milliseconds: number) => Promise<void>;
   
   constructor(options: UploaderOptions) {
     super();
     this.scanId = options.scanId;
+    this.ownerId = options.ownerId;
     this.apiUrl = options.apiUrl;
     this.concurrency = Math.max(1, Math.min(options.concurrency ?? 1, 2));
     this.maxRetries = Math.max(0, options.maxRetries ?? 3);
     this.remote = options.remote === true;
     this.resolveHeaders = createDesktopScannerHeaders(options.resolveAuth);
+    this.authorize = options.authorize;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.wait = options.wait ?? ((milliseconds) => new Promise((resolve) => {
       setTimeout(resolve, milliseconds);
@@ -106,6 +112,8 @@ export class FileUploader extends EventEmitter {
     
     try {
       console.log(`[Uploader] Starting upload for scan ${this.scanId}`);
+      await this.authorize();
+      if (!getScanCaseId(this.scanId, this.ownerId)) throw new Error('Owned scan is unavailable');
       const selected = getScanIngestionTotals(this.scanId);
       if (selected.items > EVIDENCE_INGESTION_LIMITS.maxJobItems || selected.bytes > EVIDENCE_INGESTION_LIMITS.maxJobBytes) {
         throw new Error(
@@ -125,6 +133,7 @@ export class FileUploader extends EventEmitter {
       
       // Upload files in batches
       while (!this.shouldStop) {
+        await this.authorize();
         // Wait if paused
         while (this.isPaused && !this.shouldStop) {
           await new Promise(resolve => {
@@ -279,6 +288,7 @@ export class FileUploader extends EventEmitter {
    */
   private async uploadFile(file: FileItem, retryCount: number = 0): Promise<void> {
     if (this.shouldStop) return;
+    await this.authorize();
     
     // Check if already uploading this file
     if (this.activeUploads.has(file.id)) {
@@ -296,6 +306,7 @@ export class FileUploader extends EventEmitter {
       // Read through the approved file handle and reject any path, identity, or
       // byte change that happened after the user's review decision.
       const approved = await readApprovedFile(file.path, file, MAX_EVIDENCE_FILE_BYTES);
+      await this.authorize();
 
       if (this.shouldStop) {
         updateFileStatus(file.id, 'cancelled', 0, 'Upload cancelled. The approved file can be resumed.');
@@ -486,7 +497,7 @@ export class FileUploader extends EventEmitter {
   }
 
   private getCaseId(): string {
-    const caseId = getScanCaseId(this.scanId);
+    const caseId = getScanCaseId(this.scanId, this.ownerId);
     if (!caseId) throw new Error('Scan is not linked to a case');
     return caseId;
   }

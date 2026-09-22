@@ -59,6 +59,8 @@ import {
 import { LegalAreasSelect } from "@/components/LegalAreasSelect";
 import { exportCaseSummary, printCaseSummary } from "@/lib/export";
 import { getElectronAPI, isElectron } from "@/lib/electronApiShim";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { readDefaultScannerFolders } from "@/lib/scannerDefaultFolders";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGoogleOAuthConnection } from "@/hooks/useGoogleOAuthConnection";
 import { QueryNotice } from "@/components/WorkspaceUi";
@@ -92,6 +94,7 @@ interface EnhancedCaseDetailsDialogProps {
  * case.
  */
 function KeywordEvidencePull({ caseId }: { caseId: string }) {
+  const { user } = useAuth();
   const [keywordsRaw, setKeywordsRaw] = useState("");
   const [showFolderInput, setShowFolderInput] = useState(false);
   const [newFolderPath, setNewFolderPath] = useState("");
@@ -238,15 +241,6 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
   // Read the user-level default folders that Settings → Local Computer
   // Scanner adds. We merge them with per-case folders so a folder added in
   // Settings is included in every keyword pull without re-typing the path.
-  const readDefaultFolders = (): string[] => {
-    try {
-      const raw = localStorage.getItem("laroDefaultLocalScanFolders");
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  };
-
   const handlePull = () => {
     const keywords = keywordsRaw
       .split(/[,\n]/)
@@ -256,7 +250,7 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
       toast.error("Enter at least one keyword (comma-separated for multiple).");
       return;
     }
-    const defaultFolders = readDefaultFolders();
+    const defaultFolders = readDefaultScannerFolders(user?.id);
     const localFolderPaths = Array.from(
       new Set([...defaultFolders, ...currentLocalFolders]),
     );

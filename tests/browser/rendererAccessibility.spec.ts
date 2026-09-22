@@ -1596,6 +1596,111 @@ test("scanner renders persisted retry state and resumes it without rescanning", 
   expect(requestFailures).toEqual([]);
 });
 
+test("scanner hides an open review immediately when the signed-in account changes", async ({ page }, testInfo) => {
+  const email = await createAccount(page);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  const ownerA = (database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string }).id;
+  const ownerB = `A11Y_${randomUUID()}`;
+  database.prepare("INSERT INTO users (id, email, name, password, role, createdAt) VALUES (?, ?, ?, NULL, 'user', ?)")
+    .run(ownerB, `${ownerB.toLowerCase()}@example.test`, "Second owner", Math.floor(Date.now() / 1000));
+  database.prepare("INSERT INTO system_config (configKey, configValue, updatedAt) VALUES (?, ?, ?)")
+    .run(`onboarding:state:${ownerB}`, JSON.stringify({ status: "complete", currentStepKey: "outreach" }), Math.floor(Date.now() / 1000));
+  database.close();
+
+  await page.addInitScript(({ ownerId }) => {
+    window.localStorage.setItem(`laroScannerActiveScan:${ownerId}`, "owner-a-scan");
+    (window as any).electronAPI = {
+      getConfig: async () => ({ apiUrl: location.origin, deviceName: "browser-test", caseId: "case-a" }),
+      setConfig: async (value: unknown) => value,
+      getSystemInfo: async () => ({ platform: "windows", hostname: "test", username: "test", homeDir: "/", version: "1.3.0" }),
+      getAppVersion: async () => "1.3.0",
+      openExternal: async () => undefined,
+      reportRendererError: async () => undefined,
+      selectFolder: async () => null,
+      startLocalSource: async () => null,
+      getScanFiles: async () => ({ files: [{
+        id: "owner-a-file", path: "/private/owner-a-secret.txt", name: "owner-a-secret.txt",
+        size: 12, mimeType: "text/plain", modifiedAt: new Date().toISOString(),
+        uploadStatus: "pending", uploadProgress: 0,
+      }] }),
+      getScanProgress: async () => ({ progress: {
+        scanId: "owner-a-scan", status: "review", totalFiles: 1, scannedFiles: 1,
+        uploadedFiles: 0, failedFiles: 0, totalSize: 12, uploadedSize: 0,
+      } }),
+      onScanProgress: () => undefined,
+      onUploadProgress: () => undefined,
+      clearScanProgressListeners: () => undefined,
+      clearUploadProgressListeners: () => undefined,
+    };
+  }, { ownerId: ownerA });
+
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => requestFailures.push(`${request.method()} ${request.url()}`));
+  const response = await page.goto("/?mode=scanner", { waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  await expect(page.getByText("/private/owner-a-secret.txt")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("scanner-owner-a-review.png"), fullPage: true });
+
+  const tokenB = jwt.sign({ userId: ownerB }, "laro-a11y-jwt-secret-32-characters-minimum", { expiresIn: "1h" });
+  await page.context().addCookies([{
+    name: COOKIE_NAME, value: tokenB, url: "http://127.0.0.1:5181", httpOnly: true, sameSite: "Lax",
+  }]);
+  await page.evaluate(() => window.dispatchEvent(new Event("laro:scanner-session-changed")));
+  await expect(page.getByText("/private/owner-a-secret.txt")).toHaveCount(0);
+  await expect(page.getByText("owner-a-secret.txt")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Upload selected|Geselecteerde uploaden/ })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("scanner-owner-b-after-switch.png"), fullPage: true });
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+});
+
+test("default scanner folder paths stay with their account after a live switch", async ({ page }, testInfo) => {
+  const email = await createAccount(page);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  const ownerA = (database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string }).id;
+  const ownerB = `A11Y_${randomUUID()}`;
+  database.prepare("INSERT INTO users (id, email, name, password, role, createdAt) VALUES (?, ?, ?, NULL, 'user', ?)")
+    .run(ownerB, `${ownerB.toLowerCase()}@example.test`, "Second owner", Math.floor(Date.now() / 1000));
+  database.prepare("INSERT INTO system_config (configKey, configValue, updatedAt) VALUES (?, ?, ?)")
+    .run(`onboarding:state:${ownerB}`, JSON.stringify({ status: "complete", currentStepKey: "outreach" }), Math.floor(Date.now() / 1000));
+  database.close();
+
+  await page.evaluate(({ ownerA, ownerB }) => {
+    localStorage.setItem(`laroDefaultLocalScanFolders:${ownerA}`, JSON.stringify(["/private/owner-a-folder"]));
+    localStorage.setItem(`laroDefaultLocalScanFolders:${ownerB}`, JSON.stringify(["/private/owner-b-folder"]));
+    localStorage.setItem("laroDefaultLocalScanFolders", JSON.stringify(["/private/unowned-legacy-folder"]));
+  }, { ownerA, ownerB });
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => requestFailures.push(`${request.method()} ${request.url()}`));
+  const response = await page.goto("/settings?section=sources", { waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  await expect(page.getByText("/private/owner-a-folder")).toBeVisible();
+  await expect(page.getByText("/private/unowned-legacy-folder")).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem("laroDefaultLocalScanFolders"))).toBeNull();
+  await page.screenshot({ path: testInfo.outputPath("scanner-default-folders-owner-a.png"), fullPage: true });
+
+  const tokenB = jwt.sign({ userId: ownerB }, "laro-a11y-jwt-secret-32-characters-minimum", { expiresIn: "1h" });
+  await page.context().addCookies([{
+    name: COOKIE_NAME, value: tokenB, url: "http://127.0.0.1:5181", httpOnly: true, sameSite: "Lax",
+  }]);
+  await page.evaluate(() => window.dispatchEvent(new Event("laro:scanner-session-changed")));
+  await expect(page.getByText("/private/owner-a-folder")).toHaveCount(0);
+  await expect(page.getByText("/private/owner-b-folder")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("scanner-default-folders-owner-b.png"), fullPage: true });
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+});
+
 test("lawyer comparison normalizes legacy rows and only shows a canonical match with a case", async ({ page }, testInfo) => {
   const email = await createAccount(page);
   const marker = `CompareBeacon${randomUUID().replaceAll("-", "").slice(0, 10)}`;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import HomePage from "./pages/HomePage";
 import ScanPage from "./pages/ScanPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -13,7 +13,10 @@ export default function App() {
   const electronAPI = getElectronAPI();
   const [currentPage, setCurrentPage] = useState<Page>("home");
   const [config, setConfig] = useState<AgentConfig | null>(null);
-  const [activeScanId, setActiveScanId] = useState<string | null>(null);
+  const [activeScan, setActiveScan] = useState<{ ownerId: string; scanId: string } | null>(null);
+  const [sessionInvalidated, setSessionInvalidated] = useState(false);
+  const [sessionCheckFailed, setSessionCheckFailed] = useState(false);
+  const sessionGeneration = useRef(0);
   const [configError, setConfigError] = useState<string | null>(null);
   const loadConfig = useCallback(async () => {
     setConfigError(null);
@@ -22,13 +25,44 @@ export default function App() {
   }, []);
 
   const session = trpc.auth.me.useQuery(undefined, {
-    refetchInterval: 60_000,
+    refetchInterval: 5_000,
     refetchOnWindowFocus: true,
     retry: false,
   });
   useEffect(() => {
     void loadConfig();
   }, [loadConfig]);
+
+  const ownerId = session.data?.id ?? null;
+  const activeScanId = activeScan?.ownerId === ownerId ? activeScan.scanId : null;
+
+  useEffect(() => {
+    const clearForSessionChange = () => {
+      const generation = ++sessionGeneration.current;
+      setSessionInvalidated(true);
+      setSessionCheckFailed(false);
+      setActiveScan(null);
+      setCurrentPage("home");
+      setConfig((current) => current ? { ...current, caseId: null } : current);
+      void session.refetch().then((result) => {
+        if (sessionGeneration.current !== generation) return;
+        if (result.isError) setSessionCheckFailed(true);
+        else setSessionInvalidated(false);
+      }).catch(() => {
+        if (sessionGeneration.current === generation) setSessionCheckFailed(true);
+      });
+    };
+    window.addEventListener('laro:scanner-session-changed', clearForSessionChange);
+    return () => window.removeEventListener('laro:scanner-session-changed', clearForSessionChange);
+  }, [session.refetch]);
+
+  useEffect(() => {
+    if (activeScan && activeScan.ownerId !== ownerId) {
+      setActiveScan(null);
+      setCurrentPage("home");
+      setConfig((current) => current ? { ...current, caseId: null } : current);
+    }
+  }, [activeScan, ownerId]);
 
   useEffect(() => {
     if (!session.isSuccess || session.data || !config?.caseId) return;
@@ -39,20 +73,22 @@ export default function App() {
   }, [session.isSuccess, session.data, config?.caseId]);
 
   useEffect(() => {
-    const userId = session.data?.id;
-    if (!userId || activeScanId) return;
-    const storageKey = `laroScannerActiveScan:${userId}`;
+    if (!ownerId || activeScanId) return;
+    let cancelled = false;
+    const storageKey = `laroScannerActiveScan:${ownerId}`;
     const storedScanId = window.localStorage.getItem(storageKey);
     if (!storedScanId) return;
     void electronAPI.getScanProgress(storedScanId).then(({ progress }: { progress: { status?: string } | null }) => {
+      if (cancelled) return;
       if (!progress || !["review", "uploading", "upload-paused", "failed", "cancelled"].includes(progress.status || "")) {
         window.localStorage.removeItem(storageKey);
         return;
       }
-      setActiveScanId(storedScanId);
+      setActiveScan({ ownerId, scanId: storedScanId });
       setCurrentPage("scan");
-    }).catch(() => window.localStorage.removeItem(storageKey));
-  }, [session.data?.id, activeScanId, electronAPI]);
+    }).catch(() => { if (!cancelled) window.localStorage.removeItem(storageKey); });
+    return () => { cancelled = true; };
+  }, [ownerId, activeScanId, electronAPI]);
 
   const saveSettings = async (updates: Partial<AgentConfig>) => {
     const updated = await electronAPI.setConfig({ caseId: updates.caseId ?? null });
@@ -65,7 +101,13 @@ export default function App() {
       onAction={() => { void loadConfig(); void session.refetch(); }} />;
   }
 
-  if (session.isLoading || !config) {
+  if (sessionInvalidated && sessionCheckFailed) {
+    return <ScannerStatus title={locale === "nl" ? "Sessie niet beschikbaar" : "Session unavailable"}
+      detail={t("scanner.verifySession")} actionLabel={t("common.retry")}
+      onAction={() => window.location.reload()} />;
+  }
+
+  if (sessionInvalidated || session.isLoading || !config) {
     return <ScannerStatus title={t("scanner.preparing")} detail={t("scanner.verifySession")} />;
   }
 
@@ -80,10 +122,11 @@ export default function App() {
     );
   }
 
-  switch (currentPage) {
+  switch (currentPage === "scan" && !activeScanId ? "home" : currentPage) {
     case "scan":
       return (
         <ScanPage
+          key={`${ownerId}:${activeScanId}`}
           activeScanId={activeScanId}
           onNavigate={(page) => setCurrentPage(page as Page)}
         />
@@ -91,6 +134,7 @@ export default function App() {
     case "settings":
       return (
         <SettingsPage
+          key={ownerId}
           config={config}
           onNavigate={(page) => setCurrentPage(page as Page)}
           onSave={saveSettings}
@@ -99,11 +143,12 @@ export default function App() {
     default:
       return (
         <HomePage
+          key={ownerId}
           config={config}
           onNavigate={(page) => setCurrentPage(page as Page)}
           onScanStarted={(scanId) => {
             if (session.data?.id) window.localStorage.setItem(`laroScannerActiveScan:${session.data.id}`, scanId);
-            setActiveScanId(scanId);
+            if (ownerId) setActiveScan({ ownerId, scanId });
             setCurrentPage("scan");
           }}
         />

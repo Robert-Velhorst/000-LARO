@@ -1,7 +1,7 @@
 /**
  * Full LARO dashboard for the packaged desktop and supported server renderer.
  */
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Router, Route, Switch } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -34,8 +34,43 @@ const fileProtocol =
 export default function DashboardApp() {
   const { user, loading, error, refresh } = useAuth();
   const { t, locale } = useI18n();
+  const [sessionInvalidated, setSessionInvalidated] = useState(false);
+  const [sessionCheckFailed, setSessionCheckFailed] = useState(false);
+  const refreshRef = useRef(refresh);
+  const sessionGeneration = useRef(0);
+  refreshRef.current = refresh;
 
-  if (loading) {
+  useEffect(() => {
+    const onSessionChanged = () => {
+      const generation = ++sessionGeneration.current;
+      setSessionInvalidated(true);
+      setSessionCheckFailed(false);
+      void refreshRef.current().then((result) => {
+        if (sessionGeneration.current !== generation) return;
+        if (result.isError) setSessionCheckFailed(true);
+        else setSessionInvalidated(false);
+      }).catch(() => {
+        if (sessionGeneration.current === generation) setSessionCheckFailed(true);
+      });
+    };
+    window.addEventListener('laro:scanner-session-changed', onSessionChanged);
+    return () => window.removeEventListener('laro:scanner-session-changed', onSessionChanged);
+  }, []);
+
+  if (sessionInvalidated && sessionCheckFailed) {
+    return <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
+      <section className="w-full max-w-md border border-border bg-card p-6 text-center">
+        <AlertCircle className="mx-auto h-8 w-8 text-destructive" aria-hidden="true" />
+        <h1 className="mt-4 text-lg font-semibold">{t("auth.connectionError")}</h1>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">{t("auth.connectionErrorDetail")}</p>
+        <Button className="mt-5" onClick={() => window.location.reload()}>
+          <RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />{t("common.retry")}
+        </Button>
+      </section>
+    </main>;
+  }
+
+  if (loading || sessionInvalidated) {
     return <DashboardSkeleton />;
   }
 

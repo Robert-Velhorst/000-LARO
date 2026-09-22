@@ -39,6 +39,12 @@ suite('Phases 071–080', () => {
     expect(ok.total).toBeGreaterThan(0);
   });
 
+  it('refuses GDPR erasure if the confirmed account differs from the current session', async () => {
+    await expect(app.makeCaller(U).gdpr.deleteData({ confirm: true, expectedUserId: 'OTHER_ACCOUNT' }))
+      .rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect((await app.makeCaller(U).auth.me())?.id).toBe(U.id);
+  });
+
   it('case deletion removes managed evidence objects before metadata', async () => {
     const caseUser = { id: 'USER_CASE_DELETE', name: 'Case delete', role: 'user', email: 'case-delete@example.com' };
     await app.db.insert(app.schema.users).values(buildUser({ id: caseUser.id, email: caseUser.email }));

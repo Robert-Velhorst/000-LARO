@@ -28,6 +28,7 @@ export function initDatabase(serverUrl?: string): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS scans (
       id TEXT PRIMARY KEY,
+      ownerId TEXT NOT NULL,
       caseId TEXT NOT NULL,
       caseName TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -45,12 +46,15 @@ export function initDatabase(serverUrl?: string): void {
       currentFile TEXT,
       errorMessage TEXT,
       startedAt TEXT NOT NULL,
-      completedAt TEXT
+      completedAt TEXT,
+      quarantinedAt TEXT
     );
     
     CREATE TABLE IF NOT EXISTS files (
       id TEXT PRIMARY KEY,
       scanId TEXT NOT NULL,
+      ownerId TEXT NOT NULL,
+      caseId TEXT NOT NULL,
       path TEXT NOT NULL,
       name TEXT NOT NULL,
       size INTEGER NOT NULL,
@@ -78,6 +82,8 @@ export function initDatabase(serverUrl?: string): void {
     (db.prepare('PRAGMA table_info(scans)').all() as Array<{ name: string }>).map((column) => column.name),
   );
   const scanColumns: Array<[string, string]> = [
+    ['ownerId', 'TEXT'],
+    ['quarantinedAt', 'TEXT'],
     ['skippedFiles', 'INTEGER DEFAULT 0'],
     ['skippedSize', 'INTEGER DEFAULT 0'],
     ['limitReason', 'TEXT'],
@@ -91,6 +97,8 @@ export function initDatabase(serverUrl?: string): void {
     (db.prepare('PRAGMA table_info(files)').all() as Array<{ name: string }>).map((column) => column.name),
   );
   const fileColumns: Array<[string, string]> = [
+    ['ownerId', 'TEXT'],
+    ['caseId', 'TEXT'],
     ['contentHash', 'TEXT'],
     ['sourceIdentity', 'TEXT'],
     ['sourceRealPath', 'TEXT'],
@@ -103,6 +111,41 @@ export function initDatabase(serverUrl?: string): void {
   for (const [column, type] of fileColumns) {
     if (!existingFileColumns.has(column)) db.exec(`ALTER TABLE files ADD COLUMN ${column} ${type}`);
   }
+
+  // Pre-owner scanner rows cannot be attributed safely. Keep only a redacted
+  // quarantine marker; delete their file rows and absolute paths entirely.
+  db.transaction(() => {
+    db!.prepare(`
+      UPDATE scans SET status = 'quarantined', caseId = '', caseName = '',
+        excludedFolders = '[]', currentFile = NULL, limitReason = NULL,
+        errorMessage = NULL, quarantinedAt = COALESCE(quarantinedAt, ?)
+      WHERE ownerId IS NULL OR TRIM(ownerId) = ''
+    `).run(new Date().toISOString());
+    db!.exec(`
+      DELETE FROM files
+      WHERE ownerId IS NULL OR TRIM(ownerId) = '' OR
+        NOT EXISTS (SELECT 1 FROM scans WHERE scans.id = files.scanId
+          AND scans.ownerId = files.ownerId AND scans.caseId = files.caseId);
+    `);
+  })();
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_scans_owner_started ON scans(ownerId, startedAt);
+    CREATE INDEX IF NOT EXISTS idx_files_owner_scan ON files(ownerId, scanId);
+    CREATE TRIGGER IF NOT EXISTS scanner_scan_owner_insert BEFORE INSERT ON scans
+      WHEN NEW.ownerId IS NULL OR TRIM(NEW.ownerId) = ''
+      BEGIN SELECT RAISE(ABORT, 'Scanner owner is required'); END;
+    CREATE TRIGGER IF NOT EXISTS scanner_scan_identity_update BEFORE UPDATE OF ownerId, caseId ON scans
+      WHEN NEW.ownerId IS NOT OLD.ownerId OR NEW.caseId IS NOT OLD.caseId
+      BEGIN SELECT RAISE(ABORT, 'Scanner identity is immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS scanner_file_owner_insert BEFORE INSERT ON files
+      WHEN NEW.ownerId IS NULL OR TRIM(NEW.ownerId) = '' OR NOT EXISTS
+        (SELECT 1 FROM scans WHERE id = NEW.scanId AND ownerId = NEW.ownerId AND caseId = NEW.caseId)
+      BEGIN SELECT RAISE(ABORT, 'Scanner file owner or case mismatch'); END;
+    CREATE TRIGGER IF NOT EXISTS scanner_file_identity_update BEFORE UPDATE OF ownerId, caseId, scanId ON files
+      WHEN NEW.ownerId IS NOT OLD.ownerId OR NEW.caseId IS NOT OLD.caseId OR NEW.scanId IS NOT OLD.scanId
+      BEGIN SELECT RAISE(ABORT, 'Scanner file identity is immutable'); END;
+  `);
 
   // A process exit can leave a file and its parent scan in the transient
   // `uploading` state. Convert that to an explicit retryable pause so the next
@@ -137,6 +180,7 @@ export function closeDatabase(): void {
  */
 export function createScan(
   id: string,
+  ownerId: string,
   caseId: string,
   caseName: string,
   autoUpload: boolean,
@@ -145,12 +189,13 @@ export function createScan(
   if (!db) throw new Error('Database not initialized');
   
   const stmt = db.prepare(`
-    INSERT INTO scans (id, caseId, caseName, status, autoUpload, excludedFolders, startedAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scans (id, ownerId, caseId, caseName, status, autoUpload, excludedFolders, startedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   stmt.run(
     id,
+    ownerId,
     caseId,
     caseName,
     'scanning',
@@ -248,11 +293,11 @@ export function updateScanProgress(progress: Partial<ScanProgress>): void {
 /**
  * Get scan by ID
  */
-export function getScan(scanId: string): ScanProgress | null {
+export function getScan(scanId: string, ownerId: string): ScanProgress | null {
   if (!db) throw new Error('Database not initialized');
   
-  const stmt = db.prepare('SELECT * FROM scans WHERE id = ?');
-  const row = stmt.get(scanId) as any;
+  const stmt = db.prepare('SELECT * FROM scans WHERE id = ? AND ownerId = ? AND quarantinedAt IS NULL');
+  const row = stmt.get(scanId, ownerId) as any;
   
   if (!row) return null;
   
@@ -278,18 +323,23 @@ export function getScan(scanId: string): ScanProgress | null {
  */
 export function addFile(file: FileItem, scanId: string): void {
   if (!db) throw new Error('Database not initialized');
+  const scan = db.prepare('SELECT ownerId, caseId FROM scans WHERE id = ? AND quarantinedAt IS NULL')
+    .get(scanId) as { ownerId: string; caseId: string } | undefined;
+  if (!scan?.ownerId) throw new Error('Owned scan is required before adding a file');
   
   const stmt = db.prepare(`
     INSERT INTO files (
-      id, scanId, path, name, size, mimeType, modifiedAt, uploadStatus, uploadProgress,
+      id, scanId, ownerId, caseId, path, name, size, mimeType, modifiedAt, uploadStatus, uploadProgress,
       contentHash, sourceIdentity, sourceRealPath
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   stmt.run(
     file.id,
     scanId,
+    scan.ownerId,
+    scan.caseId,
     file.path,
     file.name,
     file.size,
@@ -361,18 +411,20 @@ function rowToFileItem(row: any): FileItem {
 /**
  * Get files for a scan
  */
-export function getScanFiles(scanId: string): FileItem[] {
+export function getScanFiles(scanId: string, ownerId: string): FileItem[] {
   if (!db) throw new Error('Database not initialized');
-  
-  const stmt = db.prepare('SELECT * FROM files WHERE scanId = ? ORDER BY name');
-  const rows = stmt.all(scanId) as any[];
+  const stmt = db.prepare(`SELECT files.* FROM files JOIN scans ON scans.id = files.scanId
+    WHERE files.scanId = ? AND files.ownerId = ? AND scans.ownerId = ?
+      AND files.caseId = scans.caseId AND scans.quarantinedAt IS NULL ORDER BY files.name`);
+  const rows = stmt.all(scanId, ownerId, ownerId) as any[];
   
   return rows.map(rowToFileItem);
 }
 
-export function getScanCaseId(scanId: string): string | null {
+export function getScanCaseId(scanId: string, ownerId: string): string | null {
   if (!db) throw new Error('Database not initialized');
-  const row = db.prepare('SELECT caseId FROM scans WHERE id = ?').get(scanId) as { caseId: string } | undefined;
+  const row = db.prepare('SELECT caseId FROM scans WHERE id = ? AND ownerId = ? AND quarantinedAt IS NULL')
+    .get(scanId, ownerId) as { caseId: string } | undefined;
   return row?.caseId ?? null;
 }
 
@@ -388,13 +440,22 @@ export interface FileSelectionResult {
 export async function setScanFileSelection(
   scanId: string,
   selectedFileIds: string[],
+  ownerId: string,
+  revalidate?: () => Promise<void>,
 ): Promise<FileSelectionResult> {
   if (!db) throw new Error('Database not initialized');
+  const caseId = getScanCaseId(scanId, ownerId);
+  if (!caseId) throw new Error('Owned scan is unavailable');
 
   const selected = new Set(selectedFileIds);
+  if (selected.size !== selectedFileIds.length) throw new Error('Duplicate scanner file selection');
+  const ownedFileIds = db.prepare('SELECT id FROM files WHERE scanId = ? AND ownerId = ? AND caseId = ?')
+    .all(scanId, ownerId, caseId) as Array<{ id: string }>;
+  const available = new Set(ownedFileIds.map((file) => file.id));
+  if ([...selected].some((fileId) => !available.has(fileId))) throw new Error('Selected scanner file is unavailable');
   const rows = db
-    .prepare("SELECT * FROM files WHERE scanId = ? AND uploadStatus IN ('pending', 'review_required', 'excluded', 'retryable', 'cancelled')")
-    .all(scanId)
+    .prepare("SELECT * FROM files WHERE scanId = ? AND ownerId = ? AND caseId = ? AND uploadStatus IN ('pending', 'review_required', 'excluded', 'retryable', 'cancelled')")
+    .all(scanId, ownerId, caseId)
     .map(rowToFileItem);
 
   const outcomes: Array<{
@@ -454,8 +515,10 @@ export async function setScanFileSelection(
       uploadStatus = 'review_required', uploadProgress = 0, errorMessage = ?
     WHERE id = ?
   `);
+  if (revalidate) await revalidate();
   const approvedAt = new Date().toISOString();
   const transaction = db.transaction(() => {
+    if (getScanCaseId(scanId, ownerId) !== caseId) throw new Error('Owned scan is unavailable');
     for (const outcome of outcomes) {
       if (outcome.kind === 'excluded') {
         exclude.run(outcome.file.id);
@@ -547,10 +610,11 @@ export function prepareScanUploadResume(scanId: string): void {
 }
 
 /** Cancel a persisted upload that no longer has an in-memory worker. */
-export function cancelPausedScanUpload(scanId: string): boolean {
+export function cancelPausedScanUpload(scanId: string, ownerId: string): boolean {
   if (!db) throw new Error('Database not initialized');
   return db.transaction(() => {
-    const scan = db!.prepare('SELECT status FROM scans WHERE id = ?').get(scanId) as { status: string } | undefined;
+    const scan = db!.prepare('SELECT status FROM scans WHERE id = ? AND ownerId = ? AND quarantinedAt IS NULL')
+      .get(scanId, ownerId) as { status: string } | undefined;
     if (!scan || !['upload-paused', 'uploading'].includes(scan.status)) return false;
     db!.prepare(`
       UPDATE files SET uploadStatus = 'cancelled', uploadProgress = 0,
@@ -640,41 +704,56 @@ export function getPendingFiles(scanId: string, limit: number = 10): FileItem[] 
 /**
  * Get recent scans
  */
-export function getRecentScans(limit: number = 10): any[] {
+export function getRecentScans(ownerId: string, limit: number = 10): any[] {
   if (!db) throw new Error('Database not initialized');
   
   const stmt = db.prepare(`
-    SELECT * FROM scans 
+    SELECT * FROM scans WHERE ownerId = ? AND quarantinedAt IS NULL
     ORDER BY startedAt DESC
     LIMIT ?
   `);
   
-  return stmt.all(limit) as any[];
+  return stmt.all(ownerId, limit) as any[];
 }
 
 /**
  * Delete old completed scans (keep last 30 days)
  */
-export function cleanupOldScans(): void {
+export function cleanupOldScans(
+  now = new Date(),
+  activeScanIds: string[] = [],
+): { scans: number; files: number; quarantined: number } {
   if (!db) throw new Error('Database not initialized');
-  
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  
-  // Delete files first (foreign key constraint)
-  db.prepare(`
-    DELETE FROM files 
-    WHERE scanId IN (
-      SELECT id FROM scans 
-      WHERE status IN ('completed', 'failed', 'cancelled')
-      AND completedAt < ?
-    )
-  `).run(thirtyDaysAgo.toISOString());
-  
-  // Delete scans
-  db.prepare(`
-    DELETE FROM scans 
-    WHERE status IN ('completed', 'failed', 'cancelled')
-    AND completedAt < ?
-  `).run(thirtyDaysAgo.toISOString());
+  const cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1_000).toISOString();
+  return db.transaction(() => {
+    const excludeActive = activeScanIds.length ? ` AND id NOT IN (${activeScanIds.map(() => '?').join(',')})` : '';
+    const expired = `COALESCE(completedAt, startedAt) < ?${excludeActive}`;
+    const args = [cutoff, ...activeScanIds];
+    const quarantined = (db!.prepare(`SELECT COUNT(*) AS count FROM scans WHERE quarantinedAt IS NOT NULL AND ${expired}`)
+      .get(...args) as { count: number }).count;
+    const files = db!.prepare(`DELETE FROM files WHERE scanId IN (SELECT id FROM scans WHERE ${expired})`)
+      .run(...args).changes;
+    const scans = db!.prepare(`DELETE FROM scans WHERE ${expired}`).run(...args).changes;
+    return { scans, files, quarantined };
+  })();
+}
+
+export function exportScannerHistory(ownerId: string): { scans: unknown[]; files: unknown[] } {
+  if (!db) throw new Error('Database not initialized');
+  const scans = db.prepare('SELECT * FROM scans WHERE ownerId = ? AND quarantinedAt IS NULL ORDER BY startedAt, id')
+    .all(ownerId);
+  const files = db.prepare(`SELECT files.* FROM files JOIN scans ON scans.id = files.scanId
+    WHERE files.ownerId = ? AND scans.ownerId = ? AND files.caseId = scans.caseId
+      AND scans.quarantinedAt IS NULL
+    ORDER BY files.scanId, files.id`).all(ownerId, ownerId);
+  return { scans, files };
+}
+
+export function eraseScannerHistory(ownerId: string): { scans: number; files: number } {
+  if (!db) throw new Error('Database not initialized');
+  return db.transaction(() => {
+    const files = db!.prepare('DELETE FROM files WHERE ownerId = ?').run(ownerId).changes;
+    const scans = db!.prepare('DELETE FROM scans WHERE ownerId = ?').run(ownerId).changes;
+    return { scans, files };
+  })();
 }

@@ -10,13 +10,13 @@ vi.mock("electron", () => ({
 
 import {
   addFile,
-  cancelPausedScanUpload,
+  cancelPausedScanUpload as cancelOwnedPausedScanUpload,
   closeDatabase,
-  createScan,
-  getScan,
-  getScanFiles,
+  createScan as createOwnedScan,
+  getScan as getOwnedScan,
+  getScanFiles as getOwnedScanFiles,
   initDatabase,
-  setScanFileSelection,
+  setScanFileSelection as setOwnedScanFileSelection,
   updateFileStatus,
   updateScanProgress,
 } from "../../src-main/database";
@@ -24,6 +24,14 @@ import { inspectRegularFile } from "../../src-main/fileApproval";
 import { FileUploader } from "../../src-main/uploader";
 import { MAX_EVIDENCE_FILE_BYTES } from "../../shared/evidenceFiles";
 import { SCANNER_UPLOAD_PATH } from "../../shared/scannerUpload";
+
+const OWNER = "owner-1";
+const createScan = (scanId: string, caseId: string, caseName: string, autoUpload: boolean, excludedFolders: string[]) =>
+  createOwnedScan(scanId, OWNER, caseId, caseName, autoUpload, excludedFolders);
+const getScan = (scanId: string) => getOwnedScan(scanId, OWNER);
+const getScanFiles = (scanId: string) => getOwnedScanFiles(scanId, OWNER);
+const setScanFileSelection = (scanId: string, fileIds: string[]) => setOwnedScanFileSelection(scanId, fileIds, OWNER);
+const cancelPausedScanUpload = (scanId: string) => cancelOwnedPausedScanUpload(scanId, OWNER);
 
 describe("resumable desktop scanner uploader", () => {
   const scanId = "resume-scan";
@@ -73,6 +81,32 @@ describe("resumable desktop scanner uploader", () => {
     });
   }
 
+  it("does not dispatch approved bytes after the scanner owner changes", async () => {
+    let currentOwner = OWNER;
+    let checks = 0;
+    const fetchImpl = vi.fn(async () => receipt());
+    const uploader = new FileUploader({
+      scanId,
+      ownerId: OWNER,
+      apiUrl: "http://127.0.0.1:3000",
+      authorize: async () => {
+        checks += 1;
+        if (checks === 2) currentOwner = "owner-2";
+        if (currentOwner !== OWNER) throw new Error("Scanner session changed");
+      },
+      resolveAuth,
+      fetchImpl,
+    });
+    const errors: Error[] = [];
+    uploader.on("error", (error: Error) => errors.push(error));
+
+    await uploader.start();
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(errors[0]?.message).toMatch(/session changed/i);
+    expect(getScanFiles(scanId)[0].evidenceId).toBeUndefined();
+  });
+
   it("reacquires authentication after a 401 and completes the approved file", async () => {
     let requestCount = 0;
     const fetchImpl = vi.fn(async () => {
@@ -87,6 +121,8 @@ describe("resumable desktop scanner uploader", () => {
     });
     const uploader = new FileUploader({
       scanId,
+      ownerId: OWNER,
+      authorize: async () => undefined,
       apiUrl: "http://127.0.0.1:3000",
       resolveAuth,
       fetchImpl,
@@ -109,6 +145,8 @@ describe("resumable desktop scanner uploader", () => {
   it("persists a network failure as retryable and resumes it after database restart", async () => {
     const interrupted = new FileUploader({
       scanId,
+      ownerId: OWNER,
+      authorize: async () => undefined,
       apiUrl: "https://laro.example.test/base",
       resolveAuth,
       maxRetries: 0,
@@ -125,6 +163,8 @@ describe("resumable desktop scanner uploader", () => {
     const bodies: unknown[] = [];
     const resumed = new FileUploader({
       scanId,
+      ownerId: OWNER,
+      authorize: async () => undefined,
       apiUrl: "https://laro.example.test/base",
       resolveAuth,
       maxRetries: 0,
@@ -149,6 +189,8 @@ describe("resumable desktop scanner uploader", () => {
   it("keeps a permanent server rejection distinct from a retryable failure", async () => {
     const uploader = new FileUploader({
       scanId,
+      ownerId: OWNER,
+      authorize: async () => undefined,
       apiUrl: "http://127.0.0.1:3000",
       resolveAuth,
       fetchImpl: vi.fn(async () => new Response(JSON.stringify({
@@ -202,6 +244,8 @@ describe("resumable desktop scanner uploader", () => {
     expect(getScan(scanId)).toMatchObject({ status: "cancelled" });
     const resumed = new FileUploader({
       scanId,
+      ownerId: OWNER,
+      authorize: async () => undefined,
       apiUrl: "http://127.0.0.1:3000",
       resolveAuth,
       fetchImpl: vi.fn(async () => receipt("EVIDENCE-AFTER-CANCEL")),
@@ -221,6 +265,8 @@ describe("resumable desktop scanner uploader", () => {
     }));
     const uploader = new FileUploader({
       scanId,
+      ownerId: OWNER,
+      authorize: async () => undefined,
       apiUrl: "http://127.0.0.1:3000",
       resolveAuth,
       fetchImpl,

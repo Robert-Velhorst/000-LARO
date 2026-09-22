@@ -627,8 +627,11 @@ export const appRouter = router({
     }),
     // Permanent account + data deletion (right of erasure).
     deleteData: protectedProcedure
-      .input(z.object({ confirm: z.literal(true) }))
-      .mutation(async ({ ctx }) => {
+      .input(z.object({ confirm: z.literal(true), expectedUserId: z.string().optional() }))
+      .mutation(async ({ ctx, input }) => {
+        if (input.expectedUserId && input.expectedUserId !== ctx.user.id) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Account changed during erasure confirmation' });
+        }
         const { deleteUserData } = await import("../gdpr");
         const result = await deleteUserData(ctx.user.id);
         // Clear the session cookie since the account no longer exists.

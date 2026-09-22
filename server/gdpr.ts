@@ -22,6 +22,19 @@ import {
   type ProviderErasureRevocationSummary,
 } from "./providerConnections";
 
+type DesktopScannerPrivacyProvider = {
+  export: (userId: string) => { scans: unknown[]; files: unknown[] };
+  erase: (userId: string) => Promise<{ scans: number; files: number }>;
+};
+
+// Installed only by the integrated Electron process. A standalone/hosted API
+// has no direct authority over private scanner state on a connected desktop.
+let desktopScannerPrivacyProvider: DesktopScannerPrivacyProvider | null = null;
+
+export function registerDesktopScannerPrivacyProvider(provider: DesktopScannerPrivacyProvider | null): void {
+  desktopScannerPrivacyProvider = provider;
+}
+
 function rawClient(db: any): any {
   return db.$client ?? db.session?.client ?? null;
 }
@@ -137,6 +150,11 @@ export async function exportUserData(userId: string): Promise<Record<string, any
     "SELECT * FROM system_config WHERE configKey IN (?, ?)",
   ).all(...onboardingConfigKeys(userId));
   if (ownerConfig.length > 0) out.system_config = redactExportRows(ownerConfig);
+  if (desktopScannerPrivacyProvider) {
+    const scanner = desktopScannerPrivacyProvider.export(userId);
+    out.desktop_scanner_scans = scanner.scans;
+    out.desktop_scanner_files = scanner.files;
+  }
   return out;
 }
 
@@ -178,6 +196,15 @@ export async function deleteUserData(userId: string): Promise<{
   const erasureRequestId = `ERASURE-${nanoid(16)}`;
 
   const deleted: Record<string, number> = {};
+  // Erase the separate desktop store first. If later server erasure fails, the
+  // user can retry; private scanner paths are not left behind in an inaccessible
+  // database after the account is removed. Cross-database rollback is not
+  // represented as atomic.
+  if (desktopScannerPrivacyProvider) {
+    const scanner = await desktopScannerPrivacyProvider.erase(userId);
+    if (scanner.scans) deleted.desktop_scanner_scans = scanner.scans;
+    if (scanner.files) deleted.desktop_scanner_files = scanner.files;
+  }
   const tx = sqlite.transaction(() => {
     enqueueStorageDeletions(sqlite, storageKeys);
     // 1. Purge caseId-scoped children for the cases captured above.

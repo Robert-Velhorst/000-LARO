@@ -23,7 +23,7 @@ describe('desktop scanner review persistence', () => {
   beforeEach(async () => {
     electronState.userDataPath = await mkdtemp(join(tmpdir(), 'laro-scanner-db-'));
     initDatabase();
-    createScan('scan-1', 'case-1', 'Case one', false, []);
+    createScan('scan-1', 'owner-1', 'case-1', 'Case one', false, []);
   });
 
   afterEach(async () => {
@@ -49,11 +49,11 @@ describe('desktop scanner review persistence', () => {
       sourceRealPath: discovered.realPath,
     }, 'scan-1');
 
-    await expect(setScanFileSelection('scan-1', ['file-1'])).resolves.toEqual({
+    await expect(setScanFileSelection('scan-1', ['file-1'], 'owner-1')).resolves.toEqual({
       selected: 1,
       reviewRequired: 0,
     });
-    expect(getScanFiles('scan-1')[0]).toMatchObject({
+    expect(getScanFiles('scan-1', 'owner-1')[0]).toMatchObject({
       uploadStatus: 'pending',
       approvedContentHash: discovered.sha256,
       approvedIdentity: discovered.identity,
@@ -61,11 +61,11 @@ describe('desktop scanner review persistence', () => {
     });
 
     await writeFile(filePath, 'edited after the first review');
-    await expect(setScanFileSelection('scan-1', ['file-1'])).resolves.toEqual({
+    await expect(setScanFileSelection('scan-1', ['file-1'], 'owner-1')).resolves.toEqual({
       selected: 0,
       reviewRequired: 1,
     });
-    const changed = getScanFiles('scan-1')[0];
+    const changed = getScanFiles('scan-1', 'owner-1')[0];
     expect(changed).toMatchObject({
       uploadStatus: 'review_required',
       approvedContentHash: undefined,
@@ -74,11 +74,11 @@ describe('desktop scanner review persistence', () => {
     expect(changed.contentHash).not.toBe(discovered.sha256);
     expect(changed.errorMessage).toMatch(/changed after scanning/i);
 
-    await expect(setScanFileSelection('scan-1', ['file-1'])).resolves.toEqual({
+    await expect(setScanFileSelection('scan-1', ['file-1'], 'owner-1')).resolves.toEqual({
       selected: 1,
       reviewRequired: 0,
     });
-    expect(getScanFiles('scan-1')[0]).toMatchObject({
+    expect(getScanFiles('scan-1', 'owner-1')[0]).toMatchObject({
       uploadStatus: 'pending',
       approvedContentHash: changed.contentHash,
       approvedIdentity: changed.sourceIdentity,

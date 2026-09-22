@@ -40,6 +40,7 @@ suite('Phase 040 — critical-path backend integration', () => {
   let onboarding: any;
   const userId = 'USER_BE01';
   const otherUserId = 'USER_BE02';
+  let scannerRows = [{ scanId: 'SCAN_BE01', ownerId: userId, path: '/private/owner-a.txt' }];
   let caseId: string;
 
   beforeAll(async () => {
@@ -90,6 +91,7 @@ suite('Phase 040 — critical-path backend integration', () => {
   });
 
   afterAll(() => {
+    gdpr?.registerDesktopScannerPrivacyProvider(null);
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
@@ -126,6 +128,14 @@ suite('Phase 040 — critical-path backend integration', () => {
   });
 
   it('GDPR export returns the user data (Phase 028)', async () => {
+    gdpr.registerDesktopScannerPrivacyProvider({
+      export: (ownerId: string) => ({ scans: [], files: scannerRows.filter((row) => row.ownerId === ownerId) }),
+      erase: async (ownerId: string) => {
+        const before = scannerRows.length;
+        scannerRows = scannerRows.filter((row) => row.ownerId !== ownerId);
+        return { scans: 0, files: before - scannerRows.length };
+      },
+    });
     await onboarding.setOnboardingCurrentStep(userId, 'evidence');
     const data = await gdpr.exportUserData(userId);
     expect(Array.isArray(data.users)).toBe(true);
@@ -135,6 +145,8 @@ suite('Phase 040 — critical-path backend integration', () => {
     expect(data.system_config).toEqual(expect.arrayContaining([
       expect.objectContaining({ configKey: `onboarding:state:${userId}` }),
     ]));
+    expect(data.desktop_scanner_files).toEqual([expect.objectContaining({ path: '/private/owner-a.txt' })]);
+    expect((await gdpr.exportUserData(otherUserId)).desktop_scanner_files).toEqual([]);
   });
 
   it('GDPR erasure deletes the user data (Phase 028)', async () => {
@@ -142,6 +154,8 @@ suite('Phase 040 — critical-path backend integration', () => {
     expect(deleted.cases).toBeGreaterThanOrEqual(1);
     expect(deleted.users).toBe(1);
     expect(deleted.system_config).toBe(1);
+    expect(deleted.desktop_scanner_files).toBe(1);
+    expect(scannerRows).toEqual([]);
     expect((await db.select().from(schema.systemConfig)).some(
       (row: any) => row.configKey === `onboarding:state:${userId}`,
     )).toBe(false);

@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import { PageHeading, QueryNotice } from "@/components/WorkspaceUi";
 import { Link } from "wouter";
+import { includeConnectedDesktopScanner, eraseConnectedDesktopScanner } from "@/lib/scannerPrivacy";
 
 export default function Privacy() {
   const [confirmEmail, setConfirmEmail] = useState("");
@@ -22,7 +23,7 @@ export default function Privacy() {
 
   const downloadExport = async () => {
     try {
-      const result = await exportData.mutateAsync();
+      const result = await includeConnectedDesktopScanner(await exportData.mutateAsync());
       const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -42,7 +43,8 @@ export default function Privacy() {
       return;
     }
     try {
-      const result = await deleteData.mutateAsync({ confirm: true });
+      await eraseConnectedDesktopScanner(me.data.id);
+      const result = await deleteData.mutateAsync({ confirm: true, expectedUserId: me.data.id });
       if (result.erasureStatus === "storage_cleanup_pending") {
         toast.warning("Account records erased. Storage cleanup is still pending and will retry automatically.", {
           duration: 8_000,
