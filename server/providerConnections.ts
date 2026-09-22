@@ -959,8 +959,8 @@ export interface ProviderErasureRevocationSummary {
 }
 
 /**
- * Best-effort remote revocation before GDPR removes the only local copy of a
- * grant. Provider outages never block the owner's local right to erasure.
+ * Attempt remote revocation while credentials still exist. A failure is
+ * reported to GDPR, which must retain the account and credentials for retry.
  */
 export async function prepareProviderConnectionsForErasure(
   userId: string,
@@ -968,14 +968,29 @@ export async function prepareProviderConnectionsForErasure(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const accounts = await db.select().from(emailAccounts).where(eq(emailAccounts.userId, userId));
+  // An older source row can still carry a provider token outside the canonical
+  // email_accounts vault. No maintained revocation path can prove that legacy
+  // grant invalid, so retain it and require operator remediation.
+  const legacyTokens = await db.select({ id: evidenceSources.id, accessToken: evidenceSources.accessToken })
+    .from(evidenceSources).where(eq(evidenceSources.userId, userId));
+  const unresolvedLegacyTokens = legacyTokens.filter((source) => Boolean(source.accessToken?.trim())).length;
   const summary: ProviderErasureRevocationSummary = {
-    attempted: accounts.length,
+    attempted: accounts.length + unresolvedLegacyTokens,
     revoked: 0,
     alreadyInvalid: 0,
     notApplicable: 0,
-    failed: 0,
+    failed: unresolvedLegacyTokens,
   };
   for (const account of accounts) {
+    const hasCredential = Boolean(account.refreshToken || account.accessToken);
+    // Only Google has a supported revocation contract today. Treat a stored
+    // Outlook/unknown grant (or a connected Google row without a usable token)
+    // as unresolved; "not applicable" must never mean "safe to delete".
+    if ((account.provider !== 'gmail' && (hasCredential || account.status === 'connected')) ||
+        (account.provider === 'gmail' && account.status === 'connected' && !hasCredential)) {
+      summary.failed += 1;
+      continue;
+    }
     try {
       const outcome = await revokeProviderGrant(account);
       if (outcome === "revoked") summary.revoked += 1;

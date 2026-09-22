@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
+import { verifiedErasureInput } from "../helpers/erasure";
 import { buildUser } from "../factories";
 import { decryptToken, encryptToken } from "../../server/emailOAuth";
 import {
@@ -428,7 +429,8 @@ suite("provider credential audit atomicity", () => {
     const revoke = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
     vi.stubGlobal("fetch", revoke);
 
-    const result = await app.makeCaller(erasable).gdpr.deleteData({ confirm: true });
+    const caller = app.makeCaller(erasable);
+    const result = await caller.gdpr.deleteData(await verifiedErasureInput(app, caller, erasable.id));
 
     expect(result.providerRevocation).toEqual({
       attempted: 1,

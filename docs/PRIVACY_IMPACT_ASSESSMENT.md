@@ -29,8 +29,10 @@ match relevant lawyers, prepare human-reviewed outreach, and track outcomes.
   consent merely because an account exists.
 - `gdpr.exportData` provides an authenticated owner export with credential fields
   redacted.
-- `gdpr.deleteData` performs confirmed account erasure, including owned managed
-  objects, before relational metadata is removed.
+- `gdpr.deleteData` requires fresh, one-use server-verified identity proof.
+  Relational deletion and managed-object queueing are atomic; object cleanup
+  occurs after commit and can remain pending. Unsupported or failed provider
+  revocation retains local credentials for retry.
 - Provider connection and evidence collection are explicit user actions.
 - Optional cloud document processing requires a separate purpose-specific,
   versioned opt-in; account creation or provider connection is insufficient.

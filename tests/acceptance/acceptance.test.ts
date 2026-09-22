@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { buildLawyer, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
+import { verifiedErasureInput } from "../helpers/erasure";
 
 const suite = sqliteAvailable ? describe : describe.skip;
 
@@ -110,7 +111,7 @@ suite("core product paths", () => {
     const exported = await caller.gdpr.exportData();
     expect(exported.data.cases).toContainEqual(expect.objectContaining({ id: created.id }));
 
-    const deleted = await caller.gdpr.deleteData({ confirm: true });
+    const deleted = await caller.gdpr.deleteData(await verifiedErasureInput(app, caller, erase.id));
     expect(deleted).toMatchObject({ success: true, deleted: { users: 1 } });
     await expect(caller.cases.byId(created.id)).resolves.toBeNull();
   });

@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { createAuditLog, writeAuditLogOrThrow } from "../../server/audit";
 import { buildCase, buildLawyer, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
+import { verifiedErasureInput } from "../helpers/erasure";
 import { setFlag } from "../../server/featureFlags";
 import { sendApprovedOutreach } from "../../server/outreachSend";
 
@@ -334,7 +335,8 @@ suite("mandatory audit durability", () => {
     }));
     const release = rejectAuditAction("gdpr.delete", "reject_gdpr_delete_audit");
     try {
-      await expect(app.makeCaller(erasable).gdpr.deleteData({ confirm: true })).rejects.toThrow();
+      const caller = app.makeCaller(erasable);
+      await expect(caller.gdpr.deleteData(await verifiedErasureInput(app, caller, erasable.id))).rejects.toThrow();
     } finally {
       release();
     }
@@ -342,6 +344,9 @@ suite("mandatory audit durability", () => {
       .where(eq(app.schema.users.id, erasable.id))).toHaveLength(1);
     expect(await app.db.select().from(app.schema.cases)
       .where(eq(app.schema.cases.id, "AUDIT_ERASABLE_CASE"))).toHaveLength(1);
+    const failedErasure = app.db.$client.prepare('SELECT configValue FROM system_config WHERE configKey = ?')
+      .get(`erasure:pending:${erasable.id}`) as { configValue: string };
+    expect(JSON.parse(failedErasure.configValue)).toMatchObject({ erasureStatus: 'failed' });
     expect(await app.db.select().from(app.schema.auditLogs)
       .where(eq(app.schema.auditLogs.action, "gdpr.delete"))).toHaveLength(0);
   });

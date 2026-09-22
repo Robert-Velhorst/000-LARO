@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildCase, buildEvidence, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
+import { verifiedErasureInput } from "../helpers/erasure";
 
 const suite = sqliteAvailable ? describe : describe.skip;
 
@@ -320,7 +321,7 @@ suite("reviewed legal draft snapshots", () => {
     const exported = await caller.gdpr.exportData();
     expect(exported.data.legal_draft_recipients).toHaveLength(1);
     expect(exported.data.legal_draft_snapshots).toHaveLength(1);
-    const deleted = await caller.gdpr.deleteData({ confirm: true });
+    const deleted = await caller.gdpr.deleteData(await verifiedErasureInput(app, caller, erase.id));
     expect(deleted.deleted).toMatchObject({ users: 1 });
     expect(await app.db.select().from(app.schema.legalDraftRecipients).where(
       eq(app.schema.legalDraftRecipients.userId, erase.id),

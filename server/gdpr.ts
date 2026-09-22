@@ -16,7 +16,9 @@ import { getDb } from "./db";
 import { collectManagedStorageKeys } from "./managedStorage";
 import { enqueueStorageDeletions, processQueuedStorageDeletions } from "./storageDeletionQueue";
 import { nanoid } from "nanoid";
+import { createHash } from 'node:crypto';
 import { writeAuditLogOrThrow } from "./audit";
+import { systemConfig } from "./schema";
 import {
   prepareProviderConnectionsForErasure,
   type ProviderErasureRevocationSummary,
@@ -111,8 +113,44 @@ function redactExportRows(rows: unknown[]): unknown[] {
   return rows.map((row) => redactExportValue(row)).filter((row) => row !== OMIT_FROM_EXPORT);
 }
 
-function onboardingConfigKeys(userId: string): [string, string] {
-  return [`onboarding:state:${userId}`, `onboarding:complete:${userId}`];
+function ownerConfigKeys(userId: string): string[] {
+  const digest = createHash('sha256').update(userId).digest('hex');
+  const rateLimitKeys = ['erasureCodeRequest', 'erasureReauthenticate'].map((scope) =>
+    `rate-limit:${createHash('sha256').update(`${scope}:user:${userId}`).digest('hex')}`);
+  return [
+    `onboarding:state:${userId}`, `onboarding:complete:${userId}`,
+    `caseDraft:${userId}`, `session:revokedAfter:${userId}`,
+    `acceptance:outbound-email:${userId}`,
+    `acceptance:google-evidence:${userId}`,
+    `acceptance:google-drive-evidence:${userId}`,
+    ...rateLimitKeys,
+    ...(['global', 'local', 'external'] as const).flatMap((scope) =>
+      (['requests', 'inputCharacters', 'outputTokens'] as const)
+        .map((metric) => `llm-budget:v1:${digest}:${scope}:${metric}`)),
+  ];
+}
+
+function ownedIds(sqlite: any, table: string, userId: string): string[] {
+  return (sqlite.prepare(`SELECT id FROM "${table}" WHERE userId = ?`).all(userId) as Array<{ id: string }>).map((row) => row.id);
+}
+
+function rowsForIds(sqlite: any, table: string, column: string, ids: string[]): unknown[] {
+  if (ids.length === 0) return [];
+  const rows: unknown[] = [];
+  for (let offset = 0; offset < ids.length; offset += 400) {
+    const chunk = ids.slice(offset, offset + 400);
+    rows.push(...sqlite.prepare(`SELECT * FROM "${table}" WHERE "${column}" IN (${chunk.map(() => '?').join(',')})`).all(...chunk));
+  }
+  return rows;
+}
+
+function deleteForIds(sqlite: any, table: string, column: string, ids: string[]): number {
+  let removed = 0;
+  for (let offset = 0; offset < ids.length; offset += 400) {
+    const chunk = ids.slice(offset, offset + 400);
+    removed += sqlite.prepare(`DELETE FROM "${table}" WHERE "${column}" IN (${chunk.map(() => '?').join(',')})`).run(...chunk).changes;
+  }
+  return removed;
 }
 
 /**
@@ -146,10 +184,29 @@ export async function exportUserData(userId: string): Promise<Record<string, any
   }
   // Onboarding presentation state is owner-scoped through its config key rather
   // than a userId column, so include it explicitly in access and erasure rights.
+  const ownerKeys = ownerConfigKeys(userId);
   const ownerConfig = sqlite.prepare(
-    "SELECT * FROM system_config WHERE configKey IN (?, ?)",
-  ).all(...onboardingConfigKeys(userId));
+    `SELECT * FROM system_config WHERE configKey IN (${ownerKeys.map(() => '?').join(',')})`,
+  ).all(...ownerKeys);
   if (ownerConfig.length > 0) out.system_config = redactExportRows(ownerConfig);
+  const caseIds = ownedIds(sqlite, 'cases', userId);
+  const accountIds = ownedIds(sqlite, 'email_accounts', userId);
+  const evidenceFileIds = ownedIds(sqlite, 'evidence_files', userId);
+  const tagIds = ownedIds(sqlite, 'evidence_tags', userId);
+  for (const table of listUserTables(sqlite)) {
+    if (tableColumns(sqlite, table).includes('userId')) continue;
+    const columns = tableColumns(sqlite, table);
+    const rows = [
+      ...(columns.includes('caseId') ? rowsForIds(sqlite, table, 'caseId', caseIds) : []),
+      ...(columns.includes('accountId') ? rowsForIds(sqlite, table, 'accountId', accountIds) : []),
+      ...(table === 'evidence_file_tags' ? [
+        ...rowsForIds(sqlite, table, 'evidenceFileId', evidenceFileIds),
+        ...rowsForIds(sqlite, table, 'tagId', tagIds),
+      ] : []),
+    ] as Array<{ id?: string }>;
+    const distinct = [...new Map(rows.map((row) => [row.id, row])).values()];
+    if (distinct.length > 0) out[table] = redactExportRows(distinct);
+  }
   if (desktopScannerPrivacyProvider) {
     const scanner = desktopScannerPrivacyProvider.export(userId);
     out.desktop_scanner_scans = scanner.scans;
@@ -163,10 +220,10 @@ export async function exportUserData(userId: string): Promise<Record<string, any
  * per-table deletion counts. Runs in a transaction so a partial failure rolls
  * back.
  */
-export async function deleteUserData(userId: string): Promise<{
+async function performDeleteUserData(userId: string): Promise<{
   deleted: Record<string, number>;
   storageCleanupPending: number;
-  erasureStatus: "completed" | "storage_cleanup_pending";
+  erasureStatus: "completed" | "storage_cleanup_pending" | "revocation_pending";
   erasureRequestId: string;
   providerRevocation: ProviderErasureRevocationSummary;
 }> {
@@ -175,9 +232,45 @@ export async function deleteUserData(userId: string): Promise<{
   const sqlite = rawClient(db);
   if (!sqlite) throw new Error("Storage engine not available for deletion");
 
-  // Remote grants are attempted before their encrypted local copies disappear.
-  // An upstream outage is recorded but never blocks the owner's local erasure.
+  // Remote grants must be revoked before their encrypted local copies disappear.
+  // If upstream is unavailable, keep credentials and return a retryable state.
   const providerRevocation = await prepareProviderConnectionsForErasure(userId);
+  const existingState = sqlite.prepare(
+    'SELECT configValue FROM system_config WHERE configKey = ?',
+  ).get(`erasure:pending:${userId}`) as { configValue: string | null } | undefined;
+  let erasureRequestId = `ERASURE-${nanoid(16)}`;
+  try {
+    const previous = JSON.parse(existingState?.configValue || '{}') as { erasureRequestId?: string };
+    if (typeof previous.erasureRequestId === 'string' && /^ERASURE-[A-Za-z0-9_-]{16}$/.test(previous.erasureRequestId)) {
+      erasureRequestId = previous.erasureRequestId;
+    }
+  } catch { /* replace invalid legacy state */ }
+  if (providerRevocation.failed > 0) {
+    db.transaction((tx) => {
+      tx.insert(systemConfig).values({
+        configKey: `erasure:pending:${userId}`,
+        configValue: JSON.stringify({ erasureRequestId, erasureStatus: 'revocation_pending', providerRevocation }),
+        updatedAt: new Date(),
+      }).onConflictDoUpdate({
+        target: systemConfig.configKey,
+        set: { configValue: JSON.stringify({ erasureRequestId, erasureStatus: 'revocation_pending', providerRevocation }), updatedAt: new Date() },
+      }).run();
+      writeAuditLogOrThrow(tx, {
+        userId,
+        action: 'gdpr.erasure_revocation_pending',
+        entityType: 'gdpr_erasure',
+        entityId: erasureRequestId,
+        details: { erasureRequestId, providerRevocation, localCredentialsRetained: true },
+      });
+    });
+    return {
+      deleted: {},
+      storageCleanupPending: 0,
+      erasureStatus: 'revocation_pending',
+      erasureRequestId,
+      providerRevocation,
+    };
+  }
 
   const tables = listUserTables(sqlite);
   const userScoped = tables.filter((t) => t !== "users" && tableColumns(sqlite, t).includes("userId"));
@@ -191,9 +284,13 @@ export async function deleteUserData(userId: string): Promise<{
     (t) => t !== "cases" && !tableColumns(sqlite, t).includes("userId") && tableColumns(sqlite, t).includes("caseId")
   );
 
-  const userCaseIds = (sqlite.prepare("SELECT id FROM cases WHERE userId = ?").all(userId) as Array<{ id: string }>).map((r) => r.id);
+  const userCaseIds = ownedIds(sqlite, 'cases', userId);
+  const accountIds = ownedIds(sqlite, 'email_accounts', userId);
+  const evidenceFileIds = ownedIds(sqlite, 'evidence_files', userId);
+  const tagIds = ownedIds(sqlite, 'evidence_tags', userId);
+  const ownerOutreachIds = rowsForIds(sqlite, 'outreach_status', 'caseId', userCaseIds)
+    .map((row: any) => row.id).filter((id): id is string => typeof id === 'string');
   const storageKeys = collectManagedStorageKeys(sqlite, { userId, caseIds: userCaseIds });
-  const erasureRequestId = `ERASURE-${nanoid(16)}`;
 
   const deleted: Record<string, number> = {};
   // Erase the separate desktop store first. If later server erasure fails, the
@@ -207,12 +304,20 @@ export async function deleteUserData(userId: string): Promise<{
   }
   const tx = sqlite.transaction(() => {
     enqueueStorageDeletions(sqlite, storageKeys);
+    for (const [table, column, ids] of [
+      ['email_sync_jobs', 'accountId', accountIds],
+      ['email_messages', 'accountId', accountIds],
+      ['evidence_file_tags', 'evidenceFileId', evidenceFileIds],
+      ['evidence_file_tags', 'tagId', tagIds],
+    ] as const) {
+      const count = deleteForIds(sqlite, table, column, ids);
+      if (count > 0) deleted[table] = (deleted[table] ?? 0) + count;
+    }
     // 1. Purge caseId-scoped children for the cases captured above.
     if (userCaseIds.length > 0) {
-      const placeholders = userCaseIds.map(() => "?").join(",");
       for (const table of caseScoped) {
-        const info = sqlite.prepare(`DELETE FROM "${table}" WHERE caseId IN (${placeholders})`).run(...userCaseIds);
-        if (info.changes) deleted[table] = info.changes;
+        const count = deleteForIds(sqlite, table, 'caseId', userCaseIds);
+        if (count) deleted[table] = (deleted[table] ?? 0) + count;
       }
     }
 
@@ -223,10 +328,13 @@ export async function deleteUserData(userId: string): Promise<{
     }
 
     // Presentation state has no userId column but still belongs to this owner.
-    const configInfo = sqlite.prepare(
-      "DELETE FROM system_config WHERE configKey IN (?, ?)",
-    ).run(...onboardingConfigKeys(userId));
-    if (configInfo.changes) deleted.system_config = configInfo.changes;
+    const configKeys = [
+      ...ownerConfigKeys(userId),
+      `erasure:pending:${userId}`, `erasure:code:${userId}`, `erasure:proof:${userId}`,
+      ...ownerOutreachIds.map((id) => `sent:${id}`),
+    ];
+    const configRemoved = deleteForIds(sqlite, 'system_config', 'configKey', configKeys);
+    if (configRemoved) deleted.system_config = configRemoved;
 
     // 3. Delete the user record itself.
     const userInfo = sqlite.prepare(`DELETE FROM "users" WHERE id = ?`).run(userId);
@@ -248,16 +356,71 @@ export async function deleteUserData(userId: string): Promise<{
       },
       idempotencyKey: `gdpr-delete:${erasureRequestId}`,
     });
+    sqlite.prepare(`INSERT INTO system_config (configKey, configValue, updatedAt)
+      VALUES (?, ?, ?)
+      ON CONFLICT(configKey) DO UPDATE SET configValue = excluded.configValue, updatedAt = excluded.updatedAt`
+    ).run(`erasure:request:${erasureRequestId}`, JSON.stringify({
+      erasureRequestId,
+      erasureStatus: 'storage_cleanup_pending',
+      storageKeys,
+      providerRevocation,
+    }), Math.floor(Date.now() / 1_000));
   });
   tx();
 
-  const cleanup = await processQueuedStorageDeletions({ storageKeys });
+  let requestedPending: number;
+  try {
+    const cleanup = await processQueuedStorageDeletions({ storageKeys });
+    requestedPending = cleanup.requestedPending;
+  } catch {
+    // The account is already gone. Keep the durable queue/receipt pending for
+    // the scheduled worker instead of surfacing an ambiguous deletion failure.
+    requestedPending = storageKeys.length;
+  }
+  const erasureStatus = requestedPending > 0 ? 'storage_cleanup_pending' : 'completed';
+  sqlite.prepare('UPDATE system_config SET configValue = ?, updatedAt = ? WHERE configKey = ?').run(
+    JSON.stringify({ erasureRequestId, erasureStatus, storageKeys: erasureStatus === 'completed' ? [] : storageKeys, providerRevocation }),
+    Math.floor(Date.now() / 1_000),
+    `erasure:request:${erasureRequestId}`,
+  );
 
   return {
     deleted,
-    storageCleanupPending: cleanup.requestedPending,
-    erasureStatus: cleanup.requestedPending > 0 ? "storage_cleanup_pending" : "completed",
+    storageCleanupPending: requestedPending,
+    erasureStatus,
     erasureRequestId,
     providerRevocation,
   };
+}
+
+export async function deleteUserData(userId: string): ReturnType<typeof performDeleteUserData> {
+  try {
+    return await performDeleteUserData(userId);
+  } catch (error) {
+    // A failed relational/scanner stage retains the account. Record a durable,
+    // retryable state without persisting exception text or private source data.
+    try {
+      const db = await getDb();
+      const sqlite = rawClient(db);
+      if (sqlite && sqlite.prepare('SELECT id FROM users WHERE id = ?').get(userId)) {
+        const key = `erasure:pending:${userId}`;
+        const existing = sqlite.prepare('SELECT configValue FROM system_config WHERE configKey = ?')
+          .get(key) as { configValue: string | null } | undefined;
+        let requestId = `ERASURE-${nanoid(16)}`;
+        try {
+          const parsed = JSON.parse(existing?.configValue || '{}') as { erasureRequestId?: string };
+          if (typeof parsed.erasureRequestId === 'string' && /^ERASURE-[A-Za-z0-9_-]{16}$/.test(parsed.erasureRequestId)) {
+            requestId = parsed.erasureRequestId;
+          }
+        } catch { /* ignore malformed prior state */ }
+        sqlite.prepare(`INSERT INTO system_config (configKey, configValue, updatedAt)
+          VALUES (?, ?, ?)
+          ON CONFLICT(configKey) DO UPDATE SET configValue = excluded.configValue, updatedAt = excluded.updatedAt`
+        ).run(key, JSON.stringify({ erasureRequestId: requestId, erasureStatus: 'failed' }), Math.floor(Date.now() / 1_000));
+      }
+    } catch {
+      console.error('[GDPR] Could not persist failed erasure state');
+    }
+    throw error;
+  }
 }

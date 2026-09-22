@@ -90,6 +90,16 @@ export function requiredRelationshipTriggerNames(sqlite: SqliteClient): string[]
 
 export function ensureRelationshipIntegrityTriggers(sqlite: SqliteClient): number {
   const relationships = requiredRelationships(sqlite);
+  const requiredNames = new Set(requiredRelationshipTriggerNames(sqlite));
+  const installed = sqlite.prepare(
+    "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'laro_ri_%'",
+  ).all() as Array<{ name: string }>;
+  // Older migrations may retire a table while leaving a generated caseId or
+  // userId delete trigger on its former parent. Such a trigger compiles but
+  // fails at runtime when the parent is deleted (for example, GDPR erasure).
+  for (const { name } of installed) {
+    if (!requiredNames.has(name)) sqlite.exec(`DROP TRIGGER ${quoteIdentifier(name)}`);
+  }
   for (const relationship of relationships) {
     const childTable = quoteIdentifier(relationship.childTable);
     const childColumn = quoteIdentifier(relationship.childColumn);

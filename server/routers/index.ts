@@ -50,7 +50,7 @@ import {
 } from "./extendedRouters";
 import { adminRouter } from "./admin";
 import { auditRouter } from "./audit";
-import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
+import { enforcePersistentRateLimit, enforceRateLimit, RATE_LIMITS } from "../rateLimit";
 import { createAuditLog, writeAuditLogOrThrow, AUDIT_ACTIONS } from "../audit";
 import { verifyLocalTestTicket } from "../localTestAccess";
 import { z } from "zod";
@@ -602,6 +602,58 @@ export const appRouter = router({
 
   // GDPR procedures — Phase 028: real access + erasure (were empty stubs).
   gdpr: router({
+    erasureState: protectedProcedure.query(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+      const row = db.select({ value: systemConfig.configValue }).from(systemConfig)
+        .where(eq(systemConfig.configKey, `erasure:pending:${ctx.user.id}`)).get();
+      let state: { erasureStatus?: string; erasureRequestId?: string } | null = null;
+      try { state = row?.value ? JSON.parse(row.value) : null; } catch { /* fail closed */ }
+      return {
+        ownerId: ctx.user.id,
+        erasureStatus: state?.erasureStatus === 'revocation_pending' || state?.erasureStatus === 'failed'
+          ? state.erasureStatus : null,
+        erasureRequestId: typeof state?.erasureRequestId === 'string' ? state.erasureRequestId : null,
+      };
+    }),
+    erasureAuthMethod: protectedProcedure.query(async ({ ctx }) => {
+      const { getErasureAuthMethod } = await import('../erasureProof');
+      return { method: await getErasureAuthMethod(ctx.user.id) };
+    }),
+    requestErasureCode: protectedProcedure
+      .input(z.object({ expectedUserId: z.string().min(1) }).strict())
+      .mutation(async ({ ctx, input }) => {
+        if (input.expectedUserId !== ctx.user.id) throw new TRPCError({ code: 'FORBIDDEN' });
+        await enforcePersistentRateLimit(ctx, 'erasureCodeRequest', RATE_LIMITS.passwordResetRequest);
+        const { requestErasureCode } = await import('../erasureProof');
+        try {
+          await requestErasureCode(ctx.user.id, ctx.req.cookies);
+        } catch {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Could not send account-erasure verification code. Check email delivery and try again.' });
+        }
+        return { success: true } as const;
+      }),
+    reauthenticateForErasure: protectedProcedure
+      .input(z.object({
+        expectedUserId: z.string().min(1),
+        password: z.string().max(1_024).optional(),
+        code: z.string().regex(/^\d{8}$/).optional(),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        if (input.expectedUserId !== ctx.user.id) throw new TRPCError({ code: 'FORBIDDEN' });
+        await enforcePersistentRateLimit(ctx, 'erasureReauthenticate', RATE_LIMITS.passwordResetVerify);
+        const { reauthenticateForErasure } = await import('../erasureProof');
+        try {
+          return await reauthenticateForErasure({
+            userId: ctx.user.id,
+            cookies: ctx.req.cookies,
+            password: input.password,
+            code: input.code,
+          });
+        } catch {
+          throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Account-erasure verification failed or expired.' });
+        }
+      }),
     getConsent: protectedProcedure
       .input(z.object({ expectedUserId: z.string().trim().min(1).max(256) }).strict().optional())
       .query(async ({ ctx, input }) => {
@@ -634,19 +686,23 @@ export const appRouter = router({
     }),
     // Permanent account + data deletion (right of erasure).
     deleteData: protectedProcedure
-      .input(z.object({ confirm: z.literal(true), expectedUserId: z.string().optional() }))
+      .input(z.object({ confirm: z.literal(true), expectedUserId: z.string().min(1), proof: z.string().min(1).max(256) }).strict())
       .mutation(async ({ ctx, input }) => {
-        if (input.expectedUserId && input.expectedUserId !== ctx.user.id) {
+        if (input.expectedUserId !== ctx.user.id) {
           throw new TRPCError({ code: 'FORBIDDEN', message: 'Account changed during erasure confirmation' });
+        }
+        const { consumeErasureProof } = await import('../erasureProof');
+        if (!await consumeErasureProof(ctx.user.id, ctx.req.cookies, input.proof)) {
+          throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Verify your identity again before erasing the account.' });
         }
         const { deleteUserData } = await import("../gdpr");
         const result = await deleteUserData(ctx.user.id);
-        // Clear the session cookie since the account no longer exists.
-        try {
-          const { getSessionCookieOptions } = await import("../cookies");
+        if (result.erasureStatus !== 'revocation_pending') {
+          // Clear only after the account actually disappeared. A retryable
+          // provider-revocation failure retains the session and local secrets.
           ctx.res.clearCookie(COOKIE_NAME, { ...getSessionCookieOptions(ctx.req), maxAge: -1 });
-        } catch { /* ignore */ }
-        return { success: result.storageCleanupPending === 0, ...result };
+        }
+        return { success: result.erasureStatus === 'completed', ...result };
       }),
     updateConsent: protectedProcedure
       .input(

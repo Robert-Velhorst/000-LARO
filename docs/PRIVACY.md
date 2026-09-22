@@ -10,10 +10,44 @@ fields.
 
 ## Owner erasure
 
-`gdpr.deleteData` requires explicit confirmation. It removes owned managed
-objects before deleting relational records and aborts on storage or database
-failure so a partial erasure is not reported as success. The account session is
-cleared after deletion.
+`gdpr.deleteData` requires explicit confirmation **and** a five-minute,
+single-use server proof bound to the same browser session. Password accounts
+verify their current password. Legacy passwordless accounts verify a fresh
+eight-digit code sent to the registered mailbox; production fails closed if
+transactional email is unavailable. This mailbox fallback is not OAuth provider
+reauthentication, because LARO has provider *connections* but no OAuth account
+sign-in flow. The typed-email field in the renderer is only a human confirmation.
+
+Erasure follows these stages:
+
+1. The server consumes the one-use proof before irreversible work. Wrong,
+   expired, cross-session, and replayed proofs are rejected.
+2. Active Google grants are revoked through the maintained provider service
+   while encrypted credentials are still present. If revocation fails, or a
+   stored grant has no supported revocation contract (for example Outlook or a
+   legacy `evidence_sources.accessToken`),
+   the account and local credentials remain and the owner receives
+   `revocation_pending` for a fresh verified retry. No completion is claimed.
+3. Integrated Electron scanner state is erased before the relational transaction.
+   The renderer also invokes its owner-scoped local scanner erase before the
+   server call; on a remote desktop that can occur before provider revocation.
+   Cross-device scanner erasure is not an atomic server transaction; users must
+   erase each connected desktop's local history before completing server erasure.
+4. The relational transaction removes owner, case, account, evidence-file/tag,
+   integration-credential, session/config, and audit-linked rows; queues managed
+   object deletion; and writes a mandatory de-identified audit receipt plus a
+   durable request-status record. Existing JWTs stop authenticating when the
+   user row disappears; the current cookie is cleared.
+5. Managed objects are deleted after commit. If cleanup fails, the account is
+   gone but the durable queue and receipt remain `storage_cleanup_pending` until
+   the background worker succeeds. The worker then marks the receipt `completed`.
+   A pre-commit failure retains the account and records `failed` when the status
+   store remains available.
+
+This workflow cannot provide atomic rollback across an external provider,
+desktop database, SQLite transaction, and object store. A provider may already
+be revoked or local scanner history erased when a later stage fails; those
+partial effects are not represented as completed account erasure.
 
 ## Retention
 
@@ -84,8 +118,10 @@ privacy-preference read.
 
 ## Verification
 
-- GDPR export and erasure are covered by backend and isolation tests.
-- Managed-object deletion failures abort case, evidence, and account deletion.
+- GDPR export, one-use reauthentication, provider failure/retry, and erasure are
+  covered by backend and isolation tests.
+- Managed-object deletion failures leave a durable cleanup queue and a pending
+  account-erasure result rather than falsely reporting completion.
 - Retention tests prove that expired audit rows are removed while recent audit
   rows and business data remain.
 - Configuration tests reject unsafe retention windows and guard the daily schedule.

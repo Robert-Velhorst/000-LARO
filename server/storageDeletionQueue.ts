@@ -55,6 +55,26 @@ function countQueuedStorageKeys(sqlite: SqliteClient, storageKeys: string[]): nu
   return count;
 }
 
+/** A queued object retry can finish an erasure after the account is gone. */
+function reconcileErasureReceipts(sqlite: SqliteClient): void {
+  const rows = sqlite.prepare(`
+    SELECT configKey, configValue FROM system_config
+    WHERE configKey LIKE 'erasure:request:%'
+  `).all() as Array<{ configKey: string; configValue: string | null }>;
+  for (const row of rows) {
+    let receipt: { erasureStatus?: string; storageKeys?: unknown };
+    try { receipt = JSON.parse(row.configValue || '{}'); } catch { continue; }
+    if (receipt.erasureStatus !== 'storage_cleanup_pending' || !Array.isArray(receipt.storageKeys)) continue;
+    const keys = receipt.storageKeys.filter((key): key is string => typeof key === 'string');
+    if (countQueuedStorageKeys(sqlite, keys) > 0) continue;
+    sqlite.prepare('UPDATE system_config SET configValue = ?, updatedAt = ? WHERE configKey = ?').run(
+      JSON.stringify({ ...receipt, erasureStatus: 'completed', storageKeys: [] }),
+      Math.floor(Date.now() / 1_000),
+      row.configKey,
+    );
+  }
+}
+
 function selectQueuedStorageKeys(sqlite: SqliteClient, storageKeys: string[], limit: number): QueueRow[] {
   const rows: QueueRow[] = [];
   for (let offset = 0; offset < storageKeys.length && rows.length < limit; offset += 400) {
@@ -130,5 +150,6 @@ export async function processQueuedStorageDeletions(options: {
   const requestedPending = options.storageKeys === undefined
     ? pending
     : countQueuedStorageKeys(sqlite, keys);
+  reconcileErasureReceipts(sqlite);
   return { processed: rows.length, deleted, retained, failed, pending, requestedPending };
 }

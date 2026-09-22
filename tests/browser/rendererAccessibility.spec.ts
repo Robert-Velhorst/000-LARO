@@ -1761,6 +1761,44 @@ test("privacy navigation and analytics consent stay bound to the signed-in accou
   expect(badResponses).toEqual([]);
 });
 
+test("account erasure requires fresh server verification in the rendered privacy flow", async ({ page }, testInfo) => {
+  const email = await createAccount(page, { password: 'EraseBrowser!2026' });
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badResponses: Array<{ status: number; url: string }> = [];
+  page.on('pageerror', error => pageErrors.push(error.message));
+  page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+  page.on('requestfailed', request => requestFailures.push(`${request.method()} ${request.url()}`));
+  page.on('response', response => {
+    if (response.status() >= 400) badResponses.push({ status: response.status(), url: response.url() });
+  });
+
+  const response = await page.goto('/privacy', { waitUntil: 'networkidle' });
+  expect(response?.status()).toBe(200);
+  await page.getByRole('button', { name: 'Start account deletion' }).click();
+  await page.getByRole('textbox', { name: 'Confirm signed-in email' }).fill(email);
+  await expect(page.getByRole('button', { name: 'Erase account' })).toBeDisabled();
+  await expect(page.getByText('Typing the email is a confirmation only.')).toBeVisible();
+  await page.getByLabel('Current password for account erasure').fill('EraseBrowser!2026');
+  await page.getByRole('button', { name: 'Verify identity' }).click();
+  await expect(page.getByText('Identity verified. Complete erasure within five minutes.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Erase account' })).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath('erasure-server-verification-ready.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Erase account' }).click();
+  await expect(page.getByRole('button', { name: "Don't have an account? Sign up" })).toBeVisible();
+  const database = new Database(resolve('.laro-a11y.sqlite'), { fileMustExist: true });
+  try {
+    expect(database.prepare('SELECT id FROM users WHERE email = ?').get(email)).toBeUndefined();
+  } finally {
+    database.close();
+  }
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+  expect(badResponses).toEqual([]);
+});
+
 test("lawyer comparison normalizes legacy rows and only shows a canonical match with a case", async ({ page }, testInfo) => {
   const email = await createAccount(page);
   const marker = `CompareBeacon${randomUUID().replaceAll("-", "").slice(0, 10)}`;

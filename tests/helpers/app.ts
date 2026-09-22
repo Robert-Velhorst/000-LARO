@@ -14,6 +14,8 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'module';
+import { randomBytes } from 'crypto';
+import { SESSION_COOKIE_NAME } from '../../server/sessionCookie';
 
 export let sqliteAvailable = true;
 try {
@@ -74,6 +76,7 @@ export async function bootTestApp(): Promise<TestApp> {
     request?: { headers?: Record<string, string>; remoteAddress?: string },
   ) => {
     const { req, res } = fakeReqRes();
+    if (user) req.cookies[SESSION_COOKIE_NAME] = randomBytes(32).toString('base64url');
     if (request?.headers) req.headers = { ...request.headers };
     if (request?.remoteAddress) req.socket.remoteAddress = request.remoteAddress;
     return appRouter.createCaller({ req, res, user, authScope, desktopScanner });

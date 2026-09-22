@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
+import { verifiedErasureInput } from "../helpers/erasure";
 import { buildUser } from "../factories";
 
 const suite = sqliteAvailable ? describe : describe.skip;
@@ -98,7 +99,7 @@ suite("managed storage deletion integrity", () => {
       BEGIN SELECT RAISE(ABORT, 'simulated user delete failure'); END;
     `);
 
-    await expect(item.caller.gdpr.deleteData({ confirm: true })).rejects.toThrow(
+    await expect(item.caller.gdpr.deleteData(await verifiedErasureInput(app, item.caller, item.user.id))).rejects.toThrow(
       "simulated user delete failure",
     );
 
@@ -167,7 +168,7 @@ suite("managed storage deletion integrity", () => {
     rmSync(blockedPath, { force: true });
     mkdirSync(blockedPath, { recursive: true });
 
-    const result = await item.caller.gdpr.deleteData({ confirm: true });
+    const result = await item.caller.gdpr.deleteData(await verifiedErasureInput(app, item.caller, item.user.id));
 
     expect(result).toMatchObject({
       success: false,
@@ -180,6 +181,16 @@ suite("managed storage deletion integrity", () => {
       sqlite.prepare("SELECT COUNT(*) AS count FROM storage_deletion_queue WHERE storageKey = ?")
         .get(item.storageKey).count,
     ).toBe(1);
+    const receiptKey = `erasure:request:${result.erasureRequestId}`;
+    const pendingReceipt = sqlite.prepare('SELECT configValue FROM system_config WHERE configKey = ?')
+      .get(receiptKey) as { configValue: string };
+    expect(JSON.parse(pendingReceipt.configValue)).toMatchObject({ erasureStatus: 'storage_cleanup_pending' });
+    rmSync(blockedPath, { recursive: true, force: true });
+    const { processQueuedStorageDeletions } = await import('../../server/storageDeletionQueue');
+    await processQueuedStorageDeletions({ storageKeys: [item.storageKey] });
+    const completedReceipt = sqlite.prepare('SELECT configValue FROM system_config WHERE configKey = ?')
+      .get(receiptKey) as { configValue: string };
+    expect(JSON.parse(completedReceipt.configValue)).toMatchObject({ erasureStatus: 'completed', storageKeys: [] });
   });
 
   it("does not attribute unrelated queued cleanup to a storage-free account", async () => {
@@ -191,7 +202,8 @@ suite("managed storage deletion integrity", () => {
     const { enqueueStorageDeletions } = await import("../../server/storageDeletionQueue");
     sqlite.transaction(() => enqueueStorageDeletions(sqlite, [unrelatedKey]))();
 
-    const result = await app.makeCaller(user).gdpr.deleteData({ confirm: true });
+    const caller = app.makeCaller(user);
+    const result = await caller.gdpr.deleteData(await verifiedErasureInput(app, caller, user.id));
 
     expect(result).toMatchObject({
       success: true,

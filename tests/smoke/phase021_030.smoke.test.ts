@@ -135,7 +135,8 @@ suite("Phases 021-030 - live product contracts", () => {
     expect(exported.success).toBe(true);
     expect(exported.data.cases).toContainEqual(expect.objectContaining({ id: eraseCase.id }));
 
-    const deleted = await caller.gdpr.deleteData({ confirm: true });
+    const { verifiedErasureInput } = await import('../helpers/erasure');
+    const deleted = await caller.gdpr.deleteData(await verifiedErasureInput(app, caller, erase.id));
     expect(deleted).toMatchObject({ success: true, erasureStatus: "completed" });
     const remainingUsers = await app.db.select().from(app.schema.users)
       .where(eq(app.schema.users.id, erase.id));

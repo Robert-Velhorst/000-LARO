@@ -51,6 +51,18 @@ suite("retired lawyer-rating subsystem", () => {
       ORDER BY name
     `).all();
     expect(tables).toEqual([]);
+    expect(sqlite.prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger'
+      AND name LIKE 'laro_ri_lawyer_interactions_%'`).all()).toEqual([]);
+  });
+
+  it('prunes a stale generated trigger that refers to a retired table before account deletion', async () => {
+    const sqlite = (app.db as any).$client;
+    sqlite.exec(`CREATE TRIGGER laro_ri_lawyer_interactions_caseId_delete
+      BEFORE DELETE ON cases BEGIN DELETE FROM lawyer_interactions WHERE caseId = OLD.id; END`);
+    const { ensureRelationshipIntegrityTriggers } = await import('../../server/relationshipIntegrity');
+    ensureRelationshipIntegrityTriggers(sqlite);
+    expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = ?")
+      .get('laro_ri_lawyer_interactions_caseId_delete')).toBeUndefined();
   });
 
   it("keeps a real outreach reply from creating a hidden matching boost", async () => {

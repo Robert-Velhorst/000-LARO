@@ -29,6 +29,7 @@ const MANDATORY_AUDIT_ACTIONS = new Set([
   "feature_flag.changed",
   "gdpr.consent_updated",
   "gdpr.delete",
+  "gdpr.erasure_revocation_pending",
   "gdpr.export",
   "integration.hai_token_created",
   "integration.hai_grant_updated",
