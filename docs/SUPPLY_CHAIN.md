@@ -1,10 +1,17 @@
 # Supply Chain and Dependency Review
 
-Updated: 2026-09-19 | Branch: `milestone3/remediate-roadmap`
+Updated: 2026-09-22 | Branch: `milestone3/remediate-roadmap`
 
 ## Current result
 
 `npm audit --audit-level=moderate` reports **0 known vulnerabilities** for the committed lockfile.
+
+For implementation commit `dc3884b`, both full and production-only npm audits
+report zero vulnerabilities. An isolated Python 3.12.13 install reports all 59
+requirements compatible. The refreshed production Docker image reports zero
+HIGH/CRITICAL Debian or Node findings under Trivy 0.74.0 and has a hashed
+CycloneDX SBOM. Exact image, SBOM, and Windows artifact evidence is recorded in
+`FOURTH_ROUND_VERIFICATION.md`.
 
 The 2026-08-08 audit initially found two newly published high-severity
 advisories. The lockfile was updated from `nanoid` 3.3.16 to 3.3.18 and from

@@ -85,6 +85,13 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   credential and refreshing status immediately.
 
 ### Added
+- Added one exact-commit fourth-round verification record that integrates cloud
+  consent, reviewed HAI scope, minimal public diagnostics, evidence-coverage
+  language, run-scoped discovery, shared Google revocation, failure-aware public
+  research/search, freshness invalidation, durable notifications, canonical
+  Drive ingestion, and reviewed legal-draft versions across the full gate,
+  stable-Chrome suite, fresh database, recovery, Python, dependency, Docker/SBOM,
+  and Windows packaging boundaries.
 - Added a short-lived, one-use legal-draft download route that rechecks session
   ownership and byte integrity, writes a mandatory content-free audit event,
   and serves only the exact persisted reviewed snapshot. Owner export and case/

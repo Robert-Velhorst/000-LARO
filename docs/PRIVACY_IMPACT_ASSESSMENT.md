@@ -1,6 +1,6 @@
 # Privacy Impact Assessment (DPIA)
 
-Updated: 2026-07-20
+Updated: 2026-09-22
 Jurisdiction: Netherlands / EU (GDPR)
 
 ## Purpose of processing
@@ -17,6 +17,8 @@ match relevant lawyers, prepare human-reviewed outreach, and track outcomes.
 | Evidence | Documents, emails, attachments | Potentially special-category | `evidence`, managed storage |
 | Account | Email, password hash, role | Personal and credential | `users` |
 | Connected-account tokens | OAuth access and refresh tokens | Credential | `email_accounts`, `evidence_sources` |
+| Reviewed HAI grants | Allowed cases/fields, future-record choice, expiry | Authorization metadata | `hai_access_grants`, `hai_api_credentials` |
+| Reviewed legal drafts | Recipient revision, exact document bytes, source/review versions | Potentially special-category | `legal_draft_recipients`, `legal_draft_snapshots` |
 | Audit | Actions, timestamps, IP and user agent | Personal | `audit_logs` |
 
 ## Lawfulness and rights
@@ -29,6 +31,10 @@ match relevant lawyers, prepare human-reviewed outreach, and track outcomes.
 - `gdpr.deleteData` performs confirmed account erasure, including owned managed
   objects, before relational metadata is removed.
 - Provider connection and evidence collection are explicit user actions.
+- Optional cloud document processing requires a separate purpose-specific,
+  versioned opt-in; account creation or provider connection is insufficient.
+- HAI reads require a reviewed case-and-field grant and are re-scoped on every
+  request. Public research verifies owned case context before external contact.
 - No marketing tracker or third-party product telemetry is enabled.
 
 ## Data flow and storage
@@ -50,6 +56,8 @@ match relevant lawyers, prepare human-reviewed outreach, and track outcomes.
 | Over-retention | Automatic bounded audit-log retention plus owner export and erasure | Operator must approve the retention window |
 | Evidence integrity | Source metadata, content hashes, and source-linked analysis | Provider-origin authenticity is not independently certified |
 | External processing | Provider connection is explicit and optional | Operator must execute suitable processor agreements |
+| Over-broad downstream access | Versioned HAI grants limit cases, fields, future records, expiry, and revocation | Operator must review each enabled downstream processor |
+| Stale or unreviewed generated document | Exact-byte snapshots bind current recipient, source, case, and analysis revisions; stale review is rejected | Human legal review remains required |
 
 ## Necessity and proportionality
 

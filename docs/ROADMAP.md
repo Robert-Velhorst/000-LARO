@@ -1,13 +1,15 @@
 # Roadmap and External Gates
 
-Current as of 2026-09-19.
+Current as of 2026-09-22.
 
-## Third-Round Candidate
+## Fourth-Round Candidate
 
-Implementation commit `6011f45e03145b85820ed8cb94e57a3a94ed5ec8`
-passes the complete local verification required by issue #178. The evidence,
-negative-path mapping, maintained-source audit, container ID, and Windows
-artifact checksum are in
+Implementation commit `dc3884b5db3521101a2c735f7d49be0ddc18f0fe`
+passes the complete local verification required by issue #193. The evidence,
+integrated negative-path mapping, maintained-source audit, SBOM/container ID,
+and Windows artifact checksum are in
+[`FOURTH_ROUND_VERIFICATION.md`](FOURTH_ROUND_VERIFICATION.md). The earlier
+third-round record remains in
 [`THIRD_ROUND_VERIFICATION.md`](THIRD_ROUND_VERIFICATION.md).
 
 The next delivery gates are deliberately separate:
@@ -21,11 +23,12 @@ The next delivery gates are deliberately separate:
 4. Deploy only after the owner supplies the current Hetzner, DNS, TLS,
    persistence, secret, backup, and existing-data migration inputs; then repeat
    browser and desktop acceptance against that public target.
-5. Push and review the local issue #179 acceptance-path audit. Maintained smoke
-   and acceptance tests now use executable product boundaries, with the policy
-   and regression inventory in
-   [`TEST_QUALITY_REVIEW.md`](TEST_QUALITY_REVIEW.md); GitHub issue closure still
-   requires the protected remote checks and review.
+5. Push and review the local #179-#193 candidate. Maintained acceptance/smoke
+   tests use executable product boundaries; cloud consent, HAI grants, public
+   diagnostics, evidence framing, discovery, shared Google revocation, public
+   research, analysis freshness, search, notifications, canonical Drive intake,
+   and reviewed draft versions are integrated in the recorded verification.
+   GitHub issue closure still requires protected remote checks and review.
 
 ## Completed Production Path
 

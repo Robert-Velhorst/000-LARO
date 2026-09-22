@@ -1,5 +1,29 @@
 # Final Verification Report
 
+## 2026-09-22 fourth-round addendum
+
+The current local milestone candidate is
+`dc3884b5db3521101a2c735f7d49be0ddc18f0fe` on
+`milestone3/remediate-roadmap`. Its integrated consent/workflow verification is
+recorded in [`FOURTH_ROUND_VERIFICATION.md`](FOURTH_ROUND_VERIFICATION.md).
+
+On that implementation commit, all blocking gates pass: 183 test files passed
+and one was skipped; 1,077 tests passed and two were skipped. The exact-commit
+stable-Chrome run passed 37/37 scenarios, isolated Python 3.12 discovery passed
+223/223 tests, fresh-database readiness validated 273 relationship guards, both
+npm audits reported zero vulnerabilities, recovery restored the database,
+secrets, and managed evidence, and the production builds passed.
+
+The refreshed Docker image is
+`sha256:f1c65ef844f29b7c60e2a79382c2894ccaeba65fa23bc1fdf8223f09270bd8d5`;
+Trivy 0.74.0 reports zero HIGH/CRITICAL Debian or Node findings. The Windows
+portable artifact passed x64 PE app/SQLite/Canvas checks and has SHA-256
+`0decd4422424ab7517f2a6db7fe7b39ce544fc828346fdb44475f40a0078b60d`.
+
+This is repository-local evidence. It does not replace protected-`main`, native
+Windows, live-provider, or Hetzner acceptance, and it does not claim a push,
+merge, publication, deployment, or GitHub issue closure.
+
 ## 2026-09-19 third-round addendum
 
 The current local milestone candidate is

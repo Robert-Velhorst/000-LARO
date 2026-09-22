@@ -1,15 +1,17 @@
 # Current Technical Audit
 
-Date: 2026-09-20
+Date: 2026-09-22
 Branch: `milestone3/remediate-roadmap` (local candidate; not merged)
-Baseline implementation commit: `6011f45e03145b85820ed8cb94e57a3a94ed5ec8`
+Baseline implementation commit: `dc3884b5db3521101a2c735f7d49be0ddc18f0fe`
 Specification: `000-LARO__Giant_Codex_Goal_Prompt.pdf`, 124 pages, phases 000-115
 
-The reconciled third-round verification for issues #154-#178 is
-[`THIRD_ROUND_VERIFICATION.md`](THIRD_ROUND_VERIFICATION.md). It records the
-exact local commands, negative-path proofs, maintained-source search, Docker
-image, Windows artifact, and external boundaries. GitHub issue state, protected
-CI, native Windows execution, and deployment acceptance remain separate.
+The reconciled fourth-round verification through issue #193 is
+[`FOURTH_ROUND_VERIFICATION.md`](FOURTH_ROUND_VERIFICATION.md). It records the
+exact local commands, integrated negative-path proofs, maintained-source search,
+Docker/SBOM evidence, Windows artifact, and external boundaries. The third-round
+record remains in [`THIRD_ROUND_VERIFICATION.md`](THIRD_ROUND_VERIFICATION.md).
+GitHub issue state, protected CI, native Windows execution, and deployment
+acceptance remain separate.
 
 ## Scope and method
 
@@ -20,9 +22,9 @@ This is the current audit required by the specification appendix. The earlier
 The current pass inspected all phase titles and deliverables, the release-candidate tree,
 runtime entry points, router composition, database migrations, provider gates,
 renderer routes, tests, CI workflows, release documentation, and generated
-traceability. At implementation commit `6011f45`, the candidate contains 949
-tracked files: 577 TypeScript/TSX files, 189 tracked test files, and 32 tracked
-migration artifacts.
+traceability. At implementation commit `dc3884b`, the candidate contains 982
+tracked files: 595 TypeScript/TSX files, 217 tracked test files, and 40 tracked
+SQLite/hosted migration artifacts.
 
 ## Current architecture
 

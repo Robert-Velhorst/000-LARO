@@ -1,6 +1,13 @@
-# Deployment & Local Development (Phases 031–035)
+# Deployment & Local Development
 
-Date: 2026-07-06 · Branch `Phase-Imp`
+Updated: 2026-09-22 · Candidate branch `milestone3/remediate-roadmap`
+
+The fourth-round local release matrix for implementation commit `dc3884b` is
+recorded in [`FOURTH_ROUND_VERIFICATION.md`](FOURTH_ROUND_VERIFICATION.md).
+It proves the repository-controlled build, recovery, fresh-database, browser,
+container, vulnerability-scan, and Windows packaging boundaries. It is not a
+claim that this commit is pushed, merged, published, deployed, or accepted on a
+real Hetzner/Windows target.
 
 ## Local dev — one command (Phase 031)
 
@@ -39,6 +46,10 @@ then fail closed if required Google or outbound-mail credentials are absent.
 - The final production image is distroless and has no shell or npm. Execute its
   shipped operational scripts with `/nodejs/bin/node`; npm commands remain for
   the source checkout and build stage only.
+- The security workflow builds this actual runtime image, emits a CycloneDX
+  SBOM, and rejects every HIGH or CRITICAL Trivy finding. The recorded #193
+  image has zero findings at that threshold; each pushed commit must repeat the
+  scan because vulnerability data and base images change.
 - Configure via `.env` (see `.env.example`). In production the server refuses to
   start without strong `JWT_SECRET`/`COOKIE_SECRET` (Phase 006).
 
@@ -207,6 +218,9 @@ requires STARTTLS with TLS 1.2 or newer.
 ## Notes
 
 - The desktop app is packaged separately with `npm run dist:*` (electron-builder).
+- The #193 Linux cross-build passed packaged-native PE/x64 checks for the app,
+  SQLite, and Canvas. This structural result does not replace a native Windows
+  launch and scanned-PDF OCR acceptance run.
 - Branch and manual Windows builds are unsigned internal artifacts. Store
   certification and paid signing are not active deployment requirements. Tagged
   releases can remain unsigned after the external acceptance gates are approved;

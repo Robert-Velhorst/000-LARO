@@ -1,6 +1,6 @@
 # Acceptance Test Matrix
 
-Current as of 2026-09-19. Automated criteria exercise real tRPC procedures,
+Current as of 2026-09-22. Automated criteria exercise real tRPC procedures,
 HTTP middleware, renderer behavior, provider mocks at transport boundaries, and
 temporary SQLite databases; they do not contact external people or accounts.
 The evidence policy and per-test regression inventory are recorded in
@@ -37,6 +37,7 @@ The evidence policy and per-test regression inventory are recorded in
 | AC27 | Persist, analyze, retrieve, and audit one owner-only Drive file with evidence and provider provenance, retain signed redacted proof, and remove transient data | `tests/security/liveGoogleDriveEvidenceAcceptance.test.ts`, `tests/security/evidenceAccess.test.ts` | Automated with controlled Drive and HTTP boundaries; target environment requires the operator command |
 | AC28 | Keep one Drive ingestion path and prove canonical create, unchanged skip, changed revision, bounded partial result, and failed-revision preservation | `tests/e2e/googleDriveCanonical.e2e.test.ts`, `tests/backend/googleDriveAccountSelection.test.ts`, `tests/security/productionReadiness.test.ts` | Automated with controlled Drive responses and real tRPC, SQLite, and managed-storage boundaries |
 | AC29 | Bind legal drafts to a reviewed recipient and immutable source/input snapshot; serve exact reviewed bytes with owner-only historical re-download, content-free audit, and account erasure | `tests/backend/legalDraftSnapshots.test.ts`, acceptance and production-readiness suites | Automated with real tRPC, SQLite, SHA-256, one-use download-ticket, ownership, and erasure boundaries |
+| AC30 | Preserve the integrated consent and workflow boundaries across cloud processing, reviewed HAI scope, minimal public health, run-scoped discovery, shared Google revocation, failure-aware research/search, fresh derived analysis, durable notifications, canonical Drive ingestion, and reviewed draft versions | Focused backend/e2e/security suites plus `tests/browser/rendererAccessibility.spec.ts`; consolidated evidence in `FOURTH_ROUND_VERIFICATION.md` | Automated on recorded implementation commit `dc3884b`; public deployment and native Windows acceptance remain external |
 
 ## Target-Environment Acceptance
 
