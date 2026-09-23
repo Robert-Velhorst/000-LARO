@@ -91,8 +91,7 @@ suite('Phase 046 — cross-user isolation', () => {
   it('B cannot read, configure, or start evidence collection on A\'s case', async () => {
     const caller = app.makeCaller(B);
     await expect(caller.autoCollection.getSettings({ caseId })).rejects.toBeTruthy();
-    await expect(caller.autoCollection.getLogs({ caseId, limit: 10 })).rejects.toBeTruthy();
-    await expect(caller.autoCollection.getKeywordMatches({ caseId })).rejects.toBeTruthy();
+    await expect(caller.autoCollection.monitoring({ caseId, limit: 10 })).rejects.toBeTruthy();
     await expect(caller.autoCollection.getLocalFolders({ caseId })).rejects.toBeTruthy();
     await expect(caller.autoCollection.setLocalFolders({ caseId, paths: [] })).rejects.toBeTruthy();
     await expect(caller.autoCollection.runCollection({ caseId })).rejects.toBeTruthy();

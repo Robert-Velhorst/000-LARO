@@ -324,6 +324,118 @@ test("Home shows canonical workflow states and registered case destinations", as
   expect(badApiResponses).toEqual([]);
 });
 
+test("collection monitoring renders canonical jobs and evidence revisions", async ({ page }, testInfo) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badApiResponses: string[] = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => {
+    const failure = request.failure()?.errorText ?? "unknown failure";
+    if (!failure.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
+  });
+  page.on("response", response => {
+    if (response.url().includes("/api/trpc/") && response.status() >= 400) badApiResponses.push(`${response.status()} ${response.url()}`);
+  });
+
+  const email = await createAccount(page);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  const caseId = `A11Y_MONITOR_CASE_${randomUUID()}`;
+  const completeJobId = randomUUID();
+  const zeroJobId = randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    const ownerId = (database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string }).id;
+    database.prepare(`INSERT INTO cases
+      (id, userId, clientName, clientEmail, caseType, caseSummary, urgency, status, legalAreas, createdAt, updatedAt)
+      VALUES (?, ?, 'Canonical monitoring matter', 'monitor@example.test', 'Contract', 'Monitoring browser fixture', 'Medium', 'active', '["Contract Law"]', ?, ?)`)
+      .run(caseId, ownerId, now - 300, now - 300);
+    const completeMonitoring = {
+      schemaVersion: 1,
+      requestedKeywords: ["contract", "invoice"],
+      matchedKeywords: ["contract", "invoice"],
+      matchMode: "any",
+      requestedSources: ["gmail", "google_drive", "local"],
+      completedSources: ["gmail", "google_drive", "local"],
+      startedAt: new Date((now - 120) * 1000).toISOString(),
+      completedAt: new Date((now - 59) * 1000).toISOString(),
+      durationMs: 61_250,
+      completeness: "complete",
+      processedItems: 3,
+      storedItems: 3,
+      skippedItems: 0,
+      processedBytes: 4_096,
+      matchReasons: ["Local filename matched the persisted pull keywords."],
+      sources: [
+        { source: "gmail", status: "completed", processedItems: 1, storedItems: 1, skippedItems: 0, matchedKeywords: ["invoice"], errors: [] },
+        { source: "google_drive", status: "completed", processedItems: 1, storedItems: 1, skippedItems: 0, matchedKeywords: ["contract"], errors: [] },
+        { source: "local", status: "completed", processedItems: 1, storedItems: 1, skippedItems: 0, matchedKeywords: ["contract"], errors: [] },
+      ],
+      revisions: [{
+        evidenceId: randomUUID(),
+        source: "local",
+        title: "contract-revision.txt",
+        sourceIdentity: JSON.stringify(["local", "/safe/contract-revision.txt"]),
+        contentRevision: "b".repeat(64),
+        revisionNumber: 2,
+        matchedKeywords: ["contract"],
+        matchReason: "Local filename matched the persisted pull keywords.",
+      }],
+    };
+    const zeroMonitoring = {
+      ...completeMonitoring,
+      requestedKeywords: ["contract"],
+      matchedKeywords: ["contract"],
+      requestedSources: ["local"],
+      completedSources: ["local"],
+      startedAt: new Date((now - 30) * 1000).toISOString(),
+      completedAt: new Date((now - 29) * 1000).toISOString(),
+      durationMs: 720,
+      completeness: "complete_zero",
+      processedItems: 1,
+      storedItems: 0,
+      skippedItems: 1,
+      processedBytes: 0,
+      sources: [{ source: "local", status: "completed", processedItems: 1, storedItems: 0, skippedItems: 1, matchedKeywords: ["contract"], errors: [] }],
+      revisions: [],
+    };
+    const insertJob = database.prepare(`INSERT INTO keyword_pull_jobs
+      (id, caseId, userId, status, phase, message, processedWords, totalWords, processedItems, totalItems,
+       estimatedSecondsRemaining, result, createdAt, startedAt, updatedAt, completedAt)
+      VALUES (?, ?, ?, 'completed', 'finalizing', ?, 0, 0, ?, ?, 0, ?, ?, ?, ?, ?)`);
+    insertJob.run(completeJobId, caseId, ownerId, "Pull complete", 3, 3,
+      JSON.stringify({ monitoring: completeMonitoring }), now - 120, now - 120, now - 59, now - 59);
+    insertJob.run(zeroJobId, caseId, ownerId, "Pull complete - no new evidence revisions", 1, 1,
+      JSON.stringify({ monitoring: zeroMonitoring }), now - 30, now - 30, now - 29, now - 29);
+  } finally { database.close(); }
+
+  const response = await page.goto("/cases", { waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  await page.getByRole("button", { name: "Open case", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Documents", exact: true }).click();
+  await dialog.getByRole("tab", { name: "Monitoring", exact: true }).click();
+  const monitoring = dialog.getByTestId("canonical-collection-monitoring");
+  await expect(monitoring.getByText("Canonical collection history", { exact: true })).toBeVisible();
+  await expect(monitoring.getByText("Complete - no new revisions", { exact: true })).toBeVisible();
+  await expect(monitoring.getByText("1m 1s", { exact: true })).toBeVisible();
+  await expect(monitoring.getByText("<1s", { exact: true })).toBeVisible();
+  await expect(monitoring.getByText("contract-revision.txt", { exact: true })).toBeVisible();
+  await expect(monitoring.getByText(/Revision 2: b{64}/)).toBeVisible();
+  await expect(monitoring.getByText("Gmail", { exact: true }).first()).toBeVisible();
+  await expect(monitoring.getByText("Google Drive", { exact: true }).first()).toBeVisible();
+  await expect(monitoring.getByText("Local files", { exact: true }).first()).toBeVisible();
+  await expect.poll(() => dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  const audit = await new AxeBuilder({ page }).include('[data-testid="canonical-collection-monitoring"]').analyze();
+  expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
+  await dialog.screenshot({ path: testInfo.outputPath("canonical-collection-monitoring.png") });
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+  expect(badApiResponses).toEqual([]);
+});
+
 test("language selection changes the mounted shell and persists across reloads", async ({ page }) => {
   await createAccountThroughSignup(page);
 

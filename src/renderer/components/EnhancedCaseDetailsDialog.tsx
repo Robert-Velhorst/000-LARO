@@ -192,7 +192,7 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
       }
       if (result.errors?.length) console.warn("[KeywordPull] errors:", result.errors);
       void utils.evidenceFiles.search.invalidate({ caseId });
-      (utils.autoCollection as any)?.getLogs?.invalidate?.({ caseId });
+      void utils.autoCollection.monitoring.invalidate({ caseId, limit: 20 });
       (utils.evidenceTimeline as any)?.getTimeline?.invalidate?.({ caseId });
     } catch {
       toast.error("Pull completed but its result could not be read.");

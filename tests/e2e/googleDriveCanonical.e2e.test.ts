@@ -122,7 +122,18 @@ suite("canonical Google Drive ingestion", () => {
     expect(first).toMatchObject({
       success: true,
       outcome: "completed",
-      result: { driveFiles: 1, errors: [] },
+      result: {
+        driveFiles: 1,
+        errors: [],
+        monitoring: {
+          completeness: "complete",
+          requestedSources: ["google_drive"],
+          completedSources: ["google_drive"],
+          storedItems: 1,
+          matchedKeywords: ["contract"],
+          revisions: [{ source: "google_drive", contentRevision: "drive-version:1", revisionNumber: 1 }],
+        },
+      },
     });
     let rows = await app.db.select().from(app.schema.evidence);
     expect(rows).toHaveLength(1);
@@ -150,6 +161,13 @@ suite("canonical Google Drive ingestion", () => {
         ingestion: {
           reasons: [{ source: "google_drive", code: "duplicate", count: 1 }],
         },
+        monitoring: {
+          completeness: "complete_zero",
+          requestedKeywords: ["contract"],
+          matchedKeywords: ["contract"],
+          storedItems: 0,
+          skippedItems: 1,
+        },
       },
     });
     expect(googleMocks.getRequests).toHaveLength(getCountAfterFirst);
@@ -162,7 +180,14 @@ suite("canonical Google Drive ingestion", () => {
     expect(changed).toMatchObject({
       success: true,
       outcome: "completed",
-      result: { driveFiles: 1, errors: [] },
+      result: {
+        driveFiles: 1,
+        errors: [],
+        monitoring: {
+          completeness: "complete",
+          revisions: [{ source: "google_drive", contentRevision: "drive-version:2", revisionNumber: 2 }],
+        },
+      },
     });
     rows = await app.db.select().from(app.schema.evidence);
     expect(rows).toHaveLength(2);
@@ -197,6 +222,7 @@ suite("canonical Google Drive ingestion", () => {
     expect(failed.outcome).toBe("partial");
     expect(failed.result.driveFiles).toBe(0);
     expect(failed.result.errors.join(" ")).toContain("provider media unavailable");
+    expect(failed.result.monitoring.completeness).toBe("failed");
     expect(await app.db.select().from(app.schema.evidence)).toHaveLength(2);
 
     queueListing("4", 7 * 1024 * 1024 + 1);
@@ -218,6 +244,7 @@ suite("canonical Google Drive ingestion", () => {
         ingestion: {
           reasons: [{ source: "google_drive", code: "file_too_large", count: 1 }],
         },
+        monitoring: { completeness: "limited", storedItems: 0, skippedItems: 1 },
       },
     });
     expect(await app.db.select().from(app.schema.evidence)).toHaveLength(2);

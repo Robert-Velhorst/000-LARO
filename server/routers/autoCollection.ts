@@ -5,8 +5,7 @@ import {
   getAutoCollectionSettings,
   upsertAutoCollectionSettings,
   runAutoCollection,
-  getAutoCollectionLogs,
-  getKeywordMatches,
+  getKeywordPullMonitoring,
   pullEvidenceByKeywords,
   setLocalFolderPaths,
   getLocalFolderPaths,
@@ -135,20 +134,14 @@ export const autoCollectionRouter = router({
       }
     }),
 
-  getLogs: protectedProcedure
-    .input(z.object({ caseId: z.string(), limit: z.number().optional().default(10) }))
+  monitoring: protectedProcedure
+    .input(z.object({
+      caseId: z.string(),
+      limit: z.number().int().min(1).max(50).optional().default(20),
+    }))
     .query(async ({ input, ctx }) => {
       await assertCaseOwnership(input.caseId, ctx.user.id);
-      const logs = await getAutoCollectionLogs(input.caseId, input.limit);
-      return { logs };
-    }),
-
-  getKeywordMatches: protectedProcedure
-    .input(z.object({ caseId: z.string() }))
-    .query(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id);
-      const matches = await getKeywordMatches(input.caseId);
-      return { matches };
+      return getKeywordPullMonitoring(input.caseId, ctx.user.id, input.limit);
     }),
 
   /**

@@ -3,9 +3,7 @@ import { eq, and, desc } from 'drizzle-orm';
 import { notifyOwner } from './notification';
 import {
   autoCollectionSettings,
-  autoCollectionLogs,
   keywordPullJobs,
-  keywordMatches,
   emailAccounts,
   evidence as evidenceTable,
   cases as casesTable,
@@ -195,25 +193,6 @@ function determineEvidenceType(mimeType?: string): string {
 }
 
 /**
- * Get auto-collection logs for a case
- */
-export async function getAutoCollectionLogs(caseId: string, limit: number = 10) {
-  const db = await getDb();
-  if (!db) {
-    return [];
-  }
-
-  const logs = await db
-    .select()
-    .from(autoCollectionLogs)
-    .where(eq(autoCollectionLogs.caseId, caseId))
-    .orderBy(desc(autoCollectionLogs.runStartedAt))
-    .limit(limit);
-
-  return logs;
-}
-
-/**
  * Run auto-collection for all cases with enabled settings
  * Called by cron scheduler daily at 2:00 AM
  */
@@ -306,23 +285,6 @@ export async function runAutoCollectionForAllCases(): Promise<{
   };
 }
 
-/**
- * Get keyword matches for a case
- */
-export async function getKeywordMatches(caseId: string) {
-  const db = await getDb();
-  if (!db) {
-    return [];
-  }
-
-  const matches = await db
-    .select()
-    .from(keywordMatches)
-    .where(eq(keywordMatches.caseId, caseId));
-
-  return matches;
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // One-shot keyword pull: pulls evidence from every connected source for a case
 // in a single call, without requiring saved auto-collection settings.
@@ -336,6 +298,61 @@ export interface PullByKeywordsResult {
   errors: string[];
   outcome?: EvidenceIngestionSummary['outcome'];
   ingestion?: EvidenceIngestionSummary;
+  monitoring: KeywordPullMonitoring;
+}
+
+export const KEYWORD_PULL_SOURCES = ['gmail', 'google_drive', 'local'] as const;
+export type KeywordPullSource = typeof KEYWORD_PULL_SOURCES[number];
+export type KeywordPullCompleteness =
+  | 'queued'
+  | 'running'
+  | 'complete'
+  | 'complete_zero'
+  | 'partial'
+  | 'limited'
+  | 'interrupted'
+  | 'cancelled'
+  | 'failed';
+
+export interface KeywordPullSourceSummary {
+  source: KeywordPullSource;
+  status: 'queued' | 'running' | 'completed' | 'partial' | 'limited' | 'cancelled' | 'failed';
+  processedItems: number;
+  storedItems: number;
+  skippedItems: number;
+  matchedKeywords: string[];
+  errors: string[];
+}
+
+export interface KeywordPullRevision {
+  evidenceId: string;
+  source: string;
+  title: string;
+  sourceIdentity: string | null;
+  contentRevision: string | null;
+  revisionNumber: number | null;
+  matchedKeywords: string[];
+  matchReason: string;
+}
+
+export interface KeywordPullMonitoring {
+  schemaVersion: 1;
+  requestedKeywords: string[];
+  matchedKeywords: string[];
+  matchMode: 'all' | 'any';
+  requestedSources: KeywordPullSource[];
+  completedSources: KeywordPullSource[];
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  completeness: KeywordPullCompleteness;
+  processedItems: number;
+  storedItems: number;
+  skippedItems: number;
+  processedBytes: number;
+  matchReasons: string[];
+  sources: KeywordPullSourceSummary[];
+  revisions: KeywordPullRevision[];
 }
 
 export type PullProgressPhase = 'queued' | 'discovering' | 'gmail' | 'drive' | 'local' | 'finalizing';
@@ -350,6 +367,91 @@ export interface PullProgressUpdate {
 }
 
 export type PullProgressReporter = (update: PullProgressUpdate) => void;
+
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
+}
+
+function matchingKeywords(text: string, keywords: string[]): string[] {
+  const normalized = text.toLocaleLowerCase();
+  return uniqueStrings(keywords.filter((keyword) => normalized.includes(keyword.toLocaleLowerCase())));
+}
+
+function requestedPullSources(params: {
+  includeGmail?: boolean;
+  includeDrive?: boolean;
+  includeLocal?: boolean;
+}): KeywordPullSource[] {
+  return KEYWORD_PULL_SOURCES.filter((source) => source === 'gmail'
+    ? params.includeGmail !== false
+    : source === 'google_drive'
+      ? params.includeDrive !== false
+      : params.includeLocal !== false);
+}
+
+function ingestionSourceGroup(source: EvidenceIngestionSource): KeywordPullSource | null {
+  if (source === 'gmail_message' || source === 'gmail_attachment') return 'gmail';
+  if (source === 'google_drive') return 'google_drive';
+  if (source === 'local') return 'local';
+  return null;
+}
+
+function initialKeywordPullMonitoring(
+  params: {
+    keywords: string[];
+    matchMode?: 'all' | 'any';
+    includeGmail?: boolean;
+    includeDrive?: boolean;
+    includeLocal?: boolean;
+  },
+  completeness: 'queued' | 'running' = 'queued',
+  startedAt: Date | null = null,
+): KeywordPullMonitoring {
+  const requestedSources = requestedPullSources(params);
+  return {
+    schemaVersion: 1,
+    requestedKeywords: uniqueStrings(params.keywords),
+    matchedKeywords: [],
+    matchMode: params.matchMode || 'any',
+    requestedSources,
+    completedSources: [],
+    startedAt: startedAt?.toISOString() ?? null,
+    completedAt: null,
+    durationMs: null,
+    completeness,
+    processedItems: 0,
+    storedItems: 0,
+    skippedItems: 0,
+    processedBytes: 0,
+    matchReasons: [],
+    sources: requestedSources.map((source) => ({
+      source,
+      status: completeness,
+      processedItems: 0,
+      storedItems: 0,
+      skippedItems: 0,
+      matchedKeywords: [],
+      errors: [],
+    })),
+    revisions: [],
+  };
+}
+
+class KeywordPullTracker {
+  readonly revisions: KeywordPullRevision[] = [];
+  readonly matchedKeywords = new Set<string>();
+  readonly matchReasons = new Set<string>();
+
+  observe(keywords: string[], reason: string): void {
+    keywords.forEach((keyword) => this.matchedKeywords.add(keyword));
+    if (reason.trim()) this.matchReasons.add(reason.trim());
+  }
+
+  revision(value: KeywordPullRevision): void {
+    this.revisions.push(value);
+    this.observe(value.matchedKeywords, value.matchReason);
+  }
+}
 
 function countWords(value: string): number {
   return value.match(/[\p{L}\p{N}]+(?:['\u2019-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
@@ -395,6 +497,8 @@ async function pullFromGmail(
   onProgress?: PullProgressReporter,
   autoAnalyzeImports?: boolean,
   budget: EvidenceIngestionBudget = new EvidenceIngestionBudget(),
+  collectionRunId?: string,
+  tracker?: KeywordPullTracker,
 ): Promise<{ messages: number; attachments: number }> {
   const db = await getDb();
   if (!db) return { messages: 0, attachments: 0 };
@@ -417,6 +521,8 @@ async function pullFromGmail(
         onProgress,
         autoAnalyzeImports,
         budget,
+        collectionRunId,
+        tracker,
       );
       messages += result.messages;
       attachments += result.attachments;
@@ -494,6 +600,7 @@ async function pullFromGmail(
         cred.accountId,
         msg.id,
       );
+      if (storedState.messageStored) budget.recordSkip('gmail_message', 'duplicate');
 
       // Build a plain-text body excerpt.
       let body = '';
@@ -527,6 +634,11 @@ async function pullFromGmail(
         errors.push(`Reply linking for "${subject}" failed: ${error instanceof Error ? error.message : String(error)}`);
       }
       messageWords = Math.max(1, countWords(`${from} ${subject} ${body}`));
+      const messageMatchedKeywords = matchingKeywords(`${from} ${subject} ${body}`, keywords);
+      const messageMatchReason = messageMatchedKeywords.length > 0
+        ? 'Gmail message content matched the persisted pull keywords.'
+        : 'Gmail returned this message for the persisted keyword query.';
+      tracker?.observe(messageMatchedKeywords, messageMatchReason);
       onProgress?.({
         phase: 'gmail',
         message: `Reading Gmail message: ${subject}`,
@@ -569,7 +681,14 @@ async function pullFromGmail(
                   date: date.toISOString(),
                   bodyExcerpt: body.slice(0, 2000),
                   accountId: cred.accountId,
+                  sourceIdentity: JSON.stringify(['gmail', cred.accountId, msg.id]),
+                  sourceRevision: String((msg as any).historyId || msg.internalDate || storedMessage.sha256),
+                  revisionNumber: 1,
+                  keywordPullJobId: collectionRunId,
+                  matchedKeywords: messageMatchedKeywords,
+                  matchReason: messageMatchReason,
                   autoCollected: true,
+                  collectedAt: new Date().toISOString(),
                 }),
                 contentHash: storedMessage.sha256,
                 relevant: true,
@@ -578,6 +697,16 @@ async function pullFromGmail(
                 messageEvidenceId, userId, 'message/rfc822', subject, errors,
                 autoAnalyzeImports, budget, 'gmail_message',
               );
+              tracker?.revision({
+                evidenceId: messageEvidenceId,
+                source: 'gmail',
+                title: subject,
+                sourceIdentity: JSON.stringify(['gmail', cred.accountId, msg.id]),
+                contentRevision: String((msg as any).historyId || msg.internalDate || storedMessage.sha256),
+                revisionNumber: 1,
+                matchedKeywords: messageMatchedKeywords,
+                matchReason: messageMatchReason,
+              });
             });
             reservation.complete(messageBytes.length);
             messagesIngested++;
@@ -621,8 +750,12 @@ async function pullFromGmail(
           break;
         }
         let attachmentWords = 0;
+        tracker?.observe(messageMatchedKeywords, 'Attachment from a Gmail message returned by the persisted keyword query.');
         try {
-          if (storedState.attachmentIds.has(att.attachmentId)) continue;
+          if (storedState.attachmentIds.has(att.attachmentId)) {
+            budget.recordSkip('gmail_attachment', 'duplicate');
+            continue;
+          }
           if (typeof att.size === 'number' && att.size > MAX_EVIDENCE_FILE_BYTES) {
             budget.recordSkip('gmail_attachment', 'file_too_large');
             throw new Error('Gmail attachment exceeds the 7 MB evidence limit');
@@ -657,7 +790,14 @@ async function pullFromGmail(
                   attachmentId: att.attachmentId,
                   accountId: cred.accountId,
                   parentSubject: subject,
+                  sourceIdentity: JSON.stringify(['gmail_attachment', cred.accountId, msg.id, att.attachmentId]),
+                  sourceRevision: att.attachmentId,
+                  revisionNumber: 1,
+                  keywordPullJobId: collectionRunId,
+                  matchedKeywords: messageMatchedKeywords,
+                  matchReason: 'Attachment from a Gmail message returned by the persisted keyword query.',
                   autoCollected: true,
+                  collectedAt: new Date().toISOString(),
                 }),
                 contentHash: storedAttachment.sha256,
                 relevant: true,
@@ -666,6 +806,16 @@ async function pullFromGmail(
                 attachmentEvidenceId, userId, att.mimeType, safeName, errors,
                 autoAnalyzeImports, budget, 'gmail_attachment',
               );
+              tracker?.revision({
+                evidenceId: attachmentEvidenceId,
+                source: 'gmail',
+                title: safeName,
+                sourceIdentity: JSON.stringify(['gmail_attachment', cred.accountId, msg.id, att.attachmentId]),
+                contentRevision: att.attachmentId,
+                revisionNumber: 1,
+                matchedKeywords: messageMatchedKeywords,
+                matchReason: 'Attachment from a Gmail message returned by the persisted keyword query.',
+              });
               reservation.complete(buf.length);
             });
             storedState.attachmentIds.add(att.attachmentId);
@@ -740,6 +890,8 @@ async function pullFromDrive(
   onProgress?: PullProgressReporter,
   autoAnalyzeImports?: boolean,
   budget: EvidenceIngestionBudget = new EvidenceIngestionBudget(),
+  collectionRunId?: string,
+  tracker?: KeywordPullTracker,
 ): Promise<{ files: number }> {
   const db = await getDb();
   if (!db) return { files: 0 };
@@ -815,6 +967,11 @@ async function pullFromDrive(
           break;
         }
         if (!file.name || !file.id) continue;
+        const fileMatchedKeywords = matchingKeywords(file.name, keywords);
+        const fileMatchReason = normalizedExactFileName
+          ? 'Google Drive file was selected by an exact-name pull.'
+          : 'Google Drive filename matched the persisted pull keywords.';
+        tracker?.observe(fileMatchedKeywords, fileMatchReason);
         let fileWords = 0;
         try {
           const sourceIdentity = driveSourceIdentity(cred.accountId, file.id);
@@ -865,6 +1022,9 @@ async function pullFromDrive(
                 sourceMimeType: fileData.sourceMimeType,
                 providerVersion: fileData.providerVersion,
                 md5Checksum: fileData.md5Checksum,
+                keywordPullJobId: collectionRunId,
+                matchedKeywords: fileMatchedKeywords,
+                matchReason: fileMatchReason,
                 autoCollected: true,
                 collectedAt: new Date().toISOString(),
                 modifiedTime: fileData.modifiedTime,
@@ -880,6 +1040,16 @@ async function pullFromDrive(
               evidenceId, userId, fileData.mimeType, file.name, errors,
               autoAnalyzeImports, budget, 'google_drive',
             );
+            tracker?.revision({
+              evidenceId,
+              source: 'google_drive',
+              title: file.name,
+              sourceIdentity,
+              contentRevision: sourceRevision,
+              revisionNumber,
+              matchedKeywords: fileMatchedKeywords,
+              matchReason: fileMatchReason,
+            });
             storedByIdentity.set(sourceIdentity, [...priorVersions, {
               id: evidenceId,
               sourceRevision,
@@ -1005,6 +1175,8 @@ async function pullFromLocalFolders(
   onProgress?: PullProgressReporter,
   autoAnalyzeImports?: boolean,
   budget: EvidenceIngestionBudget = new EvidenceIngestionBudget(),
+  collectionRunId?: string,
+  tracker?: KeywordPullTracker,
 ): Promise<{ files: number }> {
   const db = await getDb();
   if (!db) return { files: 0 };
@@ -1053,6 +1225,9 @@ async function pullFromLocalFolders(
         budget.recordCapacityLimit('local');
         break;
       }
+      const fileMatchedKeywords = matchingKeywords(file.name, keywords);
+      const fileMatchReason = 'Local filename matched the persisted pull keywords.';
+      tracker?.observe(fileMatchedKeywords, fileMatchReason);
       let fileWords = 0;
       try {
         const stat = await fs.stat(file.absPath);
@@ -1106,6 +1281,12 @@ async function pullFromLocalFolders(
                 collectedAt: new Date().toISOString(),
                 modifiedTime: stat.mtime.toISOString(),
                 previousVersionIds: versions.map((version) => version.id),
+                sourceIdentity: JSON.stringify(['local', key]),
+                sourceRevision: storedFile.sha256,
+                revisionNumber: versions.length + 1,
+                keywordPullJobId: collectionRunId,
+                matchedKeywords: fileMatchedKeywords,
+                matchReason: fileMatchReason,
               }),
               contentHash: storedFile.sha256,
               relevant: true,
@@ -1114,6 +1295,16 @@ async function pullFromLocalFolders(
               evidenceId, userId, mimeType, file.name, errors,
               autoAnalyzeImports, budget, 'local',
             );
+            tracker?.revision({
+              evidenceId,
+              source: 'local',
+              title: file.name,
+              sourceIdentity: JSON.stringify(['local', key]),
+              contentRevision: storedFile.sha256,
+              revisionNumber: versions.length + 1,
+              matchedKeywords: fileMatchedKeywords,
+              matchReason: fileMatchReason,
+            });
             reservation.complete(storedFile.bytes);
             versions.push({ id: evidenceId, hash: storedFile.sha256 });
             storedLocalVersions.set(key, versions);
@@ -1186,7 +1377,7 @@ async function getConfiguredLocalFolders(caseId: string): Promise<string[]> {
  * in a single call. This is the entry point used by the case-view "Pull
  * evidence by keyword" panel.
  */
-export async function pullEvidenceByKeywords(params: {
+export interface KeywordPullParams {
   caseId: string;
   userId: string;
   keywords: string[];
@@ -1206,9 +1397,18 @@ export async function pullEvidenceByKeywords(params: {
   onProgress?: PullProgressReporter;
   signal?: AbortSignal;
   ingestionBudget?: EvidenceIngestionBudget;
-}): Promise<PullByKeywordsResult> {
+  collectionRunId?: string;
+}
+
+async function performEvidenceByKeywords(
+  params: KeywordPullParams & { collectionRunId: string },
+): Promise<PullByKeywordsResult> {
+  const startedAt = new Date();
   const matchMode = params.matchMode || 'any';
-  const errors: string[] = [];
+  const gmailErrors: string[] = [];
+  const driveErrors: string[] = [];
+  const localErrors: string[] = [];
+  const tracker = new KeywordPullTracker();
   const ingestionBudget = params.ingestionBudget ?? new EvidenceIngestionBudget(params.signal);
 
   if (!params.keywords || params.keywords.length === 0) {
@@ -1260,11 +1460,12 @@ export async function pullEvidenceByKeywords(params: {
     for (const source of sources) {
       try {
         const result = await pullFromDrive(params.caseId, params.userId, params.keywords, matchMode,
-          source.folderIds, errors, source.accountId, params.driveExactFileName,
-          params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports, ingestionBudget);
+          source.folderIds, driveErrors, source.accountId, params.driveExactFileName,
+          params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports, ingestionBudget,
+          params.collectionRunId, tracker);
         files += result.files;
       } catch (error) {
-        errors.push(`Drive account ${source.accountId || 'default'} failed: ${error instanceof Error ? error.message : String(error)}`);
+        driveErrors.push(`Drive account ${source.accountId || 'default'} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     return { files };
@@ -1276,48 +1477,106 @@ export async function pullEvidenceByKeywords(params: {
   }
 
   const [gmail, drive, local] = await Promise.all([
-    (params.includeGmail === false ? Promise.resolve({ messages: 0, attachments: 0 }) : pullFromGmail(params.caseId, params.userId, params.keywords, matchMode, errors, params.dateStart, params.dateEnd, params.includeGmailAttachments !== false, gmailAccountIds, params.onProgress, autoAnalyzeImports, ingestionBudget)).catch((err) => {
-      errors.push(`Gmail pull failed: ${err instanceof Error ? err.message : String(err)}`);
+    (params.includeGmail === false ? Promise.resolve({ messages: 0, attachments: 0 }) : pullFromGmail(params.caseId, params.userId, params.keywords, matchMode, gmailErrors, params.dateStart, params.dateEnd, params.includeGmailAttachments !== false, gmailAccountIds, params.onProgress, autoAnalyzeImports, ingestionBudget, params.collectionRunId, tracker)).catch((err) => {
+      gmailErrors.push(`Gmail pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { messages: 0, attachments: 0 };
     }),
     (params.includeDrive === false ? Promise.resolve({ files: 0 }) : collectDriveSources()).catch((err) => {
-      errors.push(`Drive pull failed: ${err instanceof Error ? err.message : String(err)}`);
+      driveErrors.push(`Drive pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { files: 0 };
     }),
-    (params.includeLocal === false ? Promise.resolve({ files: 0 }) : pullFromLocalFolders(params.caseId, params.userId, params.keywords, matchMode, localFolderPaths, errors, params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports, ingestionBudget)).catch((err) => {
-      errors.push(`Local pull failed: ${err instanceof Error ? err.message : String(err)}`);
+    (params.includeLocal === false ? Promise.resolve({ files: 0 }) : pullFromLocalFolders(params.caseId, params.userId, params.keywords, matchMode, localFolderPaths, localErrors, params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports, ingestionBudget, params.collectionRunId, tracker)).catch((err) => {
+      localErrors.push(`Local pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { files: 0 };
     }),
   ]);
   const ingestion = ingestionBudget.summary();
+  const errors = [...gmailErrors, ...driveErrors, ...localErrors];
   for (const reason of ingestion.reasons) {
     if (reason.code !== 'duplicate') {
       errors.push(`Partial ${reason.source} ingestion: ${reason.code} (${reason.count})`);
     }
   }
 
-  // Log this run.
-  try {
-    await db.insert(autoCollectionLogs).values({
-      id: uuidv4(),
-      caseId: params.caseId,
-      settingsId: settings?.id || null,
-      userId: params.userId,
-      runStartedAt: new Date(),
-      runCompletedAt: new Date(),
-      status: ingestion.outcome === 'cancelled' ? 'cancelled'
-        : errors.length === 0 && ingestion.outcome === 'completed' ? 'completed' : 'completed_with_errors',
-      emailsFound: String(gmail.messages),
-      emailsProcessed: String(gmail.messages),
-      filesFound: String(drive.files + local.files + gmail.attachments),
-      filesDownloaded: String(drive.files + local.files + gmail.attachments),
-      errorCount: String(errors.length),
-      errorMessage: errors.slice(0, 3).join('; ') || null,
-      executionTimeSeconds: '0',
-    });
-  } catch (err) {
-    console.warn('[AutoCollection] Failed to log one-shot run:', err);
-  }
+  const revisions = tracker.revisions;
+
+  const requestedSources = requestedPullSources(params);
+  const storedBySource: Record<KeywordPullSource, number> = {
+    gmail: gmail.messages + gmail.attachments,
+    google_drive: drive.files,
+    local: local.files,
+  };
+  const errorsBySource: Record<KeywordPullSource, string[]> = {
+    gmail: gmailErrors,
+    google_drive: driveErrors,
+    local: localErrors,
+  };
+  const limitedCodes = new Set([
+    'concurrency_limit',
+    'file_empty',
+    'file_too_large',
+    'job_byte_limit',
+    'job_item_limit',
+    'analysis_limit',
+    'storage_headroom',
+  ]);
+  const sourceSummaries: KeywordPullSourceSummary[] = requestedSources.map((source) => {
+    const reasons = ingestion.reasons.filter((reason) => ingestionSourceGroup(reason.source) === source);
+    const skippedItems = reasons.reduce((sum, reason) => sum + reason.count, 0);
+    const sourceErrors = [
+      ...errorsBySource[source],
+      ...reasons.filter((reason) => reason.code !== 'duplicate')
+        .map((reason) => `${reason.source}: ${reason.code} (${reason.count})`),
+    ];
+    const limited = reasons.some((reason) => limitedCodes.has(reason.code));
+    const cancelled = ingestion.outcome === 'cancelled';
+    const storedItems = storedBySource[source];
+    const status: KeywordPullSourceSummary['status'] = cancelled ? 'cancelled'
+      : limited ? 'limited'
+        : sourceErrors.length > 0 ? storedItems > 0 ? 'partial' : 'failed'
+          : 'completed';
+    return {
+      source,
+      status,
+      processedItems: storedItems + skippedItems,
+      storedItems,
+      skippedItems,
+      matchedKeywords: uniqueStrings(revisions
+        .filter((revision) => revision.source === (source === 'gmail' ? 'gmail' : source))
+        .flatMap((revision) => revision.matchedKeywords)),
+      errors: uniqueStrings(sourceErrors),
+    };
+  });
+  const completedSources = sourceSummaries
+    .filter((source) => source.status === 'completed')
+    .map((source) => source.source);
+  const storedItems = gmail.messages + gmail.attachments + drive.files + local.files;
+  const hasLimits = ingestion.reasons.some((reason) => limitedCodes.has(reason.code));
+  const hasSourceErrors = sourceSummaries.some((source) => source.status === 'failed' || source.status === 'partial');
+  const completeness: KeywordPullCompleteness = ingestion.outcome === 'cancelled' ? 'cancelled'
+    : hasLimits ? 'limited'
+      : hasSourceErrors ? storedItems > 0 || completedSources.length > 0 ? 'partial' : 'failed'
+        : storedItems === 0 ? 'complete_zero' : 'complete';
+  const completedAt = new Date();
+  const monitoring: KeywordPullMonitoring = {
+    schemaVersion: 1,
+    requestedKeywords: uniqueStrings(params.keywords),
+    matchedKeywords: uniqueStrings([...tracker.matchedKeywords]),
+    matchMode,
+    requestedSources,
+    completedSources,
+    startedAt: startedAt.toISOString(),
+    completedAt: completedAt.toISOString(),
+    durationMs: Math.max(1, completedAt.getTime() - startedAt.getTime()),
+    completeness,
+    processedItems: ingestion.processedItems + ingestion.skippedItems,
+    storedItems,
+    skippedItems: ingestion.skippedItems,
+    processedBytes: ingestion.processedBytes,
+    matchReasons: uniqueStrings([...tracker.matchReasons]),
+    sources: sourceSummaries,
+    revisions,
+  };
 
   return {
     gmailMessages: gmail.messages,
@@ -1327,10 +1586,132 @@ export async function pullEvidenceByKeywords(params: {
     errors,
     outcome: ingestion.outcome,
     ingestion,
+    monitoring,
   };
 }
 
-type KeywordPullJobParams = Omit<Parameters<typeof pullEvidenceByKeywords>[0], 'onProgress' | 'signal' | 'ingestionBudget'>;
+function persistedJobStatus(completeness: KeywordPullCompleteness): 'completed' | 'completed_with_errors' | 'cancelled' | 'failed' {
+  if (completeness === 'cancelled') return 'cancelled';
+  if (completeness === 'failed' || completeness === 'interrupted') return 'failed';
+  if (completeness === 'partial' || completeness === 'limited') return 'completed_with_errors';
+  return 'completed';
+}
+
+function persistedJobMessage(completeness: KeywordPullCompleteness): string {
+  switch (completeness) {
+    case 'complete': return 'Pull complete';
+    case 'complete_zero': return 'Pull complete - no new evidence revisions';
+    case 'partial': return 'Pull completed with source warnings';
+    case 'limited': return 'Pull completed with bounded partial results';
+    case 'cancelled': return 'Pull cancelled with bounded partial results';
+    case 'interrupted': return 'Pull interrupted before completion';
+    case 'failed': return 'Pull failed';
+    case 'queued': return 'Waiting to start';
+    case 'running': return 'Checking connected evidence sources';
+  }
+}
+
+function failedKeywordPullMonitoring(
+  params: KeywordPullParams,
+  startedAt: Date,
+  completedAt: Date,
+  completeness: 'failed' | 'interrupted' | 'cancelled',
+  error: string | null,
+): KeywordPullMonitoring {
+  const monitoring = initialKeywordPullMonitoring(params, 'running', startedAt);
+  return {
+    ...monitoring,
+    completedAt: completedAt.toISOString(),
+    durationMs: Math.max(1, completedAt.getTime() - startedAt.getTime()),
+    completeness,
+    sources: monitoring.sources.map((source) => ({
+      ...source,
+      status: completeness === 'cancelled' ? 'cancelled' : 'failed',
+      errors: error ? [error] : [],
+    })),
+  };
+}
+
+/**
+ * Execute a keyword pull and make its terminal state durable even for direct
+ * and scheduled callers. Background jobs provide their own ID so progress and
+ * terminal monitoring resolve to the same row.
+ */
+export async function pullEvidenceByKeywords(params: KeywordPullParams): Promise<PullByKeywordsResult> {
+  if (!params.keywords?.length) throw new Error('At least one keyword is required');
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+
+  const ownsJob = !params.collectionRunId;
+  const jobId = params.collectionRunId || uuidv4();
+  const startedAt = new Date();
+  if (ownsJob) {
+    const monitoring = initialKeywordPullMonitoring(params, 'running', startedAt);
+    await db.insert(keywordPullJobs).values({
+      id: jobId,
+      caseId: params.caseId,
+      userId: params.userId,
+      status: 'running',
+      phase: 'discovering',
+      message: persistedJobMessage('running'),
+      processedWords: 0,
+      totalWords: 0,
+      processedItems: 0,
+      totalItems: 0,
+      result: JSON.stringify({ monitoring }),
+      createdAt: startedAt,
+      startedAt,
+      updatedAt: startedAt,
+    });
+  }
+
+  try {
+    const result = await performEvidenceByKeywords({ ...params, collectionRunId: jobId });
+    if (ownsJob) {
+      const completedAt = result.monitoring.completedAt
+        ? new Date(result.monitoring.completedAt)
+        : new Date();
+      await db.update(keywordPullJobs).set({
+        status: persistedJobStatus(result.monitoring.completeness),
+        phase: 'finalizing',
+        message: persistedJobMessage(result.monitoring.completeness),
+        processedItems: result.monitoring.processedItems,
+        totalItems: result.monitoring.processedItems,
+        estimatedSecondsRemaining: 0,
+        result: JSON.stringify(result),
+        error: result.monitoring.completeness === 'failed' ? result.errors[0] || 'Pull failed' : null,
+        completedAt,
+        updatedAt: completedAt,
+      }).where(and(eq(keywordPullJobs.id, jobId), eq(keywordPullJobs.userId, params.userId)));
+    }
+    return result;
+  } catch (error) {
+    if (ownsJob) {
+      const completedAt = new Date();
+      const message = error instanceof Error ? error.message : String(error);
+      const monitoring = failedKeywordPullMonitoring(params, startedAt, completedAt, 'failed', message);
+      await db.update(keywordPullJobs).set({
+        status: 'failed',
+        phase: 'finalizing',
+        message: persistedJobMessage('failed'),
+        result: JSON.stringify({
+          gmailMessages: 0,
+          gmailAttachments: 0,
+          driveFiles: 0,
+          localFiles: 0,
+          errors: [message],
+          monitoring,
+        }),
+        error: message,
+        completedAt,
+        updatedAt: completedAt,
+      }).where(and(eq(keywordPullJobs.id, jobId), eq(keywordPullJobs.userId, params.userId)));
+    }
+    throw error;
+  }
+}
+
+type KeywordPullJobParams = Omit<KeywordPullParams, 'onProgress' | 'signal' | 'ingestionBudget' | 'collectionRunId'>;
 const runningKeywordPullJobIds = new Set<string>();
 const runningKeywordPullJobControllers = new Map<string, AbortController>();
 
@@ -1347,12 +1728,22 @@ export async function startKeywordPullJob(params: KeywordPullJobParams) {
   const active = recent.find((job) => job.status === 'queued' || job.status === 'running');
   if (active && runningKeywordPullJobIds.has(active.id)) return active;
   if (active) {
+    const completedAt = new Date();
+    const startedAt = active.startedAt || active.createdAt;
+    const monitoring = failedKeywordPullMonitoring(
+      params,
+      startedAt,
+      completedAt,
+      'interrupted',
+      'The application stopped while this pull was active. Start it again to retry safely.',
+    );
     await db.update(keywordPullJobs).set({
       status: 'failed',
       message: 'Pull interrupted before completion',
       error: 'The application stopped while this pull was active. Start it again to retry safely.',
-      completedAt: new Date(),
-      updatedAt: new Date(),
+      result: JSON.stringify({ monitoring }),
+      completedAt,
+      updatedAt: completedAt,
     }).where(eq(keywordPullJobs.id, active.id));
   }
 
@@ -1369,6 +1760,7 @@ export async function startKeywordPullJob(params: KeywordPullJobParams) {
     totalWords: 0,
     processedItems: 0,
     totalItems: 0,
+    result: JSON.stringify({ monitoring: initialKeywordPullMonitoring(params) }),
     createdAt: now,
     updatedAt: now,
   });
@@ -1432,6 +1824,7 @@ async function executeKeywordPullJob(
     phase: state.phase,
     message: state.message,
     startedAt,
+    result: JSON.stringify({ monitoring: initialKeywordPullMonitoring(params, 'running', startedAt) }),
     updatedAt: startedAt,
   }).where(eq(keywordPullJobs.id, id));
 
@@ -1446,23 +1839,26 @@ async function executeKeywordPullJob(
   };
 
   try {
-    const result = await pullEvidenceByKeywords({ ...params, onProgress, signal: controller.signal });
+    const result = await pullEvidenceByKeywords({
+      ...params,
+      onProgress,
+      signal: controller.signal,
+      collectionRunId: id,
+    });
     onProgress({ phase: 'finalizing', message: 'Updating the case evidence index' });
     await writeChain;
     const completedAt = new Date();
-    const cancelled = controller.signal.aborted || result.outcome === 'cancelled';
-    const partial = result.outcome === 'partial';
+    const completeness = controller.signal.aborted ? 'cancelled' : result.monitoring.completeness;
     await db.update(keywordPullJobs).set({
-      status: cancelled ? 'cancelled'
-        : partial || result.errors.length > 0 ? 'completed_with_errors' : 'completed',
+      status: persistedJobStatus(completeness),
       phase: 'finalizing',
-      message: cancelled ? 'Pull cancelled with bounded partial results'
-        : partial ? 'Pull completed with bounded partial results'
-          : result.errors.length > 0 ? 'Pull completed with source warnings' : 'Pull complete',
-      processedWords: cancelled ? state.processedWords : Math.max(state.processedWords, state.totalWords),
+      message: persistedJobMessage(completeness),
+      processedWords: completeness === 'cancelled' ? state.processedWords : Math.max(state.processedWords, state.totalWords),
       totalWords: Math.max(state.processedWords, state.totalWords),
-      processedItems: cancelled ? state.processedItems : Math.max(state.processedItems, state.totalItems),
-      totalItems: Math.max(state.processedItems, state.totalItems),
+      processedItems: completeness === 'cancelled'
+        ? state.processedItems
+        : Math.max(state.processedItems, state.totalItems, result.monitoring.processedItems),
+      totalItems: Math.max(state.processedItems, state.totalItems, result.monitoring.processedItems),
       estimatedSecondsRemaining: 0,
       result: JSON.stringify(result),
       completedAt,
@@ -1472,11 +1868,23 @@ async function executeKeywordPullJob(
   } catch (error) {
     await writeChain;
     const completedAt = new Date();
+    const errorMessage = controller.signal.aborted ? null : error instanceof Error ? error.message : String(error);
+    const completeness = controller.signal.aborted ? 'cancelled' : 'failed';
+    const monitoring = failedKeywordPullMonitoring(params, startedAt, completedAt, completeness, errorMessage);
     await db.update(keywordPullJobs).set({
-      status: controller.signal.aborted ? 'cancelled' : 'failed',
-      message: controller.signal.aborted ? 'Pull cancelled with bounded partial results' : 'Pull failed',
-      error: controller.signal.aborted ? null : error instanceof Error ? error.message : String(error),
+      status: persistedJobStatus(completeness),
+      phase: 'finalizing',
+      message: persistedJobMessage(completeness),
+      error: errorMessage,
       estimatedSecondsRemaining: null,
+      result: JSON.stringify({
+        gmailMessages: 0,
+        gmailAttachments: 0,
+        driveFiles: 0,
+        localFiles: 0,
+        errors: errorMessage ? [errorMessage] : [],
+        monitoring,
+      }),
       completedAt,
       updatedAt: completedAt,
     }).where(eq(keywordPullJobs.id, id));
@@ -1498,10 +1906,19 @@ export async function cancelKeywordPullJob(id: string, userId: string) {
 
   runningKeywordPullJobControllers.get(id)?.abort();
   const completedAt = new Date();
+  const base = monitoringForJob(job);
+  const monitoring: KeywordPullMonitoring = {
+    ...base,
+    completeness: 'cancelled',
+    completedAt: completedAt.toISOString(),
+    durationMs: Math.max(1, completedAt.getTime() - (job.startedAt || job.createdAt).getTime()),
+    sources: base.sources.map((source) => ({ ...source, status: 'cancelled' })),
+  };
   await db.update(keywordPullJobs).set({
     status: 'cancelled',
     message: 'Pull cancelled with bounded partial results',
     estimatedSecondsRemaining: 0,
+    result: JSON.stringify({ ...jsonObject(job.result), monitoring }),
     completedAt,
     updatedAt: completedAt,
   }).where(and(eq(keywordPullJobs.id, id), eq(keywordPullJobs.userId, userId)));
@@ -1534,24 +1951,195 @@ export async function getActiveKeywordPullJob(caseId: string, userId: string) {
   const active = rows.find((job) => job.status === 'queued' || job.status === 'running');
   if (!active) return null;
   if (runningKeywordPullJobIds.has(active.id)) return active;
+  return interruptKeywordPullJob(active);
+}
 
+type KeywordPullJobRow = typeof keywordPullJobs.$inferSelect;
+
+function jsonObject(value: string | null): Record<string, any> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function dateIso(value: Date | null | undefined): string | null {
+  return value instanceof Date && Number.isFinite(value.getTime()) ? value.toISOString() : null;
+}
+
+function legacyMonitoringForJob(job: KeywordPullJobRow): KeywordPullMonitoring {
+  const result = jsonObject(job.result);
+  const ingestion = result.ingestion && typeof result.ingestion === 'object' ? result.ingestion : {};
+  const storedBySource: Record<KeywordPullSource, number> = {
+    gmail: Number(result.gmailMessages || 0) + Number(result.gmailAttachments || 0),
+    google_drive: Number(result.driveFiles || 0),
+    local: Number(result.localFiles || 0),
+  };
+  const requestedSources = KEYWORD_PULL_SOURCES.filter((source) => source === 'gmail'
+    ? 'gmailMessages' in result || 'gmailAttachments' in result
+    : source === 'google_drive' ? 'driveFiles' in result : 'localFiles' in result);
+  const normalizedSources = requestedSources.length > 0 ? requestedSources : [...KEYWORD_PULL_SOURCES];
+  const storedItems = Object.values(storedBySource).reduce((sum, count) => sum + count, 0);
+  const reasons = Array.isArray(ingestion.reasons) ? ingestion.reasons : [];
+  const skippedItems = Number(ingestion.skippedItems || 0);
+  const interrupted = job.message === 'Pull interrupted before completion'
+    || String(job.error || '').includes('stopped while this pull was active');
+  const completeness: KeywordPullCompleteness = job.status === 'queued' ? 'queued'
+    : job.status === 'running' ? 'running'
+      : job.status === 'cancelled' ? 'cancelled'
+        : job.status === 'failed' ? interrupted ? 'interrupted' : 'failed'
+          : job.status === 'completed_with_errors'
+            ? reasons.some((reason: any) => reason?.code && reason.code !== 'duplicate') ? 'limited' : 'partial'
+            : storedItems === 0 ? 'complete_zero' : 'complete';
+  const startedAt = job.startedAt || job.createdAt;
+  const completedAt = job.completedAt;
+  return {
+    schemaVersion: 1,
+    requestedKeywords: [],
+    matchedKeywords: [],
+    matchMode: 'any',
+    requestedSources: normalizedSources,
+    completedSources: ['complete', 'complete_zero'].includes(completeness) ? normalizedSources : [],
+    startedAt: dateIso(startedAt),
+    completedAt: dateIso(completedAt),
+    durationMs: startedAt && completedAt
+      ? Math.max(1, completedAt.getTime() - startedAt.getTime())
+      : null,
+    completeness,
+    processedItems: Number(ingestion.processedItems || storedItems) + skippedItems,
+    storedItems,
+    skippedItems,
+    processedBytes: Number(ingestion.processedBytes || 0),
+    matchReasons: [],
+    sources: normalizedSources.map((source) => ({
+      source,
+      status: completeness === 'queued' || completeness === 'running' ? completeness
+        : completeness === 'cancelled' ? 'cancelled'
+          : completeness === 'failed' || completeness === 'interrupted' ? 'failed'
+            : completeness === 'limited' ? 'limited'
+              : completeness === 'partial' ? 'partial' : 'completed',
+      processedItems: storedBySource[source],
+      storedItems: storedBySource[source],
+      skippedItems: 0,
+      matchedKeywords: [],
+      errors: job.error ? [job.error] : [],
+    })),
+    revisions: [],
+  };
+}
+
+function monitoringForJob(job: KeywordPullJobRow): KeywordPullMonitoring {
+  const persisted = jsonObject(job.result).monitoring;
+  const monitoring: KeywordPullMonitoring = persisted?.schemaVersion === 1
+    && Array.isArray(persisted.requestedSources)
+    && Array.isArray(persisted.sources)
+    ? persisted as KeywordPullMonitoring
+    : legacyMonitoringForJob(job);
+  const interrupted = job.message === 'Pull interrupted before completion'
+    || String(job.error || '').includes('stopped while this pull was active');
+  const override: KeywordPullCompleteness | null = job.status === 'queued' ? 'queued'
+    : job.status === 'running' ? 'running'
+      : job.status === 'cancelled' ? 'cancelled'
+        : job.status === 'failed' ? interrupted ? 'interrupted' : 'failed'
+          : null;
+  if (!override || monitoring.completeness === override) return monitoring;
+  return {
+    ...monitoring,
+    completeness: override,
+    completedAt: dateIso(job.completedAt) ?? monitoring.completedAt,
+    durationMs: job.startedAt && job.completedAt
+      ? Math.max(1, job.completedAt.getTime() - job.startedAt.getTime())
+      : monitoring.durationMs,
+    sources: monitoring.sources.map((source) => ({
+      ...source,
+      status: override === 'queued' || override === 'running' ? override
+        : override === 'cancelled' ? 'cancelled' : 'failed',
+      errors: job.error ? uniqueStrings([...source.errors, job.error]) : source.errors,
+    })),
+  };
+}
+
+async function interruptKeywordPullJob(job: KeywordPullJobRow): Promise<KeywordPullJobRow> {
+  const db = await getDb();
+  if (!db) return job;
   const completedAt = new Date();
-  const interrupted = {
-    ...active,
+  const base = monitoringForJob(job);
+  const error = 'The application stopped while this pull was active. Start it again to retry safely.';
+  const monitoring: KeywordPullMonitoring = {
+    ...base,
+    completeness: 'interrupted',
+    completedAt: completedAt.toISOString(),
+    durationMs: Math.max(1, completedAt.getTime() - (job.startedAt || job.createdAt).getTime()),
+    sources: base.sources.map((source) => ({ ...source, status: 'failed', errors: uniqueStrings([...source.errors, error]) })),
+  };
+  const result = { ...jsonObject(job.result), monitoring };
+  await db.update(keywordPullJobs).set({
     status: 'failed',
-    message: 'Pull interrupted before completion',
-    error: 'The application stopped while this pull was active. Start it again to retry safely.',
+    phase: 'finalizing',
+    message: persistedJobMessage('interrupted'),
+    error,
+    result: JSON.stringify(result),
+    completedAt,
+    updatedAt: completedAt,
+  }).where(and(eq(keywordPullJobs.id, job.id), eq(keywordPullJobs.userId, job.userId)));
+  return {
+    ...job,
+    status: 'failed',
+    phase: 'finalizing',
+    message: persistedJobMessage('interrupted'),
+    error,
+    result: JSON.stringify(result),
     completedAt,
     updatedAt: completedAt,
   };
-  await db.update(keywordPullJobs).set({
-    status: interrupted.status,
-    message: interrupted.message,
-    error: interrupted.error,
-    completedAt,
-    updatedAt: completedAt,
-  }).where(eq(keywordPullJobs.id, active.id));
-  return interrupted;
+}
+
+export async function getKeywordPullMonitoring(caseId: string, userId: string, limit = 20) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  const rows = await db.select().from(keywordPullJobs)
+    .where(and(eq(keywordPullJobs.caseId, caseId), eq(keywordPullJobs.userId, userId)))
+    .orderBy(desc(keywordPullJobs.createdAt))
+    .limit(Math.max(1, Math.min(50, limit)));
+  const reconciled: KeywordPullJobRow[] = [];
+  for (const row of rows) {
+    reconciled.push(
+      (row.status === 'queued' || row.status === 'running') && !runningKeywordPullJobIds.has(row.id)
+        ? await interruptKeywordPullJob(row)
+        : row,
+    );
+  }
+  const jobs = reconciled.map((job) => ({
+    id: job.id,
+    caseId: job.caseId,
+    status: job.status,
+    phase: job.phase,
+    message: job.message,
+    error: job.error,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+    monitoring: monitoringForJob(job),
+  }));
+  const summary = jobs.reduce((totals, job) => {
+    totals.processedItems += job.monitoring.processedItems;
+    totals.storedItems += job.monitoring.storedItems;
+    totals.skippedItems += job.monitoring.skippedItems;
+    totals.processedBytes += job.monitoring.processedBytes;
+    totals.states[job.monitoring.completeness] = (totals.states[job.monitoring.completeness] || 0) + 1;
+    return totals;
+  }, {
+    totalRuns: jobs.length,
+    processedItems: 0,
+    storedItems: 0,
+    skippedItems: 0,
+    processedBytes: 0,
+    states: {} as Partial<Record<KeywordPullCompleteness, number>>,
+  });
+  return { summary, jobs };
 }
 
 export async function runAutoCollection(caseId: string): Promise<{
