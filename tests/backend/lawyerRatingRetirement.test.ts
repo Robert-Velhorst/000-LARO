@@ -30,11 +30,11 @@ suite("retired lawyer-rating subsystem", () => {
       id: "RATING_RETIREMENT_LAWYER",
       email: "rating-retirement@law.example",
       legalAreas: JSON.stringify(["Employment Law"]),
-      caseLoad: "5",
-      averageResponseTimeHours: "36",
-      totalOutreaches: "10",
-      totalResponses: "8",
-      totalAcceptances: "4",
+      caseLoad: 5,
+      averageResponseTimeHours: 36,
+      totalOutreaches: 10,
+      totalResponses: 8,
+      totalAcceptances: 4,
     }));
   });
 
@@ -118,7 +118,7 @@ suite("retired lawyer-rating subsystem", () => {
 
     const [outreach] = await app.db.select().from(app.schema.outreachStatus)
       .where(eq(app.schema.outreachStatus.id, "RATING_RETIREMENT_OUTREACH"));
-    expect(outreach).toMatchObject({ responseReceived: "Yes", responseTimeHours: "3.00" });
+    expect(outreach).toMatchObject({ responseReceived: "Yes", responseTimeHours: 3 });
   });
 
   it("refuses to drop unexpected legacy rating data without operator review", async () => {

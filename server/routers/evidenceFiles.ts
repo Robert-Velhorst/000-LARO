@@ -77,7 +77,7 @@ export const evidenceFilesRouter = router({
       description: z.string().optional(),
       fileUrl:     z.string().optional(),
       fileName:    z.string().optional(),
-      fileSize:    z.string().optional(),
+      fileSize:    z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
       mimeType:    z.string().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
@@ -175,7 +175,7 @@ export const evidenceFilesRouter = router({
               type: input.type,
               source: input.source,
               fileName,
-              fileSize: String(bytes.length),
+              fileSize: bytes.length,
               mimeType: input.mimeType,
               fileUrl: stored.url,
               contentHash: stored.sha256,

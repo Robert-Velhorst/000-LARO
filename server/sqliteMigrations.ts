@@ -11,6 +11,13 @@ import {
   nativeRelationshipsNeedReconciliation,
   reconcileNativeRelationships,
 } from "./nativeRelationshipMigration";
+import {
+  assertNumericNormalizationReady,
+  numericNormalizationIsReconciled,
+  numericNormalizationNeedsReconciliation,
+  reconcileNumericColumns,
+} from "./numericNormalizationMigration";
+import { numericColumnPolicies } from "./numericColumns";
 import { relationshipIntegrityReport } from "./relationshipIntegrity";
 
 type SqliteClient = InstanceType<typeof Database>;
@@ -34,12 +41,15 @@ export type SqliteMigrationResult = {
   migrationsApplied: number;
   nativeRelationships: number;
   relationshipTablesRebuilt: number;
+  normalizedNumericColumns: number;
+  numericTablesRebuilt: number;
   schemaSignature: string;
 };
 
 const BASELINE_VERSION = 1;
 const BASELINE_TABLE = "laro_schema_baseline";
 const RELATIONSHIP_BASELINE_TABLE = "laro_relationship_baseline";
+const NUMERIC_BASELINE_TABLE = "laro_numeric_baseline";
 const REQUIRED_BACKUP_TABLES = ["users", "lawyers", "cases", "evidence", "audit_logs", "system_config"];
 const INTERNAL_TABLES = new Set(["__drizzle_migrations", "sqlite_sequence"]);
 const BASELINE_COMPATIBILITY_COLUMNS: Record<string, SchemaColumn> = {
@@ -162,6 +172,15 @@ function declaredSchemaSnapshot(): SchemaSnapshot {
   return snapshot;
 }
 
+function applyNormalizedNumericTypes(snapshot: SchemaSnapshot): void {
+  const declared = declaredSchemaSnapshot();
+  for (const policy of numericColumnPolicies) {
+    const expected = declared.get(policy.table)?.get(policy.column);
+    if (!expected || !snapshot.get(policy.table)?.has(policy.column)) continue;
+    snapshot.get(policy.table)!.set(policy.column, expected);
+  }
+}
+
 function stableSignature(snapshot: SchemaSnapshot): string {
   return [...snapshot.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
@@ -180,6 +199,7 @@ export function validateDeclaredSqliteSchema(sqlite: SqliteClient): {
   const actual = captureSchema(sqlite);
   actual.delete(BASELINE_TABLE);
   actual.delete(RELATIONSHIP_BASELINE_TABLE);
+  actual.delete(NUMERIC_BASELINE_TABLE);
   const expected = declaredSchemaSnapshot();
   const drift = compareSnapshots(actual, expected);
   return { ok: drift.length === 0, drift, signature: stableSignature(actual) };
@@ -363,6 +383,7 @@ export async function runSqliteMigrations(options: {
   const lastAppliedIndex = validateMigrationHistory(applied, migrations);
   if (hasExistingApplicationSchema) {
     const expected = expectedSnapshotAt(migrations, lastAppliedIndex);
+    if (numericNormalizationIsReconciled(sqlite)) applyNormalizedNumericTypes(expected);
     const drift = compareSnapshots(captureSchema(sqlite), expected, true);
     if (drift.length > 0) {
       throw new Error(`Unclassified SQLite schema drift:\n- ${drift.join("\n- ")}`);
@@ -372,7 +393,8 @@ export async function runSqliteMigrations(options: {
   const pendingCount = migrations.length - (lastAppliedIndex + 1);
   const baselinePending = hasExistingApplicationSchema && baselineNeedsReconciliation(sqlite);
   const relationshipPending = hasExistingApplicationSchema && nativeRelationshipsNeedReconciliation(sqlite);
-  const compatibilityPending = baselinePending || relationshipPending;
+  const numericPending = hasExistingApplicationSchema && numericNormalizationNeedsReconciliation(sqlite);
+  const compatibilityPending = baselinePending || relationshipPending || numericPending;
   const backupPath = hasExistingApplicationSchema && (pendingCount > 0 || compatibilityPending)
     ? await createVerifiedMigrationBackup(sqlite, databasePath)
     : null;
@@ -381,11 +403,15 @@ export async function runSqliteMigrations(options: {
     if (hasExistingApplicationSchema && relationshipPending) {
       assertNativeRelationshipReconciliationReady(sqlite);
     }
+    if (hasExistingApplicationSchema && numericPending) assertNumericNormalizationReady(sqlite);
     migrate(drizzleDb, { migrationsFolder });
     reconcileBaseline(sqlite);
     const relationshipMigration = nativeRelationshipsNeedReconciliation(sqlite)
       ? reconcileNativeRelationships(sqlite)
       : { relationships: relationshipIntegrityReport(sqlite).expected, tablesRebuilt: 0 };
+    const numericMigration = numericNormalizationNeedsReconciliation(sqlite)
+      ? reconcileNumericColumns(sqlite)
+      : { columns: numericColumnPolicies.length, tablesRebuilt: 0 };
     const validation = validateDeclaredSqliteSchema(sqlite);
     if (!validation.ok) {
       throw new Error(`Declared SQLite schema mismatch:\n- ${validation.drift.join("\n- ")}`);
@@ -395,6 +421,8 @@ export async function runSqliteMigrations(options: {
       migrationsApplied: pendingCount,
       nativeRelationships: relationshipMigration.relationships,
       relationshipTablesRebuilt: relationshipMigration.tablesRebuilt,
+      normalizedNumericColumns: numericMigration.columns,
+      numericTablesRebuilt: numericMigration.tablesRebuilt,
       schemaSignature: crypto.createHash("sha256").update(validation.signature).digest("hex"),
     };
   } catch (error) {

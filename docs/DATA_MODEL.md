@@ -56,14 +56,18 @@ timeout. The scanner database declares its scan-to-file foreign key.
   are declared as native foreign keys with reviewed cascade, set-null, or
   restrict behavior. Upgrade migration `0031` verifies a backup and a clean
   orphan report before rebuilding historical tables.
-- Data readiness checks strict historical counters for malformed, negative, or
-  JavaScript-unsafe values and verifies cross-counter relationships using
-  aggregate queries. Empty compatibility values remain accepted as zero.
+- Canonical counts, byte sizes, percentages, quantities, distances, and
+  durations use native `INTEGER` or `REAL` storage with named storage-class and
+  range checks. Data readiness validates all 27 fields and verifies
+  cross-counter relationships using one aggregate query per table. Null means
+  unavailable; it is not represented by an empty string. See
+  `NUMERIC_STORAGE.md`.
 - Backup validation and an isolated delete/restore/reopen drill are release
   gates.
 
-## Remaining model work
+## Compatibility fields
 
-Some historical money and count fields remain text. A non-mutating readiness
-gate identifies incompatible count data before those columns are normalized
-through the same migration discipline.
+Retired subscription, usage-limit, and monetary compatibility fields remain
+text until their business semantics are removed or separately specified. New
+usage telemetry stores its quantity as a bounded integer and does not write the
+retired monetary fields.

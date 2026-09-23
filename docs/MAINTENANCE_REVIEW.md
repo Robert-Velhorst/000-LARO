@@ -19,7 +19,7 @@ tech-debt register (docs/TECH_DEBT.md) with maintainability observations.
 | Area | Observation | Suggested refactor |
 |---|---|---|
 | `shared/` vs `src/shared/` | duplicated trees (D8) | merge into one |
-| Money/counts as TEXT (D13) | parsing scattered | typed accessors / numeric columns |
+| Retired monetary compatibility fields (D13) | intentionally text-backed and unwritten | remove only with a separately specified retirement migration; canonical counts are native numeric since `0032` |
 | Router file `index.ts` | large; many inline routers | split inline routers into files |
 | Renderer types (D2) | ~425 tsc errors | incremental typing, then gate |
 | Dead deps (D6) | pdfkit/archiver/tesseract/stripe unused | remove or implement |

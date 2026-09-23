@@ -341,7 +341,7 @@ suite('Real outreach send (011/026/017)', () => {
     );
     expect(row.status).toBe('Interested');
     expect(row.responseReceived).toBe('Yes');
-    expect(Number(row.responseTimeHours)).toBeGreaterThanOrEqual(0);
+    expect(row.responseTimeHours).toBeGreaterThanOrEqual(0);
 
     const [caseRow] = await app.db.select().from(app.schema.cases).where(
       (await import('drizzle-orm')).eq(app.schema.cases.id, 'CASE_SEND')

@@ -166,7 +166,7 @@ suite("typed clarification application", () => {
         languages: JSON.stringify(["Dutch"]),
         financedLegalAid: "Yes",
         directorySearchLocation: "Utrecht",
-        directoryDistanceKm: "8",
+        directoryDistanceKm: 8,
       }),
       buildLawyer({
         id: "CLARIFICATION_PRIVATE_ENGLISH_LAWYER",
@@ -174,7 +174,7 @@ suite("typed clarification application", () => {
         languages: JSON.stringify(["English"]),
         financedLegalAid: "No",
         directorySearchLocation: "Utrecht",
-        directoryDistanceKm: "8",
+        directoryDistanceKm: 8,
       }),
     ]);
 

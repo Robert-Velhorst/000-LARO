@@ -128,9 +128,9 @@ Private records are scoped as follows:
 
 1. An unmigrated Flask workspace remains a separate legacy recovery responsibility until the operator completes and verifies the one-way migration.
 2. Several old prototype HTML and documentation files remain for traceability and are not supported entry points.
-3. Some desktop schema fields still store numeric values as text and need reviewed migrations.
-4. Existing databases require a verified backup and clean orphan preflight
-   before the native-relationship migration can rebuild historical tables.
-5. Renderer growth remains a monitored risk; production builds enforce per-chunk, Evidence-route, and stylesheet budgets.
+3. Existing databases require a verified backup plus clean relationship and
+   numeric preflights before compatibility migrations can rebuild historical
+   tables.
+4. Renderer growth remains a monitored risk; production builds enforce per-chunk, Evidence-route, and stylesheet budgets.
 
 Use current code, `README.md`, `docs/SECURITY.md`, and fresh gate output as status authority. Historical phase reports are snapshots, not release evidence.

@@ -22,6 +22,7 @@ development exemptions require an explicit `NODE_ENV=development`.
 Production mode also runs the `db:readiness` checks against the configured
 database. It blocks on SQLite integrity errors, declared foreign-key violations,
 missing or policy-drifted native relationships, failed invariants,
+invalid native numeric storage or bounds, impossible counter relationships,
 reconciliation findings, duplicate emails, or exact known demo/test account
 markers. The report contains
 counts only and does not print case or user data. The same command is packaged
@@ -59,6 +60,9 @@ prefers the current TypeScript source and first restores the Node ABI for
 - [ ] `npm run db:readiness` passes; equivalently, `admin.invariants` and
       `admin.reconcileReport` are clean and SQLite checks pass.
 - [ ] A target-data backup is validated before migration or release.
+- [ ] Migration `0032` reports all 27 canonical numeric fields clean; any
+      malformed legacy-field report is reviewed and repaired on the prior
+      release before retrying the upgrade.
 - [ ] The emergency stop and `outreach.send.enabled` state are confirmed.
 - [ ] Google, storage, LLM, and outreach providers show their intended state.
 - [ ] Every provider intended to be enabled has target-account evidence. Missing

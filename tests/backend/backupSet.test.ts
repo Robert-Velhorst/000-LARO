@@ -58,7 +58,7 @@ suite('recovery-ready backup sets', () => {
       userId: 'BACKUP_SET_MARKER',
       fileName: 'source.txt',
       fileType: 'text/plain',
-      fileSize: String(Buffer.byteLength(originalEvidence)),
+      fileSize: Buffer.byteLength(originalEvidence),
       storageKey: managedKey,
     });
   });

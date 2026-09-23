@@ -770,7 +770,7 @@ async function pullFromGmail(
                 description: `From ${from} on ${date.toISOString()}`,
                 fileUrl: storedMessage.url,
                 fileName: `${msg.id}.eml`,
-                fileSize: String(messageBytes.length),
+                fileSize: messageBytes.length,
                 mimeType: 'message/rfc822',
                 metadata: JSON.stringify({
                   storageKey: storedMessage.key,
@@ -882,7 +882,7 @@ async function pullFromGmail(
                 description: `Attachment from email "${subject}"`,
                 fileUrl: storedAttachment.url,
                 fileName: safeName,
-                fileSize: String(buf.length),
+                fileSize: buf.length,
                 mimeType: att.mimeType,
                 metadata: JSON.stringify({
                   storageKey: storedAttachment.key,
@@ -1370,7 +1370,7 @@ async function pullFromLocalFolders(
               description: `Auto-collected from local folder ${path.basename(resolvedFolderPath) || "selected folder"}`,
               fileUrl: storedFile.url,
               fileName: file.name,
-              fileSize: String(storedFile.bytes),
+              fileSize: storedFile.bytes,
               mimeType,
               metadata: JSON.stringify({
                 storageKey: storedFile.key,
@@ -2282,9 +2282,9 @@ export async function runAutoCollection(caseId: string): Promise<{
   const db = await getDb();
   await db.update(autoCollectionSettings).set({
     lastRunAt: new Date(),
-    totalItemsCollected: String(result.gmailMessages + files),
-    totalEmailsCollected: String(result.gmailMessages),
-    totalFilesCollected: String(files),
+    totalItemsCollected: result.gmailMessages + files,
+    totalEmailsCollected: result.gmailMessages,
+    totalFilesCollected: files,
   }).where(eq(autoCollectionSettings.caseId, caseId));
   emitRealtimeDataChange(settings.userId, { scope: 'evidence', caseId });
   return {

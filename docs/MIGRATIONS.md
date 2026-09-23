@@ -34,6 +34,17 @@ Updated: 2026-09-23
   or an existing foreign key whose policy differs, removes obsolete
   `laro_ri_*` triggers, and commits only after every declaration is installed
   and `PRAGMA foreign_key_check` is clean.
+- Migration `0032_numeric_normalization.sql` establishes the numeric-storage
+  reconciliation marker. The compatibility runner first scans every selected
+  legacy value against the declared storage type and bounds. Any malformed
+  field stops the upgrade with only its table/column name and invalid-row count;
+  source values are never written to the error message.
+- After the verified backup and preflight succeed, the runner transactionally
+  rebuilds the ten affected tables, converts 27 fields to `INTEGER` or `REAL`,
+  restores indexes and non-legacy triggers, and installs storage-class and
+  range checks. It then verifies the declared types, values, foreign keys, and
+  reconciliation marker before committing. Units and bounds are documented in
+  `NUMERIC_STORAGE.md`.
 - Integrity indexes are ensured after schema and relationship validation.
 
 ## Rollback strategy — file snapshot
@@ -74,3 +85,7 @@ Restore stages and validates the replacement and preserves the previous database
 - Databases with reported relationship orphans must be backed up and repaired
   on the prior release with `admin.reconcileReport` plus an explicitly reviewed
   `admin.repairOrphans` operation before retrying migration `0031`.
+- Databases with a `0032` numeric preflight report must be repaired on the
+  prior release from a reviewed backup. Retry only after every reported field
+  contains null or a valid in-range number; the runner does not guess or discard
+  malformed values.

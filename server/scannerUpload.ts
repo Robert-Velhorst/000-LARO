@@ -126,7 +126,7 @@ async function existingUpload(
     storedMetadata.approvedContentHash !== metadata.approvedSha256 ||
     storedMetadata.contentHash !== metadata.approvedSha256 ||
     storedMetadata.scannerUploadFileName !== metadata.fileName ||
-    row.fileSize !== String(byteLength) ||
+    row.fileSize !== byteLength ||
     row.mimeType !== metadata.mimeType ||
     row.type !== metadata.evidenceType ||
     row.source !== metadata.source
@@ -173,7 +173,7 @@ export async function persistScannerUpload(
       type: metadata.evidenceType,
       source: metadata.source,
       fileName,
-      fileSize: String(bytes.length),
+      fileSize: bytes.length,
       mimeType: metadata.mimeType,
       fileUrl: stored.url,
       contentHash: stored.sha256,

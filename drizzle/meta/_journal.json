@@ -225,6 +225,13 @@
       "when": 1790387800000,
       "tag": "0031_native_relationships",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1790474200000,
+      "tag": "0032_numeric_normalization",
+      "breakpoints": true
     }
   ]
 }

@@ -111,6 +111,6 @@ suite("bounded and atomic bulk imports", () => {
 
     const [job] = await app.db.select().from(app.schema.bulkImportJobs)
       .where(eq(app.schema.bulkImportJobs.id, result.jobId));
-    expect(job).toMatchObject({ status: "completed", processedRows: "1", failedRows: "0" });
+    expect(job).toMatchObject({ status: "completed", processedRows: 1, failedRows: 0 });
   });
 });

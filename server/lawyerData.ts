@@ -89,19 +89,6 @@ export function parseLegacyStringArray(value: unknown): string[] {
   return uniqueItems(withoutBrackets.split(/[,;|\n]+/));
 }
 
-export function parseStoredNumber(
-  value: unknown,
-  options: { minimum?: number; maximum?: number; integer?: boolean } = {},
-): number | null {
-  if (value === null || value === undefined || value === "") return null;
-  const parsed = typeof value === "number" ? value : Number(String(value).trim());
-  if (!Number.isFinite(parsed)) return null;
-  const normalized = options.integer ? Math.trunc(parsed) : parsed;
-  if (options.minimum !== undefined && normalized < options.minimum) return null;
-  if (options.maximum !== undefined && normalized > options.maximum) return null;
-  return normalized;
-}
-
 function observedRate(numerator: number | null, denominator: number | null): CanonicalRate | null {
   if (numerator === null || denominator === null || denominator <= 0 || numerator > denominator) return null;
   return {
@@ -133,9 +120,9 @@ export function toLawyerComparisonDto(
   match: { matchScore: number; matchReasons: string[] } | null,
   matchScoreMax: number,
 ): LawyerComparisonDto {
-  const totalOutreaches = parseStoredNumber(row.totalOutreaches, { minimum: 0, integer: true });
-  const totalResponses = parseStoredNumber(row.totalResponses, { minimum: 0, integer: true });
-  const totalAcceptances = parseStoredNumber(row.totalAcceptances, { minimum: 0, integer: true });
+  const totalOutreaches = row.totalOutreaches;
+  const totalResponses = row.totalResponses;
+  const totalAcceptances = row.totalAcceptances;
   const matchScore = match && Number.isFinite(match.matchScore)
     ? Math.max(0, Math.min(matchScoreMax, match.matchScore))
     : null;
@@ -147,11 +134,11 @@ export function toLawyerComparisonDto(
     city: row.city?.trim() || null,
     legalAreas: parseLegacyStringArray(row.legalAreas),
     languages: parseLegacyStringArray(row.languages),
-    experienceYears: parseStoredNumber(row.experienceYears, { minimum: 0, maximum: 100, integer: true }),
+    experienceYears: row.experienceYears,
     ...availability(row),
-    caseLoad: parseStoredNumber(row.caseLoad, { minimum: 0, integer: true }),
-    capacityPercent: parseStoredNumber(row.capacityPercentage, { minimum: 0, maximum: 100 }),
-    averageResponseHours: parseStoredNumber(row.averageResponseTimeHours, { minimum: 0 }),
+    caseLoad: row.caseLoad,
+    capacityPercent: row.capacityPercentage,
+    averageResponseHours: row.averageResponseTimeHours,
     responseRate: observedRate(totalResponses, totalOutreaches),
     acceptanceRate: observedRate(totalAcceptances, totalResponses),
     officialProfileUrl: row.officialProfileUrl?.trim() || null,

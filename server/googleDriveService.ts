@@ -169,7 +169,7 @@ async function downloadAndUploadGoogleDriveFileAdmitted(
     fileName, 
     mimeType, 
     sourceMimeType,
-    size: stored.bytes.toString(),
+    size: stored.bytes,
     modifiedTime: modifiedTime ? new Date(modifiedTime) : new Date(),
     providerVersion,
     md5Checksum,

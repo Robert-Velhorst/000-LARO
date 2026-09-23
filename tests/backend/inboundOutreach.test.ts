@@ -58,7 +58,7 @@ suite("Inbound outreach reply correlation", () => {
     const [row] = await app.db.select().from(app.schema.outreachStatus).where(eq(app.schema.outreachStatus.id, "INBOUND_OUTREACH"));
     expect(row.status).toBe("Sent");
     expect(row.responseReceived).toBe("Yes");
-    expect(row.responseTimeHours).toBe("3.50");
+    expect(row.responseTimeHours).toBe(3.5);
     expect(JSON.parse(row.metadata || "{}")).toMatchObject({
       inboundGmailMessageIds: ["gmail-inbound-1"],
       responseNeedsClassification: true,

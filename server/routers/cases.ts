@@ -515,8 +515,8 @@ export const casesRouter = router({
       );
       const totalResponses = responded.length;
       const times = rows
-        .map((r) => parseFloat(r.responseTimeHours || ""))
-        .filter((n) => !Number.isNaN(n));
+        .map((row) => row.responseTimeHours)
+        .filter((value): value is number => value !== null);
       const avgHours = times.length > 0 ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : null;
 
       return {

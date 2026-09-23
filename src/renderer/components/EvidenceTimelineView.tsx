@@ -261,7 +261,7 @@ export default function EvidenceTimelineView({ caseId }: EvidenceTimelineViewPro
                             <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
                               <span>{format(new Date(item.createdAt ?? ""), "HH:mm")}</span>
                               {item.fileSize && (
-                                <span>{(parseInt(item.fileSize) / 1024 / 1024).toFixed(2)} MB</span>
+                                <span>{(item.fileSize / 1024 / 1024).toFixed(2)} MB</span>
                               )}
                               {tags.length > 0 && (
                                 <div className="flex gap-1">

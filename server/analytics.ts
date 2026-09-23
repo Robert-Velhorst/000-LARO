@@ -115,7 +115,9 @@ export async function lawyerPerformance(userId: string) {
     const sent = rows.filter((row) => SENT_OUTREACH_STATES.has(String(row.status)));
     const responses = sent.filter(hasResponse);
     const accepted = responses.filter((row) => row.status === "Interested").length;
-    const responseTimes = responses.map((row) => Number(row.responseTimeHours)).filter(Number.isFinite);
+    const responseTimes = responses
+      .map((row) => row.responseTimeHours)
+      .filter((value): value is number => value !== null);
     return {
       lawyerId,
       name: names.get(lawyerId) || "Unknown lawyer",
@@ -149,8 +151,8 @@ export async function lawyerCapacity(userId: string) {
   return rows.map((row) => ({
     lawyerId: row.lawyerId,
     name: row.name || "Unknown lawyer",
-    caseLoad: Number.isFinite(Number(row.caseLoad)) ? Number(row.caseLoad) : null,
-    capacityPercentage: Number.isFinite(Number(row.capacityPercentage)) ? Number(row.capacityPercentage) : null,
+    caseLoad: row.caseLoad,
+    capacityPercentage: row.capacityPercentage,
     currentlyAccepting: row.currentlyAccepting || "Unknown",
     updatedAt: row.updatedAt?.toISOString() ?? null,
   }));

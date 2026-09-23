@@ -43,14 +43,14 @@ suite("truthful product results through live routes", () => {
         lawyerId: "TRUTH_EMPLOYMENT_LAWYER",
         status: "Interested",
         response: "Available",
-        responseTimeHours: "12",
+        responseTimeHours: 12,
       },
       {
         id: "TRUTH_OUTREACH_CONTACTED",
         caseId: ownerCase.id,
         lawyerId: "TRUTH_FAMILY_LAWYER",
         status: "Contacted",
-        responseTimeHours: "36",
+        responseTimeHours: 36,
       },
     ]);
     await app.db.insert(app.schema.emailActivity).values({

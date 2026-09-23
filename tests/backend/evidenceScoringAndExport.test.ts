@@ -315,7 +315,7 @@ suite("evidence scoring and case export", () => {
       fileName: "large.bin",
       mimeType: "application/octet-stream",
       source: "manual",
-      fileSize: String(4 * 1024 * 1024),
+      fileSize: 4 * 1024 * 1024,
       metadata: JSON.stringify({ storageKey: stored.key, contentHash: stored.sha256 }),
     }));
     const { createCaseZipStream } = await import("../../server/evidenceExport");

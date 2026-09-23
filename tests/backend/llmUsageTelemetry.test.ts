@@ -60,7 +60,7 @@ suite("non-sensitive model usage telemetry", () => {
     const rejected = parsedRows.find((item) => item.metadata.outcome === "budget_rejected")!;
     expect(success.row).toMatchObject({
       resourceType: "ai_model_invocation",
-      quantity: "12",
+      quantity: 12,
       baseCost: null,
       billedCost: null,
       caseId: "TELEMETRY_CASE",

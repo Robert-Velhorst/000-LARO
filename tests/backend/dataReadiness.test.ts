@@ -70,10 +70,15 @@ suite("production data readiness", () => {
   it("fails closed on malformed operational counters without exposing values", async () => {
     const sqlite = (app.db as any).$client ?? (app.db as any).session?.client;
     try {
-      sqlite.prepare(`
-        INSERT INTO lawyers (id, name, totalOutreaches, totalResponses, totalAcceptances)
-        VALUES (?, ?, ?, ?, ?)
-      `).run("numeric-invalid-lawyer", "Numeric integrity test", "12x", "2", "1");
+      sqlite.pragma("ignore_check_constraints = ON");
+      try {
+        sqlite.prepare(`
+          INSERT INTO lawyers (id, name, totalOutreaches, totalResponses, totalAcceptances)
+          VALUES (?, ?, ?, ?, ?)
+        `).run("numeric-invalid-lawyer", "Numeric integrity test", "12x", 2, 1);
+      } finally {
+        sqlite.pragma("ignore_check_constraints = OFF");
+      }
 
       const report = await assessDataReadiness();
       const field = report.numericIntegrity.fields.find(
@@ -88,13 +93,13 @@ suite("production data readiness", () => {
     }
   });
 
-  it("accepts numeric strings but rejects impossible counter relationships", async () => {
+  it("accepts valid numeric storage but rejects impossible counter relationships", async () => {
     const sqlite = (app.db as any).$client ?? (app.db as any).session?.client;
     try {
       sqlite.prepare(`
         INSERT INTO lawyers (id, name, totalOutreaches, totalResponses, totalAcceptances)
         VALUES (?, ?, ?, ?, ?)
-      `).run("numeric-inconsistent-lawyer", "Numeric consistency test", " 1 ", "2", "0");
+      `).run("numeric-inconsistent-lawyer", "Numeric consistency test", 1, 2, 0);
 
       const report = await assessDataReadiness();
       const responseConstraint = report.numericIntegrity.constraints.find(

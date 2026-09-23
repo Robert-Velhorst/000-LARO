@@ -469,7 +469,7 @@ export async function recordOutreachResponse(
   const respondedAt = new Date();
   const sentAt = row.lastContact ?? row.initialContact ?? row.updatedAt ?? row.createdAt;
   const responseTimeHours = sentAt
-    ? Math.max(0, (respondedAt.getTime() - sentAt.getTime()) / 3_600_000).toFixed(2)
+    ? Math.max(0, (respondedAt.getTime() - sentAt.getTime()) / 3_600_000)
     : null;
 
   const [caseSnapshot] = response === "Interested"

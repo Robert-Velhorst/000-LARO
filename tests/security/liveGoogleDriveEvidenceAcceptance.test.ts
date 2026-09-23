@@ -86,7 +86,7 @@ suite("live Google Drive evidence acceptance", () => {
           description: "Controlled Drive acceptance source",
           fileUrl: stored.url,
           fileName: "representative.txt",
-          fileSize: String(body.length),
+          fileSize: body.length,
           mimeType: "text/plain",
           metadata: JSON.stringify({
             storageKey: stored.key,
@@ -109,9 +109,9 @@ suite("live Google Drive evidence acceptance", () => {
           caseId: params.caseId,
           userId,
           status: "completed",
-          filesFound: "1",
-          filesDownloaded: "1",
-          errorCount: "0",
+          filesFound: 1,
+          filesDownloaded: 1,
+          errorCount: 0,
           createdAt: new Date(),
         });
         await analyzeStoredEvidence({ userId, evidenceId, deepAnalysis: false, force: true });

@@ -100,9 +100,9 @@ export const bulkImportRouter = router({
             userId: ctx.user.id,
             filename: normalized.filename,
             status: "completed",
-            totalRows: String(normalized.rows.length),
-            processedRows: String(normalized.rows.length),
-            failedRows: "0",
+            totalRows: normalized.rows.length,
+            processedRows: normalized.rows.length,
+            failedRows: 0,
             completedAt: now,
             metadata: JSON.stringify({
               aggregation: {

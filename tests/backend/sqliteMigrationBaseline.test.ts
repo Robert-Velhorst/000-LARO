@@ -248,7 +248,7 @@ describe("non-destructive SQLite migration baseline", () => {
     `);
 
     const result = await migrateFixture(legacy);
-    expect(result.migrationsApplied).toBe(1);
+    expect(result.migrationsApplied).toBe(2);
     expect(result.backupPath).toBeTruthy();
     expect(result.relationshipTablesRebuilt).toBeGreaterThan(30);
     expect(legacy.sqlite.prepare(
@@ -307,6 +307,144 @@ describe("non-destructive SQLite migration baseline", () => {
     legacy.sqlite.prepare("DELETE FROM document_inbox WHERE id = ?").run("relationship-inbox");
     legacy.sqlite.prepare("DELETE FROM users WHERE id = ?").run("relationship-user");
     expect(legacy.sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    legacy.sqlite.close();
+  });
+
+  it("normalizes valid legacy numeric text without losing fractions, counts, or artifacts", async () => {
+    const legacy = temporaryDatabase("numeric-normalization");
+    applyLegacySnapshot(legacy.sqlite, 31);
+    legacy.sqlite.exec(`
+      INSERT INTO users (id, email, role)
+      VALUES ('numeric-user', 'numeric@example.test', 'user');
+      INSERT INTO cases (id, userId)
+      VALUES ('numeric-case', 'numeric-user');
+      INSERT INTO lawyers (
+        id, name, totalOutreaches, totalResponses, totalAcceptances,
+        averageResponseTimeHours, caseLoad, experienceYears,
+        capacityPercentage, directoryDistanceKm
+      ) VALUES (
+        'numeric-lawyer-a', 'Numeric Lawyer A', '9', '4', '2',
+        '3.50', '7', '12', '62.5', '4.25'
+      ), (
+        'numeric-lawyer-b', 'Numeric Lawyer B', '11', '5', '3',
+        '1.25', '8e0', '8', '50', '7.75'
+      );
+      INSERT INTO evidence (id, caseId, userId, type, title, fileSize)
+      VALUES ('numeric-evidence', 'numeric-case', 'numeric-user', 'document', 'Numeric evidence', '4096');
+      INSERT INTO outreach_status (
+        id, caseId, lawyerId, status, responseTimeHours, lawyerCapacityPercentage
+      ) VALUES (
+        'numeric-outreach', 'numeric-case', 'numeric-lawyer-a', 'Interested', '1.75', '62.5'
+      );
+      INSERT INTO usage_tracking (id, userId, resourceType, quantity)
+      VALUES ('numeric-usage', 'numeric-user', 'analysis', '+6e0');
+      CREATE INDEX numeric_fixture_lawyer_response_idx ON lawyers(averageResponseTimeHours);
+    `);
+    expect(legacy.sqlite.prepare(`
+      SELECT typeof(totalOutreaches) AS countType,
+             typeof(averageResponseTimeHours) AS durationType
+      FROM lawyers WHERE id = 'numeric-lawyer-a'
+    `).get()).toEqual({ countType: "text", durationType: "text" });
+
+    const result = await migrateFixture(legacy);
+    expect(result).toMatchObject({
+      migrationsApplied: 1,
+      normalizedNumericColumns: 27,
+      numericTablesRebuilt: 10,
+    });
+    expect(result.backupPath).toBeTruthy();
+    expect(legacy.sqlite.prepare(`
+      SELECT totalOutreaches, averageResponseTimeHours, capacityPercentage,
+             directoryDistanceKm, typeof(totalOutreaches) AS countType,
+             typeof(averageResponseTimeHours) AS durationType
+      FROM lawyers WHERE id = 'numeric-lawyer-a'
+    `).get()).toEqual({
+      totalOutreaches: 9,
+      averageResponseTimeHours: 3.5,
+      capacityPercentage: 62.5,
+      directoryDistanceKm: 4.25,
+      countType: "integer",
+      durationType: "real",
+    });
+    expect(legacy.sqlite.prepare(
+      "SELECT sum(totalOutreaches) AS outreaches, sum(totalResponses) AS responses FROM lawyers",
+    ).get()).toEqual({ outreaches: 20, responses: 9 });
+    expect(legacy.sqlite.prepare(`
+      SELECT fileSize, typeof(fileSize) AS storage FROM evidence WHERE id = 'numeric-evidence'
+    `).get()).toEqual({ fileSize: 4096, storage: "integer" });
+    expect(legacy.sqlite.prepare(`
+      SELECT responseTimeHours, lawyerCapacityPercentage,
+             typeof(responseTimeHours) AS durationType
+      FROM outreach_status WHERE id = 'numeric-outreach'
+    `).get()).toEqual({ responseTimeHours: 1.75, lawyerCapacityPercentage: 62.5, durationType: "real" });
+    expect(legacy.sqlite.prepare(
+      "SELECT quantity, typeof(quantity) AS storage FROM usage_tracking WHERE id = 'numeric-usage'",
+    ).get()).toEqual({ quantity: 6, storage: "integer" });
+    expect(legacy.sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'numeric_fixture_lawyer_response_idx'",
+    ).get()).toEqual({ name: "numeric_fixture_lawyer_response_idx" });
+    expect(legacy.sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(() => legacy.sqlite.prepare(
+      "UPDATE lawyers SET totalOutreaches = -1 WHERE id = 'numeric-lawyer-a'",
+    ).run()).toThrow(/CHECK constraint failed/i);
+    expect(() => legacy.sqlite.prepare(
+      "UPDATE lawyers SET capacityPercentage = 101 WHERE id = 'numeric-lawyer-a'",
+    ).run()).toThrow(/CHECK constraint failed/i);
+
+    const backup = new Database(result.backupPath!, { readonly: true, fileMustExist: true });
+    expect(backup.prepare(`
+      SELECT totalOutreaches, averageResponseTimeHours,
+             typeof(totalOutreaches) AS countType,
+             typeof(averageResponseTimeHours) AS durationType
+      FROM lawyers WHERE id = 'numeric-lawyer-a'
+    `).get()).toEqual({
+      totalOutreaches: "9",
+      averageResponseTimeHours: "3.50",
+      countType: "text",
+      durationType: "text",
+    });
+    expect(backup.pragma("quick_check")).toEqual([{ quick_check: "ok" }]);
+    backup.close();
+
+    const secondBoot = await migrateFixture(legacy);
+    expect(secondBoot).toMatchObject({
+      backupPath: null,
+      migrationsApplied: 0,
+      normalizedNumericColumns: 27,
+      numericTablesRebuilt: 0,
+      schemaSignature: result.schemaSignature,
+    });
+    legacy.sqlite.close();
+  });
+
+  it("reports malformed legacy numeric fields before mutating the database", async () => {
+    const legacy = temporaryDatabase("numeric-invalid");
+    applyLegacySnapshot(legacy.sqlite, 31);
+    legacy.sqlite.exec(`
+      INSERT INTO users (id, email, role)
+      VALUES ('numeric-invalid-user', 'numeric-invalid@example.test', 'user');
+      INSERT INTO lawyers (id, name, totalOutreaches)
+      VALUES ('numeric-invalid-lawyer', 'Invalid Numeric Lawyer', '12x');
+    `);
+
+    let error: unknown;
+    try {
+      await migrateFixture(legacy);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(
+      /reviewed legacy-value repair before upgrade: lawyers\.totalOutreaches \(1\)/,
+    );
+    expect((error as Error).message).not.toContain("12x");
+    expect(legacy.sqlite.prepare(
+      "SELECT totalOutreaches, typeof(totalOutreaches) AS storage FROM lawyers WHERE id = 'numeric-invalid-lawyer'",
+    ).get()).toEqual({ totalOutreaches: "12x", storage: "text" });
+    expect(legacy.sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'laro_numeric_baseline'",
+    ).get()).toBeUndefined();
+    expect(readdirSync(join(legacy.directory, "db-backups"))).toHaveLength(1);
     legacy.sqlite.close();
   });
 });

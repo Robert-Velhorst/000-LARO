@@ -1,7 +1,7 @@
 // matching.ts
 import { getAllLawyers, getCaseById } from "./db";
 import { syncNovaLawyersForCase, type NovaDirectoryReport } from "./novaDirectory";
-import { parseLegacyStringArray, parseStoredNumber } from "./lawyerData";
+import { parseLegacyStringArray } from "./lawyerData";
 import { MATCH_SCORE_MAX } from "../shared/lawyerMatching";
 
 import * as fs from "fs";
@@ -186,7 +186,7 @@ export interface MatchedLawyer {
   website: string | null;
   languages: string[];
   legalAreas: string[];
-  experienceYears: string | null;
+  experienceYears: number | null;
   distance: number;
   distanceKnown: boolean;
   matchScore: number;
@@ -445,9 +445,9 @@ export async function findMatchingLawyers(
       lawyer.directorySearchLocation &&
       lawyer.directorySearchLocation.toLowerCase() === effectiveLocation.toLowerCase() &&
       lawyer.directoryDistanceKm !== null &&
-      Number.isFinite(Number(lawyer.directoryDistanceKm))
+      Number.isFinite(lawyer.directoryDistanceKm)
     ) {
-      distance = Number(lawyer.directoryDistanceKm);
+      distance = lawyer.directoryDistanceKm;
       distanceKnown = true;
       if (distance > maxDistance) continue;
     }
@@ -463,7 +463,7 @@ export async function findMatchingLawyers(
 
     // PRIMARY METRIC 1: Case-load (0-50 points)
     let caseLoadScore = 0;
-    const caseLoad = parseStoredNumber(lawyer.caseLoad, { minimum: 0, integer: true });
+    const caseLoad = lawyer.caseLoad;
     
     if (caseLoad === null) {
       matchReasons.push("Case-load not available");
@@ -484,7 +484,7 @@ export async function findMatchingLawyers(
 
     // PRIMARY METRIC 2: Response Time (0-50 points)
     let responseTimeScore = 0;
-    const avgResponseTime = parseStoredNumber(lawyer.averageResponseTimeHours, { minimum: 0 });
+    const avgResponseTime = lawyer.averageResponseTimeHours;
 
     if (avgResponseTime === null) {
       matchReasons.push("Response history not available");
@@ -505,9 +505,9 @@ export async function findMatchingLawyers(
 
     // PRIMARY METRIC 2: Acceptance Rate (0-50 points)
     let acceptanceRateScore = 0;
-    const totalOutreaches = parseStoredNumber(lawyer.totalOutreaches, { minimum: 0, integer: true });
-    const totalResponses = parseStoredNumber(lawyer.totalResponses, { minimum: 0, integer: true });
-    const totalAcceptances = parseStoredNumber(lawyer.totalAcceptances, { minimum: 0, integer: true });
+    const totalOutreaches = lawyer.totalOutreaches;
+    const totalResponses = lawyer.totalResponses;
+    const totalAcceptances = lawyer.totalAcceptances;
 
     if (totalResponses !== null && totalResponses > 0 && totalAcceptances !== null && totalAcceptances <= totalResponses) {
       const acceptanceRate = (totalAcceptances / totalResponses) * 100;
@@ -542,7 +542,7 @@ export async function findMatchingLawyers(
 
     // TERTIARY METRIC: Capacity Percentage (0-20 points)
     let capacityScore = 0;
-    const capacityFilled = parseStoredNumber(lawyer.capacityPercentage, { minimum: 0, maximum: 100 });
+    const capacityFilled = lawyer.capacityPercentage;
     if (capacityFilled === null) {
       matchReasons.push("Capacity not available");
     } else if (capacityFilled <= 25) {
@@ -579,7 +579,7 @@ export async function findMatchingLawyers(
 
     // LOW WEIGHT: Experience (0-10 points)
     let experienceScore = 0;
-    const experience = parseStoredNumber(lawyer.experienceYears, { minimum: 0, maximum: 100, integer: true }) ?? 0;
+    const experience = lawyer.experienceYears ?? 0;
     if (experience >= 10) {
       experienceScore = 10;
       matchReasons.push(`Highly experienced (${experience}+ years)`);
@@ -641,8 +641,8 @@ export async function findMatchingLawyers(
       case "distance":
         return a.distance - b.distance; // Closest first
       case "experience":
-        const expA = a.experienceYears ? parseInt(a.experienceYears) : 0;
-        const expB = b.experienceYears ? parseInt(b.experienceYears) : 0;
+        const expA = a.experienceYears ?? 0;
+        const expB = b.experienceYears ?? 0;
         return expB - expA; // Most experienced first
       case "score":
       default:

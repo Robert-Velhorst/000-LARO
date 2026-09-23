@@ -190,7 +190,7 @@ async function organizeInboxDocumentUnlocked(userId: string, id: string, explici
     }
     const evidenceId = randomUUID();
     tx.insert(evidence).values({ id: evidenceId, userId, caseId, title: row.fileName, fileName: row.fileName,
-      type: evidenceTypeForMime(row.mimeType), source: row.sourceType, mimeType: row.mimeType, fileSize: String(row.fileSize),
+      type: evidenceTypeForMime(row.mimeType), source: row.sourceType, mimeType: row.mimeType, fileSize: row.fileSize,
       description: analysis?.summary || null, metadata: JSON.stringify({ ...(row.provenance ? JSON.parse(row.provenance) : {}), storageKey: row.storageKey, contentHash: row.contentHash,
         inboxId: id, sourcePath: row.sourcePath, organizationMethod: method }),
       createdAt: now, updatedAt: now }).run();

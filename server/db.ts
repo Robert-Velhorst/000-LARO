@@ -716,8 +716,8 @@ export async function calculateResponseRate(lawyerId: string): Promise<number> {
   const lawyer = await db.select().from(lawyers).where(eq(lawyers.id, lawyerId)).limit(1);
   if (!lawyer.length) return 0;
   
-  const totalOutreaches = parseInt(lawyer[0].totalOutreaches || "0");
-  const totalResponses = parseInt(lawyer[0].totalResponses || "0");
+  const totalOutreaches = lawyer[0].totalOutreaches ?? 0;
+  const totalResponses = lawyer[0].totalResponses ?? 0;
   
   if (totalOutreaches === 0) return -1; // -1 indicates new lawyer (no history)
   
@@ -743,9 +743,8 @@ export async function calculateAverageResponseTime(lawyerId: string): Promise<nu
   
   if (outreaches.length === 0) return null;
   
-  const totalHours = outreaches.reduce((sum, o) => {
-    return sum + parseInt(o.responseTimeHours || "0");
-  }, 0);
+  const totalHours = outreaches.reduce((sum, outreach) =>
+    sum + (outreach.responseTimeHours ?? 0), 0);
   
   return totalHours / outreaches.length;
 }
@@ -761,8 +760,8 @@ export async function calculateAcceptanceRate(lawyerId: string): Promise<number>
   const lawyer = await db.select().from(lawyers).where(eq(lawyers.id, lawyerId)).limit(1);
   if (!lawyer.length) return 0;
   
-  const totalResponses = parseInt(lawyer[0].totalResponses || "0");
-  const totalAcceptances = parseInt(lawyer[0].totalAcceptances || "0");
+  const totalResponses = lawyer[0].totalResponses ?? 0;
+  const totalAcceptances = lawyer[0].totalAcceptances ?? 0;
   
   if (totalResponses === 0) return 0;
   
@@ -798,10 +797,10 @@ export async function updateLawyerStatistics(lawyerId: string): Promise<void> {
   // Update lawyer record
   await db.update(lawyers)
     .set({
-      totalOutreaches: totalOutreaches.length.toString(),
-      totalResponses: responses.length.toString(),
-      totalAcceptances: acceptances.length.toString(),
-      averageResponseTimeHours: avgResponseTime?.toString() || null,
+      totalOutreaches: totalOutreaches.length,
+      totalResponses: responses.length,
+      totalAcceptances: acceptances.length,
+      averageResponseTimeHours: avgResponseTime,
       updatedAt: new Date(),
     })
     .where(eq(lawyers.id, lawyerId));
@@ -818,8 +817,8 @@ export async function checkPermanentFilter(lawyerId: string): Promise<boolean> {
   const lawyer = await db.select().from(lawyers).where(eq(lawyers.id, lawyerId)).limit(1);
   if (!lawyer.length) return false;
   
-  const totalOutreaches = parseInt(lawyer[0].totalOutreaches || "0");
-  const totalResponses = parseInt(lawyer[0].totalResponses || "0");
+  const totalOutreaches = lawyer[0].totalOutreaches ?? 0;
+  const totalResponses = lawyer[0].totalResponses ?? 0;
   
   // If 3+ contacts with 0 responses, permanently filter
   if (totalOutreaches >= 3 && totalResponses === 0) {
@@ -849,7 +848,7 @@ export function calculateNewMatchScore(lawyer: any, distanceKm: number): number 
   let score = 0;
   
   // 1. Case-load Score (50 points max)
-  const caseLoad = parseInt(lawyer.caseLoad || "999");
+  const caseLoad = typeof lawyer.caseLoad === "number" ? lawyer.caseLoad : 999;
   if (caseLoad <= 10) score += 50;
   else if (caseLoad <= 20) score += 30;
   else if (caseLoad <= 30) score += 10;
@@ -866,7 +865,9 @@ export function calculateNewMatchScore(lawyer: any, distanceKm: number): number 
   // else 0 points
   
   // 3. Average Response Time Score (30 points max)
-  const avgResponseTime = parseFloat(lawyer.averageResponseTimeHours || "999");
+  const avgResponseTime = typeof lawyer.averageResponseTimeHours === "number"
+    ? lawyer.averageResponseTimeHours
+    : 999;
   if (avgResponseTime <= 48) score += 30;
   else if (avgResponseTime <= 168) score += 20; // 7 days
   else if (avgResponseTime <= 336) score += 10; // 14 days
@@ -886,7 +887,7 @@ export function calculateNewMatchScore(lawyer: any, distanceKm: number): number 
   // else 0 points
   
   // 6. Years Practicing Score (10 points max)
-  const yearsExp = parseInt(lawyer.experienceYears || "0");
+  const yearsExp = typeof lawyer.experienceYears === "number" ? lawyer.experienceYears : 0;
   if (yearsExp >= 10) score += 10;
   else if (yearsExp >= 5) score += 5;
   else if (yearsExp >= 2) score += 2;
@@ -899,8 +900,8 @@ export function calculateNewMatchScore(lawyer: any, distanceKm: number): number 
  * Synchronous helper to calculate response rate from lawyer object
  */
 function calculateResponseRateSync(lawyer: any): number {
-  const totalOutreaches = parseInt(lawyer.totalOutreaches || "0");
-  const totalResponses = parseInt(lawyer.totalResponses || "0");
+  const totalOutreaches = typeof lawyer.totalOutreaches === "number" ? lawyer.totalOutreaches : 0;
+  const totalResponses = typeof lawyer.totalResponses === "number" ? lawyer.totalResponses : 0;
   
   if (totalOutreaches === 0) return -1; // New lawyer
   
@@ -911,8 +912,8 @@ function calculateResponseRateSync(lawyer: any): number {
  * Synchronous helper to calculate acceptance rate from lawyer object
  */
 function calculateAcceptanceRateSync(lawyer: any): number {
-  const totalResponses = parseInt(lawyer.totalResponses || "0");
-  const totalAcceptances = parseInt(lawyer.totalAcceptances || "0");
+  const totalResponses = typeof lawyer.totalResponses === "number" ? lawyer.totalResponses : 0;
+  const totalAcceptances = typeof lawyer.totalAcceptances === "number" ? lawyer.totalAcceptances : 0;
   
   if (totalResponses === 0) return 0;
   

@@ -101,7 +101,7 @@ export async function linkInboundOutreachReply(options: {
 
   const firstContact = outreach.initialContact ?? outreach.lastContact ?? outreach.createdAt;
   const responseTimeHours = firstContact
-    ? Math.max(0, (options.message.receivedAt.getTime() - firstContact.getTime()) / 3_600_000).toFixed(2)
+    ? Math.max(0, (options.message.receivedAt.getTime() - firstContact.getTime()) / 3_600_000)
     : null;
   db.transaction((tx: any) => {
     const mutation = tx.update(outreachStatus).set({

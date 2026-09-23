@@ -55,7 +55,7 @@ export async function trackUsage(params: {
       id: usageId,
       userId: params.userId,
       resourceType: params.resourceType,
-      quantity: String(quantity),
+      quantity,
       baseCost: null,
       billedCost: null,
       metadata: params.metadata ? JSON.stringify(params.metadata) : null,
@@ -101,7 +101,7 @@ export async function getUserUsage(
   let total = 0;
   const byResourceType: Record<string, { quantity: number }> = {};
   for (const record of records) {
-    const quantity = Number.parseInt(record.quantity || '0', 10) || 0;
+    const quantity = record.quantity ?? 0;
     total += quantity;
     if (!record.resourceType) continue;
     byResourceType[record.resourceType] ??= { quantity: 0 };

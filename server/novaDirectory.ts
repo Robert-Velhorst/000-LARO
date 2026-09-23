@@ -368,13 +368,13 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item
   return results;
 }
 
-function yearsFromAdmissionDate(value: string | null): string | null {
+function yearsFromAdmissionDate(value: string | null): number | null {
   const match = value?.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
   if (!match) return null;
   const admitted = new Date(Date.UTC(Number(match[3]), Number(match[2]) - 1, Number(match[1])));
   if (Number.isNaN(admitted.getTime()) || admitted > new Date()) return null;
   const years = Math.floor((Date.now() - admitted.getTime()) / (365.2425 * 24 * 60 * 60 * 1000));
-  return String(Math.max(0, years));
+  return Math.max(0, years);
 }
 
 export async function searchNovaDirectory(criteria: NovaSearchCriteria): Promise<{ candidates: NovaLawyerCandidate[]; report: NovaDirectoryReport }> {
@@ -537,7 +537,7 @@ export async function persistNovaCandidates(candidates: NovaLawyerCandidate[]): 
       officialProfileUrl: candidate.profileUrl,
       directorySource: NOVA_SOURCE_NAME,
       directoryRetrievedAt: new Date(candidate.retrievedAt),
-      directoryDistanceKm: candidate.distanceKm === null ? null : String(candidate.distanceKm),
+      directoryDistanceKm: candidate.distanceKm,
       directorySearchLocation: candidate.searchLocation,
       updatedAt: new Date(),
     };

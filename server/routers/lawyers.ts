@@ -12,14 +12,10 @@ const experienceFilter = z.enum(["0-5", "6-10", "11-20", "20+"]);
 const acceptingFilter = z.enum(["Yes", "Limited", "No", "Unknown"]);
 
 function experienceCondition(filter: z.infer<typeof experienceFilter>) {
-  const numericYears = sql`CAST(TRIM(${lawyersTable.experienceYears}) AS INTEGER)`;
-  const isNumeric = sql`TRIM(COALESCE(${lawyersTable.experienceYears}, '')) <> ''
-    AND TRIM(${lawyersTable.experienceYears}) NOT GLOB '*[^0-9]*'`;
-
-  if (filter === "0-5") return sql`(${isNumeric}) AND ${numericYears} BETWEEN 0 AND 5`;
-  if (filter === "6-10") return sql`(${isNumeric}) AND ${numericYears} BETWEEN 6 AND 10`;
-  if (filter === "11-20") return sql`(${isNumeric}) AND ${numericYears} BETWEEN 11 AND 20`;
-  return sql`(${isNumeric}) AND ${numericYears} > 20`;
+  if (filter === "0-5") return sql`${lawyersTable.experienceYears} BETWEEN 0 AND 5`;
+  if (filter === "6-10") return sql`${lawyersTable.experienceYears} BETWEEN 6 AND 10`;
+  if (filter === "11-20") return sql`${lawyersTable.experienceYears} BETWEEN 11 AND 20`;
+  return sql`${lawyersTable.experienceYears} > 20`;
 }
 
 const officialProfileCondition = sql`TRIM(COALESCE(${lawyersTable.officialProfileUrl}, '')) <> ''`;
