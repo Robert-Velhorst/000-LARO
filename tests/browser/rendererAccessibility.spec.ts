@@ -3180,3 +3180,78 @@ test("typed notifications render safe actions and suppress unavailable destinati
   expect(pageErrors).toEqual([]);
   expect(requestFailures).toEqual([]);
 });
+
+test("folder-first collection is visibly saved but not scheduled until keywords exist", async ({ page }, testInfo) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badApiResponses: string[] = [];
+  page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("requestfailed", (request) => {
+    const failure = request.failure()?.errorText ?? "unknown failure";
+    if (!failure.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
+  });
+  page.on("response", (response) => {
+    if (response.url().includes("/api/trpc/") && response.status() >= 400) {
+      badApiResponses.push(`${response.status()} ${response.url()}`);
+    }
+  });
+
+  const email = await createAccount(page);
+  const caseId = `A11Y_FOLDER_SCHEDULE_${randomUUID()}`;
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const owner = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    const now = Math.floor(Date.now() / 1000);
+    database.prepare(
+      `INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, createdAt, updatedAt)
+       VALUES (?, ?, 'Folder-first browser case', 'Contract', 'Saved source schedule fixture', 'Medium', 'Intake', ?, ?)`,
+    ).run(caseId, owner.id, now, now);
+    database.prepare(
+      `INSERT INTO auto_collection_settings
+       (id, caseId, userId, keywords, keywordMatchMode, emailAccountIds, autoDownloadAttachments,
+        autoDownloadGoogleDriveFiles, isEnabled, status, metadata, updatedAt)
+       VALUES (?, ?, ?, '[]', 'any', '[]', 1, 1, 0, 'configured', ?, ?)`,
+    ).run(
+      `A11Y_FOLDER_SETTINGS_${randomUUID()}`,
+      caseId,
+      owner.id,
+      JSON.stringify({ localFolderPaths: ["/approved/browser-folder"] }),
+      now,
+    );
+  } finally {
+    database.close();
+  }
+
+  const response = await page.goto(`/cases?case=${caseId}`, { waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("heading", { name: "Folder-first browser case", exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Documents", exact: true }).click();
+  const status = dialog.getByTestId("local-folder-schedule-status");
+  await expect(status).toContainText("Saved source only");
+  await expect(status).toContainText("add keywords in Auto-Collection Settings");
+  await page.screenshot({ path: testInfo.outputPath("folder-source-not-scheduled.png"), fullPage: false });
+
+  const updateDatabase = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    updateDatabase.prepare(
+      "UPDATE auto_collection_settings SET keywords = ?, isEnabled = 1, status = 'active' WHERE caseId = ?",
+    ).run(JSON.stringify(["contract"]), caseId);
+  } finally {
+    updateDatabase.close();
+  }
+
+  const reloadResponse = await page.reload({ waitUntil: "networkidle" });
+  expect(reloadResponse?.status()).toBe(200);
+  const reloadedDialog = page.getByRole("dialog");
+  await reloadedDialog.getByRole("button", { name: "Documents", exact: true }).click();
+  await expect(reloadedDialog.getByTestId("local-folder-schedule-status"))
+    .toContainText("Scheduled collection is active");
+
+  expect(badApiResponses).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+});

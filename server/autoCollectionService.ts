@@ -1,6 +1,6 @@
 import { getDb } from './db';
 import { eq, and, desc } from 'drizzle-orm';
-import { notifyOwner } from './notification';
+import { createNotification } from './notifications';
 import {
   autoCollectionSettings,
   keywordPullJobs,
@@ -61,6 +61,52 @@ interface AutoCollectionConfig {
   googleDriveFolderIds?: string[];
   autoDownloadAttachments: boolean;
   autoDownloadGoogleDriveFiles: boolean;
+}
+
+type AutoCollectionSettingsRecord = {
+  caseId?: string | null;
+  userId?: string | null;
+  keywords?: string | null;
+  isEnabled?: boolean | number | null;
+  status?: string | null;
+};
+
+type AutoCollectionRunResult = {
+  emailsFound: number;
+  emailsProcessed: number;
+  filesFound: number;
+  filesDownloaded: number;
+  errors: string[];
+};
+
+type AutoCollectionSchedulerDependencies = {
+  runCase?: (caseId: string) => Promise<AutoCollectionRunResult>;
+  writeNotification?: typeof createNotification;
+  now?: Date;
+};
+
+export function configuredAutoCollectionKeywords(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return [...new Set(parsed
+      .filter((keyword): keyword is string => typeof keyword === 'string')
+      .map((keyword) => keyword.trim())
+      .filter(Boolean))];
+  } catch {
+    return [];
+  }
+}
+
+export function isRunnableAutoCollectionSetting(settings: AutoCollectionSettingsRecord): boolean {
+  return Boolean(
+    settings.caseId
+    && settings.userId
+    && settings.isEnabled
+    && settings.status === 'active'
+    && configuredAutoCollectionKeywords(settings.keywords).length > 0,
+  );
 }
 
 async function analyzeImportedEvidence(
@@ -131,10 +177,12 @@ export async function upsertAutoCollectionSettings(config: AutoCollectionConfig)
     delete metadata.googleDriveSources;
   }
 
+  const keywords = [...new Set(config.keywords.map((keyword) => keyword.trim()).filter(Boolean))];
+  const scheduleActive = keywords.length > 0;
   const settingsData = {
     caseId: config.caseId,
     userId: config.userId,
-    keywords: JSON.stringify(config.keywords),
+    keywords: JSON.stringify(keywords),
     keywordMatchMode: config.keywordMatchMode,
     dateRangeStart: config.dateRangeStart,
     dateRangeEnd: config.dateRangeEnd,
@@ -143,6 +191,8 @@ export async function upsertAutoCollectionSettings(config: AutoCollectionConfig)
     googleDriveFolderIds: config.googleDriveSources !== undefined ? null : config.googleDriveFolderIds ? JSON.stringify(config.googleDriveFolderIds) : null,
     autoDownloadAttachments: config.autoDownloadAttachments,
     autoDownloadGoogleDriveFiles: config.autoDownloadGoogleDriveFiles,
+    isEnabled: scheduleActive,
+    status: scheduleActive ? 'active' : 'configured',
   };
 
   if (existing) {
@@ -154,8 +204,6 @@ export async function upsertAutoCollectionSettings(config: AutoCollectionConfig)
     await db.insert(autoCollectionSettings).values({
       id: uuidv4(),
       ...settingsData,
-      isEnabled: true,
-      status: 'active',
     });
   }
 }
@@ -196,7 +244,9 @@ function determineEvidenceType(mimeType?: string): string {
  * Run auto-collection for all cases with enabled settings
  * Called by cron scheduler daily at 2:00 AM
  */
-export async function runAutoCollectionForAllCases(): Promise<{
+export async function runAutoCollectionForAllCases(
+  dependencies: AutoCollectionSchedulerDependencies = {},
+): Promise<{
   casesProcessed: number;
   emailsCollected: number;
   filesCollected: number;
@@ -218,62 +268,112 @@ export async function runAutoCollectionForAllCases(): Promise<{
       )
     );
 
-  console.log(`[AutoCollection] Found ${enabledSettings.length} cases with enabled auto-collection`);
+  const runnableSettings = enabledSettings.filter(isRunnableAutoCollectionSetting);
+  const inactiveSources = enabledSettings.length - runnableSettings.length;
+  console.log(`[AutoCollection] Found ${runnableSettings.length} runnable scheduled collection(s)`);
+  if (inactiveSources > 0) {
+    console.log(`[AutoCollection] Skipped ${inactiveSources} saved source configuration(s) without an active keyword schedule`);
+  }
 
   let casesProcessed = 0;
   let totalEmailsCollected = 0;
   let totalFilesCollected = 0;
   const errors: string[] = [];
+  const reports = new Map<string, {
+    userId: string;
+    casesProcessed: number;
+    emailsCollected: number;
+    filesCollected: number;
+    errors: string[];
+  }>();
+  const runCase = dependencies.runCase ?? runAutoCollection;
+  const writeNotification = dependencies.writeNotification ?? createNotification;
+  const now = dependencies.now ?? new Date();
 
-  for (const settings of enabledSettings) {
-    if (!settings.caseId) {
-      errors.push(`Auto-collection setting ${settings.id} has no case and was skipped`);
-      continue;
-    }
+  for (const settings of runnableSettings) {
+    const caseId = settings.caseId!;
+    const userId = settings.userId!;
+    const report = reports.get(userId) ?? {
+      userId,
+      casesProcessed: 0,
+      emailsCollected: 0,
+      filesCollected: 0,
+      errors: [],
+    };
+    reports.set(userId, report);
     try {
-      console.log(`[AutoCollection] Processing case ${settings.caseId}...`);
-      const result = await runAutoCollection(settings.caseId);
+      console.log(`[AutoCollection] Processing case ${caseId}...`);
+      const result = await runCase(caseId);
       casesProcessed++;
+      report.casesProcessed++;
       totalEmailsCollected += result.emailsProcessed;
       totalFilesCollected += result.filesDownloaded;
+      report.emailsCollected += result.emailsProcessed;
+      report.filesCollected += result.filesDownloaded;
       
       if (result.errors.length > 0) {
-        errors.push(...result.errors.map(e => `Case ${settings.caseId}: ${e}`));
+        const caseErrors = result.errors.map((error) => `Case ${caseId}: ${error}`);
+        errors.push(...caseErrors);
+        report.errors.push(...caseErrors);
       }
       
-      console.log(`[AutoCollection] Case ${settings.caseId}: ${result.emailsProcessed} emails, ${result.filesDownloaded} files`);
+      console.log(`[AutoCollection] Case ${caseId}: ${result.emailsProcessed} emails, ${result.filesDownloaded} files`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      errors.push(`Case ${settings.caseId}: ${errorMsg}`);
-      console.error(`[AutoCollection] Error processing case ${settings.caseId}:`, errorMsg);
+      const caseError = `Case ${caseId}: ${errorMsg}`;
+      errors.push(caseError);
+      report.errors.push(caseError);
+      console.error(`[AutoCollection] Error processing case ${caseId}:`, errorMsg);
     }
   }
 
-  // Send notification to owner about collection results
-  if (casesProcessed > 0 || errors.length > 0) {
+  for (const report of reports.values()) {
+    const hasNewEvidence = report.emailsCollected > 0 || report.filesCollected > 0;
+    const title = hasNewEvidence
+      ? `Auto-Collection: ${report.emailsCollected + report.filesCollected} new items found`
+      : 'Auto-Collection completed';
+    const bodyLines = [
+      'Daily Evidence Auto-Collection Report',
+      '',
+      `- Cases processed: ${report.casesProcessed}`,
+      `- Emails collected: ${report.emailsCollected}`,
+      `- Files collected: ${report.filesCollected}`,
+    ];
+    if (report.errors.length > 0) {
+      bodyLines.push('', `Errors (${report.errors.length}):`);
+      bodyLines.push(...report.errors.slice(0, 5).map((error) => `- ${error.slice(0, 500)}`));
+      if (report.errors.length > 5) bodyLines.push(`- ... and ${report.errors.length - 5} more errors`);
+    }
+
     try {
-      const hasNewEvidence = totalEmailsCollected > 0 || totalFilesCollected > 0;
-      const title = hasNewEvidence 
-        ? `📧 Auto-Collection: ${totalEmailsCollected + totalFilesCollected} new items found`
-        : `📧 Auto-Collection completed`;
-      
-      let content = `**Daily Evidence Auto-Collection Report**\n\n`;
-      content += `- Cases processed: ${casesProcessed}\n`;
-      content += `- Emails collected: ${totalEmailsCollected}\n`;
-      content += `- Files collected: ${totalFilesCollected}\n`;
-      
-      if (errors.length > 0) {
-        content += `\n**Errors (${errors.length}):**\n`;
-        content += errors.slice(0, 5).map(e => `- ${e}`).join('\n');
-        if (errors.length > 5) {
-          content += `\n- ... and ${errors.length - 5} more errors`;
-        }
+      const notification = await writeNotification({
+        userId: report.userId,
+        kind: 'system_announcement',
+        title,
+        body: bodyLines.join('\n'),
+        metadata: {
+          source: 'auto_collection',
+          casesProcessed: report.casesProcessed,
+          emailsCollected: report.emailsCollected,
+          filesCollected: report.filesCollected,
+          errorCount: report.errors.length,
+        },
+        dedupKey: `auto-collection-report:${now.toISOString().slice(0, 10)}`,
+      });
+      if (notification.outcome === 'failure') {
+        const notificationError = `Collection report for user ${report.userId} was not persisted (${notification.reason})`;
+        errors.push(notificationError);
+        console.error(`[AutoCollection] ${notificationError}`);
+      } else if (notification.outcome === 'created') {
+        console.log(`[AutoCollection] Persisted collection report for user ${report.userId}`);
+      } else {
+        console.log(`[AutoCollection] Collection report already recorded for user ${report.userId}`);
       }
-      
-      await notifyOwner({ title, content });
-      console.log('[AutoCollection] Notification sent to owner');
     } catch (notifyError) {
-      console.error('[AutoCollection] Failed to send notification:', notifyError);
+      const message = notifyError instanceof Error ? notifyError.message : 'Unknown notification error';
+      const notificationError = `Collection report for user ${report.userId} was not persisted (${message})`;
+      errors.push(notificationError);
+      console.error(`[AutoCollection] ${notificationError}`);
     }
   }
 
@@ -2218,10 +2318,15 @@ export async function setLocalFolderPaths(caseId: string, userId: string, paths:
   meta.localFolderPaths = Array.from(new Set(validatedPaths));
 
   if (existing) {
+    if (existing.userId !== userId) throw new Error('Auto-collection settings owner mismatch');
+    const hasKeywords = configuredAutoCollectionKeywords(existing.keywords).length > 0;
     await db
       .update(autoCollectionSettings)
-      .set({ metadata: JSON.stringify(meta) })
-      .where(eq(autoCollectionSettings.caseId, caseId));
+      .set({
+        metadata: JSON.stringify(meta),
+        ...(hasKeywords ? {} : { isEnabled: false, status: 'configured' }),
+      })
+      .where(and(eq(autoCollectionSettings.caseId, caseId), eq(autoCollectionSettings.userId, userId)));
   } else {
     await db.insert(autoCollectionSettings).values({
       id: uuidv4(),
@@ -2232,8 +2337,8 @@ export async function setLocalFolderPaths(caseId: string, userId: string, paths:
       emailAccountIds: JSON.stringify([]),
       autoDownloadAttachments: true,
       autoDownloadGoogleDriveFiles: true,
-      isEnabled: true,
-      status: 'active',
+      isEnabled: false,
+      status: 'configured',
       metadata: JSON.stringify(meta),
     });
   }

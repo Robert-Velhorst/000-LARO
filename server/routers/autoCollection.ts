@@ -9,6 +9,7 @@ import {
   pullEvidenceByKeywords,
   setLocalFolderPaths,
   getLocalFolderPaths,
+  isRunnableAutoCollectionSetting,
   startKeywordPullJob,
   getKeywordPullJob,
   getActiveKeywordPullJob,
@@ -71,7 +72,7 @@ export const autoCollectionRouter = router({
     .input(
       z.object({
         caseId: z.string(),
-        keywords: z.array(z.string()),
+        keywords: z.array(z.string().trim().min(1)).min(1),
         keywordMatchMode: z.enum(["all", "any"]),
         dateRangeStart: z.date().optional(),
         dateRangeEnd: z.date().optional(),
@@ -224,6 +225,7 @@ export const autoCollectionRouter = router({
     .query(async ({ input, ctx }) => {
       await assertCaseOwnership(input.caseId, ctx.user.id);
       const paths = await getLocalFolderPaths(input.caseId);
-      return { paths };
+      const settings = await getAutoCollectionSettings(input.caseId);
+      return { paths, scheduleActive: Boolean(settings && isRunnableAutoCollectionSetting(settings)) };
     }),
 });

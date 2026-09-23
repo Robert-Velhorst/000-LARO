@@ -496,6 +496,13 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
                 </Button>
               )}
             </div>
+            {currentLocalFolders.length > 0 && (
+              <p className="text-xs text-muted-foreground" role="status" data-testid="local-folder-schedule-status">
+                {localFolderData?.scheduleActive
+                  ? "Scheduled collection is active. These folders are scanned by the saved keyword schedule and by manual pulls."
+                  : "Saved source only. These folders are scanned only when you run a keyword pull; add keywords in Auto-Collection Settings to activate scheduled collection."}
+              </p>
+            )}
           </div>
         </div>
 
