@@ -3,9 +3,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
-import * as schema from "./schema";
 import { InsertUser, users, lawyers, cases, outreachStatus, emailActivity, systemConfig, evidence } from "./schema";
-import { getTableConfig } from "drizzle-orm/sqlite-core";
 import { ENV } from './_core/env';
 import { createCaseId } from './ids';
 import { normalizeAccountEmail } from './emailIdentity';
@@ -17,8 +15,7 @@ import {
   parsePrivacyPreferences,
   serializePrivacyPreferences,
 } from './privacyPreferenceValue';
-
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import { runSqliteMigrations } from './sqliteMigrations';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 let _sqlite: InstanceType<typeof Database> | null = null;
@@ -272,24 +269,6 @@ function ensureIndexes(sqlite: InstanceType<typeof Database>) {
   console.log("[Database] Ensured integrity indexes (Phase 005).");
 }
 
-function ensureSupportTicketsTable(sqlite: InstanceType<typeof Database>) {
-  try {
-    sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS support_tickets (
-        id TEXT PRIMARY KEY NOT NULL,
-        userId TEXT,
-        category TEXT NOT NULL,
-        subject TEXT NOT NULL,
-        message TEXT NOT NULL,
-        status TEXT DEFAULT 'open',
-        createdAt INTEGER NOT NULL
-      );
-    `);
-  } catch (e) {
-    console.warn("[Database] Could not ensure support_tickets table:", e);
-  }
-}
-
 export function ensureStorageDeletionQueueTable(sqlite: InstanceType<typeof Database>) {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS storage_deletion_queue (
@@ -306,170 +285,6 @@ export function ensureStorageDeletionQueueTable(sqlite: InstanceType<typeof Data
     CREATE INDEX IF NOT EXISTS storage_deletion_queue_nextAttemptAt_idx
       ON storage_deletion_queue(nextAttemptAt);
   `);
-}
-
-function ensureAllTablesColumns(sqlite: InstanceType<typeof Database>) {
-  for (const key of Object.keys(schema)) {
-    const table = (schema as any)[key];
-    try {
-      // Use Drizzle's getTableConfig to reflect the schema
-      const config = getTableConfig(table);
-      if (!config || !config.name || !config.columns) continue;
-
-      const dbColumns = sqlite.prepare(`PRAGMA table_info("${config.name}")`).all() as Array<{ name: string }>;
-      if (dbColumns.length === 0) continue; // Table not created yet, migration will handle it
-
-      const existing = new Set(dbColumns.map((c) => c.name));
-
-      for (const col of config.columns) {
-        if (!existing.has(col.name)) {
-          // Default to TEXT for missing columns to satisfy the migration SELECTs
-          sqlite.exec(`ALTER TABLE "${config.name}" ADD COLUMN "${col.name}" TEXT;`);
-          console.log(`[Database] Added missing column ${config.name}.${col.name} before migration.`);
-        }
-      }
-    } catch (e) {
-      // Ignore exports that aren't tables
-    }
-  }
-}
-
-/**
- * Idempotent migration replay: reads each .sql migration file in the drizzle
- * folder, splits on `--> statement-breakpoint`, and runs every statement
- * individually — swallowing "already exists" / "duplicate column" type errors.
- *
- * This is the safety net for production: drizzle's migrator relies on the
- * `__drizzle_migrations` bookkeeping table, which can disagree with the actual
- * DB state in a portable Electron build (e.g. a stale userData DB created by
- * `db:push` or a previous partial run). Replaying SQL idempotently guarantees
- * that every table in the schema exists regardless of bookkeeping state.
- */
-function replayMigrationsIdempotent(
-  sqlite: InstanceType<typeof Database>,
-  migrationsFolder: string
-) {
-  const isIgnorable = (msg: string) => {
-    const m = msg.toLowerCase();
-    return (
-      m.includes("already exists") ||
-      m.includes("duplicate column name") ||
-      m.includes("no such column") || // for ALTER TABLE on already-migrated schema
-      m.includes("no such table") // for DROP TABLE on already-cleaned schema
-    );
-  };
-
-  let sqlFiles: string[];
-  try {
-    sqlFiles = fs
-      .readdirSync(migrationsFolder)
-      .filter((f) => f.endsWith(".sql"))
-      .sort();
-  } catch (e) {
-    console.warn("[Database] Could not enumerate migration folder:", e);
-    return;
-  }
-
-  for (const file of sqlFiles) {
-    const fullPath = path.join(migrationsFolder, file);
-    let content: string;
-    try {
-      content = fs.readFileSync(fullPath, "utf8");
-    } catch (e) {
-      console.warn(`[Database] Could not read migration ${file}:`, e);
-      continue;
-    }
-
-    const statements = content
-      .split("--> statement-breakpoint")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-
-    let applied = 0;
-    let skipped = 0;
-    for (const stmt of statements) {
-      try {
-        sqlite.exec(stmt);
-        applied++;
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (isIgnorable(msg)) {
-          skipped++;
-          continue;
-        }
-        console.warn(
-          `[Database] Idempotent replay: statement in ${file} failed (continuing):`,
-          msg
-        );
-      }
-    }
-    console.log(
-      `[Database] Replayed ${file}: ${applied} applied, ${skipped} skipped (already present).`
-    );
-  }
-}
-
-function tableExists(sqlite: InstanceType<typeof Database>, name: string): boolean {
-  try {
-    const row = sqlite
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?")
-      .get(name);
-    return !!row;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Mark every migration in the folder as applied in drizzle's bookkeeping
- * table, so subsequent boots take the happy path (drizzle's migrate() becomes
- * a no-op instead of trying to re-create tables we've already created via
- * recovery replay).
- *
- * Drizzle's bookkeeping table is `__drizzle_migrations` with columns
- * (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at NUMERIC). The hash
- * is the SHA-256 of the migration SQL content.
- */
-function stampMigrationsAsApplied(
-  sqlite: InstanceType<typeof Database>,
-  migrationsFolder: string
-) {
-  try {
-    sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS __drizzle_migrations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        hash TEXT NOT NULL,
-        created_at NUMERIC
-      );
-    `);
-
-    const journalPath = path.join(migrationsFolder, "meta", "_journal.json");
-    const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
-      entries: Array<{ idx: number; tag: string; when: number }>;
-    };
-
-    const crypto = require("crypto") as typeof import("crypto");
-    const existing = sqlite.prepare("SELECT hash FROM __drizzle_migrations").all() as Array<{
-      hash: string;
-    }>;
-    const known = new Set(existing.map((r) => r.hash));
-
-    const insert = sqlite.prepare(
-      "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)"
-    );
-
-    for (const entry of journal.entries) {
-      const sqlPath = path.join(migrationsFolder, `${entry.tag}.sql`);
-      if (!fs.existsSync(sqlPath)) continue;
-      const content = fs.readFileSync(sqlPath, "utf8");
-      const hash = crypto.createHash("sha256").update(content).digest("hex");
-      if (known.has(hash)) continue;
-      insert.run(hash, entry.when);
-      console.log(`[Database] Stamped migration ${entry.tag} as applied.`);
-    }
-  } catch (e) {
-    console.warn("[Database] Could not stamp migrations as applied:", e);
-  }
 }
 
 function findMigrationsFolder(): string {
@@ -515,131 +330,21 @@ export async function getDb() {
       const foundFolder = findMigrationsFolder();
 
       if (foundFolder) {
-        // Try drizzle's bookkeeping-based migrator first (the happy path on a
-        // clean install). Failures here are not fatal because we have a
-        // recovery replay below.
-        let migrateSucceeded = false;
-        try {
-          migrate(_db, { migrationsFolder: foundFolder });
-          migrateSucceeded = true;
-          console.log("[Database] drizzle migrate() succeeded.");
-        } catch (migrationError: unknown) {
-          const msg =
-            migrationError instanceof Error ? migrationError.message : String(migrationError);
-          console.warn(
-            "[Database] drizzle migrate() failed; will check schema state and recover if needed:",
-            msg
-          );
-        }
-
-        // Destructive evidence operations require this queue. Repair it before
-        // migration recovery can stamp journal entries on an installed DB.
-        ensureStorageDeletionQueueTable(sqlite);
-
-        // This additive migration must exist even when an older journal fails
-        // before reaching it; never stamp an inbox migration without its table.
-        const inboxMigration = path.join(foundFolder, "0013_document_inbox.sql");
-        if (!tableExists(sqlite, "document_inbox")) {
-          sqlite.exec(fs.readFileSync(inboxMigration, "utf8"));
-        }
-        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0015_document_sources.sql"), "utf8"));
-        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0017_case_action_proposals.sql"), "utf8"));
-        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0018_case_action_evidence.sql"), "utf8"));
-        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0019_case_shares.sql"), "utf8"));
-        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0020_account_email_identity.sql"), "utf8"));
-        // Legal-draft downloads must never fall back to transient renderer
-        // blobs when an installed database has stale migration bookkeeping.
-        // The migration is additive and idempotent, so replay it on every boot.
-        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0029_reviewed_legal_draft_snapshots.sql"), "utf8"));
-        // Legacy gap-analysis rows contain unsupported case-strength scores.
-        // Re-run this idempotent retirement even when an installed database has
-        // stale migration bookkeeping; current versioned coverage rows survive.
-        const coverageTables = [
-          "case_strength_analysis",
-          "communication_gaps",
-          "expected_documents",
-          "suspicious_patterns",
-          "legal_inferences",
-        ];
-        if (coverageTables.every((table) => tableExists(sqlite, table))) {
-          sqlite.exec(fs.readFileSync(path.join(foundFolder, "0027_retire_gap_scoring.sql"), "utf8"));
-        }
-        // HAI credentials created before reviewed grants were unrestricted.
-        // Ensure the additive grant schema exists even when an older install's
-        // migration bookkeeping is incomplete, then revoke every unbound token.
-        sqlite.exec(`
-          CREATE TABLE IF NOT EXISTS hai_access_grants (
-            id text PRIMARY KEY NOT NULL,
-            userId text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            caseIds text NOT NULL CHECK (json_valid(caseIds) AND json_type(caseIds) = 'array'),
-            fieldCategories text NOT NULL CHECK (json_valid(fieldCategories) AND json_type(fieldCategories) = 'array'),
-            includeFutureCases integer NOT NULL DEFAULT 0,
-            includeFutureAnalyses integer NOT NULL DEFAULT 0,
-            revision integer NOT NULL DEFAULT 1 CHECK (revision >= 1),
-            reviewedAt integer NOT NULL,
-            createdAt integer NOT NULL,
-            updatedAt integer NOT NULL,
-            revokedAt integer
-          );
-          CREATE INDEX IF NOT EXISTS hai_access_grants_user_idx ON hai_access_grants(userId);
-          CREATE INDEX IF NOT EXISTS hai_access_grants_user_revoked_idx ON hai_access_grants(userId, revokedAt);
-        `);
-        const haiTokenColumns = new Set((sqlite.prepare('PRAGMA table_info("integration_access_tokens")').all() as Array<{ name: string }>).map((column) => column.name));
-        if (!haiTokenColumns.has("grantId")) {
-          sqlite.exec("ALTER TABLE integration_access_tokens ADD COLUMN grantId text REFERENCES hai_access_grants(id) ON DELETE SET NULL");
-        }
-        sqlite.exec(`
-          CREATE UNIQUE INDEX IF NOT EXISTS integration_access_tokens_grant_unique ON integration_access_tokens(grantId);
-          UPDATE integration_access_tokens
-          SET status = 'revoked', revokedAt = CAST(unixepoch('now') * 1000 AS integer)
-          WHERE status = 'active' AND grantId IS NULL;
-        `);
-        const resetColumns = new Set((sqlite.prepare('PRAGMA table_info("users")').all() as Array<{ name: string }>).map((column) => column.name));
-        if (!resetColumns.has("resetCodeFailures")) sqlite.exec("ALTER TABLE users ADD COLUMN resetCodeFailures integer NOT NULL DEFAULT 0");
-        if (!resetColumns.has("resetCodeLockedUntil")) sqlite.exec("ALTER TABLE users ADD COLUMN resetCodeLockedUntil integer");
-        const inboxColumns = new Set((sqlite.prepare('PRAGMA table_info("document_inbox")').all() as Array<{ name: string }>).map((column) => column.name));
-        if (!inboxColumns.has("sourceType")) sqlite.exec("ALTER TABLE document_inbox ADD COLUMN sourceType text NOT NULL DEFAULT 'manual'");
-        if (!inboxColumns.has("provenance")) sqlite.exec("ALTER TABLE document_inbox ADD COLUMN provenance text");
-        // Source domains remain separate when recovering an older journal.
-        sqlite.exec('DROP INDEX IF EXISTS document_inbox_owner_source_hash_idx; CREATE UNIQUE INDEX IF NOT EXISTS document_inbox_owner_source_identity_idx ON document_inbox(userId, sourceType, sourcePath, contentHash)');
-
-        // Recovery: if any expected core table is missing after migrate(), the
-        // bookkeeping is out of sync with reality (stale userData DB, partial
-        // prior run, db:push without migration entries, etc.). Replay the SQL
-        // files only in that case. We skip replay on a healthy DB because
-        // migration 0001 includes destructive table-rebuilds (DROP TABLE) that
-        // would be unsafe to re-run on live data.
-        const coreTables = ["users", "lawyers", "cases"];
-        const missing = coreTables.filter((t) => !tableExists(sqlite, t));
-        if (missing.length > 0) {
-          console.warn(
-            `[Database] Core tables missing after migrate(): ${missing.join(", ")}. Running recovery replay.`
-          );
-          replayMigrationsIdempotent(sqlite, foundFolder);
-
-          // Drizzle bookkeeping is now out of sync (we ran SQL it doesn't know
-          // about). Mark all migrations as applied so subsequent boots use the
-          // happy path.
-          stampMigrationsAsApplied(sqlite, foundFolder);
-        } else if (!migrateSucceeded) {
-          // migrate() failed but tables exist — likely a benign "already
-          // exists" on a re-run. Still stamp bookkeeping so next boot is clean.
-          stampMigrationsAsApplied(sqlite, foundFolder);
+        const migrationResult = await runSqliteMigrations({
+          sqlite,
+          drizzleDb: _db,
+          migrationsFolder: foundFolder,
+          databasePath: dbPath,
+        });
+        console.log(
+          `[Database] Versioned migrations ready (${migrationResult.migrationsApplied} applied, schema ${migrationResult.schemaSignature.slice(0, 12)}).`,
+        );
+        if (migrationResult.backupPath) {
+          console.log(`[Database] Verified pre-migration backup: ${migrationResult.backupPath}`);
         }
       } else {
-        console.warn(
-          "[Database] No migrations folder found — DB will not be initialized. Auth and other features will fail until this is resolved."
-        );
+        throw new Error("No versioned SQLite migrations folder was found; refusing to start.");
       }
-
-      // Legacy databases may predate this table, but creating it before the
-      // migrator makes a fresh 0001 migration fail with "table already exists".
-      ensureSupportTicketsTable(sqlite);
-
-      // Run column alignment AFTER migrations to backfill any columns that the
-      // schema declares but the on-disk DB is missing (e.g. schema.ts was
-      // updated without generating a new migration).
-      ensureAllTablesColumns(sqlite);
 
       // Phase 005: create integrity indexes + unique email constraint AFTER the
       // tables exist. Idempotent, so safe on every boot.

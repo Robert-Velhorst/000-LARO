@@ -521,9 +521,10 @@ describe('production readiness regressions', () => {
     expect(dashboard).toContain('const token = localStorage.getItem("laroAuthToken") || localStorage.getItem("auth_token") || localStorage.getItem("access_token")');
   });
 
-  it('keeps API-only deployments explicit and runs compatibility schema repair after migrations', () => {
+  it('keeps API-only deployments explicit and uses fail-closed versioned SQLite migrations', () => {
     const server = readFileSync(join(ROOT, 'server/index.ts'), 'utf8');
     const database = readFileSync(join(ROOT, 'server/db.ts'), 'utf8');
+    const sqliteMigrations = readFileSync(join(ROOT, 'server/sqliteMigrations.ts'), 'utf8');
     const compose = readFileSync(join(ROOT, 'docker-compose.yml'), 'utf8');
     const ngrokLauncher = readFileSync(join(ROOT, 'scripts/start-ngrok-api.ps1'), 'utf8');
     const ngrokStopper = readFileSync(join(ROOT, 'scripts/stop-ngrok-api.ps1'), 'utf8');
@@ -535,7 +536,12 @@ describe('production readiness regressions', () => {
     const operatorDiagnostics = readFileSync(join(ROOT, 'server/operatorDiagnostics.ts'), 'utf8');
     const systemRouter = readFileSync(join(ROOT, 'server/_core/systemRouter.ts'), 'utf8');
     expect(server).toContain('!ENV.SERVER_ONLY');
-    expect(database.indexOf('migrate(_db')).toBeLessThan(database.lastIndexOf('ensureSupportTicketsTable(sqlite)'));
+    expect(database).toContain('await runSqliteMigrations({');
+    expect(database).not.toContain('ensureAllTablesColumns');
+    expect(database).not.toContain('replayMigrationsIdempotent');
+    expect(database).not.toContain('stampMigrationsAsApplied');
+    expect(sqliteMigrations).toContain('createVerifiedMigrationBackup');
+    expect(sqliteMigrations).toContain('Unclassified SQLite schema drift');
     expect(compose).toContain('127.0.0.1:3000:3000');
     expect(compose).toContain('LARO_APP_VERSION: ${LARO_APP_VERSION:-unknown}');
     expect(compose).toContain('ALLOWED_ORIGINS: ${LARO_PUBLIC_ORIGIN:-}');

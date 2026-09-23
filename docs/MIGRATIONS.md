@@ -1,16 +1,31 @@
-# Database Migrations & Rollback Safety (Phase 033)
+# Database Migrations & Rollback Safety
 
-Date: 2026-07-06 · Branch `Phase-Imp`
+Updated: 2026-09-23
 
 ## How migrations run
 
 - Migrations live in reviewed `drizzle/*.sql` files with bookkeeping
   in `drizzle/meta/_journal.json`.
-- They apply automatically on first DB open (`server/db.ts:getDb`): drizzle's
-  `migrate()` runs, and a homegrown recovery replay re-applies SQL idempotently
-  if core tables are missing (portable-build safety). Missing schema columns are
-  backfilled at boot (`ensureAllTablesColumns`), and integrity indexes are
-  ensured (`ensureIndexes`, Phase 005/017).
+- They apply automatically on first DB open (`server/db.ts:getDb`) through the
+  fail-closed runner in `server/sqliteMigrations.ts`.
+- A clean installation applies the complete journal and must converge exactly
+  to the declared Drizzle table and column schema.
+- An existing installation must have a contiguous, checksum-matching migration
+  history and the expected table/column shape for its recorded version. Unknown
+  tables, columns, types, nullability, primary-key shape, history gaps, and
+  changed migration hashes stop startup before any migration is run.
+- Before an existing database is upgraded, the runner creates an online SQLite
+  backup under `<db-dir>/db-backups/`, applies mode `0600`, and verifies
+  `quick_check`, `foreign_key_check`, and the core table set. A backup failure
+  stops the upgrade.
+- Migration `0030_non_destructive_baseline.sql` is the first explicit baseline.
+  Its compatibility step adds only the two classified legacy password-reset
+  columns with their declared `TEXT` type. It records reconciliation only after
+  the transaction succeeds.
+- Startup never invents arbitrary missing columns, replays historical statements
+  individually, suppresses SQL errors, or stamps unverified history as applied.
+- Integrity indexes are ensured after schema validation. Historical relationship
+  triggers remain a separate, observable compatibility layer until S4-02.
 - `ensureRelationshipIntegrityTriggers` installs non-destructive database guards
   for historical relationships after schema alignment. It rejects new orphaned
   inserts/updates and cascades parent deletion. It does not delete pre-existing
@@ -37,16 +52,20 @@ Restore stages and validates the replacement and preserves the previous database
 ## Recommended flow for a schema change
 
 1. `npm run db:backup` (snapshot).
-2. Update `server/schema.ts` and add a reviewed SQL migration, or add an idempotent boot-time step for a narrowly scoped compatibility repair.
+2. Update `server/schema.ts` and add a reviewed, versioned SQL migration. If a
+   legacy shape needs reconciliation, classify that exact shape in
+   `server/sqliteMigrations.ts`; do not add a generic boot-time repair.
 3. Deploy; migrations apply on next boot.
 4. If something is wrong, restore the snapshot with `--restore`.
 
-## Known constraints (tracked)
+## Compatibility boundary
 
-- Migration `0001` performs destructive table rebuilds; the recovery replay only
-  runs it when core tables are missing (never on a healthy live DB).
-- A consolidated, non-destructive migration baseline is planned (Phase 033
-  follow-up) to replace the boot-time reconciliation with clean versioned
-  migrations.
-- Historical tables retain trigger-enforced relationships until a future
-  backup-tested rebuild can replace them with native foreign-key clauses.
+- Databases created outside the versioned journal (for example, an old
+  `db:push` database with no migration history) are not guessed into shape.
+  Preserve the file, validate a separate backup, and add a reviewed fixture and
+  compatibility migration for that exact source version.
+- Migration `0001` contains historical table rebuilds. It is used only as part
+  of the contiguous journal for a clean database or a database whose recorded
+  version predates it; it is never replayed over a newer schema.
+- Historical tables still use trigger-enforced relationships. Replacing those
+  with reviewed native foreign keys is tracked separately by S4-02.

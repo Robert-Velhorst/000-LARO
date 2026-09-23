@@ -211,6 +211,13 @@
       "when": 1790215000000,
       "tag": "0029_reviewed_legal_draft_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1790301400000,
+      "tag": "0030_non_destructive_baseline",
+      "breakpoints": true
     }
   ]
 }
