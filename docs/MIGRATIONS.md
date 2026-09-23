@@ -45,6 +45,13 @@ Updated: 2026-09-23
   range checks. It then verifies the declared types, values, foreign keys, and
   reconciliation marker before committing. Units and bounds are documented in
   `NUMERIC_STORAGE.md`.
+- Migration `0033_billing_compatibility_archive.sql` copies non-empty historical
+  payment, subscription, Stripe, quota, and monetary values into the
+  owner-aware `legacy_billing_archive` JSON table, removes the obsolete active
+  columns/tables, and leaves only quantity/provenance usage telemetry. Insert,
+  update, and delete triggers make the archive read-only after the copy. Clean
+  installs and upgrades therefore converge on the same local-unmetered model;
+  the migration never creates a checkout or quota gate.
 - Integrity indexes are ensured after schema and relationship validation.
 
 ## Rollback strategy — file snapshot
@@ -89,3 +96,6 @@ Restore stages and validates the replacement and preserves the previous database
   prior release from a reviewed backup. Retry only after every reported field
   contains null or a valid in-range number; the runner does not guess or discard
   malformed values.
+- A `0033` archive is intentionally append-free after migration. If a legacy
+  billing row is needed for audit, read the archived JSON from a verified backup;
+  do not disable the archive triggers or recreate the removed active tables.

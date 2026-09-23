@@ -232,6 +232,13 @@
       "when": 1790474200000,
       "tag": "0032_numeric_normalization",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1790560600000,
+      "tag": "0033_billing_compatibility_archive",
+      "breakpoints": true
     }
   ]
 }

@@ -248,7 +248,7 @@ describe("non-destructive SQLite migration baseline", () => {
     `);
 
     const result = await migrateFixture(legacy);
-    expect(result.migrationsApplied).toBe(2);
+    expect(result.migrationsApplied).toBe(3);
     expect(result.backupPath).toBeTruthy();
     expect(result.relationshipTablesRebuilt).toBeGreaterThan(30);
     expect(legacy.sqlite.prepare(
@@ -348,7 +348,7 @@ describe("non-destructive SQLite migration baseline", () => {
 
     const result = await migrateFixture(legacy);
     expect(result).toMatchObject({
-      migrationsApplied: 1,
+      migrationsApplied: 2,
       normalizedNumericColumns: 27,
       numericTablesRebuilt: 10,
     });
@@ -445,6 +445,101 @@ describe("non-destructive SQLite migration baseline", () => {
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'laro_numeric_baseline'",
     ).get()).toBeUndefined();
     expect(readdirSync(join(legacy.directory, "db-backups"))).toHaveLength(1);
+    legacy.sqlite.close();
+  });
+
+  it("archives obsolete billing compatibility data and leaves only local usage telemetry", async () => {
+    const legacy = temporaryDatabase("billing-compatibility");
+    applyLegacySnapshot(legacy.sqlite, 32);
+    legacy.sqlite.exec(`
+      INSERT INTO users (
+        id, email, role, stripeCustomerId, stripeSubscriptionId,
+        subscriptionStatus, subscriptionTier, paymentFailedAt, gracePeriodEndsAt
+      ) VALUES (
+        'billing-user', 'billing@example.test', 'user', 'cus_legacy', 'sub_legacy',
+        'past_due', 'legacy-pro', 1790000000000, 1790003600000
+      );
+      INSERT INTO cases (id, userId, clientName)
+      VALUES ('billing-case', 'billing-user', 'Billing archive case');
+      INSERT INTO billing_periods (
+        id, userId, stripeSubscriptionId, stripeInvoiceId, status,
+        totalCost, totalBilledCost
+      ) VALUES (
+        'billing-period', 'billing-user', 'sub_legacy', 'in_legacy',
+        'completed', '12.50', '12.50'
+      );
+      INSERT INTO usage_limits (
+        id, userId, tier, resourceType, monthlyLimit, description, limitsJson
+      ) VALUES (
+        'billing-limit', 'billing-user', 'legacy-pro', 'case_analysis',
+        '100', 'Historical limit', '{"case_analysis":100}'
+      );
+      INSERT INTO usage_tracking (
+        id, userId, resourceType, quantity, baseCost, billedCost,
+        metadata, caseId, reportedToStripe, stripeUsageRecordId
+      ) VALUES (
+        'billing-usage', 'billing-user', 'case_analysis', 4, '0.25',
+        '1.00', '{"source":"legacy"}', 'billing-case', 1, 'usage_legacy'
+      );
+    `);
+
+    const result = await migrateFixture(legacy);
+    expect(result.migrationsApplied).toBe(1);
+    expect(result.backupPath).toBeTruthy();
+    expect(legacy.sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('billing_periods', 'usage_limits')",
+    ).all()).toEqual([]);
+    const userColumns = legacy.sqlite.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+    expect(userColumns.map((column) => column.name)).not.toEqual(expect.arrayContaining([
+      "stripeCustomerId", "stripeSubscriptionId", "subscriptionStatus", "subscriptionTier",
+      "paymentFailedAt", "gracePeriodEndsAt",
+    ]));
+    const usageColumns = legacy.sqlite.prepare("PRAGMA table_info(usage_tracking)").all() as Array<{ name: string }>;
+    expect(usageColumns.map((column) => column.name)).not.toEqual(expect.arrayContaining([
+      "baseCost", "billedCost", "reportedToStripe", "stripeUsageRecordId",
+    ]));
+    expect(legacy.sqlite.prepare(
+      "SELECT quantity, metadata FROM usage_tracking WHERE id = 'billing-usage'",
+    ).get()).toEqual({ quantity: 4, metadata: '{"source":"legacy"}' });
+
+    const archiveRows = legacy.sqlite.prepare(
+      "SELECT sourceTable, sourceId, ownerId, payload FROM legacy_billing_archive ORDER BY sourceTable",
+    ).all() as Array<{ sourceTable: string; sourceId: string; ownerId: string | null; payload: string }>;
+    expect(archiveRows.map((row) => `${row.sourceTable}:${row.sourceId}`)).toEqual([
+      "billing_periods:billing-period",
+      "usage_limits:billing-limit",
+      "usage_tracking:billing-usage",
+      "users:billing-user",
+    ]);
+    expect(JSON.parse(archiveRows.find((row) => row.sourceTable === "users")!.payload)).toMatchObject({
+      stripeCustomerId: "cus_legacy",
+      subscriptionStatus: "past_due",
+      subscriptionTier: "legacy-pro",
+    });
+    expect(JSON.parse(archiveRows.find((row) => row.sourceTable === "usage_tracking")!.payload)).toMatchObject({
+      // The archive captures the pre-normalization legacy representation;
+      // the active usage_tracking row is normalized to an integer afterward.
+      quantity: "4",
+      baseCost: "0.25",
+      billedCost: "1.00",
+      reportedToStripe: 1,
+      stripeUsageRecordId: "usage_legacy",
+    });
+
+    expect(() => legacy.sqlite.prepare(
+      "INSERT INTO legacy_billing_archive (id, sourceTable, sourceId, payload, archivedAt) VALUES ('x', 'x', 'x', '{}', 0)",
+    ).run()).toThrow(/read-only/i);
+    expect(() => legacy.sqlite.prepare(
+      "DELETE FROM legacy_billing_archive WHERE sourceId = 'billing-user'",
+    ).run()).toThrow(/read-only/i);
+    expect(legacy.sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+
+    const secondBoot = await migrateFixture(legacy);
+    expect(secondBoot).toMatchObject({
+      backupPath: null,
+      migrationsApplied: 0,
+      schemaSignature: result.schemaSignature,
+    });
     legacy.sqlite.close();
   });
 });

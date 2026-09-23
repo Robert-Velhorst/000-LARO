@@ -61,8 +61,6 @@ suite("non-sensitive model usage telemetry", () => {
     expect(success.row).toMatchObject({
       resourceType: "ai_model_invocation",
       quantity: 12,
-      baseCost: null,
-      billedCost: null,
       caseId: "TELEMETRY_CASE",
     });
     expect(success.metadata).toMatchObject({

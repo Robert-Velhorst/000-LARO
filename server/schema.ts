@@ -20,17 +20,11 @@ export const users = sqliteTable("users", {
   password: text("password"),
   loginMethod: text("loginMethod"),
   role: text("role").default("user").notNull(),
-  stripeCustomerId: text("stripeCustomerId"),
-  stripeSubscriptionId: text("stripeSubscriptionId"),
-  subscriptionStatus: text("subscriptionStatus").default("free"),
-  subscriptionTier: text("subscriptionTier").default("free"),
   emailPreferences: text("emailPreferences"),
   resetCodeHash: text("resetCodeHash"),
   resetCodeExpiresAt: text("resetCodeExpiresAt"),
   resetCodeFailures: integer("resetCodeFailures").notNull().default(0),
   resetCodeLockedUntil: integer("resetCodeLockedUntil", { mode: "timestamp" }),
-  paymentFailedAt: integer("paymentFailedAt", { mode: "timestamp" }),
-  gracePeriodEndsAt: integer("gracePeriodEndsAt", { mode: "timestamp" }),
   createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
   lastSignedIn: integer("lastSignedIn", { mode: "timestamp" }).default(new Date()),
 });
@@ -560,46 +554,38 @@ export const documents = sqliteTable("documents", {
   createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
 });
 
-// ─── Legacy billing tables and optional owner usage analytics ────────────────
+// ─── Local usage telemetry and read-only billing compatibility archive ───────
 
-export const billingPeriods = sqliteTable("billing_periods", {
-  id: text("id").primaryKey(),
-  userId: text("userId").references(() => users.id, { onDelete: "cascade" }),
-  stripeSubscriptionId: text("stripeSubscriptionId"),
-  stripeInvoiceId: text("stripeInvoiceId"),
-  periodStart: integer("periodStart", { mode: "timestamp" }),
-  periodEnd: integer("periodEnd", { mode: "timestamp" }),
-  status: text("status"), // completed, pending, failed
-  metadata: text("metadata"),
-  totalCost: text("totalCost"),
-  totalBilledCost: text("totalBilledCost"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
-});
+/**
+ * Historical payment/quota records are retained only for migration evidence.
+ * Migration `0033` installs database triggers that reject every write after
+ * the archive is populated; no runtime route reads it as operational state.
+ */
+export const legacyBillingArchive = sqliteTable(
+  "legacy_billing_archive",
+  {
+    id: text("id").primaryKey(),
+    sourceTable: text("sourceTable").notNull(),
+    sourceId: text("sourceId").notNull(),
+    ownerId: text("ownerId"),
+    payload: text("payload").notNull(),
+    archivedAt: integer("archivedAt", { mode: "timestamp" }).notNull(),
+  },
+  (table) => ({
+    sourceUnique: uniqueIndex("legacy_billing_archive_source_unique")
+      .on(table.sourceTable, table.sourceId),
+  }),
+);
 
 export const usageTracking = sqliteTable("usage_tracking", {
   id: text("id").primaryKey(),
   userId: text("userId").references(() => users.id, { onDelete: "cascade" }),
   resourceType: text("resourceType"),
   quantity: integer("quantity"),
-  baseCost: text("baseCost"),
-  billedCost: text("billedCost"),
   metadata: text("metadata"),
   caseId: text("caseId").references(() => cases.id, { onDelete: "cascade" }),
-  reportedToStripe: integer("reportedToStripe", { mode: "boolean" }).default(false),
-  stripeUsageRecordId: text("stripeUsageRecordId"),
   timestamp: integer("timestamp", { mode: "timestamp" }),
   createdAt: integer("createdAt", { mode: "timestamp" }).default(new Date()),
-});
-
-export const usageLimits = sqliteTable("usage_limits", {
-  id: text("id").primaryKey(),
-  userId: text("userId").references(() => users.id, { onDelete: "cascade" }),
-  tier: text("tier"),
-  resourceType: text("resourceType"),
-  monthlyLimit: text("monthlyLimit"),
-  description: text("description"),
-  limitsJson: text("limitsJson"),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }).default(new Date()),
 });
 
 // ─── Integrations & misc ─────────────────────────────────────────────────────

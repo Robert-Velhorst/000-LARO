@@ -49,8 +49,7 @@ suite('optional local usage analytics without fabricated billing', () => {
       .from(app.schema.usageTracking)
       .where(eq(app.schema.usageTracking.id, tracked.usageId));
     expect(row.quantity).toBe(3);
-    expect(row.baseCost).toBeNull();
-    expect(row.billedCost).toBeNull();
+    expect(row.metadata).toContain('demand_letter');
 
     await expect(trackUsage({
       userId: user.id,

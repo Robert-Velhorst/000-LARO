@@ -7,10 +7,11 @@ import { isUsageAnalyticsEnabled } from './privacyPreferences';
 /**
  * Optional owner-scoped product-usage analytics.
  *
- * LARO does not enforce paid tiers or block core actions. Historical billing
- * columns remain nullable for installed-database compatibility, but new usage
- * records contain quantities and provenance only. Required audit, security,
- * and resource-budget state use separate stores and are never gated here.
+ * LARO does not enforce paid tiers or block core actions. Usage records contain
+ * quantities and provenance only; historical payment/quota fields are isolated
+ * in the read-only compatibility archive by migration `0033`. Required audit,
+ * security, and resource-budget state use separate stores and are never gated
+ * here.
  */
 export const RESOURCE_TYPES = [
   'ai_model_invocation',
@@ -56,8 +57,6 @@ export async function trackUsage(params: {
       userId: params.userId,
       resourceType: params.resourceType,
       quantity,
-      baseCost: null,
-      billedCost: null,
       metadata: params.metadata ? JSON.stringify(params.metadata) : null,
       caseId: params.caseId,
       timestamp: new Date(),

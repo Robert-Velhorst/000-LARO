@@ -67,6 +67,9 @@ The next delivery gates are deliberately separate:
   motion.
 - Removal of excluded legacy test files with broken imports or disconnected
   assertions; release coverage now lives only in explicitly maintained suites.
+- Backup-tested migration `0033` removes obsolete payment, Stripe, subscription,
+  grace-period, quota, and monetary usage fields from the active model while
+  preserving non-empty legacy values in a trigger-protected read-only archive.
 
 ## External Acceptance
 

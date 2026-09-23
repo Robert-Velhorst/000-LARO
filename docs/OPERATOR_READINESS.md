@@ -63,6 +63,9 @@ prefers the current TypeScript source and first restores the Node ABI for
 - [ ] Migration `0032` reports all 27 canonical numeric fields clean; any
       malformed legacy-field report is reviewed and repaired on the prior
       release before retrying the upgrade.
+- [ ] Migration `0033` has completed; the active schema has no payment,
+      Stripe, subscription, grace-period, quota, or monetary usage columns,
+      and `legacy_billing_archive` remains trigger-protected and read-only.
 - [ ] The emergency stop and `outreach.send.enabled` state are confirmed.
 - [ ] Google, storage, LLM, and outreach providers show their intended state.
 - [ ] Every provider intended to be enabled has target-account evidence. Missing

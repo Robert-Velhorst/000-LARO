@@ -65,9 +65,11 @@ timeout. The scanner database declares its scan-to-file foreign key.
 - Backup validation and an isolated delete/restore/reopen drill are release
   gates.
 
-## Compatibility fields
+## Compatibility archive
 
-Retired subscription, usage-limit, and monetary compatibility fields remain
-text until their business semantics are removed or separately specified. New
-usage telemetry stores its quantity as a bounded integer and does not write the
-retired monetary fields.
+Migration `0033` removes subscription, payment, Stripe, usage-limit, and
+monetary columns from the active schema. Non-empty historical values are
+preserved as JSON rows in `legacy_billing_archive`; database triggers make that
+table read-only after migration, and no product route treats it as policy or
+operational input. New usage telemetry stores only owner/case provenance,
+resource type, quantity, metadata, and timestamps.

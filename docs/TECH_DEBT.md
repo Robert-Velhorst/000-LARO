@@ -16,7 +16,7 @@ Updated: 2026-09-23
 | D10 | Historical tables used generated relationship triggers instead of native foreign keys | - | Resolved with the backup-verified `0031` compatibility migration, schema-derived native keys, reviewed delete policies, orphan preflight, and post-migration `foreign_key_check` |
 | D11 | Top-level proprietary license | - | Resolved |
 | D12 | CSV and ZIP evidence export include a case-scoped index, redacted metadata, analyses, and available source files; PDF remains unavailable | Low | Keep capability labels honest |
-| D13 | Historical subscription, usage-limit, and monetary usage columns remain in installed schemas | Low | Keep for compatibility; new telemetry writes quantity counts only and leaves monetary fields null |
+| D13 | Historical subscription, usage-limit, and monetary usage columns remained in installed schemas | - | Resolved by backup-tested migration `0033`: non-empty legacy values are retained in the read-only `legacy_billing_archive`; active schema contains quantity/provenance telemetry only |
 | D14 | Persisted NL/EN runtime and operational-surface translation | - | Resolved with typed catalog, language controls, locale formatting, and browser persistence coverage; source/provider/user content intentionally retains its original language |
 | D15 | Desktop scanner previously accepted false connection success and fabricated uploads | - | Resolved with session auth, folder consent, review selection and real evidence storage |
 | D16 | Supported Electron/Chromium route accessibility and responsive coverage | - | Resolved with a CI Playwright/axe matrix across all 15 static routes at desktop and mobile sizes; non-target browsers and formal WCAG certification remain outside the packaged-app claim |

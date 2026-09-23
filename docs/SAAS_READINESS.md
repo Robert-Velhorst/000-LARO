@@ -13,8 +13,10 @@ quota gate.
   provider, send quota alerts, or block an action.
 - Pricing, checkout, upgrade, grace-period, and usage-quota prototypes are not
   part of the production renderer or server runtime.
-- Historical subscription and usage-limit database columns remain in migrations
-  for compatibility with existing installations. They are not product policy.
+- Migration `0033` removes historical subscription, payment, Stripe, usage-limit,
+  and monetary columns from the active schema. Non-empty legacy values are
+  retained only in the database-enforced read-only `legacy_billing_archive`;
+  they are not product policy and are never used to gate an action.
 
 This contract is verified in `tests/backend/phase051_060.test.ts` and
 `tests/backend/usageTelemetry.test.ts`.
