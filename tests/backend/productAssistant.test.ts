@@ -67,11 +67,15 @@ suite('no-case assistant API', () => {
     const caller = app.makeCaller(user);
 
     await expect(caller.assistant.ask({ question: 'How do I scan documents?' })).resolves.toMatchObject({
+      caseId: null,
+      ownerId: user.id,
       mode: 'product_help',
       grounded: false,
       citations: [],
     });
     await expect(caller.assistant.ask({ question: 'What legal deadline applies to my case?' })).resolves.toMatchObject({
+      caseId: null,
+      ownerId: user.id,
       mode: 'case_required',
       grounded: false,
       citations: [],

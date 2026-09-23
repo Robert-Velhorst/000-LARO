@@ -161,6 +161,8 @@ suite("case assistant API boundaries", () => {
       question: "What happened?",
     });
     expect(result).toMatchObject({
+      caseId: 'CASE_ASSISTANT',
+      ownerId: owner.id,
       grounded: false,
       mode: "no_sources",
       citations: [],
@@ -169,5 +171,51 @@ suite("case assistant API boundaries", () => {
       caseId: "CASE_ASSISTANT",
       question: "What happened?",
     })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it('answers only from the explicitly requested owned case and echoes that identity', async () => {
+    const caseA = 'CASE_ASSISTANT_A';
+    const caseB = 'CASE_ASSISTANT_B';
+    await app.db.insert(app.schema.cases).values([
+      buildCase({ id: caseA, userId: owner.id, clientName: 'Matter A' }),
+      buildCase({ id: caseB, userId: owner.id, clientName: 'Matter B' }),
+    ]);
+    for (const [caseId, evidenceId, detail] of [
+      [caseA, 'ASSISTANT_EVIDENCE_A', 'Matter Alpha was submitted on Monday.'],
+      [caseB, 'ASSISTANT_EVIDENCE_B', 'Matter Beta was submitted on Friday.'],
+    ] as const) {
+      const result = analysis({
+        summary: detail,
+        citations: [{ id: 'S1', quote: detail, start: 0, end: detail.length, lineStart: 1, lineEnd: 1 }],
+        parties: [], obligations: [], legalIssues: [], timelineEvents: [],
+      });
+      await app.db.insert(app.schema.evidence).values({
+        id: evidenceId, caseId, userId: owner.id, type: 'document', title: `${caseId}.txt`,
+      });
+      await app.db.insert(app.schema.documentAnalyses).values({
+        id: `ANALYSIS_${evidenceId}`, evidenceId, caseId, userId: owner.id,
+        analysisVersion: 'test', contentHash: `hash-${evidenceId}`, status: 'complete',
+        extractionMethod: 'plain_text', providerStatus: 'not_requested',
+        documentType: 'case note', confidence: 92, summary: detail,
+        result: JSON.stringify(result), analyzedChars: detail.length,
+        createdAt: new Date(), updatedAt: new Date(),
+      });
+    }
+    const caller = app.makeCaller(owner);
+    const answerB = await caller.assistant.ask({
+      expectedUserId: owner.id, caseId: caseB, question: 'What happened in this case?',
+    });
+    expect(answerB).toMatchObject({
+      ownerId: owner.id, caseId: caseB, grounded: true,
+      citations: [expect.objectContaining({ evidenceId: 'ASSISTANT_EVIDENCE_B' })],
+    });
+    expect(answerB.citations.some((citation: { evidenceId: string }) => citation.evidenceId === 'ASSISTANT_EVIDENCE_A')).toBe(false);
+    const answerA = await caller.assistant.ask({
+      expectedUserId: owner.id, caseId: caseA, question: 'What happened in this case?',
+    });
+    expect(answerA).toMatchObject({ caseId: caseA, citations: [expect.objectContaining({ evidenceId: 'ASSISTANT_EVIDENCE_A' })] });
+    await expect(caller.assistant.ask({
+      expectedUserId: other.id, caseId: caseB, question: 'What happened in this case?',
+    })).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 });

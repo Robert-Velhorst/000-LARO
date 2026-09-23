@@ -2,6 +2,7 @@
  * Full LARO dashboard for the packaged desktop and supported server renderer.
  */
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Router, Route, Switch } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -33,6 +34,7 @@ const fileProtocol =
 
 export default function DashboardApp() {
   const { user, loading, error, refresh } = useAuth();
+  const queryClient = useQueryClient();
   const { t, locale } = useI18n();
   const [sessionInvalidated, setSessionInvalidated] = useState(false);
   const [sessionCheckFailed, setSessionCheckFailed] = useState(false);
@@ -41,12 +43,23 @@ export default function DashboardApp() {
   refreshRef.current = refresh;
 
   useEffect(() => {
+    const isSessionQuery = (query: { queryKey: readonly unknown[] }) => {
+      const path = query.queryKey[0];
+      return Array.isArray(path) && path[0] === "auth" && path[1] === "me";
+    };
+    const clearPreviousAccountData = async () => {
+      const protectedQuery = (query: { queryKey: readonly unknown[] }) => !isSessionQuery(query);
+      await queryClient.cancelQueries({ predicate: protectedQuery });
+      queryClient.removeQueries({ predicate: protectedQuery });
+      queryClient.getMutationCache().clear();
+    };
     const onSessionChanged = () => {
       const generation = ++sessionGeneration.current;
       setSessionInvalidated(true);
       setSessionCheckFailed(false);
-      void refreshRef.current().then((result) => {
+      void clearPreviousAccountData().then(() => refreshRef.current()).then(async (result) => {
         if (sessionGeneration.current !== generation) return;
+        await clearPreviousAccountData();
         if (result.isError) setSessionCheckFailed(true);
         else setSessionInvalidated(false);
       }).catch(() => {
@@ -55,7 +68,7 @@ export default function DashboardApp() {
     };
     window.addEventListener('laro:scanner-session-changed', onSessionChanged);
     return () => window.removeEventListener('laro:scanner-session-changed', onSessionChanged);
-  }, []);
+  }, [queryClient]);
 
   if (sessionInvalidated && sessionCheckFailed) {
     return <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
@@ -105,8 +118,8 @@ export default function DashboardApp() {
       <SkipNavigation />
       <WebSocketProvider>
         <Router {...(fileProtocol ? { hook: useHashLocation } : {})}>
-          <OnboardingFlow key={user.id} />
-          <DashboardLayout>
+          <OnboardingFlow key={`onboarding:${user.id}`} />
+          <DashboardLayout key={`workspace:${user.id}`}>
           <Suspense fallback={<div role="status" className="py-12 text-center text-muted-foreground">{t("common.loading")}</div>}>
             <Switch>
               <Route path="/" component={Home} />

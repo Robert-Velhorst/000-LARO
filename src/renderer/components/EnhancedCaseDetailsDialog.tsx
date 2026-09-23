@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { useAssistantCaseContext } from '@/components/DashboardLayout';
 import { MultiAreaOutreachProgress } from "@/components/OutreachProgressBar";
 import {
   Dialog,
@@ -613,6 +614,11 @@ export default function EnhancedCaseDetailsDialog({
   } | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
   const utils = trpc.useUtils();
+  const assistantCaseContext = useAssistantCaseContext();
+  const handleDialogOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) assistantCaseContext?.clearCaseView(caseId);
+    onOpenChange(nextOpen);
+  };
 
   const [activeTab, setActiveTab] = useState(() => savedCaseTab(caseId));
 
@@ -787,7 +793,7 @@ export default function EnhancedCaseDetailsDialog({
   /* ═══════════════════════ RENDER ═══════════════════════ */
   return (
     <>
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent
         showCloseButton={false}
         className="flex h-[94dvh] w-[calc(100vw-1rem)] max-w-[1400px] flex-col gap-0 overflow-hidden border-border bg-background p-0 sm:h-[90dvh] sm:max-w-[92vw]"
@@ -821,6 +827,9 @@ export default function EnhancedCaseDetailsDialog({
           </div>
 
           <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
+            <Button disabled={!caseData || !!caseError || !assistantCaseContext} onClick={() => assistantCaseContext?.selectFromCaseView(caseId)} variant="ghost" size="sm" aria-label="Ask assistant about this case" className="h-8 w-8 px-0 text-xs text-primary sm:w-auto sm:px-2.5">
+              <MessageSquare className="h-3.5 w-3.5 sm:mr-1.5" /> <span className="hidden sm:inline">Ask assistant</span>
+            </Button>
             <Button disabled={!caseData || !!caseError} onClick={() => exportCaseSummary(caseData)} variant="ghost" size="sm" title="Export case" aria-label="Export case" className="h-8 w-8 px-0 text-xs text-muted-foreground hover:text-foreground sm:w-auto sm:px-2.5">
               <Download className="h-3.5 w-3.5 sm:mr-1.5" /> <span className="hidden sm:inline">Export</span>
             </Button>
@@ -833,7 +842,7 @@ export default function EnhancedCaseDetailsDialog({
               </Button>
             )}
             <div className="mx-0.5 h-5 w-px bg-border/60 sm:mx-1" />
-            <Button onClick={() => onOpenChange(false)} variant="ghost" size="sm" aria-label="Close case details" className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground">
+            <Button onClick={() => handleDialogOpenChange(false)} variant="ghost" size="sm" aria-label="Close case details" className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground">
               <X className="w-4 h-4" />
             </Button>
           </div>

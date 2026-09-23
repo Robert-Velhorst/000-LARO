@@ -1186,6 +1186,147 @@ test("assistant preserves an unsent draft while closing and navigating", async (
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
+test("assistant shows its case, ignores legacy storage, and clears context on navigation and refresh", async ({ page }, testInfo) => {
+  const email = await createAccount(page);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  const ownerId = (database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string }).id;
+  const caseA = `A11Y_ASSISTANT_A_${randomUUID()}`;
+  const caseB = `A11Y_ASSISTANT_B_${randomUUID()}`;
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    const insert = database.prepare("INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, createdAt, updatedAt) VALUES (?, ?, ?, 'Contract', 'Assistant context test', 'Low', 'Intake', ?, ?)");
+    insert.run(caseA, ownerId, "Matter Alpha", now, now);
+    insert.run(caseB, ownerId, "Matter Beta", now, now);
+  } finally { database.close(); }
+
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badApiResponses: string[] = [];
+  const asks: string[] = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => {
+    if (!request.failure()?.errorText?.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}`);
+  });
+  page.on("response", response => {
+    if (response.url().includes("/api/trpc/") && response.status() >= 400) badApiResponses.push(`${response.status()} ${response.url()}`);
+  });
+  page.on("request", request => {
+    if (request.url().includes("assistant.ask")) asks.push(request.postData() ?? "");
+  });
+
+  await page.evaluate(id => localStorage.setItem("active-case-context-id", id), caseA);
+  const reload = await page.reload({ waitUntil: "networkidle" });
+  expect(reload?.status()).toBe(200);
+  expect(await page.evaluate(() => localStorage.getItem("active-case-context-id"))).toBeNull();
+  await page.getByRole("button", { name: "Open LARO assistant" }).click();
+  let assistant = page.getByRole("dialog");
+  await expect(assistant.getByRole("button", { name: "Case: Product help (no case)" })).toBeVisible();
+  await assistant.getByRole("textbox", { name: "Message LARO assistant" }).fill("How do I scan documents?");
+  await assistant.getByRole("button", { name: "Send message" }).click();
+  await expect(assistant.getByText("Product help", { exact: true })).toBeVisible();
+  expect(asks[0]).not.toContain(caseA);
+  expect((JSON.parse(asks[0]) as Record<string, { json: { caseId: null } }>)["0"].json.caseId).toBeNull();
+
+  await assistant.getByRole("button", { name: "Case: Product help (no case)" }).click();
+  await page.getByRole("button", { name: "Matter Alpha", exact: true }).click();
+  await expect(assistant.getByText("Source-grounded case mode: Matter Alpha", { exact: true })).toBeVisible();
+  await assistant.getByRole("textbox", { name: "Message LARO assistant" }).fill("What happened in this case?");
+  await assistant.getByRole("button", { name: "Send message" }).click();
+  await expect(assistant.getByLabel("Answer case identity")).toHaveText("Case: Matter Alpha");
+  expect(asks[1]).toContain(caseA);
+  await page.screenshot({ path: testInfo.outputPath("assistant-visible-case-alpha.png"), fullPage: true });
+
+  await assistant.getByRole("button", { name: "Case: Matter Alpha" }).click();
+  await page.getByRole("button", { name: "Matter Beta", exact: true }).click();
+  await expect(assistant.getByText("Source-grounded case mode: Matter Beta", { exact: true })).toBeVisible();
+  await expect(assistant.getByLabel("Answer case identity")).toHaveCount(0);
+  await assistant.getByRole("textbox", { name: "Message LARO assistant" }).fill("What happened in this case?");
+  await assistant.getByRole("button", { name: "Send message" }).click();
+  await expect(assistant.getByLabel("Answer case identity")).toHaveText("Case: Matter Beta");
+  expect(asks[2]).toContain(caseB);
+  expect(asks[2]).not.toContain(caseA);
+
+  await assistant.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("button", { name: "Documents", exact: true }).click();
+  await page.getByRole("button", { name: "Open LARO assistant" }).click();
+  assistant = page.getByRole("dialog");
+  await expect(assistant.getByRole("button", { name: "Case: Product help (no case)" })).toBeVisible();
+  await expect(assistant.getByLabel("Answer case identity")).toHaveCount(0);
+  await assistant.getByRole("button", { name: "Case: Product help (no case)" }).click();
+  await page.getByRole("button", { name: "Matter Beta", exact: true }).click();
+  const secondReload = await page.reload({ waitUntil: "networkidle" });
+  expect(secondReload?.status()).toBe(200);
+  await page.getByRole("button", { name: "Open LARO assistant" }).click();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Case: Product help (no case)" })).toBeVisible();
+
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+  expect(badApiResponses).toEqual([]);
+});
+
+test("assistant case-view selection closes with the case and cannot cross accounts", async ({ page }, testInfo) => {
+  const email = await createAccount(page);
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  const ownerA = (database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string }).id;
+  const ownerB = `A11Y_${randomUUID()}`;
+  const caseA = `A11Y_ASSISTANT_A_${randomUUID()}`;
+  const caseB = `A11Y_ASSISTANT_B_${randomUUID()}`;
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    database.prepare("INSERT INTO users (id, email, name, password, role, createdAt) VALUES (?, ?, 'Second owner', NULL, 'user', ?)")
+      .run(ownerB, `${ownerB.toLowerCase()}@example.test`, now);
+    database.prepare("INSERT INTO system_config (configKey, configValue, updatedAt) VALUES (?, ?, ?)")
+      .run(`onboarding:state:${ownerB}`, JSON.stringify({ status: "complete", currentStepKey: "outreach" }), now);
+    const insert = database.prepare("INSERT INTO cases (id, userId, clientName, caseType, caseSummary, urgency, status, createdAt, updatedAt) VALUES (?, ?, ?, 'Contract', 'Account context test', 'Low', 'Intake', ?, ?)");
+    insert.run(caseA, ownerA, "Owner A matter", now, now);
+    insert.run(caseB, ownerB, "Owner B matter", now, now);
+  } finally { database.close(); }
+
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => {
+    if (!request.failure()?.errorText?.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}`);
+  });
+
+  const casePage = await page.goto(`/cases?case=${caseA}`, { waitUntil: "networkidle" });
+  expect(casePage?.status()).toBe(200);
+  await page.getByRole("button", { name: "Ask assistant about this case" }).click();
+  await expect(page.getByText("Source-grounded case mode: Owner A matter", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("assistant-from-case-view.png"), fullPage: true });
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Close case details" }).click();
+  await page.getByRole("button", { name: "Open LARO assistant" }).click();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Case: Product help (no case)" })).toBeVisible();
+
+  await page.getByRole("dialog").getByRole("button", { name: "Case: Product help (no case)" }).click();
+  await page.getByRole("button", { name: "Owner A matter", exact: true }).click();
+  await expect(page.getByText("Source-grounded case mode: Owner A matter", { exact: true })).toBeVisible();
+  const tokenB = jwt.sign({ userId: ownerB }, "laro-a11y-jwt-secret-32-characters-minimum", { expiresIn: "1h" });
+  await page.context().addCookies([{
+    name: COOKIE_NAME, value: tokenB, url: "http://127.0.0.1:5181", httpOnly: true, sameSite: "Lax",
+  }]);
+  await page.evaluate(() => window.dispatchEvent(new Event("laro:scanner-session-changed")));
+  await expect(page.getByText("Source-grounded case mode: Owner A matter", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Owner B matter", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Owner A matter", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open LARO assistant" }).click();
+  const assistant = page.getByRole("dialog");
+  await expect(assistant.getByRole("button", { name: "Case: Product help (no case)" })).toBeVisible();
+  await assistant.getByRole("button", { name: "Case: Product help (no case)" }).click();
+  await expect(page.getByRole("button", { name: "Owner B matter", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Owner A matter", exact: true })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("assistant-after-account-switch.png"), fullPage: true });
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+});
+
 test("notes preserve a draft, save once and reveal the full text without sending mail", async ({ page }, testInfo) => {
   const email = await createAccount(page);
   const outbound: string[] = [];

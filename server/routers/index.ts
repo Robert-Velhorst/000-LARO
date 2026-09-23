@@ -498,19 +498,24 @@ export const appRouter = router({
         z.object({
           question: z.string().trim().min(1).max(2000),
           caseId: z.string().optional(),
+          expectedUserId: z.string().min(1).optional(),
           page: z.string().optional(),
         })
       )
       .mutation(async ({ ctx, input }) => {
+        if (input.expectedUserId && input.expectedUserId !== ctx.user.id) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Account changed while asking the assistant' });
+        }
         if (input.caseId) {
-          return answerCaseQuestion({
+          const result = await answerCaseQuestion({
             userId: ctx.user.id,
             caseId: input.caseId,
             question: input.question,
           });
+          return { ...result, caseId: input.caseId, ownerId: ctx.user.id };
         }
 
-        return answerProductQuestion(input.question);
+        return { ...answerProductQuestion(input.question), caseId: null, ownerId: ctx.user.id };
       }),
   }),
   

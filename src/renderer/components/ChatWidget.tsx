@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -29,23 +29,41 @@ interface Message {
   notice?: string | null;
   mode?: string;
   grounded?: boolean;
+  caseId?: string | null;
+  caseLabel?: string | null;
 }
 
 export function useChatSession() {
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
-  const [caseId, setCaseId] = useState<string | null>(null);
-  return { message, setMessage, messages, setMessages, caseId, setCaseId };
+  const [caseId, setCaseIdState] = useState<string | null>(null);
+  const caseIdRef = useRef<string | null>(null);
+  const setCaseId = useCallback((nextCaseId: string | null) => {
+    // An in-flight answer must see navigation/closure before React can render.
+    caseIdRef.current = nextCaseId;
+    setCaseIdState(nextCaseId);
+  }, []);
+  return { message, setMessage, messages, setMessages, caseId, caseIdRef, setCaseId };
 }
 
-export default function ChatWidget({ embedded = false, session }: { embedded?: boolean; session?: ReturnType<typeof useChatSession> }) {
+export default function ChatWidget({ embedded = false, session, ownerId = null }: { embedded?: boolean; session?: ReturnType<typeof useChatSession>; ownerId?: string | null }) {
   const { isConnected } = useWebSocket();
   const [location] = useLocation();
   const [isOpen, setIsOpen] = useState(embedded);
   const [isMinimized, setIsMinimized] = useState(false);
   const [activeClarificationId, setActiveClarificationId] = useState<string | null>(null);
   const localSession = useChatSession();
-  const { message, setMessage, messages, setMessages, caseId, setCaseId } = session || localSession;
+  const { message, setMessage, messages, setMessages, caseId, caseIdRef, setCaseId } = session || localSession;
+  const selectedCase = trpc.cases.byId.useQuery(caseId || '', {
+    enabled: Boolean(caseId && ownerId),
+    staleTime: 0,
+    refetchOnMount: 'always',
+  });
+  const visibleCase = selectedCase.data?.id === caseId && selectedCase.data.userId === ownerId
+    ? selectedCase.data : null;
+  const selectionRef = useRef({ ownerId, caseId });
+  selectionRef.current = { ownerId, caseId };
+  const previousOwnerId = useRef(ownerId);
   const utils = trpc.useUtils();
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -70,11 +88,24 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+  useEffect(() => {
+    if (previousOwnerId.current === ownerId) return;
+    previousOwnerId.current = ownerId;
+    setCaseId(null);
+    setMessages([]);
+    setActiveClarificationId(null);
+  }, [ownerId, setCaseId, setMessages]);
 
   const handleSend = async () => {
     if (!message.trim() || askAssistantMutation.isPending || answerMutation.isPending) return;
+    if (!ownerId || (caseId && !visibleCase)) {
+      toast.error('Choose an available case before asking about its evidence');
+      return;
+    }
 
     const outgoingMessage = message;
+    const requestedCaseId = visibleCase?.id ?? null;
+    const requestedCaseLabel = visibleCase?.clientName || visibleCase?.caseType || visibleCase?.id || null;
     const newMessage: Message = {
       id: Date.now().toString(),
       role: "user",
@@ -119,9 +150,15 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
       try {
         const result = await askAssistantMutation.mutateAsync({
           question: outgoingMessage,
-          caseId: caseId || undefined,
+          caseId: requestedCaseId || undefined,
+          expectedUserId: ownerId,
           page: location,
         });
+        if (result.caseId !== requestedCaseId || result.ownerId !== ownerId ||
+            caseIdRef.current !== requestedCaseId || selectionRef.current.ownerId !== ownerId) {
+          toast.info('The selected account or case changed; the previous answer was discarded.');
+          return;
+        }
         const response: Message = {
           id: (Date.now() + 1).toString(),
           role: "assistant",
@@ -131,9 +168,12 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
           notice: result.notice,
           mode: result.mode,
           grounded: result.grounded,
+          caseId: result.caseId,
+          caseLabel: requestedCaseLabel,
         };
         setMessages(prev => [...prev, response]);
       } catch {
+        if (caseIdRef.current !== requestedCaseId || selectionRef.current.ownerId !== ownerId) return;
         setMessage((current) => current || outgoingMessage);
         const fallback: Message = {
           id: (Date.now() + 1).toString(),
@@ -208,7 +248,7 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
                 <CardTitle className="text-base">LARO Assistant</CardTitle>
                 {!isMinimized && (
                   <p className="text-xs text-muted-foreground">
-                    {caseId ? "Source-grounded case mode" : "Product help mode"}
+                    {caseId ? (visibleCase ? `Source-grounded case mode: ${visibleCase.clientName || visibleCase.caseType || visibleCase.id}` : 'Checking selected case...') : "Product help mode"}
                   </p>
                 )}
                 {pendingCount > 0 && !isMinimized && (
@@ -246,7 +286,7 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
             </div>
           </CardHeader>
           {!isMinimized && <div className="border-b border-border px-4 py-2">
-            <CasePicker value={caseId} onChange={setCaseId} disabled={askAssistantMutation.isPending || answerMutation.isPending} />
+            <CasePicker value={caseId} ownerId={ownerId} onChange={(id) => { setActiveClarificationId(null); setMessages([]); setCaseId(id); }} disabled={askAssistantMutation.isPending || answerMutation.isPending} emptyLabel="Product help (no case)" />
           </div>}
 
           {/* Messages */}
@@ -275,8 +315,9 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
                           aria-pressed={activeClarificationId === q.id}
                           onClick={() => {
                             setActiveClarificationId(q.id);
+                            setMessages([]);
                             setCaseId(q.caseId);
-                            setMessages(previous => [...previous, {
+                            setMessages([{
                               id: crypto.randomUUID(),
                               role: "assistant",
                               content: q.question,
@@ -314,6 +355,9 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
                           {assistantModeLabel(msg.mode, Boolean(msg.grounded))}
                         </Badge>
                       ) : null}
+                      {msg.role === 'assistant' && msg.caseId && (
+                        <p className="mb-2 text-xs font-medium" aria-label="Answer case identity">Case: {msg.caseLabel || msg.caseId}</p>
+                      )}
                       <p className="whitespace-pre-wrap break-words text-sm">{msg.content}</p>
                       {msg.notice ? (
                         <p className="mt-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
@@ -369,7 +413,7 @@ export default function ChatWidget({ embedded = false, session }: { embedded?: b
                     onClick={handleSend}
                     size="icon"
                     aria-label="Send message"
-                    disabled={!message.trim() || askAssistantMutation.isPending || answerMutation.isPending}
+                    disabled={!message.trim() || !ownerId || Boolean(caseId && !visibleCase) || askAssistantMutation.isPending || answerMutation.isPending}
                   >
                     {askAssistantMutation.isPending
                       ? <Loader2 className="h-4 w-4 animate-spin" />
