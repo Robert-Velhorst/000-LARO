@@ -704,8 +704,8 @@ with `--local`.
 - Persisted OAuth tokens stay server-side, encrypted, and absent from API
   responses. Trello and Telegram connector procedures are not mounted and never
   accept provider tokens.
-- SQLite uses WAL, foreign-key enforcement, migrations, a busy timeout, and
-  additional relationship guards for historical tables.
+- SQLite uses WAL, declared native foreign keys, fail-closed versioned
+  migrations, a busy timeout, and verified pre-migration backups.
 
 ## Installation and Quick Start
 
@@ -1183,7 +1183,6 @@ External Flask keys stay in independent operator escrow.
   evidence connectors; Trello and Telegram have no mounted connector routes.
 - Sending is disabled by default.
 - Flask remains a separate recovery responsibility until migration.
-- Historical tables still use extra relationship guards pending native-FK work.
 - SQLite/local storage target one desktop/API owner process, not active-active
   multi-node service.
 - Windows portable builds are unsigned and intended for internal use.

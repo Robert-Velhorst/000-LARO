@@ -7,7 +7,7 @@ import { InsertUser, users, lawyers, cases, outreachStatus, emailActivity, syste
 import { ENV } from './_core/env';
 import { createCaseId } from './ids';
 import { normalizeAccountEmail } from './emailIdentity';
-import { ensureRelationshipIntegrityTriggers } from './relationshipIntegrity';
+import { relationshipIntegrityReport } from './relationshipIntegrity';
 import { assertDatabaseRuntimeIsSupported } from './persistence/hostedPersistenceGuard';
 import { normalizeLiteralSearchText } from './literalSearch';
 import {
@@ -351,11 +351,13 @@ export async function getDb() {
       ensureIndexes(sqlite);
       normalizeLegacyPrivacyPreferences(sqlite);
 
-      // Enforce relationships in legacy tables without rebuilding installed
-      // databases. Existing inconsistencies remain visible to reconciliation;
-      // new orphaned writes and parent deletes are guarded at database level.
-      const relationshipTriggerCount = ensureRelationshipIntegrityTriggers(sqlite);
-      console.log(`[Database] Ensured ${relationshipTriggerCount} relationship-integrity triggers.`);
+      const relationships = relationshipIntegrityReport(sqlite);
+      if (!relationships.ok) {
+        throw new Error(
+          `Native relationship verification failed (${relationships.missing.length} missing, ${relationships.violations.length} violation(s)).`,
+        );
+      }
+      console.log(`[Database] Verified ${relationships.installed} native foreign-key relationships.`);
 
     } catch (error) {
       console.error("[Database] Failed to connect to SQLite or run migrations:", error);

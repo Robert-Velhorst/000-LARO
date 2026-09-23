@@ -87,16 +87,14 @@ must not be represented as operational.
 ## Engineering Follow-Up
 
 1. Complete the external candidate gates listed above.
-2. Expand declared foreign keys after installed-data reconciliation; the
-   production data-readiness gate now detects violations before migration.
-3. Complete renderer NL/EN string migration.
-4. Add platform-normalized pixel baselines for high-risk interaction states and
+2. Complete renderer NL/EN string migration.
+3. Add platform-normalized pixel baselines for high-risk interaction states and
    extend focus-order coverage into complex route-specific case and evidence
    editors; shared-shell keyboard behavior is now blocking.
-5. Normalize historical text-backed numeric fields through a reviewed,
+4. Normalize historical text-backed numeric fields through a reviewed,
    backup-tested migration; the production readiness gate now detects malformed,
    unsafe, or internally inconsistent count data before conversion.
-6. Continue dependency review while preserving the enforced renderer bundle budgets.
+5. Continue dependency review while preserving the enforced renderer bundle budgets.
 
 These items improve maintainability and coverage; they do not replace the
 target-account acceptance required for any enabled external provider.

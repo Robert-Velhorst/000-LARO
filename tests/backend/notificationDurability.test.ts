@@ -132,12 +132,14 @@ suite("typed durable notifications", () => {
     expect(beforeDelete.outcome).toBe("created");
     if (!beforeDelete.persisted) throw new Error("Expected persisted notification");
     // Simulate a legacy/partially-migrated database that retained a stale row;
-    // current installs normally cascade it through relationship triggers.
+    // current installs normally cascade it through native foreign keys.
     const sqlite: any = app.db.$client;
-    sqlite.exec('DROP TRIGGER IF EXISTS "laro_ri_notifications_caseId_delete"');
-    await app.db.delete(app.schema.cases).where(eq(app.schema.cases.id, deletedCaseId));
-    const { ensureRelationshipIntegrityTriggers } = await import("../../server/relationshipIntegrity");
-    ensureRelationshipIntegrityTriggers(sqlite);
+    sqlite.pragma("foreign_keys = OFF");
+    try {
+      sqlite.prepare("DELETE FROM cases WHERE id = ?").run(deletedCaseId);
+    } finally {
+      sqlite.pragma("foreign_keys = ON");
+    }
 
     const listed = await app.makeCaller(owner).notifications.list({ limit: 50 });
     for (const id of ["NOTIFICATION_FORGED_DESTINATION", beforeDelete.id]) {
@@ -150,6 +152,7 @@ suite("typed durable notifications", () => {
         evidenceFileId: null,
       });
     }
+    sqlite.prepare("DELETE FROM notifications WHERE id = ?").run(beforeDelete.id);
   });
 
   it("deduplicates concurrent writes in the notification row itself", async () => {

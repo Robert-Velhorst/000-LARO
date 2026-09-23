@@ -1,6 +1,6 @@
 # Technical Debt Register
 
-Updated: 2026-09-20
+Updated: 2026-09-23
 
 | # | Debt | Impact | Status / next step |
 | --- | --- | --- | --- |
@@ -13,7 +13,7 @@ Updated: 2026-09-20
 | D7 | Current runtime lockfile has no known advisory | - | Re-audit each release |
 | D8 | Duplicate `shared/` and `src/shared/` contracts | - | Resolved; `shared/` is canonical |
 | D9 | Historical excluded tests and audit snapshots remain for traceability | Low | Keep clearly dated; remove only through reviewed archive work |
-| D10 | Historical tables use database triggers rather than native foreign-key clauses to avoid destructive installed-data rebuilds | Low | Startup enforces insert/update/delete relationships; readiness verifies every guard and reconciliation covers historical drift; replace with native FKs only through a backup-tested migration |
+| D10 | Historical tables used generated relationship triggers instead of native foreign keys | - | Resolved with the backup-verified `0031` compatibility migration, schema-derived native keys, reviewed delete policies, orphan preflight, and post-migration `foreign_key_check` |
 | D11 | Top-level proprietary license | - | Resolved |
 | D12 | CSV and ZIP evidence export include a case-scoped index, redacted metadata, analyses, and available source files; PDF remains unavailable | Low | Keep capability labels honest |
 | D13 | Historical subscription, usage-limit, and monetary usage columns remain in installed schemas | Low | Keep for compatibility; new telemetry writes quantity counts only and leaves monetary fields null |
@@ -42,7 +42,5 @@ Updated: 2026-09-20
 | D36 | A second Drive router exposed preview/direct-import/sync logic, repeated deduplication and analysis, and wrote a parallel provider table | - | Resolved by retaining only read-only folder selection plus canonical auto-collection; canonical evidence now owns account-bound source identity, provider revision, version history, hashes, bounded outcomes, and retry-safe failure behavior |
 | D37 | Legal drafts were transient renderer blobs with placeholder recipients and no reproducible source/review version | - | Resolved with reviewed recipient revisions, immutable exact-byte snapshots, source/analysis provenance, stale-review rejection, owner-only historical downloads, mandatory content-free audit, and erasure coverage |
 
-D10 is operationally contained without rewriting installed databases. A native
-foreign-key conversion remains migration work, not a release blocker while the
-guard and reconciliation gates stay green. D16 remains incremental quality
-work. Provider rollout must retain credential, consent, approval and audit gates.
+D16 remains incremental quality work. Provider rollout must retain credential,
+consent, approval and audit gates.

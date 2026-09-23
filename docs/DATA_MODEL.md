@@ -1,6 +1,6 @@
 # Data Model, Ownership, and Persistence
 
-Current as of 2026-09-20.
+Current as of 2026-09-23.
 
 ## Topology
 
@@ -52,6 +52,10 @@ timeout. The scanner database declares its scan-to-file foreign key.
   pending snapshot cannot receive a server download ticket.
 - Storage is deleted if evidence-record creation fails.
 - Reconciliation and invariant reports detect orphan or inconsistent records.
+- Maintained owner, case, provider, lawyer, tag, and conversation relationships
+  are declared as native foreign keys with reviewed cascade, set-null, or
+  restrict behavior. Upgrade migration `0031` verifies a backup and a clean
+  orphan report before rebuilding historical tables.
 - Data readiness checks strict historical counters for malformed, negative, or
   JavaScript-unsafe values and verifies cross-counter relationships using
   aggregate queries. Empty compatibility values remain accepted as zero.
@@ -60,8 +64,6 @@ timeout. The scanner database declares its scan-to-file foreign key.
 
 ## Remaining model work
 
-Many relationships are still application-enforced rather than declared as SQL
-foreign keys. Adding constraints requires a reviewed migration after reconciling
-existing installations. Some historical money and count fields remain text. A
-non-mutating readiness gate now identifies incompatible count data before those
-columns are normalized through the same migration discipline.
+Some historical money and count fields remain text. A non-mutating readiness
+gate identifies incompatible count data before those columns are normalized
+through the same migration discipline.

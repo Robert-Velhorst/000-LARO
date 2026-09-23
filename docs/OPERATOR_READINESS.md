@@ -21,8 +21,9 @@ development exemptions require an explicit `NODE_ENV=development`.
 
 Production mode also runs the `db:readiness` checks against the configured
 database. It blocks on SQLite integrity errors, declared foreign-key violations,
-missing legacy relationship guards, failed invariants, reconciliation findings,
-duplicate emails, or exact known demo/test account markers. The report contains
+missing or policy-drifted native relationships, failed invariants,
+reconciliation findings, duplicate emails, or exact known demo/test account
+markers. The report contains
 counts only and does not print case or user data. The same command is packaged
 as a compiled operation in the API-only production image; it does not require
 development dependencies such as `tsx`. In a source checkout, the command

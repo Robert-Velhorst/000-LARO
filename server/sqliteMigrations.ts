@@ -6,6 +6,12 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { getTableConfig } from "drizzle-orm/sqlite-core";
 import * as schema from "./schema";
+import {
+  assertNativeRelationshipReconciliationReady,
+  nativeRelationshipsNeedReconciliation,
+  reconcileNativeRelationships,
+} from "./nativeRelationshipMigration";
+import { relationshipIntegrityReport } from "./relationshipIntegrity";
 
 type SqliteClient = InstanceType<typeof Database>;
 
@@ -26,11 +32,14 @@ type AppliedMigration = {
 export type SqliteMigrationResult = {
   backupPath: string | null;
   migrationsApplied: number;
+  nativeRelationships: number;
+  relationshipTablesRebuilt: number;
   schemaSignature: string;
 };
 
 const BASELINE_VERSION = 1;
 const BASELINE_TABLE = "laro_schema_baseline";
+const RELATIONSHIP_BASELINE_TABLE = "laro_relationship_baseline";
 const REQUIRED_BACKUP_TABLES = ["users", "lawyers", "cases", "evidence", "audit_logs", "system_config"];
 const INTERNAL_TABLES = new Set(["__drizzle_migrations", "sqlite_sequence"]);
 const BASELINE_COMPATIBILITY_COLUMNS: Record<string, SchemaColumn> = {
@@ -170,6 +179,7 @@ export function validateDeclaredSqliteSchema(sqlite: SqliteClient): {
 } {
   const actual = captureSchema(sqlite);
   actual.delete(BASELINE_TABLE);
+  actual.delete(RELATIONSHIP_BASELINE_TABLE);
   const expected = declaredSchemaSnapshot();
   const drift = compareSnapshots(actual, expected);
   return { ok: drift.length === 0, drift, signature: stableSignature(actual) };
@@ -360,14 +370,22 @@ export async function runSqliteMigrations(options: {
   }
 
   const pendingCount = migrations.length - (lastAppliedIndex + 1);
-  const compatibilityPending = hasExistingApplicationSchema && baselineNeedsReconciliation(sqlite);
+  const baselinePending = hasExistingApplicationSchema && baselineNeedsReconciliation(sqlite);
+  const relationshipPending = hasExistingApplicationSchema && nativeRelationshipsNeedReconciliation(sqlite);
+  const compatibilityPending = baselinePending || relationshipPending;
   const backupPath = hasExistingApplicationSchema && (pendingCount > 0 || compatibilityPending)
     ? await createVerifiedMigrationBackup(sqlite, databasePath)
     : null;
 
   try {
+    if (hasExistingApplicationSchema && relationshipPending) {
+      assertNativeRelationshipReconciliationReady(sqlite);
+    }
     migrate(drizzleDb, { migrationsFolder });
     reconcileBaseline(sqlite);
+    const relationshipMigration = nativeRelationshipsNeedReconciliation(sqlite)
+      ? reconcileNativeRelationships(sqlite)
+      : { relationships: relationshipIntegrityReport(sqlite).expected, tablesRebuilt: 0 };
     const validation = validateDeclaredSqliteSchema(sqlite);
     if (!validation.ok) {
       throw new Error(`Declared SQLite schema mismatch:\n- ${validation.drift.join("\n- ")}`);
@@ -375,6 +393,8 @@ export async function runSqliteMigrations(options: {
     return {
       backupPath,
       migrationsApplied: pendingCount,
+      nativeRelationships: relationshipMigration.relationships,
+      relationshipTablesRebuilt: relationshipMigration.tablesRebuilt,
       schemaSignature: crypto.createHash("sha256").update(validation.signature).digest("hex"),
     };
   } catch (error) {

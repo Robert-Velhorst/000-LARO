@@ -24,13 +24,17 @@ Updated: 2026-09-23
   the transaction succeeds.
 - Startup never invents arbitrary missing columns, replays historical statements
   individually, suppresses SQL errors, or stamps unverified history as applied.
-- Integrity indexes are ensured after schema validation. Historical relationship
-  triggers remain a separate, observable compatibility layer until S4-02.
-- `ensureRelationshipIntegrityTriggers` installs non-destructive database guards
-  for historical relationships after schema alignment. It rejects new orphaned
-  inserts/updates and cascades parent deletion. It does not delete pre-existing
-  drift; `admin.reconcileReport` and a reviewed `admin.repairOrphans` run handle
-  that explicitly.
+- Migration `0031_native_relationships.sql` establishes the relationship
+  reconciliation marker. Because SQLite cannot add a foreign key in place, the
+  compatibility runner rebuilds only affected tables inside one transaction,
+  copies every declared column and row, and restores non-legacy indexes and
+  triggers.
+- The runner derives the required relationship set and delete policies from
+  `server/schema.ts`. It refuses to mutate a database with relationship orphans
+  or an existing foreign key whose policy differs, removes obsolete
+  `laro_ri_*` triggers, and commits only after every declaration is installed
+  and `PRAGMA foreign_key_check` is clean.
+- Integrity indexes are ensured after schema and relationship validation.
 
 ## Rollback strategy — file snapshot
 
@@ -67,5 +71,6 @@ Restore stages and validates the replacement and preserves the previous database
 - Migration `0001` contains historical table rebuilds. It is used only as part
   of the contiguous journal for a clean database or a database whose recorded
   version predates it; it is never replayed over a newer schema.
-- Historical tables still use trigger-enforced relationships. Replacing those
-  with reviewed native foreign keys is tracked separately by S4-02.
+- Databases with reported relationship orphans must be backed up and repaired
+  on the prior release with `admin.reconcileReport` plus an explicitly reviewed
+  `admin.repairOrphans` operation before retrying migration `0031`.

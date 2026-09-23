@@ -175,12 +175,12 @@ suite('Phases 051–060 — services', () => {
     expect(workload.some((row: any) => row.caseId === 'ANALYTICS_CASE_OTHER')).toBe(false);
   });
 
-  it('Phase 054 — database guards reject new orphans and reconciliation stays clean', async () => {
+  it('Phase 054 — native foreign keys reject new orphans and reconciliation stays clean', async () => {
     const { reconcileReport } = await import('../../server/reconcile');
     await expect(app.db.insert(app.schema.outreachStatus).values({
       id: 'ORPHAN1', caseId: 'NONEXISTENT_CASE', lawyerId: 'LWYR_5X', status: 'PendingApproval',
       createdAt: new Date(), updatedAt: new Date(),
-    } as any)).rejects.toThrow(/relationship violation: outreach_status\.caseId/);
+    } as any)).rejects.toThrow(/FOREIGN KEY constraint failed/i);
     const report = await reconcileReport();
     expect(report.orphanedByCaseId['outreach_status'] ?? 0).toBe(0);
   });
