@@ -90,7 +90,9 @@ must not be represented as operational.
 ## Engineering Follow-Up
 
 1. Complete the external candidate gates listed above.
-2. Complete renderer NL/EN string migration.
+2. Complete renderer NL/EN string migration. Auto-collection settings and the
+   mounted case workspace are catalog-driven and browser-tested; the blocking
+   copy audit currently acknowledges 1,896 legacy candidates across 58 files.
 3. Add platform-normalized pixel baselines for high-risk interaction states and
    extend focus-order coverage into complex route-specific case and evidence
    editors; shared-shell keyboard behavior is now blocking.

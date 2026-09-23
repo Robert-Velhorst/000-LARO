@@ -436,23 +436,88 @@ test("collection monitoring renders canonical jobs and evidence revisions", asyn
   expect(badApiResponses).toEqual([]);
 });
 
-test("language selection changes the mounted shell and persists across reloads", async ({ page }) => {
-  await createAccountThroughSignup(page);
+test("language selection updates representative workflows and persists across reloads", async ({ page }, testInfo) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badApiResponses: string[] = [];
+  page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("requestfailed", (request) => {
+    const failure = request.failure()?.errorText ?? "unknown failure";
+    if (!failure.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}: ${failure}`);
+  });
+  page.on("response", (response) => {
+    if (response.url().includes("/api/trpc/") && response.status() >= 400) {
+      badApiResponses.push(`${response.status()} ${response.url()}`);
+    }
+  });
+
+  const email = await createAccountThroughSignup(page);
+  const caseId = `A11Y_I18N_CASE_${randomUUID()}`;
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  try {
+    const owner = database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string };
+    const now = Math.floor(Date.now() / 1000);
+    database.prepare(`INSERT INTO cases
+      (id, userId, clientName, clientEmail, caseType, caseSummary, urgency, status, legalAreas, createdAt, updatedAt)
+      VALUES (?, ?, 'Bilingual workflow matter', 'language@example.test', 'Contract',
+        'Renderer language workflow fixture', 'Medium', 'Matching', '["Contract Law"]', ?, ?)`)
+      .run(caseId, owner.id, now, now);
+  } finally {
+    database.close();
+  }
 
   await page.getByRole("button", { name: "Open account menu" }).click();
   await page.getByRole("group", { name: "Language" }).getByRole("button", { name: "nl", exact: true }).click();
+  await page.keyboard.press("Escape");
   await expect(page.locator("html")).toHaveAttribute("lang", "nl");
   await expect(page.getByText("Mijn zaken", { exact: true })).toBeVisible();
   await expect(page.getByText("Juridische ondersteuning, geen juridisch advies.")).toBeVisible();
 
-  await page.reload({ waitUntil: "networkidle" });
+  const casesNavNl = page.getByRole("button", { name: "Mijn zaken", exact: true });
+  await expect(casesNavNl).toBeVisible();
+  await casesNavNl.click();
+  await expect(page.getByRole("heading", { name: "Dossiers", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Dossier openen", exact: true }).click();
+  let dialog = page.getByRole("dialog").first();
+  await expect(dialog.getByText("Dossieroverzicht", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Documenten", exact: true }).click();
+  await expect(dialog.getByText("Bewijsbeheer", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Bewijs ophalen op trefwoord", { exact: true })).toBeVisible();
+  await dialog.screenshot({ path: testInfo.outputPath("case-evidence-nl.png") });
+  await dialog.getByRole("button", { name: "Dossierdetails sluiten", exact: true }).click();
+
+  await page.getByRole("button", { name: "Benadering", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Benadering", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Instellingen", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Instellingen", exact: true })).toBeVisible();
+
+  const reloadResponse = await page.reload({ waitUntil: "networkidle" });
+  expect(reloadResponse?.status()).toBe(200);
   await expect(page.locator("html")).toHaveAttribute("lang", "nl");
-  await expect(page.getByText("Mijn zaken", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Instellingen", exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Accountmenu openen" }).click();
   await page.getByRole("group", { name: "Taal" }).getByRole("button", { name: "en", exact: true }).click();
+  await page.keyboard.press("Escape");
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await expect(page.getByText("My Cases", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "My Cases", exact: true }).click();
+  await page.getByRole("button", { name: "Open case", exact: true }).click();
+  dialog = page.getByRole("dialog").first();
+  await dialog.getByRole("button", { name: "Overview", exact: true }).click();
+  await expect(dialog.getByText("Case Overview", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Documents", exact: true }).click();
+  await expect(dialog.getByText("Evidence Management", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Pull evidence by keyword", { exact: true })).toBeVisible();
+  await dialog.screenshot({ path: testInfo.outputPath("case-evidence-en.png") });
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+  expect(badApiResponses).toEqual([]);
 });
 
 test("onboarding resumes, skips, completes, resets, and stays isolated across accounts", async ({ page }, testInfo) => {

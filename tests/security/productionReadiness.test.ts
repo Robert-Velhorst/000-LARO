@@ -167,7 +167,7 @@ describe('production readiness regressions', () => {
     expect(collector).toContain('analyzeImportedEvidence');
     expect(analysisUi).toContain('evidenceFiles.upload.useMutation');
     expect(analysisUi).toContain('documentAnalysis.analyzeEvidence.useMutation');
-    expect(caseUi).toContain('{ id: "analysis", label: "Analysis"');
+    expect(caseUi).toContain('{ id: "analysis", labelKey: "case.nav.analysis"');
     expect(caseUi).toContain('<CaseTimeline caseId={caseId} />');
     expect(timelineUi).toContain('title="Open source document"');
     expect(caseUi).toContain('<CaseReconstruction caseId={caseId} />');
@@ -299,13 +299,13 @@ describe('production readiness regressions', () => {
     expect(oauthFlow).toContain('OAUTH_WAIT_TIMEOUT_MS = 3 * 60 * 1_000');
     expect(connections).toContain('onClick={cancelConnection}');
     expect(caseDetails).toContain('onClick={cancelGoogleConnection}');
-    expect(caseDetails).toContain('connectingGoogle ? "Finishing Google connection..." : "Connect Google"');
+    expect(caseDetails).toContain('connectingGoogle ? t("case.pull.finishingGoogle") : t("case.pull.connectGoogle")');
     expect(oauthFlow).toContain('document.addEventListener("visibilitychange", refreshOnReturn)');
     expect(oauthFlow).toContain('oauthWindowRef.current?.closed');
     expect(connections).toContain('connecting ? "Waiting for Google..." : "Add Google account"');
     expect(connections).toContain('Accounts could not be loaded.');
     expect(connections).toContain('onClick={cancelConnection}');
-    expect(caseDetails).toContain('Google status unavailable');
+    expect(caseDetails).toContain('t("case.pull.googleStatusUnavailable")');
     expect(existsSync(join(ROOT, 'src/renderer/components/GmailSimple.tsx'))).toBe(false);
     expect(existsSync(join(ROOT, 'src/renderer/components/GoogleDriveSimple.tsx'))).toBe(false);
     expect(existsSync(join(ROOT, 'src/renderer/components/GoogleDriveIntegration.tsx'))).toBe(false);

@@ -60,6 +60,7 @@
     "verify:security-workflow": "node scripts/verify-security-workflow.mjs",
     "verify:behavioral-tests": "node scripts/verify-behavioral-test-boundary.mjs",
     "verify:renderer-boundary": "node scripts/verify-renderer-boundary.mjs",
+    "verify:renderer-copy": "node scripts/renderer-copy-audit.mjs",
     "release:prepare": "node scripts/prepare-release-acceptance.mjs",
     "release:check": "node scripts/release-acceptance.mjs",
     "acceptance:providers": "node scripts/run-built-operation.mjs acceptance:providers",
