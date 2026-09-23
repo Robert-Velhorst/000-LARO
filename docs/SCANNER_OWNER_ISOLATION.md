@@ -1,5 +1,7 @@
 # Desktop scanner owner isolation (S1-27 / issue #194)
 
+Updated: 2026-09-23
+
 The auxiliary desktop scanner database is local to each desktop profile and, in
 connected mode, each configured server. New scans and file rows record an
 immutable account owner and case ID. Scanner IPC resolves the owner from the
@@ -33,4 +35,8 @@ Verification lives in `tests/backend/scannerOwnerAuth.test.ts`,
 `scannerOwnerIsolation.test.ts`, `scannerPrivacy.test.ts`, the existing scanner
 upload/review and GDPR integration tests, and the account-switch browser tests
 in `tests/browser/rendererAccessibility.spec.ts`. Local passing tests do not
-prove acceptance on a client's installed desktop or Hetzner deployment.
+prove acceptance on a client's installed desktop or Hetzner deployment. The
+integrated exact-commit evidence for implementation commit `ec94985`, including
+account switching, retention, export, erasure, packaging, and the maintained
+caller audit, is recorded in
+[`FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md`](FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md).

@@ -1,14 +1,14 @@
 # Browser and desktop on one Hetzner server
 
-Updated: 2026-09-22
+Updated: 2026-09-23
 
-Implementation commit `dc3884b` passed the local fourth-round container,
-browser, recovery, fresh-database, vulnerability-scan, and Windows packaging
-matrix recorded in
-[`FOURTH_ROUND_VERIFICATION.md`](FOURTH_ROUND_VERIFICATION.md). It has not been
-pushed, published, installed on Hetzner, or accepted from a real browser and
-connected Windows desktop; follow the target checks below before calling the
-deployment complete.
+Implementation commit `ec94985` passed the local final account/lifecycle
+container, browser, recovery, fresh-database, vulnerability-scan, and Windows
+packaging matrix recorded in
+[`FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md`](FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md).
+It has not been pushed, published, installed on Hetzner, migrated with the
+owner's real workspace, or accepted from a real browser and connected Windows
+desktop; follow the target checks below before calling the deployment complete.
 
 This deployment runs one LARO API process, the React interface, and the existing
 SQLite data layer on a persistent server. Browser users and connected desktop

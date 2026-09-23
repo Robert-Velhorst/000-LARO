@@ -1,6 +1,6 @@
 # Privacy Impact Assessment (DPIA)
 
-Updated: 2026-09-22
+Updated: 2026-09-23
 Jurisdiction: Netherlands / EU (GDPR)
 
 ## Purpose of processing
@@ -82,4 +82,7 @@ automatically under the configured policy.
 - Confirm the public product branding before a versioned public release.
 
 These target-account items cannot be proven by repository tests and remain in
-`release-acceptance.json` where applicable.
+`release-acceptance.json` where applicable. The repository-controlled privacy,
+scanner, account-erasure, and provider-lifecycle evidence for implementation
+commit `ec94985` is recorded in
+[`FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md`](FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md).

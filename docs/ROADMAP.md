@@ -1,38 +1,46 @@
 # Roadmap and External Gates
 
-Current as of 2026-09-22.
+Current as of 2026-09-23.
 
-## Fourth-Round Candidate
+## Final Account and Lifecycle Candidate
 
-Implementation commit `dc3884b5db3521101a2c735f7d49be0ddc18f0fe`
-passes the complete local verification required by issue #193. The evidence,
-integrated negative-path mapping, maintained-source audit, SBOM/container ID,
-and Windows artifact checksum are in
-[`FOURTH_ROUND_VERIFICATION.md`](FOURTH_ROUND_VERIFICATION.md). The earlier
-third-round record remains in
+Implementation commit `ec94985e9d78fc95ad14e89473f79dec287b1825`
+passes the complete repository-controlled verification required by issue #201.
+The exact commands, integrated behavior, failure reconciliation,
+maintained-source audit, SBOM/container identity, and Windows artifact checksum
+are in
+[`FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md`](FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md).
+The fourth- and third-round records remain historical evidence in
+[`FOURTH_ROUND_VERIFICATION.md`](FOURTH_ROUND_VERIFICATION.md) and
 [`THIRD_ROUND_VERIFICATION.md`](THIRD_ROUND_VERIFICATION.md).
 
 The next delivery gates are deliberately separate:
 
-1. Push the candidate and obtain the protected GitHub CI/Windows results.
-2. Review and merge the candidate before closing the corresponding GitHub
-   issues; an open issue is not treated as closed merely because its local code
-   is present.
+1. Push the candidate and obtain the protected GitHub CI, CodeQL, and Windows
+   results.
+2. Review and merge the candidate before closing #194-#199, #139, and #201; an
+   open issue is not treated as closed merely because its local code is present.
 3. Run the portable artifact on native Windows and confirm startup plus a
    scanned-PDF OCR path.
 4. Deploy only after the owner supplies the current Hetzner, DNS, TLS,
    persistence, secret, backup, and existing-data migration inputs; then repeat
    browser and desktop acceptance against that public target.
-5. Push and review the local #179-#193 candidate. Maintained acceptance/smoke
-   tests use executable product boundaries; cloud consent, HAI grants, public
-   diagnostics, evidence framing, discovery, shared Google revocation, public
-   research, analysis freshness, search, notifications, canonical Drive intake,
-   and reviewed draft versions are integrated in the recorded verification.
-   GitHub issue closure still requires protected remote checks and review.
+5. Retest every enabled provider with the target accounts, migrate the owner's
+   actual workspace through the documented recovery path, and retain rollback
+   evidence until owner acceptance.
 
 ## Completed Production Path
 
 - Local-first Electron runtime with generated per-install secrets.
+- Account-bound desktop scanner rows, paths, preferences, workers, export, and
+  erasure, including account-switch invalidation and legacy-row quarantine.
+- Default-off usage analytics enforced by the canonical writer, fresh one-use
+  account-erasure proof with fail-safe provider revocation, and explicit
+  owner-checked assistant case context.
+- Canonical Home workflow metrics and restart-safe collection monitoring backed
+  by persisted keyword-pull jobs rather than parallel legacy state.
+- Removal of callable Trello and Telegram credential/connector stacks while
+  retaining display-only history labels.
 - Authenticated case, evidence, document intelligence, source-linked timeline,
   official NOvA matching, controlled outreach, responses, analytics, export,
   scanner, audit, retention, backup, and recovery workflows.

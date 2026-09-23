@@ -1,6 +1,6 @@
 # External Provider Status
 
-Date: 2026-09-19
+Date: 2026-09-23
 
 | Provider | Purpose | Required configuration | Current status |
 |---|---|---|---|
@@ -75,10 +75,15 @@ aliases were removed; collection jobs cannot manually refresh a grant.
   and the mandatory audit are one transaction. Other account selections and
   collected documents remain. Shared Gmail/Drive source state is removed only
   after the owner's final Google account is disconnected.
-- GDPR erasure uses the same provider revocation adapter before deleting the
-  only local grant copy. Remote failure is summarized in the durable erasure
-  receipt but cannot block local erasure; the owner may still need to revoke the
-  application in the provider account when that summary reports a failure.
+- GDPR erasure enumerates stored external grants while their encrypted
+  credentials are still present. Each supported Google grant uses the same
+  revocation adapter as disconnect before any account or local credential row is
+  deleted. A retryable remote failure returns `revocation_pending` and retains
+  the account and credential for a fresh verified retry; it is not reported as
+  completed erasure. A stored legacy or unsupported grant shape also fails
+  closed instead of silently deleting the only local grant copy. Post-commit
+  managed-object cleanup may remain `storage_cleanup_pending` in the durable
+  erasure receipt without restoring the already deleted account.
 
 KvK, Rechtspraak, and KOOP research requires an owned case. Every attempt stores
 a mandatory metadata-only receipt containing the case, source, normalized query,
@@ -102,3 +107,7 @@ protection in an ignored local file. `scripts/start-ngrok-api.ps1` injects those
 values into Docker at startup without copying them into `.env`. Configuration
 presence is only a prerequisite: it does not satisfy the live acceptance checks
 in `release-acceptance.json`.
+
+The final provider-route and account-erasure lifecycle audit for implementation
+commit `ec94985` is recorded in
+[`FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md`](FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md).

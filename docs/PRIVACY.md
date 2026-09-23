@@ -1,6 +1,6 @@
 # Privacy Controls and Data Deletion
 
-Updated: 2026-09-22
+Updated: 2026-09-23
 
 ## Owner access
 
@@ -127,7 +127,11 @@ privacy-preference read.
 - Configuration tests reject unsafe retention windows and guard the daily schedule.
 - Focused and browser tests prove cloud-consent denial, reviewed HAI scope,
   shared-Google disconnect consequences, public-research failure states, and
-  exact reviewed-draft export/erasure behavior. The consolidated exact-commit
-  evidence is in `FOURTH_ROUND_VERIFICATION.md`.
+  exact reviewed-draft export/erasure behavior.
 - Privacy-processing tests cover the default, opt-in, opt-out, concurrent
   changes, account isolation, direct API use, and required-record separation.
+- Scanner isolation/retention, enforced optional processing, one-use erasure
+  verification, supported-grant revocation, retry states, and account-switch
+  behavior pass together on implementation commit `ec94985`; the consolidated
+  evidence is in
+  [`FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md`](FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md).

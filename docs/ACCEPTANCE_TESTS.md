@@ -1,6 +1,6 @@
 # Acceptance Test Matrix
 
-Current as of 2026-09-22. Automated criteria exercise real tRPC procedures,
+Current as of 2026-09-23. Automated criteria exercise real tRPC procedures,
 HTTP middleware, renderer behavior, provider mocks at transport boundaries, and
 temporary SQLite databases; they do not contact external people or accounts.
 The evidence policy and per-test regression inventory are recorded in
@@ -38,6 +38,7 @@ The evidence policy and per-test regression inventory are recorded in
 | AC28 | Keep one Drive ingestion path and prove canonical create, unchanged skip, changed revision, bounded partial result, and failed-revision preservation | `tests/e2e/googleDriveCanonical.e2e.test.ts`, `tests/backend/googleDriveAccountSelection.test.ts`, `tests/security/productionReadiness.test.ts` | Automated with controlled Drive responses and real tRPC, SQLite, and managed-storage boundaries |
 | AC29 | Bind legal drafts to a reviewed recipient and immutable source/input snapshot; serve exact reviewed bytes with owner-only historical re-download, content-free audit, and account erasure | `tests/backend/legalDraftSnapshots.test.ts`, acceptance and production-readiness suites | Automated with real tRPC, SQLite, SHA-256, one-use download-ticket, ownership, and erasure boundaries |
 | AC30 | Preserve the integrated consent and workflow boundaries across cloud processing, reviewed HAI scope, minimal public health, run-scoped discovery, shared Google revocation, failure-aware research/search, fresh derived analysis, durable notifications, canonical Drive ingestion, and reviewed draft versions | Focused backend/e2e/security suites plus `tests/browser/rendererAccessibility.spec.ts`; consolidated evidence in `FOURTH_ROUND_VERIFICATION.md` | Automated on recorded implementation commit `dc3884b`; public deployment and native Windows acceptance remain external |
+| AC31 | Preserve scanner ownership and retention, enforced optional analytics, fresh verified provider-aware account erasure, explicit assistant context, truthful Home workflow state, restart-safe canonical collection monitoring, and the absence of callable Trello/Telegram connectors together | Focused backend/e2e/security suites, maintained-source audit, complete gate, stable-Chrome suite, fresh-database/recovery checks, scans, Docker build, and Windows packaging; consolidated evidence in `FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md` | Automated on recorded implementation commit `ec94985`; protected GitHub checks, native Windows execution, provider retest, data migration, and Hetzner acceptance remain external |
 
 ## Target-Environment Acceptance
 

@@ -1,6 +1,6 @@
 # Backend Endpoint Usage Audit
 
-Updated: 2026-09-20
+Updated: 2026-09-23
 
 ## Current contract
 
@@ -41,6 +41,13 @@ original phase-074 snapshot are mounted and typed.
   deduplication, revisioning, analysis policy, explicit outcomes, and canonical
   evidence provenance. Shared-grant disconnect retains its versioned review and
   one confirmed cleanup operation.
+- Collection monitoring reads the canonical owner/case-scoped persisted
+  `keyword_pull_jobs`, including per-source outcomes and interrupted-run
+  reconciliation; maintained runtime code does not write the legacy
+  `auto_collection_logs` table.
+- Assistant case requests carry an explicit owned case ID and product help uses
+  an explicit no-case mode. The retired global local-storage case key is removed
+  only as migration cleanup and is not an authorization source.
 - Case-owned KvK, Rechtspraak, and KOOP research with durable metadata-only
   receipts and explicit complete, empty, partial, unavailable, and failed
   outcomes; failures carry null counts rather than fabricated zero results.
@@ -53,8 +60,10 @@ original phase-074 snapshot are mounted and typed.
   source files and analyses), JSON, CSV, print, and timeline export remain the
   supported paths.
 - Trello and Telegram have no exported connector routes; the mounted provider
-  checklist reports both as unsupported. Slack and other unfinished providers
-  remain unavailable instead of returning fabricated success.
+  checklist reports both as unsupported. No runtime credential key, token input,
+  callback, import/sync service, or fake-success response remains. Historical
+  source labels are display-only. Slack and other unfinished providers remain
+  unavailable instead of returning fabricated success.
 - Provider-backed analysis and delivery remain disabled until configured and
   accepted against target accounts.
 
@@ -83,3 +92,6 @@ original phase-074 snapshot are mounted and typed.
 - Legal-draft regressions reject client-created download blobs, placeholder
   recipients, unreviewed download tickets, cross-owner access, stale review,
   content-bearing audit events, and account erasure gaps.
+- The final maintained-caller and provider-route audit is recorded for
+  implementation commit `ec94985` in
+  [`FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md`](FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md).
