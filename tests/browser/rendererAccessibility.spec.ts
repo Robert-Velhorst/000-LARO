@@ -246,6 +246,84 @@ test("all supported routes pass the blocking renderer accessibility audit", asyn
   expect(consoleErrors, "renderer console errors").toEqual([]);
 });
 
+test("Home shows canonical workflow states and registered case destinations", async ({ page }, testInfo) => {
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const requestFailures: string[] = [];
+  const badApiResponses: string[] = [];
+  page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()); });
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("requestfailed", request => {
+    if (!request.failure()?.errorText?.includes("ERR_ABORTED")) requestFailures.push(`${request.method()} ${request.url()}`);
+  });
+  page.on("response", response => {
+    if (response.url().includes("/api/trpc/") && response.status() >= 400) badApiResponses.push(`${response.status()} ${response.url()}`);
+  });
+
+  const email = await createAccount(page);
+  await expect(page.getByTestId("dashboard-active-cases")).toContainText("0");
+  await expect(page.getByTestId("dashboard-outreach-sent")).toContainText("0");
+  await expect(page.getByText("No open workflow actions.", { exact: true })).toBeVisible();
+  await expect(page.getByText("No recorded activity yet.", { exact: true })).toBeVisible();
+
+  const database = new Database(resolve(".laro-a11y.sqlite"), { fileMustExist: true });
+  const ownerId = (database.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string }).id;
+  const workflowCase = `A11Y_HOME_WORKFLOW_${randomUUID()}`;
+  const urgentCase = `A11Y_HOME_URGENT_${randomUUID()}`;
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    const insertCase = database.prepare(`INSERT INTO cases
+      (id, userId, clientName, clientEmail, caseType, caseSummary, urgency, status, legalAreas, createdAt, updatedAt)
+      VALUES (?, ?, ?, 'verified@example.test', 'Contract', 'Canonical dashboard browser fixture', ?, ?, ?, ?, ?)`);
+    insertCase.run(workflowCase, ownerId, "Workflow dashboard matter", "Medium", "Outreach", '["Contract Law","Employment Law"]', now - 600, now - 600);
+    insertCase.run(urgentCase, ownerId, "Urgent dashboard gap", "High", "Intake", '["Administrative Law"]', now - 500, now - 500);
+    database.prepare("INSERT INTO evidence (id, caseId, userId, type, title, createdAt, updatedAt) VALUES (?, ?, ?, 'document', 'Dashboard evidence', ?, ?)")
+      .run(`A11Y_HOME_EVIDENCE_${randomUUID()}`, workflowCase, ownerId, now - 400, now - 400);
+    const lawyerIds = ["DRAFT", "REJECTED", "APPROVED", "SENT", "INTERESTED", "FAILED"]
+      .map(state => `A11Y_HOME_LAWYER_${state}_${randomUUID()}`);
+    const insertLawyer = database.prepare("INSERT INTO lawyers (id, name, createdAt, updatedAt) VALUES (?, ?, ?, ?)");
+    const insertOutreach = database.prepare("INSERT INTO outreach_status (id, caseId, lawyerId, status, updatedAt, createdAt) VALUES (?, ?, ?, ?, ?, ?)");
+    const statuses = ["PendingApproval", "Rejected", "Approved", "Sent", "Interested", "Failed"];
+    statuses.forEach((status, index) => {
+      insertLawyer.run(lawyerIds[index], `Dashboard ${status}`, now - 300 + index, now - 300 + index);
+      insertOutreach.run(`A11Y_HOME_OUTREACH_${status}_${randomUUID()}`, workflowCase, lawyerIds[index], status, now - 300 + index, now - 300 + index);
+    });
+    database.prepare("INSERT INTO email_activity (id, caseId, lawyerId, activityType, subject, sentAt, createdAt) VALUES (?, ?, ?, 'sent', 'Browser outreach sent', ?, ?)")
+      .run(`A11Y_HOME_ACTIVITY_${randomUUID()}`, workflowCase, lawyerIds[3], now - 200, now - 200);
+  } finally { database.close(); }
+
+  const response = await page.reload({ waitUntil: "networkidle" });
+  expect(response?.status()).toBe(200);
+  await expect(page.getByTestId("dashboard-active-cases")).toContainText("2");
+  await expect(page.getByTestId("dashboard-filed-evidence")).toContainText("1");
+  await expect(page.getByTestId("dashboard-outreach-sent")).toContainText("2");
+  const pipeline = page.getByLabel("Outreach pipeline states");
+  await expect(pipeline).toContainText("Suggested 6");
+  await expect(pipeline).toContainText("Drafted 1");
+  await expect(pipeline).toContainText("Approved, unsent 1");
+  await expect(pipeline).toContainText("Sent 2");
+  await expect(pipeline).toContainText("Responded 1");
+  await expect(pipeline).toContainText("Interested 1");
+
+  const actions = page.getByTestId("dashboard-pending-actions");
+  await expect(actions.getByText("Exception", { exact: true }).first()).toBeVisible();
+  await expect(actions.getByText("Next action", { exact: true }).first()).toBeVisible();
+  await expect(actions.getByText("Clarification", { exact: true })).toBeVisible();
+  await expect(actions.getByText(/Urgent dashboard gap:.*no evidence/i).first()).toBeVisible();
+  const activity = page.getByTestId("dashboard-recent-activity");
+  await expect(activity.getByText("Outreach response recorded", { exact: true })).toBeVisible();
+  await expect(activity.getByText("Outreach: Browser outreach sent", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("home-canonical-summary.png"), fullPage: true });
+
+  await actions.getByRole("button").filter({ hasText: "Add evidence" }).click();
+  await expect(page).toHaveURL(new RegExp(`/cases\\?case=${urgentCase}$`));
+  await expect(page.getByRole("dialog").getByText("Urgent dashboard gap", { exact: true }).first()).toBeVisible();
+  expect(consoleErrors).toEqual([]);
+  expect(pageErrors).toEqual([]);
+  expect(requestFailures).toEqual([]);
+  expect(badApiResponses).toEqual([]);
+});
+
 test("language selection changes the mounted shell and persists across reloads", async ({ page }) => {
   await createAccountThroughSignup(page);
 
