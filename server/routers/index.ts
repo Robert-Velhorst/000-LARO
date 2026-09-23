@@ -23,8 +23,6 @@ import { documentAnalysisRouter } from "./documentAnalysis";
 import { searchRouter } from "./search";
 import { messagesRouter } from "./messages";
 import { messageTemplatesRouter } from "./messageTemplates";
-import { trelloEnhancedRouter } from "./trelloEnhanced";
-import { telegramEnhancedRouter } from "./telegramEnhanced";
 import { gapAnalysisRouter } from "./gapAnalysis";
 import { providerConnectionsRouter } from "./providerConnections";
 import { emailRouter } from "./email";
@@ -46,7 +44,7 @@ import {
   adminAnalyticsRouter, outreachAnalyticsRouter,
   evidenceAggregationRouter, enrichmentRouter, evidenceRouter,
   bulkFileOperationsRouter, caseManagementRouter, legalChecklistsRouter,
-  emailMessagesRouter, syncSchedulerRouter, trelloRouter, unifiedInboxRouter,
+  emailMessagesRouter, syncSchedulerRouter, unifiedInboxRouter,
 } from "./extendedRouters";
 import { adminRouter } from "./admin";
 import { auditRouter } from "./audit";
@@ -108,8 +106,6 @@ export const appRouter = router({
   search: searchRouter,
   messages: messagesRouter,
   messageTemplates: messageTemplatesRouter,
-  trelloEnhanced: trelloEnhancedRouter,
-  telegramEnhanced: telegramEnhancedRouter,
   gapAnalysis: gapAnalysisRouter,
   providerConnections: providerConnectionsRouter,
   email: emailRouter,
@@ -138,7 +134,6 @@ export const appRouter = router({
   legalChecklists: legalChecklistsRouter,
   emailMessages: emailMessagesRouter,
   syncScheduler: syncSchedulerRouter,
-  trello: trelloRouter,
   unifiedInbox: unifiedInboxRouter,
 
   // Local operation has no paid tier or checkout gate. The returned usage

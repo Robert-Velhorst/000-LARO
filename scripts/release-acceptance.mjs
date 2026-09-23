@@ -23,7 +23,6 @@ export const PROVIDER_REQUIREMENTS = Object.freeze({
   inboundEmail: ['credentials', 'replyReceived', 'threadedToOutreach', 'analyticsUpdated'],
   s3: ['credentials', 'put', 'read', 'hashMatched', 'delete', 'backupInventory'],
   forgeLlm: ['credentials', 'sourceLinkedResult', 'invalidCitationRejected', 'failureClosed'],
-  telegram: ['credentials', 'messageRead', 'evidencePersisted', 'sourceLinkOpened'],
 });
 
 function argumentValue(args, flag) {

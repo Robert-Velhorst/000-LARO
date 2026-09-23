@@ -83,7 +83,8 @@ loopback-only entry path using your existing account and encryption keys.
 - It does not provide a trusted, publicly signed Windows installer. The current
   distribution target is an unsigned internal portable build.
 - It does not make every configured connector operational. Microsoft collection
-  and Trello OAuth remain unavailable until their complete flows are accepted.
+  is unavailable, and the disconnected Trello and Telegram connector stacks are
+  not shipped.
 
 ## Product Website Preview
 
@@ -701,8 +702,8 @@ with `--local`.
 - Lawyers are global reference data; private matches/outreach are owner-scoped.
 - Media and organization directories are owner-scoped.
 - Persisted OAuth tokens stay server-side, encrypted, and absent from API
-  responses. Trello and Telegram tokens are not persisted and are accepted only
-  in bounded POST bodies for explicit provider operations.
+  responses. Trello and Telegram connector procedures are not mounted and never
+  accept provider tokens.
 - SQLite uses WAL, foreign-key enforcement, migrations, a busy timeout, and
   additional relationship guards for historical tables.
 
@@ -800,9 +801,9 @@ Credentials make a provider available; they do not prove live acceptance.
 | KvK public records | Supported official open-data contract with case-owned research receipts |
 | Rechtspraak published decisions | Supported bounded RSS discovery; coverage is always partial |
 | KOOP legislation | Supported official Basiswettenbestand search with completeness reporting |
-| Telegram | Bounded bot/API and desktop-export import paths are available when configured; bot history is limited by Telegram and target verification is still required |
+| Telegram | Unsupported; connector routes, bot-token input, webhooks, downloads, and legacy imports are not shipped |
 | Microsoft/OneDrive/Outlook | Reserved configuration; collection unavailable |
-| Trello OAuth | Unavailable until durable token lifecycle is complete |
+| Trello | Unsupported; duplicate connector routes and raw-token operations are not shipped |
 | Google Calendar/Contacts | Not implemented as LARO evidence connectors |
 
 Public-source research is attached to an owned case. Each KvK, Rechtspraak, or
@@ -1178,8 +1179,8 @@ External Flask keys stay in independent operator escrow.
 - Public target discovery is bounded, not exhaustive.
 - Dashed map links are suggestions, not factual causation.
 - Optional AI quality varies, but citations remain mandatory.
-- Microsoft, Google Calendar/Contacts, and Trello OAuth are not operational
-  evidence connectors.
+- Microsoft, Google Calendar/Contacts, Trello, and Telegram are not operational
+  evidence connectors; Trello and Telegram have no mounted connector routes.
 - Sending is disabled by default.
 - Flask remains a separate recovery responsibility until migration.
 - Historical tables still use extra relationship guards pending native-FK work.

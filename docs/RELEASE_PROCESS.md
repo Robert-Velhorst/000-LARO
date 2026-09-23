@@ -123,7 +123,7 @@ token vault. Missing representative case activity remains visible as pending
 rather than being inferred from configuration or unit tests.
 
 An approved `liveProviders` gate must use the supported provider identifiers
-`google`, `outboundEmail`, `inboundEmail`, `s3`, `forgeLlm`, or `telegram`.
+`google`, `outboundEmail`, `inboundEmail`, `s3`, or `forgeLlm`.
 For every identifier in `providerScope`, add a matching `providerChecks` entry
 with `status: "passed"`, a non-future `testedAt` timestamp, evidence references,
 and every mandatory check reported by `npm run release:check`. Generic approval

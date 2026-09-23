@@ -10,8 +10,8 @@ Date: 2026-09-19
 | Local Ollama | Flask deep document reading | loopback `LARO_OLLAMA_*` | Optional; citation-gated local analysis |
 | SMTP or SendGrid | Transactional email and approved sending | complete authenticated `SMTP_*`, or `SENDGRID_API_KEY` plus sender | Available when configured; no console success in production |
 | AWS S3 | Evidence object storage | bucket and workload/IAM credentials | Optional; real local-disk fallback |
-| Telegram | Message evidence | `TELEGRAM_BOT_TOKEN` | Available when configured |
-| Trello | Board evidence | API credentials plus secure token persistence | Disabled; secure token persistence is not implemented |
+| Telegram | Message evidence | not applicable | Unsupported; no connector routes, token input, webhook controls, downloads, or import workflow are shipped |
+| Trello | Board evidence | not applicable | Unsupported; no connector routes, token input, or OAuth workflow are shipped |
 | Slack | Message evidence | not applicable | Unavailable |
 | KvK open dataset | Basic Dutch business-register fields | public open-data endpoint | Available; exact-number lookup with field provenance and explicit completeness |
 | Rechtspraak | Recently published court-decision discovery | public RSS search | Available; structured XML parsing, bounded requests, ECLI metadata, and direct source links |
@@ -21,6 +21,12 @@ Google requests only Gmail read, Drive read, and account-email identity scopes.
 It does not request Gmail send or label-write access. Outlook OAuth does not
 request `Mail.Send`, and the product keeps Microsoft connection unavailable
 until a real owner-scoped collector and target-account acceptance exist.
+
+Trello and Telegram are deliberately absent from the application router and
+release-acceptance provider set. Historical evidence/source labels remain
+readable and account erasure still removes old owner-scoped rows, but no live
+path can connect, import, sync, download, or accept credentials for either
+provider.
 
 Provider configuration is not connection success. The UI shows Google as
 connected only after persisted account state confirms OAuth completion. Gmail

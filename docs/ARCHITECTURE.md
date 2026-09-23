@@ -104,7 +104,8 @@ Private records are scoped as follows:
 ## Providers and AI
 
 - Google and Microsoft OAuth require configured client credentials and explicit user consent.
-- Trello OAuth remains disabled until its server-side token lifecycle is complete.
+- Trello and Telegram connector stacks are retired. They have no tRPC namespace,
+  credential input, OAuth callback, webhook control, or evidence-import path.
 - Desktop document analysis retains a deterministic local result when provider
   credentials are absent; provider-backed enrichment fails closed and cannot
   replace the source-grounded result with uncited output.

@@ -58,5 +58,10 @@ describe("OAuth callback response", () => {
     expect(tamperedStateResponse.status).toBe(400);
     expect(await tamperedStateResponse.text()).not.toContain(tamperedEnvelope);
     expect(errorLog).not.toHaveBeenCalled();
+
+    const retiredTrelloCallback = await fetch(
+      `http://127.0.0.1:${address.port}/api/oauth/trello/callback`,
+    );
+    expect(retiredTrelloCallback.status).toBe(404);
   });
 });

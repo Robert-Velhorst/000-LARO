@@ -69,9 +69,6 @@ export const ENV = {
   MICROSOFT_CLIENT_SECRET: process.env.MICROSOFT_CLIENT_SECRET || '',
   SLACK_CLIENT_ID:        process.env.SLACK_CLIENT_ID || '',
   SLACK_CLIENT_SECRET:    process.env.SLACK_CLIENT_SECRET || '',
-  TRELLO_API_KEY:         process.env.TRELLO_API_KEY || '',
-  TELEGRAM_BOT_TOKEN:     process.env.TELEGRAM_BOT_TOKEN || '',
-
   // Email
   SENDGRID_API_KEY:   process.env.SENDGRID_API_KEY || '',
   AWS_SES_ACCESS_KEY: process.env.AWS_SES_ACCESS_KEY || '',

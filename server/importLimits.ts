@@ -13,22 +13,6 @@ export const IMPORT_LIMITS = {
     maxEvidenceUrlsChars: 20_000,
     maxTagsChars: 10_000,
   },
-  telegram: {
-    maxBytes: 8 * 1024 * 1024,
-    maxMessages: 2_000,
-    maxJsonDepth: 32,
-    maxJsonStructuralTokens: 100_000,
-    maxRichTextPartsPerMessage: 1_000,
-    maxRichTextPartsTotal: 10_000,
-    maxFilenameChars: 255,
-    maxChatNameChars: 500,
-    maxTypeChars: 100,
-    maxSenderChars: 500,
-    maxMessageTextChars: 100_000,
-    maxFilePathChars: 2_000,
-    maxMimeTypeChars: 255,
-    maxMediaTypeChars: 100,
-  },
 } as const;
 
 export class ImportValidationError extends Error {
@@ -45,27 +29,6 @@ export interface NormalizedCaseImportRow {
   urgency: "Low" | "Medium" | "High";
   evidenceUrls: string;
   tags: string;
-}
-
-export interface TelegramExportMessage {
-  id: number;
-  type: string;
-  date: string;
-  date_unixtime: string;
-  from?: string;
-  from_id?: string;
-  text?: string;
-  text_entities?: Array<{ type: string; offset: number; length: number }>;
-  file?: string;
-  mime_type?: string;
-  media_type?: string;
-}
-
-export interface TelegramExportedChat {
-  name: string;
-  type: string;
-  id: number;
-  messages: TelegramExportMessage[];
 }
 
 type CsvRow = {
@@ -183,43 +146,6 @@ function preflightCsvStructure(csvContent: string): string {
   return delimiter;
 }
 
-function preflightJsonStructure(jsonContent: string): void {
-  let depth = 0;
-  let structuralTokens = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let index = 0; index < jsonContent.length; index++) {
-    const character = jsonContent[index];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === '"') inString = false;
-      continue;
-    }
-    if (character === '"') {
-      inString = true;
-      continue;
-    }
-    if (character === "{" || character === "[") {
-      depth++;
-      structuralTokens++;
-      if (depth > IMPORT_LIMITS.telegram.maxJsonDepth) {
-        throw new ImportValidationError(
-          `Telegram export exceeds the ${IMPORT_LIMITS.telegram.maxJsonDepth}-level JSON nesting depth limit.`,
-        );
-      }
-    } else if (character === "}" || character === "]") {
-      depth--;
-    } else if (character === "," || character === ":") {
-      structuralTokens++;
-    }
-    if (structuralTokens > IMPORT_LIMITS.telegram.maxJsonStructuralTokens) {
-      throw new ImportValidationError("Telegram export contains too many JSON elements.");
-    }
-  }
-}
-
 export function normalizeCaseCsvImport(
   csvContent: string,
   filename: string,
@@ -271,112 +197,4 @@ export function normalizeCaseCsvImport(
     );
   }
   return { filename: normalizedFilename, rows };
-}
-
-function asRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new ImportValidationError(`${label} must be an object.`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function normalizeInteger(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw new ImportValidationError(`${label} must be a whole number.`);
-  }
-  return value;
-}
-
-function normalizeUnixTime(value: unknown, label: string): string {
-  if (typeof value !== "string" || !/^\d{1,10}$/.test(value)) {
-    throw new ImportValidationError(`${label} is invalid.`);
-  }
-  const seconds = Number(value);
-  if (!Number.isSafeInteger(seconds) || seconds < 0 || seconds > 4_102_444_800) {
-    throw new ImportValidationError(`${label} is outside the supported date range.`);
-  }
-  return String(seconds);
-}
-
-function flattenTelegramText(value: unknown, label: string): string {
-  if (value === undefined || value === null) return "";
-  if (typeof value === "string") {
-    return normalizeString(value, label, IMPORT_LIMITS.telegram.maxMessageTextChars);
-  }
-  if (!Array.isArray(value)) throw new ImportValidationError(`${label} must be text.`);
-  const flattened = value.map((part) => {
-    if (typeof part === "string") return part;
-    const record = asRecord(part, label);
-    return typeof record.text === "string" ? record.text : "";
-  }).join("");
-  return normalizeString(flattened, label, IMPORT_LIMITS.telegram.maxMessageTextChars);
-}
-
-export function normalizeTelegramExport(
-  jsonContent: string,
-  filename: string,
-): { filename: string; chat: TelegramExportedChat } {
-  const normalizedFilename = normalizeFilename(filename, IMPORT_LIMITS.telegram.maxFilenameChars);
-  requireByteLimit(jsonContent, IMPORT_LIMITS.telegram.maxBytes, "Telegram export");
-  preflightJsonStructure(jsonContent);
-
-  let raw: unknown;
-  try {
-    raw = JSON.parse(jsonContent);
-  } catch {
-    throw new ImportValidationError("Invalid Telegram export JSON.");
-  }
-  const data = asRecord(raw, "Telegram export");
-  if (!Array.isArray(data.messages)) {
-    throw new ImportValidationError("Invalid Telegram export format: messages must be an array.");
-  }
-  if (data.messages.length === 0) {
-    throw new ImportValidationError("The Telegram export does not contain any messages.");
-  }
-  if (data.messages.length > IMPORT_LIMITS.telegram.maxMessages) {
-    throw new ImportValidationError(
-      `Telegram imports are limited to ${IMPORT_LIMITS.telegram.maxMessages} messages at a time.`,
-    );
-  }
-
-  let richTextParts = 0;
-  const messages = data.messages.map((value, index): TelegramExportMessage => {
-    const message = asRecord(value, `Message ${index + 1}`);
-    const label = `Message ${index + 1}`;
-    if (Array.isArray(message.text)) {
-      if (message.text.length > IMPORT_LIMITS.telegram.maxRichTextPartsPerMessage) {
-        throw new ImportValidationError(
-          `${label} exceeds the ${IMPORT_LIMITS.telegram.maxRichTextPartsPerMessage} rich-text parts limit.`,
-        );
-      }
-      richTextParts += message.text.length;
-      if (richTextParts > IMPORT_LIMITS.telegram.maxRichTextPartsTotal) {
-        throw new ImportValidationError("Telegram export contains too many rich-text parts.");
-      }
-    }
-    return {
-      id: normalizeInteger(message.id, `${label} ID`),
-      type: normalizeString(message.type, `${label} type`, IMPORT_LIMITS.telegram.maxTypeChars),
-      date: normalizeString(message.date, `${label} date`, 100),
-      date_unixtime: normalizeUnixTime(message.date_unixtime, `${label} timestamp`),
-      from: normalizeString(message.from, `${label} sender`, IMPORT_LIMITS.telegram.maxSenderChars) || undefined,
-      from_id: normalizeString(message.from_id, `${label} sender ID`, IMPORT_LIMITS.telegram.maxSenderChars) || undefined,
-      text: flattenTelegramText(message.text, `${label} message text`) || undefined,
-      file: normalizeString(message.file, `${label} file path`, IMPORT_LIMITS.telegram.maxFilePathChars) || undefined,
-      mime_type: normalizeString(message.mime_type, `${label} MIME type`, IMPORT_LIMITS.telegram.maxMimeTypeChars) || undefined,
-      media_type: normalizeString(message.media_type, `${label} media type`, IMPORT_LIMITS.telegram.maxMediaTypeChars) || undefined,
-    };
-  });
-
-  const name = normalizeString(data.name, "Chat name", IMPORT_LIMITS.telegram.maxChatNameChars);
-  if (!name) throw new ImportValidationError("The Telegram export is missing a chat name.");
-  return {
-    filename: normalizedFilename,
-    chat: {
-      name,
-      type: normalizeString(data.type, "Chat type", IMPORT_LIMITS.telegram.maxTypeChars),
-      id: normalizeInteger(data.id, "Chat ID"),
-      messages,
-    },
-  };
 }

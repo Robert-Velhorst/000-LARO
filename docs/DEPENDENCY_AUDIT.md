@@ -27,8 +27,9 @@ databases, uploads, and token stores are not packaged.
 - React, Radix, TanStack Query, tRPC, Wouter, Recharts, Tailwind helpers and
   Lucide power the renderer.
 - Express, tRPC, Zod, Drizzle and better-sqlite3 power the local API.
-- Google APIs, Microsoft Graph, AWS S3, Nodemailer/SendGrid, Telegram and
-  provider adapters are conditional integrations.
+- Google APIs, Microsoft Graph, AWS S3, Nodemailer/SendGrid, and maintained
+  provider adapters are conditional integrations. Trello and Telegram runtime
+  adapters are not shipped.
 - Socket.IO powers authenticated user-scoped notifications.
 - Archiver powers provenance-preserving ZIP evidence export.
 - bcrypt and jsonwebtoken power account and session controls.

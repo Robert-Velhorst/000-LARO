@@ -62,8 +62,9 @@ export const systemRouter = router({
           ? `Incomplete configuration; missing ${outboundEmail.missingVars.join(', ')}.`
           : undefined },
       { provider: 'Trello', category: 'evidence', requiredEnv: [], configured: false,
-        note: 'Unavailable — secure server-side token persistence is not implemented.' },
-      { provider: 'Telegram', category: 'evidence', requiredEnv: ['TELEGRAM_BOT_TOKEN'], configured: has(ENV.TELEGRAM_BOT_TOKEN) },
+        note: 'Unsupported in this release — connector routes and token handling are not shipped.' },
+      { provider: 'Telegram', category: 'evidence', requiredEnv: [], configured: false,
+        note: 'Unsupported in this release — connector routes and token handling are not shipped.' },
     ];
     return {
       configuredCount: items.filter((i) => i.configured).length,

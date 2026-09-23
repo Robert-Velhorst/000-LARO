@@ -2,18 +2,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { buildCase, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
-import {
-  IMPORT_LIMITS,
-  normalizeCaseCsvImport,
-  normalizeTelegramExport,
-} from "../../server/importLimits";
+import { IMPORT_LIMITS, normalizeCaseCsvImport } from "../../server/importLimits";
 
 const suite = sqliteAvailable ? describe : describe.skip;
 
 suite("bounded and atomic bulk imports", () => {
   let app: TestApp;
   const owner = { id: "IMPORT_OWNER", email: "imports@example.test", role: "user" };
-  const caseId = "CASE_IMPORT_TELEGRAM";
+  const caseId = "CASE_IMPORT_BASELINE";
 
   beforeAll(async () => {
     app = await bootTestApp();
@@ -28,34 +24,12 @@ suite("bounded and atomic bulk imports", () => {
     expect(() => normalizeCaseCsvImport(csv, "cases.csv")).toThrow("2 MB");
   });
 
-  it("rejects structurally amplified CSV and Telegram input", () => {
+  it("rejects structurally amplified CSV input", () => {
     const csv = `caseTitle,description\n${Array.from(
       { length: IMPORT_LIMITS.csv.maxColumns + 1 },
       (_, index) => `value${index}`,
     ).join(",")}`;
     expect(() => normalizeCaseCsvImport(csv, "wide.csv")).toThrow("columns");
-
-    const deeplyNested = `${"[".repeat(IMPORT_LIMITS.telegram.maxJsonDepth + 1)}0${"]".repeat(IMPORT_LIMITS.telegram.maxJsonDepth + 1)}`;
-    expect(() => normalizeTelegramExport(deeplyNested, "deep.json")).toThrow("nesting depth");
-
-    const richText = Array.from(
-      { length: IMPORT_LIMITS.telegram.maxRichTextPartsPerMessage + 1 },
-      () => "x",
-    );
-    const richTextExport = JSON.stringify({
-      name: "Chat",
-      type: "personal_chat",
-      id: 1,
-      messages: [{
-        id: 1,
-        type: "message",
-        date: "2026-08-22T10:00:00",
-        date_unixtime: "1787392800",
-        text: richText,
-      }],
-    });
-    expect(() => normalizeTelegramExport(richTextExport, "rich-text.json"))
-      .toThrow("rich-text parts");
   });
 
   it("uses the preflight CSV delimiter during parsing", () => {
@@ -124,160 +98,19 @@ suite("bounded and atomic bulk imports", () => {
       .where(eq(app.schema.cases.userId, owner.id));
     const jobs = await app.db.select().from(app.schema.bulkImportJobs)
       .where(eq(app.schema.bulkImportJobs.userId, owner.id));
-    expect(importedCases.map((row: any) => row.id)).toEqual([caseId]);
+    expect(importedCases.map((row: { id: string }) => row.id)).toEqual([caseId]);
     expect(jobs).toHaveLength(0);
   });
 
-  it("rejects Telegram message overflow and oversized message fields", () => {
-    const baseMessage = {
-      id: 1,
-      type: "message",
-      date: "2026-08-22T10:00:00",
-      date_unixtime: "1787392800",
-      from: "Sender",
-      text: "Evidence",
-    };
-    const overflow = JSON.stringify({
-      name: "Chat",
-      type: "personal_chat",
-      id: 1,
-      messages: Array.from(
-        { length: IMPORT_LIMITS.telegram.maxMessages + 1 },
-        (_, index) => ({ ...baseMessage, id: index + 1 }),
-      ),
-    });
-    expect(() => normalizeTelegramExport(overflow, "result.json"))
-      .toThrow(`${IMPORT_LIMITS.telegram.maxMessages}`);
-
-    const oversizedText = JSON.stringify({
-      name: "Chat",
-      type: "personal_chat",
-      id: 1,
-      messages: [{ ...baseMessage, text: "x".repeat(IMPORT_LIMITS.telegram.maxMessageTextChars + 1) }],
-    });
-    expect(() => normalizeTelegramExport(oversizedText, "result.json"))
-      .toThrow("message text");
-  });
-
-  it("rolls back the Telegram source and all messages when a later insert fails", async () => {
-    const sqlite = (app.db as any).$client;
-    sqlite.exec(`
-      CREATE TRIGGER reject_atomic_telegram_item
-      BEFORE INSERT ON evidence_items
-      WHEN NEW.title LIKE '%Reject me%'
-      BEGIN
-        SELECT RAISE(ABORT, 'forced Telegram failure');
-      END;
-    `);
-    const exportJson = JSON.stringify({
-      name: "Atomic chat",
-      type: "personal_chat",
-      id: 99,
-      messages: [
-        {
-          id: 1,
-          type: "message",
-          date: "2026-08-22T10:00:00",
-          date_unixtime: "1787392800",
-          from: "Keep me",
-          text: "First",
-        },
-        {
-          id: 2,
-          type: "message",
-          date: "2026-08-22T10:01:00",
-          date_unixtime: "1787392860",
-          from: "Reject me",
-          text: "Second",
-        },
-      ],
-    });
-
-    try {
-      await expect(app.makeCaller(owner).telegramEnhanced.importExport({
-        caseId,
-        fileName: "atomic.json",
-        exportJson,
-      })).rejects.toThrow("no messages were added");
-    } finally {
-      sqlite.exec("DROP TRIGGER reject_atomic_telegram_item;");
-    }
-
-    const sources = await app.db.select().from(app.schema.evidenceSources)
-      .where(eq(app.schema.evidenceSources.userId, owner.id));
-    const items = await app.db.select().from(app.schema.evidenceItems)
-      .where(eq(app.schema.evidenceItems.userId, owner.id));
-    expect(sources).toHaveLength(0);
-    expect(items).toHaveLength(0);
-  });
-
-  it("rechecks Telegram case ownership inside the evidence transaction", async () => {
-    const { importTelegramExport } = await import("../../server/telegramService");
-    await expect(importTelegramExport(owner.id, "CASE_ALREADY_DELETED", {
-      name: "Orphan attempt",
-      type: "personal_chat",
-      id: 101,
-      messages: [{
-        id: 1,
-        type: "message",
-        date: "2026-08-22T10:00:00",
-        date_unixtime: "1787392800",
-        text: "Must not be written",
-      }],
-    }, "orphan.json")).rejects.toThrow("no messages were added");
-
-    const sources = await app.db.select().from(app.schema.evidenceSources)
-      .where(eq(app.schema.evidenceSources.userId, owner.id));
-    expect(sources).toHaveLength(0);
-  });
-
-  it("commits complete CSV and Telegram imports with canonical evidence linkage", async () => {
-    const csvResult = await app.makeCaller(owner).bulkImport.uploadCSV({
+  it("commits a complete CSV import", async () => {
+    const result = await app.makeCaller(owner).bulkImport.uploadCSV({
       csvContent: "caseTitle,description,category,urgency\nImported case,Verified description,Civil,High",
       filename: "complete.csv",
     });
-    expect(csvResult).toMatchObject({ success: true, totalRows: 1 });
-
-    const telegramResult = await app.makeCaller(owner).telegramEnhanced.importExport({
-      caseId,
-      fileName: "complete.json",
-      exportJson: JSON.stringify({
-        name: "Complete chat",
-        type: "personal_chat",
-        id: 100,
-        messages: [{
-          id: 1,
-          type: "message",
-          date: "2026-08-22T10:00:00",
-          date_unixtime: "1787392800",
-          from: "Witness",
-          text: "Verified message",
-        }],
-      }),
-    });
-    expect(telegramResult).toEqual({ success: true, messagesImported: 1, filesFound: 0 });
+    expect(result).toMatchObject({ success: true, totalRows: 1 });
 
     const [job] = await app.db.select().from(app.schema.bulkImportJobs)
-      .where(eq(app.schema.bulkImportJobs.id, csvResult.jobId));
+      .where(eq(app.schema.bulkImportJobs.id, result.jobId));
     expect(job).toMatchObject({ status: "completed", processedRows: "1", failedRows: "0" });
-
-    const [source] = await app.db.select().from(app.schema.evidenceSources)
-      .where(eq(app.schema.evidenceSources.userId, owner.id));
-    const [item] = await app.db.select().from(app.schema.evidenceItems)
-      .where(eq(app.schema.evidenceItems.sourceId, source.id));
-    expect(source).toMatchObject({
-      caseId,
-      provider: "telegram",
-      sourceType: "telegram",
-      connectionStatus: "imported",
-      itemCount: 1,
-    });
-    expect(item).toMatchObject({
-      caseId,
-      userId: owner.id,
-      sourceId: source.id,
-      source: "telegram",
-      content: "Verified message",
-    });
   });
 });

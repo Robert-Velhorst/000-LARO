@@ -70,10 +70,10 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
   bundles, exports, release artifacts, or version control.
 - Provider connection and local disconnection changes commit with their audit
   rows. Empty credentials and invalid account identities are rejected, and
-  OAuth, Gmail, Telegram, SendGrid, SMTP, and acceptance calls use bounded
-  deadlines. Credential-bearing Trello and Telegram operations use POST bodies,
-  persistent per-user quotas, and bounded concurrent-read admission. Telegram
-  downloads enforce the evidence-file byte ceiling.
+  OAuth, Gmail, SendGrid, SMTP, and acceptance calls use bounded deadlines.
+  Disconnected Trello and Telegram adapters, raw-token procedures, callback,
+  webhook controls, discarded downloads, and legacy import path are retired;
+  neither provider has a mounted production API.
 - External contact is not autonomous: preparation, approval, and sending are
   separate state transitions; delivery is disabled by default and fail-closed.
 - Case and outreach transitions claim their exact prior state. Response and case
@@ -126,10 +126,10 @@ recorded in `docs/ACCEPTANCE_TESTS.md` and `docs/MANUAL_VERIFICATION.md`.
 | Consequential legal-state writes could survive a failed audit insert | High | Case creation, classification, editing, transition, and deletion plus outreach initiation, single and batch draft decisions, dispatch claims, responses, and Gmail reply linking now commit with required audit rows or roll back together; injected SQLite failures verify each boundary |
 | Provider credentials could be stored or deleted without durable audit evidence | High | Connection and every registered local disconnect route now transact credentials, connected sources, and required audit rows; injected audit failures preserve the prior local state |
 | Dormant Gmail OAuth and provider calls retained unsafe or unbounded paths | Medium | Removed the unused unsigned-state/non-PKCE OAuth implementation, validate and normalize returned account credentials, and bound OAuth refresh, Gmail, SendGrid, SMTP, and live-acceptance calls |
-| Credential-bearing Trello and Telegram reads used query-string transports | High | Converted every token-bearing procedure to a POST-backed mutation, removed dormant unsigned/non-expiring Trello OAuth generation, bounded Telegram token/file inputs, and added provider deadlines and response-size ceilings |
+| Disconnected Trello and Telegram stacks exposed raw-token and fake-success surfaces | High | Retired both provider services, all three router namespaces, the unused callback, webhook/download controls, release-provider claim, and legacy Telegram import; capability reporting now marks both unsupported |
 | Provider identity normalization could duplicate historical mixed-case accounts | High | Provider lookup now occurs case-insensitively inside the credential/audit transaction; startup reconciliation preserves child references, normalizes identities, and creates a unique owner/provider/email index; concurrent reconnect tests converge on one row |
 | Public-source provider failure could be rendered as zero results or an absence conclusion | High | KvK, Rechtspraak, and KOOP lookup now verifies case ownership before contact, writes a mandatory metadata-only receipt for every attempt, retains null counts on failure, and renders complete, genuine-empty, partial, unavailable, and failed states separately |
-| Trello and Telegram token operations lacked aggregate admission controls | High | Added persistent per-user/provider request quotas and shared bounded-read admission around provider calls; the 31st request is rejected before provider contact |
+| Retired connector code remained remotely callable despite no maintained renderer workflow | High | Route-graph and behavioral tests prove no Trello or Telegram procedure is exported; historical labels remain readable and erasure-covered without retaining a credential or import path |
 | Linux cross-packaging omitted the Windows canvas binary used for scanned-PDF OCR | High | `dist:win` and Store builds stage the exact pinned Windows canvas package; CI repeats the step and packaged-native verification requires x64 PE SQLite and canvas bindings |
 | Gap analysis presented count-derived percentages as evidence completeness and case strength | High | Replaced the score contract with `evidence-coverage-v1`, exact source and analysis revisions, explicit unknown legal basis and limitations; legacy rows and their derived output are retired, and sparse/duplicate/contradictory/unavailable/well-documented plus desktop/mobile browser regressions are covered |
 | Saved gap-analysis output remained visible after its evidence or timeline inputs changed | High | Every run now records the exact case/input revision and manifest; reads revalidate it, non-current states suppress all derived output and document generation, and evidence create/delete/revision, timeline correction, unchanged rerun, failed recomputation, and desktop/mobile state regressions are covered |

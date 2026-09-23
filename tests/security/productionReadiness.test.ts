@@ -237,14 +237,12 @@ describe('production readiness regressions', () => {
     expect(decryptSecret(existingCiphertext)).toBe('fixture-oauth-token');
   });
 
-  it('requests evidence-read OAuth permissions without delegated mail sending or label writes', async () => {
+  it('requests evidence-read OAuth permissions without delegated mail sending or retired connectors', async () => {
     const { getOAuth2Config } = await import('../../server/oauth2');
     const google = getOAuth2Config('gmail');
     const microsoft = getOAuth2Config('outlook');
     const gmailService = readFileSync(join(ROOT, 'server/gmailService.ts'), 'utf8');
     const refreshSource = readFileSync(join(ROOT, 'server/emailOAuth.ts'), 'utf8');
-    const trelloService = readFileSync(join(ROOT, 'server/trelloService.ts'), 'utf8');
-    const trelloRouter = readFileSync(join(ROOT, 'server/routers/trelloEnhanced.ts'), 'utf8');
 
     expect(google.scopes).toEqual([
       'https://www.googleapis.com/auth/gmail.readonly',
@@ -259,34 +257,22 @@ describe('production readiness regressions', () => {
     expect(gmailService).not.toContain('getGmailAuthorizationUrl');
     expect(gmailService).not.toContain('exchangeGmailCodeForTokens');
     expect(gmailService).not.toContain("Buffer.from(JSON.stringify({ userId, caseId }))");
-    expect(trelloService).not.toContain('getTrelloAuthorizationUrl');
-    expect(trelloService).not.toContain("expiration: 'never'");
-    expect(trelloService).not.toContain("Buffer.from(JSON.stringify({ userId, caseId }))");
-    expect(trelloRouter).not.toContain('getTrelloAuthorizationUrl');
-    expect(trelloRouter).toContain('Trello OAuth is not available until secure token storage is implemented.');
+    expect(existsSync(join(ROOT, 'server/trelloService.ts'))).toBe(false);
+    expect(existsSync(join(ROOT, 'server/telegramService.ts'))).toBe(false);
+    expect(existsSync(join(ROOT, 'server/routers/trelloEnhanced.ts'))).toBe(false);
+    expect(existsSync(join(ROOT, 'server/routers/telegramEnhanced.ts'))).toBe(false);
     expect(refreshSource).not.toContain('Mail.Send');
     expect(JSON.stringify({ google, microsoft })).not.toMatch(/gmail\.send|gmail\.labels|Mail\.Send/);
   });
 
-  it('keeps provider tokens out of query-string transports', async () => {
+  it('does not export retired Trello or Telegram procedures', async () => {
     const { appRouter } = await import('../../server/routers');
     const procedures = (appRouter as any)._def.procedures as Record<
       string,
       { _def: { mutation?: boolean; query?: boolean } }
     >;
-    const tokenBearingProcedures = [
-      'trelloEnhanced.listBoards',
-      'trelloEnhanced.listLists',
-      'trelloEnhanced.listCards',
-      'trelloEnhanced.testConnection',
-      'telegramEnhanced.validateToken',
-      'telegramEnhanced.downloadFile',
-    ];
-
-    for (const name of tokenBearingProcedures) {
-      expect(procedures[name]?._def.mutation, name).toBe(true);
-      expect(procedures[name]?._def.query, name).not.toBe(true);
-    }
+    expect(Object.keys(procedures).filter((name) => /^(trello|trelloEnhanced|telegramEnhanced)\./.test(name)))
+      .toEqual([]);
   // This imports the complete source router graph, not a timed HTTP operation.
   // Cold TypeScript transforms on a loaded or mounted drive can exceed 30 seconds.
   }, 120_000);

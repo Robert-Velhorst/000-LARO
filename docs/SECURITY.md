@@ -45,7 +45,9 @@ Date: 2026-09-20
   removes the credential, rewrites only affected schedule references, performs
   final-account source cleanup, and stores the mandatory audit. Provider or
   network failure retains the full shared local state for a safe retry.
-- Trello OAuth is disabled until server-side encrypted token persistence exists. No token is reflected into HTML or posted to an arbitrary origin.
+- Trello and Telegram are unsupported and have no mounted connector, OAuth
+  callback, token input, webhook, download, or import procedure. Historical
+  owner-scoped rows remain covered by account erasure.
 - Electron keeps Node integration disabled, enables context isolation and renderer sandboxing, and permits external navigation only to HTTPS, `mailto:`, or loopback HTTP URLs.
 - Production startup fails if the database cannot initialize. The API binds to loopback by default; Docker explicitly opts into `0.0.0.0`.
 - Provider-backed AI fails closed without `FORGE_API_KEY`. Transactional email never reports delivery when no provider is configured and does not log reset codes in production.

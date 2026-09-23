@@ -457,20 +457,6 @@ export const syncSchedulerRouter = router({
   }),
 });
 
-/* ─── trello (maps to real config; honest unavailable when not configured) ─ */
-export const trelloRouter = router({
-  getStatus: protectedProcedure.query(() => ({ connected: false, configured: !!process.env.TRELLO_API_KEY })),
-  getOAuthUrl: protectedProcedure.query(() => {
-    if (!process.env.TRELLO_API_KEY) return { url: null as string | null, reason: "Trello is not configured (TRELLO_API_KEY missing)." };
-    return { url: null as string | null, reason: "Trello OAuth is not enabled in this build." };
-  }),
-  listBoards: protectedProcedure.query((): Array<{ id: string; name: string }> => []),
-  listLists: protectedProcedure.input(z.object({ boardId: z.string() }).optional()).query((): Array<{ id: string; name: string }> => []),
-  listCards: protectedProcedure.input(z.object({ listId: z.string() }).optional()).query((): Array<{ id: string; name: string }> => []),
-  syncBoards: protectedProcedure.mutation(() => ({ synced: 0, reason: "Trello not connected." })),
-  disconnect: protectedProcedure.mutation(() => ({ ok: true as const })),
-});
-
 /* ─── unifiedInbox (real: conversationThreads + unifiedMessages) ─────────── */
 export const unifiedInboxRouter = router({
   getThreads: protectedProcedure.input(z.object({ caseId: z.string().optional() }).optional()).query(async ({ input, ctx }) => {

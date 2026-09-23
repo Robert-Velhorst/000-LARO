@@ -198,13 +198,4 @@ router.get('/api/oauth/gmail/start', startHandler('gmail'));
 router.get('/api/oauth/outlook/start', startHandler('outlook'));
 router.get('/api/oauth/gmail/callback', callbackHandler('gmail'));
 router.get('/api/oauth/outlook/callback', callbackHandler('outlook'));
-router.get('/api/oauth/trello/callback', (_req, res) => {
-  sendCallbackPage(res, {
-    success: false,
-    title: 'Trello unavailable',
-    message: 'Trello connection is disabled until secure server-side token storage is available.',
-    status: 410,
-  });
-});
-
 export default router;

@@ -52,8 +52,9 @@ original phase-074 snapshot are mounted and typed.
 - PDF evidence export is marked unavailable; case-scoped ZIP (including available
   source files and analyses), JSON, CSV, print, and timeline export remain the
   supported paths.
-- Trello, Slack, and other unconfigured providers return an unavailable state
-  instead of fabricated success.
+- Trello and Telegram have no exported connector routes; the mounted provider
+  checklist reports both as unsupported. Slack and other unfinished providers
+  remain unavailable instead of returning fabricated success.
 - Provider-backed analysis and delivery remain disabled until configured and
   accepted against target accounts.
 
