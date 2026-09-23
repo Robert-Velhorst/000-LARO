@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, writeFileSync } from "fs";
+import { join } from "path";
 import { eq } from "drizzle-orm";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 import { buildCase, buildUser } from "../factories";
@@ -154,5 +156,59 @@ suite("scheduled collection ownership and eligibility", () => {
     await runAutoCollectionForAllCases({ runCase, writeNotification });
     expect(runCase).toHaveBeenCalledWith(caseId);
     expect(writeNotification).toHaveBeenCalledOnce();
+  });
+
+  it("routes manual, saved-setting, and scheduled pulls through one canonical ingestion path", async () => {
+    const owner = await insertOwnerWithCases("CANONICAL_PULL_OWNER", ["CANONICAL_PULL_CASE"]);
+    const caseId = "CANONICAL_PULL_CASE";
+    const sourceDirectory = join(app.tmpDir, "canonical-pull-source");
+    mkdirSync(sourceDirectory);
+    writeFileSync(join(sourceDirectory, "contract-canonical.txt"), "One canonical source revision");
+    await app.makeCaller(owner).userPreferences.updateWorkflow({ autoAnalyzeImports: false });
+    await app.db.update(app.schema.autoCollectionSettings).set({
+      metadata: JSON.stringify({ localFolderPaths: [sourceDirectory] }),
+      autoDownloadAttachments: false,
+      autoDownloadGoogleDriveFiles: false,
+    }).where(eq(app.schema.autoCollectionSettings.caseId, caseId));
+
+    const manual = await app.makeCaller(owner).autoCollection.pullByKeywords({
+      caseId,
+      keywords: ["contract-canonical"],
+      includeGmail: false,
+      includeDrive: false,
+      includeLocal: true,
+      localFolderPaths: [sourceDirectory],
+    });
+    expect(manual.result).toMatchObject({ localFiles: 1, errors: [] });
+
+    const savedSetting = await app.makeCaller(owner).autoCollection.runCollection({ caseId });
+    expect(savedSetting.result).toMatchObject({ filesDownloaded: 0, errors: [] });
+
+    const { runAutoCollectionForAllCases } = await import("../../server/autoCollectionService");
+    const scheduled = await runAutoCollectionForAllCases({
+      now: new Date("2026-09-24T02:00:00.000Z"),
+    });
+    expect(scheduled).toMatchObject({
+      casesProcessed: 1,
+      emailsCollected: 0,
+      filesCollected: 0,
+      errors: [],
+    });
+
+    const evidence = await app.db.select().from(app.schema.evidence)
+      .where(eq(app.schema.evidence.caseId, caseId));
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]).toMatchObject({
+      userId: owner.id,
+      source: "local",
+      title: "contract-canonical.txt",
+    });
+
+    const pullJobs = await app.db.select().from(app.schema.keywordPullJobs)
+      .where(eq(app.schema.keywordPullJobs.caseId, caseId));
+    expect(pullJobs).toHaveLength(3);
+    expect(pullJobs.every((job: any) => job.status === "completed")).toBe(true);
+    expect(pullJobs.map((job: any) => JSON.parse(job.result).monitoring.storedItems).sort())
+      .toEqual([0, 0, 1]);
   });
 });
