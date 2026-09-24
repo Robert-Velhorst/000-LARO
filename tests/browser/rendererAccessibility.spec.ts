@@ -1033,6 +1033,9 @@ test("inbox corrects and reverses dossier assignments without losing the source"
 });
 
 test("source controls retain paused work and refresh status without reloading", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("laro.locale")) localStorage.setItem("laro.locale", "en");
+  });
   const email = await createAccount(page);
   const database = new Database(resolve(".laro-a11y.sqlite"));
   const jobId = crypto.randomUUID();
@@ -1071,6 +1074,17 @@ test("source controls retain paused work and refresh status without reloading", 
     expect(audit.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
     await page.screenshot({ path: `test-results/document-sources-${viewport.name}.png`, fullPage: false });
   }
+  await page.evaluate(() => localStorage.setItem("laro.locale", "nl"));
+  const dutchReload = await page.reload({ waitUntil: "networkidle" });
+  expect(dutchReload?.status()).toBe(200);
+  await expect(page.locator("html")).toHaveAttribute("lang", "nl");
+  const dutchSources = page.getByRole("region", { name: "Documentbronnen" });
+  await expect(dutchSources.getByText("Voltooid met fouten", { exact: true })).toBeVisible();
+  await expect(dutchSources.getByRole("button", { name: "Onvoltooide verwerking opnieuw proberen" })).toBeVisible();
+  const dutchFailures = dutchSources.getByRole("region", { name: "Bronfouten" });
+  await expect(dutchFailures.getByText("Google heeft de toegang geweigerd of de accountkoppeling is niet meer beschikbaar.", { exact: true })).toBeVisible();
+  await expect(dutchSources.getByLabel("Voortgang bronverwerking", { exact: true })).toBeVisible();
+  await dutchSources.screenshot({ path: test.info().outputPath("document-sources-nl.png") });
 });
 
 test("shared Google disconnect review names both capabilities and cancellation preserves multiple accounts", async ({ page }, testInfo) => {

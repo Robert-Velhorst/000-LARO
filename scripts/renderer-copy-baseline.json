@@ -71,10 +71,6 @@
     "count": 57,
     "digest": "ca67a7d63f4d7c383fdd69981bcde24903a77d595ed1023941cfb282ad4b736c"
   },
-  "src/renderer/components/DocumentSources.tsx": {
-    "count": 96,
-    "digest": "c32ef79a0fd31ad51b0a3952520455d9ed73b00e03d9c1a4c408abb9fb9eaf03"
-  },
   "src/renderer/components/EnhancedEvidenceUpload.tsx": {
     "count": 23,
     "digest": "c0150e34c7cb7720d03155c8cfb01ee19d33cc603e74519ad93ef3aebfa93350"
@@ -194,10 +190,6 @@
   "src/renderer/components/SmartSearchFilters.tsx": {
     "count": 62,
     "digest": "8d8c14e8d32312b81cfe224eb4d5117120499f4cccc003befc3af4992386e48a"
-  },
-  "src/renderer/components/SourceJobProgress.tsx": {
-    "count": 25,
-    "digest": "832a3b77b954347c1d1f0cb3e8e57ece330e392d4236e65939628a0fb7f43e22"
   },
   "src/renderer/components/SuggestedActions.tsx": {
     "count": 32,

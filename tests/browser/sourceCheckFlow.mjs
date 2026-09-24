@@ -23,7 +23,7 @@ export async function verifySourceChecks(page, database, ownerId, origin, output
     const source = page.getByRole('article', { name: 'Local folder source' }).filter({ has: page.getByRole('button', { name: 'Review exclusions' }) });
     await source.getByRole('button', { name: 'Review exclusions' }).click();
     await expect(source).toContainText('Previous skip has no recorded verification');
-    await expect(source).toContainText('1 source items need review');
+    await expect(source).toContainText('1 source item needs review');
     await source.getByText(/Import limitation checked/).click();
     await expect(source).toContainText('Contents and legal relevance were not assessed');
     await expect(source).toContainText('sizeBytes: 0');
@@ -62,7 +62,7 @@ export async function verifySourceChecks(page, database, ownerId, origin, output
     await expect(screening).toBeVisible({ timeout: 10000 });
     await expect(screening).toContainText('0 text-sampled');
     await expect(screening).toContainText('Bytes actually sampled: 0.00 MiB');
-    await screening.getByRole('button', { name: 'Review 1 deferred items' }).click();
+    await screening.getByRole('button', { name: 'Review 1 deferred item' }).click();
     await source.getByRole('button', { name: 'Analyze anyway', exact: true }).click();
     await expect(source.getByRole('button', { name: 'Analyze anyway', exact: true })).toHaveCount(0);
     const deferred = db.prepare('SELECT status,payload FROM document_source_work WHERE id = ?').get(deferredId);

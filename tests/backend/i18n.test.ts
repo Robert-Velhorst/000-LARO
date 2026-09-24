@@ -22,6 +22,9 @@ describe('Phase 057 — i18n', () => {
     expect(t('reconstruction.openSourceNamed', 'en', { title: 'Decision.pdf' })).toBe(
       'Open source document Decision.pdf',
     );
+    expect(t('sources.accessVerified', 'nl', { kind: 'Gmail', time: '10:30' })).toBe(
+      'Toegang tot Gmail gecontroleerd om 10:30',
+    );
   });
   it('normalizes locale strings', () => {
     expect(normalizeLocale('nl-NL')).toBe('nl');

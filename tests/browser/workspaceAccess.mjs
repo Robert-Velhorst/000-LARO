@@ -59,11 +59,15 @@ async function workspace(kind) {
   const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
   return { dir, port, url: `http://127.0.0.1:${port}`, kind, cookie: `laro_${kind}_session` };
 }
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.LARO_BROWSER_CHANNEL ? { channel: process.env.LARO_BROWSER_CHANNEL } : {}),
+});
 try {
   const a = await workspace('local'), b = await workspace('preview');
   let childA = await start(a); await start(b);
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await context.addInitScript(() => localStorage.setItem('laro.locale', 'en'));
   const page = await context.newPage();
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   const offlineAuth = route => route.abort('connectionrefused');
@@ -143,6 +147,8 @@ try {
   await page.screenshot({ path: path.join(runtime, 'mobile.png') });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
   assert.deepEqual(errors, []);
+  const skipSetup = page.getByRole('button', { name: 'Skip setup' });
+  if (await skipSetup.isVisible()) await skipSetup.click();
   console.log('PASS workspace access, session isolation, and live-browser restart');
   if (process.argv.includes('--source-progress')) {
     await page.setViewportSize({ width: 1440, height: 900 });
