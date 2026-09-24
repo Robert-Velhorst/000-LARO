@@ -39,10 +39,6 @@
     "count": 20,
     "digest": "b72b3c8dc67963908a9a2b55451141236d16244cfc7f413ebd60cf819bec999a"
   },
-  "src/renderer/components/CaseReconstruction.tsx": {
-    "count": 102,
-    "digest": "9538408cd8240deaf7ab3d962c7e7fc0fdfc4fe692f09539f5603e8ad6f8f484"
-  },
   "src/renderer/components/CaseStatusWorkflow.tsx": {
     "count": 4,
     "digest": "dd7de7a1847900394221c22357e2046135cfaff14b0d457a8ec60d5c066fffdd"

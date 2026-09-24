@@ -171,11 +171,11 @@ describe('production readiness regressions', () => {
     expect(caseUi).toContain('<CaseTimeline caseId={caseId} />');
     expect(timelineUi).toContain('title="Open source document"');
     expect(caseUi).toContain('<CaseReconstruction caseId={caseId} />');
-    expect(reconstructionUi).toContain('Suggested links');
-    expect(reconstructionUi).toContain('Open source document');
-    expect(reconstructionUi).toContain('Trace selection');
-    expect(reconstructionUi).toContain('All participants and topics');
-    expect(reconstructionUi).toContain('Dated actions in this document');
+    expect(reconstructionUi).toContain('t("reconstruction.suggestedLinks")');
+    expect(reconstructionUi).toContain('t("reconstruction.openSource")');
+    expect(reconstructionUi).toContain('t("reconstruction.traceSelection")');
+    expect(reconstructionUi).toContain('t("reconstruction.allFocus")');
+    expect(reconstructionUi).toContain('t("reconstruction.datedActions")');
     expect(analysisUi).toContain('Analyze all pending');
     expect(analysisUi).toContain('documentAnalysis.byCase.useQuery');
     expect(migration).toContain('CREATE TABLE `document_analyses`');

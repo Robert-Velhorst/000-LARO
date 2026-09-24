@@ -16,6 +16,12 @@ describe('Phase 057 — i18n', () => {
     expect(t('scanner.filesFound', 'en', { count: 3, size: '9 KB' })).toBe(
       '3 eligible files found (9 KB)',
     );
+    expect(t('reconstruction.openSourceNamed', 'nl', { title: 'Besluit.pdf' })).toBe(
+      'Brondocument Besluit.pdf openen',
+    );
+    expect(t('reconstruction.openSourceNamed', 'en', { title: 'Decision.pdf' })).toBe(
+      'Open source document Decision.pdf',
+    );
   });
   it('normalizes locale strings', () => {
     expect(normalizeLocale('nl-NL')).toBe('nl');

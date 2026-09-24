@@ -1240,6 +1240,9 @@ test("inbox shows a retained discovery explanation without presenting a review a
 });
 
 test("document reconstruction focuses source-linked participants, topics, and actions", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("laro.locale")) localStorage.setItem("laro.locale", "en");
+  });
   const email = await createAccount(page);
   const database = new Database(resolve(".laro-a11y.sqlite"));
   const now = Math.floor(Date.now() / 1_000);
@@ -1330,6 +1333,22 @@ test("document reconstruction focuses source-linked participants, topics, and ac
     const audit = await new AxeBuilder({ page }).include('[aria-label="Case content"]').analyze();
     expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
   }
+
+  await page.getByRole("button", { name: "Close case details", exact: true }).click();
+  await page.evaluate(() => localStorage.setItem("laro.locale", "nl"));
+  const dutchReload = await page.reload({ waitUntil: "networkidle" });
+  expect(dutchReload?.status()).toBe(200);
+  await expect(page.locator("html")).toHaveAttribute("lang", "nl");
+  await page.getByRole("button", { name: "Dossier openen", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Dossieronderdeel", exact: true })).toHaveValue("evidence-timeline");
+  await expect(page.getByRole("button", { name: "Documentkaart tonen", exact: true })).toBeVisible();
+  await page.getByText("Documenten en koppelingen filteren", { exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Focus", exact: true })).toContainText("Alle deelnemers en onderwerpen");
+  await page.getByRole("button", { name: "Documentkaart tonen", exact: true }).click();
+  const dutchMap = page.getByLabel("Schuifbare documentreconstructiekaart", { exact: true });
+  await expect(dutchMap.locator("svg[role=img]")).toBeVisible();
+  await expect(dutchMap).toContainText("Juridische procedure");
+  await dutchMap.screenshot({ path: test.info().outputPath("reconstruction-map-nl.png") });
 });
 
 test("assistant timeline proposals stay unapplied until explicit review", async ({ page }, testInfo) => {
@@ -1338,6 +1357,7 @@ test("assistant timeline proposals stay unapplied until explicit review", async 
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
   page.on("requestfailed", (request) => failedRequests.push(`${request.method()} ${request.url()}`));
+  await page.addInitScript(() => localStorage.setItem("laro.locale", "en"));
   const email = await createAccount(page);
   const database = new Database(resolve(".laro-a11y.sqlite"));
   const now = Math.floor(Date.now() / 1_000);
