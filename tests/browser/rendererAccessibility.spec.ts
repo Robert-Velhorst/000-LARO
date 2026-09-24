@@ -492,11 +492,24 @@ test("language selection updates representative workflows and persists across re
   await expect(page.getByRole("heading", { name: "Benadering", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Instellingen", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Instellingen", exact: true })).toBeVisible();
+  const settingsNavNl = page.getByRole("navigation", { name: "Instellingengroepen" });
+  await expect(page.getByText("Documentanalyse", { exact: true })).toBeVisible();
+  await settingsNavNl.getByRole("button", { name: "E-mail", exact: true }).click();
+  await expect(page.getByText("E-mailservice", { exact: true })).toBeVisible();
+  await expect(page.getByText("Tests voor transactionele bezorging zijn alleen beschikbaar voor een beheerder.", { exact: true })).toBeVisible();
+  await settingsNavNl.getByRole("button", { name: "Bewijsbronnen", exact: true }).click();
+  await expect(page.getByText("Lokale computer", { exact: true })).toBeVisible();
+  await settingsNavNl.getByRole("button", { name: "HAI-koppeling", exact: true }).click();
+  await expect(page.getByText("Alleen lezen", { exact: true })).toBeVisible();
+  await settingsNavNl.getByRole("button", { name: "Gegevens en privacy", exact: true }).click();
+  await expect(page.getByText("Accountarchief", { exact: true })).toBeVisible();
+  await page.locator("main").screenshot({ path: testInfo.outputPath("settings-security-nl.png") });
 
   const reloadResponse = await page.reload({ waitUntil: "networkidle" });
   expect(reloadResponse?.status()).toBe(200);
   await expect(page.locator("html")).toHaveAttribute("lang", "nl");
   await expect(page.getByRole("heading", { name: "Instellingen", exact: true })).toBeVisible();
+  await expect(page.getByText("Privacy en account", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Accountmenu openen" }).click();
   await page.getByRole("group", { name: "Taal" }).getByRole("button", { name: "en", exact: true }).click();
@@ -504,6 +517,12 @@ test("language selection updates representative workflows and persists across re
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await expect(page.getByText("My Cases", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+  await expect(page.getByText("Privacy and account", { exact: true })).toBeVisible();
+  const settingsNavEn = page.getByRole("navigation", { name: "Settings sections" });
+  await settingsNavEn.getByRole("button", { name: "Workflow", exact: true }).click();
+  await expect(page.getByText("Document analysis", { exact: true })).toBeVisible();
+  await expect(page.getByText("External full-document processing", { exact: true })).toBeVisible();
+  await page.locator("main").screenshot({ path: testInfo.outputPath("settings-workflow-en.png") });
 
   await page.getByRole("button", { name: "My Cases", exact: true }).click();
   await page.getByRole("button", { name: "Open case", exact: true }).click();

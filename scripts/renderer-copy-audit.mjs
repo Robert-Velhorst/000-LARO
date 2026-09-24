@@ -9,6 +9,7 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const RENDERER_ROOT = path.join(ROOT, "src", "renderer");
 const BASELINE_PATH = path.join(ROOT, "scripts", "renderer-copy-baseline.json");
 const WRITE = process.argv.includes("--write");
+const LIST_INDEX = process.argv.indexOf("--list");
 const USER_ATTRIBUTES = new Set(["aria-label", "alt", "placeholder", "title"]);
 const NON_TRANSLATABLE_COPY = new Set([
   "&larr;",
@@ -16,6 +17,7 @@ const NON_TRANSLATABLE_COPY = new Set([
   "Gmail &amp; Drive",
   "Google Drive",
   "km",
+  "name@example.com",
 ]);
 
 function rendererFiles(directory) {
@@ -109,6 +111,20 @@ function snapshot() {
 }
 
 const current = snapshot();
+if (LIST_INDEX >= 0) {
+  const requested = process.argv[LIST_INDEX + 1];
+  if (!requested) {
+    console.error("Usage: node scripts/renderer-copy-audit.mjs --list <renderer-file>");
+    process.exit(2);
+  }
+  const absolute = path.resolve(ROOT, requested);
+  if (!absolute.startsWith(`${RENDERER_ROOT}${path.sep}`) || !fs.existsSync(absolute)) {
+    console.error(`Renderer file not found: ${requested}`);
+    process.exit(2);
+  }
+  for (const item of candidatesFor(absolute)) console.log(item);
+  process.exit(0);
+}
 if (WRITE) {
   fs.writeFileSync(BASELINE_PATH, `${JSON.stringify(current, null, 2)}\n`, "utf8");
   console.log(`Wrote renderer copy baseline for ${Object.keys(current).length} file(s).`);

@@ -16,8 +16,8 @@
     "digest": "7daa241664fb848b70dc156163395d1e03e0ba564873fe58bf89fe1917b413cc"
   },
   "src/renderer/components/AuthPage.tsx": {
-    "count": 15,
-    "digest": "af16e8eae2139c229d7af8d2b39626cc609417f8472f5465a1dd79d2255198a9"
+    "count": 14,
+    "digest": "08057fcc1bc57f27980469cde3ed6ae0205f861eaaeaa03a31e5cd5139371c43"
   },
   "src/renderer/components/AutomatedDocumentAnalysis.tsx": {
     "count": 52,
@@ -194,10 +194,6 @@
   "src/renderer/components/SearchResultSelection.tsx": {
     "count": 20,
     "digest": "a508195ca536d5f4695417b906fe453f90fbcf2ede41733d1c31b638c1306b92"
-  },
-  "src/renderer/components/Settings.tsx": {
-    "count": 202,
-    "digest": "b8e880dfd2653d2f8c4cd8fbb50dac1fbda4d7ebdd06ebc69b81491f93a0ce85"
   },
   "src/renderer/components/SmartSearchFilters.tsx": {
     "count": 62,

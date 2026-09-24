@@ -780,6 +780,7 @@ describe('production readiness regressions', () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
     const rendererBuild = readFileSync(join(ROOT, 'scripts/build-renderer.mjs'), 'utf8');
     const bundleBudget = readFileSync(join(ROOT, 'scripts/renderer-bundle-budget.mjs'), 'utf8');
+    const viteConfig = readFileSync(join(ROOT, 'vite.config.mts'), 'utf8');
     const gate = readFileSync(join(ROOT, 'scripts/stabilization-gate.mjs'), 'utf8');
     expect(pkg.scripts['build:renderer']).toBe('node scripts/build-renderer.mjs');
     expect(pkg.scripts['check:renderer-bundle']).toContain('renderer-bundle-budget.mjs');
@@ -788,6 +789,7 @@ describe('production readiness regressions', () => {
     expect(bundleBudget).toContain('javascriptChunk: 200 * KIB');
     expect(bundleBudget).toContain('evidenceRoute: 80 * KIB');
     expect(bundleBudget).toContain('The split Evidence route chunk was not found.');
+    expect(viteConfig).toContain("{ name: 'i18n-catalog'");
     expect(gate).toContain('"renderer bundle budget"');
   });
 
