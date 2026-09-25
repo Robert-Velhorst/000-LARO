@@ -396,16 +396,9 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
 function SidebarTrigger({
   className,
   onClick,
-  onKeyUp,
   ...props
 }: React.ComponentProps<typeof Button>) {
   const { toggleSidebar, isMobile, openMobile } = useSidebar();
-  const focusMobileSidebar = React.useCallback(() => {
-    const sidebar = document.getElementById("laro-mobile-sidebar");
-    if (sidebar?.getAttribute("aria-hidden") === "false") {
-      sidebar.querySelector<HTMLElement>("button:not([disabled])")?.focus({ preventScroll: true });
-    }
-  }, []);
   return (
     <Button
       data-sidebar="trigger"
@@ -415,18 +408,8 @@ function SidebarTrigger({
       size="icon"
       className={cn("h-9 w-9", className)}
       onClick={(e) => {
-        const openingMobileSidebar = isMobile && !openMobile;
         toggleSidebar();
-        if (openingMobileSidebar) {
-          window.setTimeout(focusMobileSidebar, 50);
-        }
         onClick?.(e);
-      }}
-      onKeyUp={(event) => {
-        if (isMobile && openMobile && (event.key === "Enter" || event.key === " ")) {
-          focusMobileSidebar();
-        }
-        onKeyUp?.(event);
       }}
       {...props}
     >
