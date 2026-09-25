@@ -218,18 +218,20 @@ function Sidebar({
       }
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.shiftKey && (event.target === first || document.activeElement === first)) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && (event.target === last || document.activeElement === last)) {
         event.preventDefault();
         first.focus();
       }
     };
 
-    document.addEventListener("keydown", handleKeyDown);
+    // Capture on the dialog-like surface itself so nested menu primitives
+    // cannot consume Tab or Escape before the focus trap handles them.
+    sidebar.addEventListener("keydown", handleKeyDown, true);
     return () => {
-      document.removeEventListener("keydown", handleKeyDown);
+      sidebar.removeEventListener("keydown", handleKeyDown, true);
       const restoreTarget = restoreFocusRef.current;
       if (restoreTarget?.isConnected) {
         restoreTarget.focus();
