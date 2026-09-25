@@ -28,6 +28,19 @@ describe('Phase 057 — i18n', () => {
     expect(t('publicRecords.research.recordedMany', 'nl', { count: 2 })).toBe(
       '2 overeenkomende resultaten vastgelegd voor deze begrensde zoekopdracht.',
     );
+    expect(t('coverage.tabs.records', 'nl', { count: 3 })).toBe('Mogelijke records (3)');
+    expect(t('coverage.summary', 'en', {
+      inputs: 3,
+      available: 1,
+      unavailable: 0,
+      external: 1,
+      unreviewed: 2,
+    })).toBe(
+      'Inventory — input records: 3; managed sources available: 1; unavailable: 0; external references unverified: 1; records without an explicit review marker: 2.',
+    );
+    expect(t('coverage.unknownDetail.missing_context', 'nl', { count: 1 })).toBe(
+      'Te verifiëren items voor communicatie of mogelijk relevante records: 1.',
+    );
   });
   it('normalizes locale strings', () => {
     expect(normalizeLocale('nl-NL')).toBe('nl');

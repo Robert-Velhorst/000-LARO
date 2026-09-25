@@ -91,10 +91,10 @@ must not be represented as operational.
 
 1. Complete the external candidate gates listed above.
 2. Complete renderer NL/EN string migration. Auto-collection settings, the
-   mounted case workspace, document reconstruction, document-source jobs, and
-   case-scoped public research are catalog-driven and browser-tested; the
-   blocking copy audit currently acknowledges 1,386 legacy candidates across
-   53 files.
+   mounted case workspace, document reconstruction, document-source jobs,
+   evidence coverage, and case-scoped public research are catalog-driven and
+   browser-tested; the blocking copy audit currently acknowledges 1,318 legacy
+   candidates across 52 files.
 3. Add platform-normalized pixel baselines for high-risk interaction states and
    extend focus-order coverage into complex route-specific case and evidence
    editors; shared-shell keyboard behavior is now blocking.

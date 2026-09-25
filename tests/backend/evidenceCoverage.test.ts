@@ -206,7 +206,7 @@ suite("versioned evidence coverage", () => {
     const evidencePage = readFileSync("src/renderer/components/Evidence.tsx", "utf8");
     const dashboard = readFileSync("src/renderer/components/EvidenceGapAnalysisDashboard.tsx", "utf8");
     expect(evidencePage + dashboard).not.toMatch(/No critical gaps detected|getCaseStrength|Completeness Score|Evidence Completeness Analysis/);
-    expect(dashboard).toContain("Exact inputs and revisions");
-    expect(dashboard).toContain("Legal basis: Unknown");
+    expect(dashboard).toContain('coverage.exactInputs');
+    expect(dashboard).toContain('coverage.legalBasisUnknown');
   });
 });

@@ -91,10 +91,6 @@
     "count": 13,
     "digest": "c503b68f0b117cbf2bedb0e4d72480b585dbf4bac0b8ce4ce7ec40bb854cda93"
   },
-  "src/renderer/components/EvidenceGapAnalysisDashboard.tsx": {
-    "count": 68,
-    "digest": "aef872f197e9e04545d43950fc99afe0398357d586fce02573725c87f4afb603"
-  },
   "src/renderer/components/EvidenceSummaryDashboard.tsx": {
     "count": 32,
     "digest": "adfaef88298b35bcc5ac737d6e84bf6d96ccc8d650c56191b27fa43253e94700"

@@ -2865,7 +2865,13 @@ test("public research renders complete, empty, partial, unavailable, and failed 
   const dutchReload = await page.reload({ waitUntil: "networkidle" });
   expect(dutchReload?.status()).toBe(200);
   await expect(page.locator("html")).toHaveAttribute("lang", "nl");
-  await page.getByRole("tab", { name: "Public Records", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Bewijsdekking en bronbeschikbaarheid" })).toBeVisible();
+  await expect(page.getByText("Juridische grondslag: onbekend", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Inventaris — invoerrecords: 0;/)).toBeVisible();
+  await expect(page.getByText("juridische grondslag onbekend", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Deze momentopname inventariseert alleen records die momenteel voor LARO zichtbaar zijn/)).toBeVisible();
+  await expect(page.getByText(/Vraag een bevoegde advocaat om de toepasselijke bronnen voor de juridische grondslag vast te stellen/)).toBeVisible();
+  await page.getByRole("tab", { name: "Openbare registers", exact: true }).click();
   await expect(page.getByRole("tab", { name: "KvK-bedrijfsregister", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Rechtbankgegevens", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Wetgeving", exact: true })).toBeVisible();
