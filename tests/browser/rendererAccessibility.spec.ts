@@ -1797,7 +1797,7 @@ test("reviewed HAI credentials expose and enforce their case, field, and future-
   await expect(dialog).toContainText("Future cases: Included automatically");
   const create = dialog.getByRole("button", { name: "Create reviewed credential" });
   await expect(create).toBeDisabled();
-  await dialog.getByLabel(/I reviewed the 1 selected case/).check();
+  await dialog.getByLabel("I reviewed the selected case and understand other current cases are excluded.").check();
   await dialog.getByLabel("I reviewed the exported field categories shown above.").check();
   await dialog.getByLabel("I reviewed whether future cases and analyses enter this grant automatically.").check();
   await expect(create).toBeEnabled();
@@ -1818,7 +1818,7 @@ test("reviewed HAI credentials expose and enforce their case, field, and future-
   await page.getByRole("switch", { name: "Include cases created later" }).click();
   await page.getByRole("button", { name: "Review scope update" }).click();
   const updateDialog = page.getByRole("dialog", { name: "Confirm HAI scope update" });
-  await updateDialog.getByLabel(/I reviewed the 1 selected case/).check();
+  await updateDialog.getByLabel("I reviewed the selected case and understand other current cases are excluded.").check();
   await updateDialog.getByLabel("I reviewed the exported field categories shown above.").check();
   await updateDialog.getByLabel("I reviewed whether future cases and analyses enter this grant automatically.").check();
   await updateDialog.getByRole("button", { name: "Update reviewed scope" }).click();
@@ -2312,8 +2312,8 @@ test("lawyer comparison normalizes legacy rows and only shows a canonical match 
         currentlyAccepting, caseStop, permanentlyFiltered, barAssociationStatus,
         caseLoad, capacityPercentage, averageResponseTimeHours,
         totalOutreaches, totalResponses, totalAcceptances, createdAt, updatedAt
-      ) VALUES (?, ?, 'Legacy Comparison Firm', 'Utrecht', 'Employment Law; Social Security Law', 'Dutch | English', 'unknown',
-        'Limited', 'No', 'No', 'Good Standing', 'not-recorded', '140', '', 'broken', '4', '9', ?, ?)
+      ) VALUES (?, ?, 'Legacy Comparison Firm', 'Utrecht', 'Employment Law; Social Security Law', 'Dutch | English', 20,
+        'Limited', 'No', 'No', 'Good Standing', 4, 100, 72, 7, 3, 1, ?, ?)
     `).run(legacyLawyerId, legacyName, now, now);
   } finally {
     database.close();
