@@ -61,8 +61,11 @@ describe('production renderer usability regressions', () => {
     expect(translations).toContain('"nav.accountMenu"');
     expect(translations).toContain('"nav.privacy"');
     expect(layout).toContain('navigate("/privacy")');
-    expect(filters).toContain('aria-label="Filter by legal area"');
-    expect(filters).toContain('"Search lawyers" : "Search cases"');
+    expect(filters).toContain('aria-label={t("search.filter.legalArea")}');
+    expect(filters).toContain('aria-label={t(searchLabelKey)}');
+    expect(filters.match(/<SelectItem value="year">/g)).toHaveLength(1);
+    expect(translations).toContain('"search.filter.legalArea"');
+    expect(translations).toContain('"search.placeholder.lawyers"');
     expect(privacy).toContain('aria-label="Allow usage analytics"');
     expect(privacy).not.toContain('Allow marketing communication');
     expect(privacy).toContain('Security and resource integrity');

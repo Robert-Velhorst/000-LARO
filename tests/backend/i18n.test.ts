@@ -41,6 +41,12 @@ describe('Phase 057 — i18n', () => {
     expect(t('coverage.unknownDetail.missing_context', 'nl', { count: 1 })).toBe(
       'Te verifiëren items voor communicatie of mogelijk relevante records: 1.',
     );
+    expect(t('search.appliedPreset', 'nl', { name: 'Deze week' })).toBe(
+      'Snelkeuze toegepast: Deze week',
+    );
+    expect(t('search.saveFailed', 'en', { error: 'Network unavailable' })).toBe(
+      'Failed to save search: Network unavailable',
+    );
   });
   it('normalizes locale strings', () => {
     expect(normalizeLocale('nl-NL')).toBe('nl');

@@ -179,10 +179,6 @@
     "count": 20,
     "digest": "a508195ca536d5f4695417b906fe453f90fbcf2ede41733d1c31b638c1306b92"
   },
-  "src/renderer/components/SmartSearchFilters.tsx": {
-    "count": 62,
-    "digest": "8d8c14e8d32312b81cfe224eb4d5117120499f4cccc003befc3af4992386e48a"
-  },
   "src/renderer/components/SuggestedActions.tsx": {
     "count": 32,
     "digest": "911dd39d55a9dd9091e0b8f03e7ba8452ef6a9e1fa8d3fb89bbd33885751af92"
