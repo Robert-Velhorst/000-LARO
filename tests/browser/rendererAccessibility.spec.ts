@@ -2697,6 +2697,9 @@ test("global search renders literal results as incomplete instead of a false emp
 });
 
 test("public research renders complete, empty, partial, unavailable, and failed states without false absence claims", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    if (!localStorage.getItem("laro.locale")) localStorage.setItem("laro.locale", "en");
+  });
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
   const requestFailures: string[] = [];
@@ -2857,6 +2860,21 @@ test("public research renders complete, empty, partial, unavailable, and failed 
     expect(audit.violations.filter(item => item.impact === "serious" || item.impact === "critical")).toEqual([]);
     await page.screenshot({ path: testInfo.outputPath(`public-research-${viewport.name}.png`), fullPage: true });
   }
+
+  await page.evaluate(() => localStorage.setItem("laro.locale", "nl"));
+  const dutchReload = await page.reload({ waitUntil: "networkidle" });
+  expect(dutchReload?.status()).toBe(200);
+  await expect(page.locator("html")).toHaveAttribute("lang", "nl");
+  await page.getByRole("tab", { name: "Public Records", exact: true }).click();
+  await expect(page.getByRole("tab", { name: "KvK-bedrijfsregister", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Rechtbankgegevens", exact: true })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Wetgeving", exact: true })).toBeVisible();
+  await expect(page.getByText("Zoeken in Nederlands bedrijfsregister (KvK)", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("KvK-nummer", { exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "Wetgeving", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Officiële Nederlandse wetgeving", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Wet of regeling", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("public-research-nl.png"), fullPage: true });
 
   expect(consoleErrors).toEqual([]);
   expect(pageErrors).toEqual([]);

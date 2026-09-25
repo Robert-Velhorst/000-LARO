@@ -175,10 +175,6 @@
     "count": 14,
     "digest": "7b0410f98c260effec51255cf10726cbca09bbf117feaa1f6621496efb0a1a1e"
   },
-  "src/renderer/components/PublicRecordsPanel.tsx": {
-    "count": 84,
-    "digest": "001659782e8a3052221626c600bd62da42b7c5246dc00274fe1e19b9e3611b89"
-  },
   "src/renderer/components/RelevanceScoringDashboard.tsx": {
     "count": 28,
     "digest": "23194a406d01a13daf117ba4e8017a964d8d3083b9730b09e2c2399327f1b553"

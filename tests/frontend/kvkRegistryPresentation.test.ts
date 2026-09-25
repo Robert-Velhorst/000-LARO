@@ -16,11 +16,11 @@ describe('KvK registry presentation contract', () => {
     expect(service).toContain('retrievedAt');
     expect(service).toContain('reviewOnly: true');
 
-    expect(panel).toContain('Registry source');
-    expect(panel).toContain('Source field:');
-    expect(panel).toContain('Review-only triage');
-    expect(panel).toContain('These prompts are not registry facts or legal findings.');
-    expect(panel).toContain('Dataset limitations');
+    expect(panel).toContain('publicRecords.registrySource');
+    expect(panel).toContain('publicRecords.sourceField');
+    expect(panel).toContain('publicRecords.reviewTriage');
+    expect(panel).toContain('publicRecords.triageDisclaimer');
+    expect(panel).toContain('publicRecords.datasetLimitations');
     expect(panel).not.toContain('Insolvency Detected');
     expect(panel).not.toContain('Legal Significance:');
   });

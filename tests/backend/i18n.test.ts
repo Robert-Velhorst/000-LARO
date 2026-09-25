@@ -25,6 +25,9 @@ describe('Phase 057 — i18n', () => {
     expect(t('sources.accessVerified', 'nl', { kind: 'Gmail', time: '10:30' })).toBe(
       'Toegang tot Gmail gecontroleerd om 10:30',
     );
+    expect(t('publicRecords.research.recordedMany', 'nl', { count: 2 })).toBe(
+      '2 overeenkomende resultaten vastgelegd voor deze begrensde zoekopdracht.',
+    );
   });
   it('normalizes locale strings', () => {
     expect(normalizeLocale('nl-NL')).toBe('nl');
