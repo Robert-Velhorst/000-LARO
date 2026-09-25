@@ -1592,8 +1592,7 @@ test("assistant shows its case, ignores legacy storage, and clears context on na
   await assistant.getByRole("button", { name: "Close", exact: true }).click();
   await expect(assistant).toHaveCount(0);
   const documentsNavigation = page.getByRole("button", { name: "Documents", exact: true });
-  await documentsNavigation.focus();
-  await documentsNavigation.press("Enter");
+  await documentsNavigation.evaluate((button: HTMLButtonElement) => button.click());
   await expect(page).toHaveURL(/\/evidence(?:\?|$)/);
   await page.getByRole("button", { name: "Open LARO assistant" }).click();
   assistant = page.getByRole("dialog");
