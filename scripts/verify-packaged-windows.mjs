@@ -107,9 +107,14 @@ try {
   await page.getByLabel('Email Address').fill('windows-verification@example.test');
   await page.getByLabel('Password', { exact: true }).fill(randomBytes(20).toString('hex'));
   await page.getByRole('button', { name: 'Sign Up', exact: true }).click();
+  const onboarding = page.getByRole('dialog', { name: 'Set up your LARO workspace' });
+  await onboarding.waitFor();
+  await onboarding.getByRole('button', { name: 'Skip setup', exact: true }).click();
+  await onboarding.waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: 'Open account menu' }).waitFor();
   assert.equal((await rpc('auth.me')).email, 'windows-verification@example.test');
-  checked('packaged Windows renderer, backend readiness, and real signup');
+  assert.equal((await rpc('onboarding.state')).status, 'skipped');
+  checked('packaged Windows renderer, backend readiness, real signup, and onboarding skip');
 
   const created = await rpc('cases.create', {
     clientName: 'Windows packaged verification', clientEmail: 'windows-verification@example.test', caseType: 'Employment', urgency: 'Medium',
