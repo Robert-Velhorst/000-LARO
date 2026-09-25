@@ -15,8 +15,8 @@ describe('production renderer usability regressions', () => {
     expect(workspace).toContain('className="workspace-heading"');
     expect(workspace).toContain('flex min-w-0 flex-wrap items-center gap-2');
     expect(styles).toContain('.workspace-heading');
-    expect(cases).toContain('Dossier openen');
-    expect(cases).toContain('Nieuw dossier');
+    expect(cases).toContain('t("case.list.open")');
+    expect(cases).toContain('t("case.list.new")');
     expect(cases).not.toContain('<div className="p-6 space-y-6">');
   });
 

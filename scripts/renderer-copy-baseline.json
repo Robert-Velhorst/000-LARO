@@ -47,10 +47,6 @@
     "count": 22,
     "digest": "6478cd93415b20e588e365d04ad889ec085d38da8a8314ec700f086fa1fea4cf"
   },
-  "src/renderer/components/Cases.tsx": {
-    "count": 57,
-    "digest": "14e0c78adb6f695328b9e52dc223761c1bfa9b7eb7d646e2a9920de2b08a6ef6"
-  },
   "src/renderer/components/ChatWidget.tsx": {
     "count": 32,
     "digest": "c9a51d11b9698c431ee9e86b9060abc02d1b1364a5ba28a598019a8ea64caa52"

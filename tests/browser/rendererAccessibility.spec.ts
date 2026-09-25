@@ -479,6 +479,7 @@ test("language selection updates representative workflows and persists across re
   await expect(casesNavNl).toBeVisible();
   await casesNavNl.click();
   await expect(page.getByRole("heading", { name: "Dossiers", exact: true })).toBeVisible();
+  await expect(page.getByText("1 dossier", { exact: true })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Dossiers zoeken", exact: true })).toBeVisible();
   await page.locator("summary").filter({ hasText: "Filters" }).click();
   await expect(page.getByRole("combobox", { name: "Filteren op dossierstatus", exact: true })).toBeVisible();
@@ -486,6 +487,11 @@ test("language selection updates representative workflows and persists across re
   await page.getByRole("combobox", { name: "Filteren op periode", exact: true }).click();
   await expect(page.getByRole("option", { name: "Dit jaar", exact: true })).toHaveCount(1);
   await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Dossieracties: Bilingual workflow matter", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Dossier verwijderen", exact: true }).click();
+  const deleteDialog = page.getByRole("dialog").filter({ hasText: "Dit dossier verwijderen?" });
+  await expect(deleteDialog).toContainText("standaard 30 dagen");
+  await deleteDialog.getByRole("button", { name: "Annuleren", exact: true }).click();
   await page.locator("main").screenshot({ path: testInfo.outputPath("case-search-filters-nl.png") });
   await page.getByRole("button", { name: "Dossier openen", exact: true }).click();
   let dialog = page.getByRole("dialog").first();
@@ -533,6 +539,7 @@ test("language selection updates representative workflows and persists across re
   await page.locator("main").screenshot({ path: testInfo.outputPath("settings-workflow-en.png") });
 
   await page.getByRole("button", { name: "My Cases", exact: true }).click();
+  await expect(page.getByText("1 case", { exact: true })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Search cases", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Open case", exact: true }).click();
   dialog = page.getByRole("dialog").first();

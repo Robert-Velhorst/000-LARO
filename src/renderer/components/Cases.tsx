@@ -17,6 +17,11 @@ const EnhancedCaseDetailsDialog = lazy(() => import("./EnhancedCaseDetailsDialog
 const CaseCreationWizard = lazy(() => import("./CaseCreationWizard"));
 const BulkCaseImport = lazy(() => import("./BulkCaseImport").then(module => ({ default: module.BulkCaseImport })));
 const BulkEvidenceUpload = lazy(() => import("./BulkEvidenceUpload"));
+const CASE_URGENCY_BY_FILTER: Record<string, "High" | "Medium" | "Low"> = {
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
 
 function CaseWorkspaceLoadingDialog({ title, onClose }: { title: string; onClose: () => void }) {
   return <Dialog open onOpenChange={open => { if (!open) onClose(); }}><DialogContent className="max-w-md">
@@ -26,8 +31,7 @@ function CaseWorkspaceLoadingDialog({ title, onClose }: { title: string; onClose
 }
 
 export default function Cases() {
-  const { locale, t, formatDate } = useI18n();
-  const nl = locale === "nl";
+  const { t, formatDate, formatNumber } = useI18n();
   const [, navigate] = useLocation();
   const [params, setParams] = useSearchParams();
   const selectedCaseId = params.get("case");
@@ -43,8 +47,8 @@ export default function Cases() {
   const deleteCase = trpc.cases.delete.useMutation({
     onSuccess: result => {
       if (result.deletionStatus === "storage_cleanup_pending") {
-        toast.warning(nl ? "Dossiergegevens verwijderd. Het opruimen van bestanden wordt automatisch opnieuw geprobeerd." : "Case records deleted. Storage cleanup is pending and will retry automatically.");
-      } else { toast.success(nl ? "Dossier verwijderd" : "Case deleted"); }
+        toast.warning(t("case.list.deletedCleanupPending"));
+      } else { toast.success(t("case.list.deleted")); }
       setPage(1);
       void utils.cases.invalidate();
       void utils.dashboard.invalidate();
@@ -66,7 +70,7 @@ export default function Cases() {
   const query = trpc.cases.list.useQuery({
     page, limit: 20, search: searchTerm, matchingIds: hybrid.data?.slice(0, 500), sortBy, sortDir: sortBy === "clientName" ? "asc" : "desc",
     statusGroup: ["open", "in_progress", "waiting_for_lawyer", "closed"].includes(filters.status || "") ? filters.status as "open" | "in_progress" | "waiting_for_lawyer" | "closed" : undefined,
-    urgency: filters.urgency === "high" ? "High" : filters.urgency === "medium" ? "Medium" : filters.urgency === "low" ? "Low" : undefined,
+    urgency: CASE_URGENCY_BY_FILTER[filters.urgency || ""],
     legalArea: filters.legalArea || undefined,
     createdWithin: ["today", "week", "month", "year"].includes(filters.dateRange || "") ? filters.dateRange as "today" | "week" | "month" | "year" : undefined,
   });
@@ -76,21 +80,21 @@ export default function Cases() {
 
   return (<DashboardLayout>
     <div className="space-y-5">
-      <PageHeading title={nl ? "Dossiers" : "Cases"} actions={<>
-        <Button variant="outline" onClick={() => setBulkImportOpen(true)}><Upload className="h-4 w-4" />{nl ? "Importeren" : "Bulk Import"}</Button>
-        <Button onClick={() => setNewCaseOpen(true)}><Plus className="h-4 w-4" />{nl ? "Nieuw dossier" : "New Case"}</Button>
+      <PageHeading title={t("case.list.title")} actions={<>
+        <Button variant="outline" onClick={() => setBulkImportOpen(true)}><Upload className="h-4 w-4" />{t("case.list.bulkImport")}</Button>
+        <Button onClick={() => setNewCaseOpen(true)}><Plus className="h-4 w-4" />{t("case.list.new")}</Button>
       </>} />
       <SmartSearchFilters compact onSearch={applySearchFilters} />
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-        <p role="status" className="text-muted-foreground">{query.isLoading ? t("common.loading") : query.error ? "" : `${pagination?.total ?? 0} ${nl ? "dossiers" : "cases"}`}</p>
-        <label>{nl ? "Sorteren" : "Sort by"}<select value={sortBy} onChange={event => { setSortBy(event.target.value as typeof sortBy); setPage(1); }} className="ml-2 min-h-9 rounded-md border border-input bg-background px-2">
-          <option value="updatedAt">{nl ? "Laatst bijgewerkt" : "Last updated"}</option><option value="createdAt">{nl ? "Nieuwste eerst" : "Newest first"}</option><option value="clientName">{nl ? "Naam" : "Name"}</option>
+        <p role="status" className="text-muted-foreground">{query.isLoading ? t("common.loading") : query.error ? "" : t((pagination?.total ?? 0) === 1 ? "case.list.countOne" : "case.list.countMany", { count: formatNumber(pagination?.total ?? 0) })}</p>
+        <label>{t("case.list.sort")}<select value={sortBy} onChange={event => { setSortBy(event.target.value as typeof sortBy); setPage(1); }} className="ml-2 min-h-9 rounded-md border border-input bg-background px-2">
+          <option value="updatedAt">{t("case.list.sort.updated")}</option><option value="createdAt">{t("case.list.sort.created")}</option><option value="clientName">{t("case.list.sort.name")}</option>
         </select></label>
       </div>
-      {hybrid.error && searchTerm && <p role="status" className="text-sm text-muted-foreground">{nl ? "Uitgebreid zoeken is niet beschikbaar. Resultaten op trefwoorden worden wel getoond." : "Expanded search is unavailable. Keyword results are still shown."}</p>}
+      {hybrid.error && searchTerm && <p role="status" className="text-sm text-muted-foreground">{t("case.list.expandedSearchUnavailable")}</p>}
       {query.error ? <QueryNotice error={query.error} retry={query.refetch} /> : query.isLoading ? <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-24 w-full" />)}</div> : !cases.length ? <div className="flex min-h-64 flex-col items-center justify-center gap-4 border-y border-border text-center">
-        <Briefcase className="h-8 w-8 text-muted-foreground" /><h2 className="text-base font-medium">{filtered ? nl ? "Geen dossiers gevonden" : "No matching cases" : nl ? "Nog geen dossiers" : "No cases yet"}</h2>
-        {!filtered && <Button variant="outline" onClick={() => navigate("/evidence")}><FileText className="h-4 w-4" />{nl ? "Documenten toevoegen" : "Add documents"}</Button>}
+        <Briefcase className="h-8 w-8 text-muted-foreground" /><h2 className="text-base font-medium">{t(filtered ? "case.list.noMatching" : "case.list.none")}</h2>
+        {!filtered && <Button variant="outline" onClick={() => navigate("/evidence")}><FileText className="h-4 w-4" />{t("case.list.addDocuments")}</Button>}
       </div> : <div className="divide-y divide-border border-y border-border">
         {cases.map(item => <article key={item.id} className="flex items-start gap-3 py-5 sm:gap-4">
           <Briefcase className="mt-1 hidden h-5 w-5 shrink-0 text-muted-foreground sm:block" />
@@ -98,31 +102,31 @@ export default function Cases() {
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="min-w-0 text-base font-semibold"><button type="button" onClick={() => setSelectedCaseId(item.id)} className="break-words text-left hover:text-primary">{item.clientName || item.caseType || item.id}</button></h2>
               <Badge variant="outline">{t(`case.status.${item.status}` as Parameters<typeof t>[0]) === `case.status.${item.status}` ? item.status : t(`case.status.${item.status}` as Parameters<typeof t>[0])}</Badge>
-              {item.urgency === "High" && <Badge variant="outline" className="border-red-400/40 text-red-300">{nl ? "Hoge prioriteit" : "High priority"}</Badge>}
+              {item.urgency === "High" && <Badge variant="outline" className="border-red-400/40 text-red-300">{t("case.list.highPriority")}</Badge>}
             </div>
             <p className="mt-1 line-clamp-2 break-words text-sm leading-6 text-muted-foreground">{item.caseSummary}</p>
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
               <span>{item.caseType}</span><span>{item.updatedAt ? formatDate(item.updatedAt) : ""}</span>
-              <Button variant="ghost" size="sm" onClick={() => setSelectedCaseId(item.id)}>{nl ? "Dossier openen" : "Open case"}<ArrowRight className="h-4 w-4" /></Button>
-              <Button variant="ghost" size="sm" onClick={() => navigate(`/evidence?view=timeline&case=${encodeURIComponent(item.id)}`)}><Clock className="h-4 w-4" />{nl ? "Tijdlijn" : "Timeline"}</Button>
+              <Button variant="ghost" size="sm" onClick={() => setSelectedCaseId(item.id)}>{t("case.list.open")}<ArrowRight className="h-4 w-4" /></Button>
+              <Button variant="ghost" size="sm" onClick={() => navigate(`/evidence?view=timeline&case=${encodeURIComponent(item.id)}`)}><Clock className="h-4 w-4" />{t("case.nav.timeline")}</Button>
             </div>
           </div>
-          <DropdownMenu><DropdownMenuTrigger asChild><Button size="icon" variant="ghost" aria-label={`${nl ? "Dossieracties" : "Case actions"}: ${item.clientName || item.id}`}><ChevronDown /></Button></DropdownMenuTrigger>
+          <DropdownMenu><DropdownMenuTrigger asChild><Button size="icon" variant="ghost" aria-label={t("case.list.actions", { name: item.clientName || item.id })}><ChevronDown /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => setEvidenceUploadCaseId(item.id)}><Upload className="mr-2 h-4 w-4" />{nl ? "Bewijs toevoegen" : "Upload evidence"}</DropdownMenuItem>
-              <DropdownMenuItem className="text-destructive" onClick={() => setCaseToDelete({ id: item.id, name: item.clientName || item.caseType || item.id })}><Trash2 className="mr-2 h-4 w-4" />{nl ? "Dossier verwijderen" : "Delete case"}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setEvidenceUploadCaseId(item.id)}><Upload className="mr-2 h-4 w-4" />{t("case.list.uploadEvidence")}</DropdownMenuItem>
+              <DropdownMenuItem className="text-destructive" onClick={() => setCaseToDelete({ id: item.id, name: item.clientName || item.caseType || item.id })}><Trash2 className="mr-2 h-4 w-4" />{t("case.list.delete")}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </article>)}
       </div>}
-      {pagination && pagination.totalPages > 1 && <nav aria-label={nl ? "Dossierpagina's" : "Case pages"} className="flex items-center justify-between gap-3">
-        <Button variant="outline" size="icon" aria-label={nl ? "Vorige pagina" : "Previous page"} disabled={page === 1 || query.isFetching} onClick={() => setPage(page - 1)}><ChevronLeft /></Button>
-        <span className="text-sm">{nl ? "Pagina" : "Page"} {page} / {pagination.totalPages}</span>
-        <Button variant="outline" size="icon" aria-label={nl ? "Volgende pagina" : "Next page"} disabled={page >= pagination.totalPages || query.isFetching} onClick={() => setPage(page + 1)}><ChevronRight /></Button>
+      {pagination && pagination.totalPages > 1 && <nav aria-label={t("case.list.pages")} className="flex items-center justify-between gap-3">
+        <Button variant="outline" size="icon" aria-label={t("case.list.previousPage")} disabled={page === 1 || query.isFetching} onClick={() => setPage(page - 1)}><ChevronLeft /></Button>
+        <span className="text-sm">{t("case.list.page", { page: formatNumber(page), total: formatNumber(pagination.totalPages) })}</span>
+        <Button variant="outline" size="icon" aria-label={t("case.list.nextPage")} disabled={page >= pagination.totalPages || query.isFetching} onClick={() => setPage(page + 1)}><ChevronRight /></Button>
       </nav>}
     </div>
       {newCaseOpen && (
-        <Suspense fallback={<CaseWorkspaceLoadingDialog title="Opening new case form" onClose={() => setNewCaseOpen(false)} />}>
+        <Suspense fallback={<CaseWorkspaceLoadingDialog title={t("case.list.openingNew")} onClose={() => setNewCaseOpen(false)} />}>
           <CaseCreationWizard
             open={newCaseOpen}
             onOpenChange={setNewCaseOpen}
@@ -146,7 +150,7 @@ export default function Cases() {
                 }
                 return true;
               } catch (error) {
-                toast.error(error instanceof Error ? error.message : "Failed to create case");
+                toast.error(error instanceof Error ? error.message : t("case.list.createFailed"));
                 return false;
               }
             }}
@@ -154,7 +158,7 @@ export default function Cases() {
         </Suspense>
       )}
       {selectedCaseId && (
-        <Suspense fallback={<CaseWorkspaceLoadingDialog title="Opening case details" onClose={() => setSelectedCaseId(null)} />}>
+        <Suspense fallback={<CaseWorkspaceLoadingDialog title={t("case.list.openingDetails")} onClose={() => setSelectedCaseId(null)} />}>
           <EnhancedCaseDetailsDialog
             caseId={selectedCaseId}
             open={!!selectedCaseId}
@@ -166,7 +170,7 @@ export default function Cases() {
       <Dialog open={bulkImportOpen} onOpenChange={setBulkImportOpen}>
         <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Bulk Case Import</DialogTitle>
+            <DialogTitle>{t("case.list.bulkImportTitle")}</DialogTitle>
           </DialogHeader>
           {bulkImportOpen && (
             <Suspense fallback={<div role="status" aria-live="polite"><Skeleton className="h-48 w-full" /></div>}>
@@ -176,7 +180,7 @@ export default function Cases() {
         </DialogContent>
       </Dialog>
       {evidenceUploadCaseId && (
-        <Suspense fallback={<CaseWorkspaceLoadingDialog title="Opening evidence upload" onClose={() => setEvidenceUploadCaseId(null)} />}>
+        <Suspense fallback={<CaseWorkspaceLoadingDialog title={t("case.list.openingUpload")} onClose={() => setEvidenceUploadCaseId(null)} />}>
           <BulkEvidenceUpload
             caseId={evidenceUploadCaseId}
             open={!!evidenceUploadCaseId}
@@ -194,14 +198,14 @@ export default function Cases() {
       >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Delete this case?</DialogTitle>
+            <DialogTitle>{t("case.list.deleteTitle")}</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This will erase{" "}
+            {t("case.list.deletePrefix")}{" "}
             <span className="font-medium text-foreground">
               {caseToDelete?.name}
             </span>{" "}
-            and all its live evidence, outreach, deadlines, and related data. Recovery backups may retain prior copies until the configured retention period expires (30 days by default).
+            {t("case.list.deleteSuffix")}
           </p>
           <div className="flex justify-end gap-2 pt-2">
             <Button
@@ -209,7 +213,7 @@ export default function Cases() {
               onClick={() => setCaseToDelete(null)}
               disabled={deleteCase.isLoading}
             >
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button
               className="bg-red-500 hover:bg-red-600"
@@ -224,7 +228,7 @@ export default function Cases() {
                 }
               }}
             >
-              {deleteCase.isLoading ? "Deleting…" : "Erase case"}
+              {deleteCase.isLoading ? t("case.list.deleting") : t("case.list.erase")}
             </Button>
           </div>
         </DialogContent>

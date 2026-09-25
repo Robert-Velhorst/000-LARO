@@ -355,12 +355,14 @@ describe('production readiness regressions', () => {
   it('discloses bounded backup retention instead of promising immediate permanent erasure', () => {
     const privacy = readFileSync(join(ROOT, 'src/renderer/components/Privacy.tsx'), 'utf8');
     const cases = readFileSync(join(ROOT, 'src/renderer/components/Cases.tsx'), 'utf8');
+    const translations = readFileSync(join(ROOT, 'shared/i18n.ts'), 'utf8');
     const help = readFileSync(join(ROOT, 'server/help.ts'), 'utf8');
     const onboarding = readFileSync(join(ROOT, 'server/onboarding.ts'), 'utf8');
-    const combined = [privacy, cases, help, onboarding].join('\n');
+    const combined = [privacy, cases, translations, help, onboarding].join('\n');
     expect(combined).not.toContain('permanently delete everything');
     expect(privacy).toContain('Recovery backups may retain prior copies');
-    expect(cases).toContain('Recovery backups may retain prior copies');
+    expect(cases).toContain('case.list.deleteSuffix');
+    expect(translations).toContain('Recovery backups may retain prior copies');
   });
 
   it('refreshes the evidence query used by the case workspace after a keyword pull', () => {

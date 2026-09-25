@@ -47,6 +47,11 @@ describe('Phase 057 — i18n', () => {
     expect(t('search.saveFailed', 'en', { error: 'Network unavailable' })).toBe(
       'Failed to save search: Network unavailable',
     );
+    expect(t('case.list.countOne', 'nl', { count: 1 })).toBe('1 dossier');
+    expect(t('case.list.countMany', 'en', { count: 2 })).toBe('2 cases');
+    expect(t('case.list.actions', 'nl', { name: 'Voorbeeldzaak' })).toBe(
+      'Dossieracties: Voorbeeldzaak',
+    );
   });
   it('normalizes locale strings', () => {
     expect(normalizeLocale('nl-NL')).toBe('nl');
