@@ -52,6 +52,11 @@ describe('Phase 057 — i18n', () => {
     expect(t('case.list.actions', 'nl', { name: 'Voorbeeldzaak' })).toBe(
       'Dossieracties: Voorbeeldzaak',
     );
+    expect(t('inbox.progress', 'nl', { done: 1, total: 2 })).toBe('1 / 2 verwerkt');
+    expect(t('inbox.lines', 'en', { start: 4, end: 8 })).toBe('Lines 4-8');
+    expect(t('inbox.downloadNamed', 'nl', { name: 'besluit.pdf' })).toBe(
+      'Downloaden: besluit.pdf',
+    );
   });
   it('normalizes locale strings', () => {
     expect(normalizeLocale('nl-NL')).toBe('nl');

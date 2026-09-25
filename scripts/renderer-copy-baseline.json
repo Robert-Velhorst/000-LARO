@@ -63,10 +63,6 @@
     "count": 6,
     "digest": "b0d7cf284d9133d1f2e613952d50e8756f0d71c90f88d3367db009e043bd8ae7"
   },
-  "src/renderer/components/DocumentInbox.tsx": {
-    "count": 57,
-    "digest": "ca67a7d63f4d7c383fdd69981bcde24903a77d595ed1023941cfb282ad4b736c"
-  },
   "src/renderer/components/EnhancedEvidenceUpload.tsx": {
     "count": 23,
     "digest": "c0150e34c7cb7720d03155c8cfb01ee19d33cc603e74519ad93ef3aebfa93350"

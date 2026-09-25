@@ -475,6 +475,13 @@ test("language selection updates representative workflows and persists across re
   await expect(page.getByText("Mijn zaken", { exact: true })).toBeVisible();
   await expect(page.getByText("Juridische ondersteuning, geen juridisch advies.")).toBeVisible();
 
+  await page.getByRole("button", { name: "Documenten", exact: true }).click();
+  const inboxNl = page.getByRole("region", { name: "Documenteninbox", exact: true });
+  await expect(inboxNl.getByRole("heading", { name: "Documenteninbox", exact: true })).toBeVisible();
+  await expect(inboxNl.getByLabel("Documenten uploaden", { exact: true })).toBeAttached();
+  await expect(inboxNl.getByRole("group", { name: "Inboxfilter", exact: true })).toContainText("Aandacht vereist");
+  await inboxNl.screenshot({ path: testInfo.outputPath("document-inbox-nl.png") });
+
   const casesNavNl = page.getByRole("button", { name: "Mijn zaken", exact: true });
   await expect(casesNavNl).toBeVisible();
   await casesNavNl.click();
@@ -1234,7 +1241,7 @@ test("inbox discovers and grows a dossier without preselecting a case", async ({
   await expect(page.getByRole("region", { name: "Chronological events" }).getByText("Details and source: first.txt", { exact: true }).first()).toBeVisible();
 });
 
-test("inbox shows a retained discovery explanation without presenting a review as an applied decision", async ({ page }) => {
+test("inbox shows a retained discovery explanation without presenting a review as an applied decision", async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const email = await createAccount(page);
@@ -1266,6 +1273,16 @@ test("inbox shows a retained discovery explanation without presenting a review a
     expect(audit.violations.filter((item) => item.impact === "serious" || item.impact === "critical")).toEqual([]);
     await page.screenshot({ path: `test-results/discovery-explanation-${viewport.name}.png`, fullPage: false });
   }
+  await page.evaluate(() => localStorage.setItem("laro.locale", "nl"));
+  const dutchReload = await page.reload({ waitUntil: "networkidle" });
+  expect(dutchReload?.status()).toBe(200);
+  const dutchInbox = page.getByRole("region", { name: "Documenteninbox", exact: true });
+  await dutchInbox.getByRole("button", { name: "Details: discovery-review.txt", exact: true }).click();
+  await dutchInbox.getByText("Dossierbeslissing", { exact: true }).click();
+  await expect(dutchInbox.getByText("Niet toegepast; beoordeling vereist | ollama", { exact: true })).toBeVisible();
+  await expect(dutchInbox.getByText("Dossiercontext (geen zelfstandig bewijs)", { exact: true })).toBeVisible();
+  await expect(dutchInbox.getByText("Eerder gemelde lekkage in de woning.", { exact: true })).toBeVisible();
+  await dutchInbox.screenshot({ path: testInfo.outputPath("discovery-explanation-nl.png") });
   expect(errors).toEqual([]);
 });
 
