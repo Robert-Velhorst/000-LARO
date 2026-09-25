@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, realpathSync, writeFileSync } from "fs";
+import { mkdirSync, promises as fs, writeFileSync } from "fs";
 import { join } from "path";
 import { eq } from "drizzle-orm";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
@@ -115,7 +115,7 @@ suite("scheduled collection ownership and eligibility", () => {
   it("keeps folder-first setup inactive until keywords are configured", async () => {
     const owner = await insertOwnerWithCases("SCHEDULE_FOLDER_OWNER", []);
     const caseId = "SCHEDULE_FOLDER_CASE";
-    const canonicalTmpDir = realpathSync(app.tmpDir);
+    const canonicalTmpDir = await fs.realpath(app.tmpDir);
     await app.db.insert(app.schema.cases).values(buildCase({ id: caseId, userId: owner.id }));
     const {
       runAutoCollectionForAllCases,
