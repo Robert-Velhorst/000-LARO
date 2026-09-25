@@ -8,11 +8,15 @@ const WORKFLOW_PATH = join(ROOT, '.github', 'workflows', 'security.yml');
 const POLICY_PATH = join(ROOT, 'docs', 'SECURITY_SCANNING.md');
 const BASELINE_PATH = join(ROOT, '.gitleaksignore');
 
-const workflow = readFileSync(WORKFLOW_PATH, 'utf8');
-const policy = readFileSync(POLICY_PATH, 'utf8');
-const dockerfile = readFileSync(join(ROOT, 'Dockerfile'), 'utf8');
-const baseline = readFileSync(BASELINE_PATH, 'utf8')
-  .split(/\r?\n/)
+function readText(path) {
+  return readFileSync(path, 'utf8').replace(/\r\n?/g, '\n');
+}
+
+const workflow = readText(WORKFLOW_PATH);
+const policy = readText(POLICY_PATH);
+const dockerfile = readText(join(ROOT, 'Dockerfile'));
+const baseline = readText(BASELINE_PATH)
+  .split('\n')
   .map((line) => line.trim())
   .filter(Boolean);
 const failures = [];
