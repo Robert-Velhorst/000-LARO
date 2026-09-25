@@ -104,7 +104,8 @@ export async function storagePut(
   fs.mkdirSync(path.dirname(full), { recursive: true });
   // Intentional evidence persistence: the key is confined above and callers
   // enforce upload size, content type, ownership, and provenance boundaries.
-  fs.writeFileSync(full, bodyBuffer); // lgtm[js/http-to-file-access]
+  // codeql[js/http-to-file-access]
+  fs.writeFileSync(full, bodyBuffer);
   return { key: safeKey, url: `file://${full}`, sha256 };
 }
 

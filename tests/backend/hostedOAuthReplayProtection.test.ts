@@ -55,16 +55,18 @@ describe('hosted OAuth replay protection', () => {
     const state = startUrl.searchParams.get('state');
     const ticket = startUrl.searchParams.get('ticket');
     expect(startUrl.pathname).toBe('/api/oauth/gmail/start');
+    const rejectedBinding = 'r'.repeat(43);
     await expect(activateOAuthStateAsync(
-      state!, 'gmail', ticket!, 'different-session-cookie', false,
+      state!, 'gmail', ticket!, rejectedBinding, 'different-session-cookie', false,
     )).rejects.toBeInstanceOf(OAuthStateError);
-    const activated = await activateOAuthStateAsync(
-      state!, 'gmail', ticket!, 'initiating-session-cookie', false,
+    const bindingCookieValue = 'b'.repeat(43);
+    const authorizationUrl = await activateOAuthStateAsync(
+      state!, 'gmail', ticket!, bindingCookieValue, 'initiating-session-cookie', false,
     );
-    expect(new URL(activated.authorizationUrl).hostname).toBe('accounts.google.com');
+    expect(new URL(authorizationUrl).hostname).toBe('accounts.google.com');
 
     await expect(consumeOAuthStateAsync(state!, 'gmail', 'x'.repeat(43))).rejects.toBeInstanceOf(OAuthStateError);
-    await expect(consumeOAuthStateAsync(state!, 'gmail', activated.bindingCookieValue)).resolves.toMatchObject({ userId: 'public-user' });
-    await expect(consumeOAuthStateAsync(state!, 'gmail', activated.bindingCookieValue)).rejects.toBeInstanceOf(OAuthStateError);
+    await expect(consumeOAuthStateAsync(state!, 'gmail', bindingCookieValue)).resolves.toMatchObject({ userId: 'public-user' });
+    await expect(consumeOAuthStateAsync(state!, 'gmail', bindingCookieValue)).rejects.toBeInstanceOf(OAuthStateError);
   });
 });

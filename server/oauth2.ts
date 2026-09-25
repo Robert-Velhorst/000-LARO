@@ -43,6 +43,7 @@ interface OAuthStatePayload {
   flowId: string;
   provider: OAuthProvider;
   codeVerifier: string;
+  codeChallenge: string;
   nonce: string;
   createdAt: number;
 }
@@ -171,11 +172,17 @@ function generatePkcePair(): { codeVerifier: string; codeChallenge: string } {
 }
 
 /** The portable state contains PKCE material and an opaque flow ID, never user authority. */
-function buildOAuthState(provider: OAuthProvider, flowId: string, codeVerifier: string): string {
+function buildOAuthState(
+  provider: OAuthProvider,
+  flowId: string,
+  codeVerifier: string,
+  codeChallenge: string,
+): string {
   const payload: OAuthStatePayload = {
     provider,
     flowId,
     codeVerifier,
+    codeChallenge,
     nonce: nanoid(),
     createdAt: Date.now(),
   };
@@ -185,9 +192,8 @@ function buildOAuthState(provider: OAuthProvider, flowId: string, codeVerifier: 
 function providerAuthorizationUrl(
   provider: OAuthProvider,
   state: string,
-  codeVerifier: string,
+  codeChallenge: string,
 ): string {
-  const codeChallenge = toBase64Url(crypto.createHash("sha256").update(codeVerifier).digest());
   const config = getOAuth2Config(provider);
   if (!config.clientId) {
     throw new Error(`${provider} OAuth client ID is not configured`);
@@ -272,10 +278,12 @@ function decodeOAuthState(state: string, provider: OAuthProvider): OAuthStatePay
     !payload ||
     typeof payload.flowId !== "string" ||
     typeof payload.codeVerifier !== "string" ||
+    typeof payload.codeChallenge !== "string" ||
     typeof payload.createdAt !== "number" ||
     typeof payload.nonce !== "string" ||
     payload.flowId.length < 20 ||
-    payload.codeVerifier.length < 43
+    !/^[A-Za-z0-9_-]{43,128}$/.test(payload.codeVerifier) ||
+    !/^[A-Za-z0-9_-]{43}$/.test(payload.codeChallenge)
   ) {
     throw new OAuthStateError();
   }
@@ -296,9 +304,9 @@ export async function beginOAuthFlowAsync(
   userId: string,
   initiatingSessionToken = '',
 ): Promise<string> {
-  const { codeVerifier } = generatePkcePair();
+  const { codeVerifier, codeChallenge } = generatePkcePair();
   const flowId = toBase64Url(crypto.randomBytes(24));
-  const state = buildOAuthState(provider, flowId, codeVerifier);
+  const state = buildOAuthState(provider, flowId, codeVerifier, codeChallenge);
   const startTicket = toBase64Url(crypto.randomBytes(32));
   // Validate provider configuration before leaving a durable pending record.
   if (!getOAuth2Config(provider).clientId) {
@@ -339,12 +347,13 @@ export async function activateOAuthStateAsync(
   state: string,
   provider: OAuthProvider,
   startTicket: string,
+  bindingCookieValue: string,
   initiatingSessionToken = '',
   loopbackRequest = false,
-): Promise<{ authorizationUrl: string; bindingCookieValue: string }> {
+): Promise<string> {
   const payload = decodeOAuthState(state, provider);
   if (!/^[A-Za-z0-9_-]{32,128}$/.test(startTicket)) throw new OAuthStateError();
-  const bindingCookieValue = toBase64Url(crypto.randomBytes(32));
+  if (!/^[A-Za-z0-9_-]{43}$/.test(bindingCookieValue)) throw new OAuthStateError();
   try {
     const store = await oauthFlowStore();
     const flow = await store.activate(state, {
@@ -361,10 +370,7 @@ export async function activateOAuthStateAsync(
     if (error instanceof OAuthStateError) throw error;
     throw new OAuthStateError();
   }
-  return {
-    authorizationUrl: providerAuthorizationUrl(provider, state, payload.codeVerifier),
-    bindingCookieValue,
-  };
+  return providerAuthorizationUrl(provider, state, payload.codeChallenge);
 }
 
 /**

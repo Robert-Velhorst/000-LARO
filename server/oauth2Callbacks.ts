@@ -178,21 +178,29 @@ function startHandler(provider: OAuthProvider) {
       const initiatingSessionToken = typeof req.cookies?.[SESSION_COOKIE_NAME] === 'string'
         ? req.cookies[SESSION_COOKIE_NAME]
         : '';
-      const activated = await activateOAuthStateAsync(
+      const bindingCookieValue = randomBytes(32).toString('base64url');
+      const authorizationUrl = await activateOAuthStateAsync(
         state,
         provider,
         ticket,
+        bindingCookieValue,
         initiatingSessionToken,
         isLoopbackPeer(req),
       );
       res.cookie(
         oauthFlowBindingCookieName(provider),
-        activated.bindingCookieValue,
-        { ...oauthBindingCookieOptions(), maxAge: OAUTH_BINDING_MAX_AGE_MS },
+        bindingCookieValue,
+        {
+          httpOnly: true,
+          maxAge: OAUTH_BINDING_MAX_AGE_MS,
+          path: '/',
+          sameSite: 'lax',
+          secure: true,
+        },
       );
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('Referrer-Policy', 'no-referrer');
-      res.redirect(302, activated.authorizationUrl);
+      res.redirect(302, authorizationUrl);
     } catch (error) {
       if (!(error instanceof OAuthStateError)) {
         console.error(`[OAuth2] ${provider} start handoff failed`, {
