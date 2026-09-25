@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>LARO Implemented Work Report — 25 September 2026</title>
+  <style>
+    :root {
+      --ink: #15243a;
+      --muted: #5c6877;
+      --line: #dce3ea;
+      --paper: #ffffff;
+      --soft: #f4f7f8;
+      --green: #0c8168;
+      --green-soft: #e9f6f1;
+      --blue: #2358a5;
+      --blue-soft: #eaf1fb;
+      --navy: #10243e;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: #dfe5ea; }
+    body {
+      margin: 0 auto;
+      width: 210mm;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 9.35pt;
+      line-height: 1.38;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    .page {
+      min-height: 297mm;
+      padding: 15mm 16mm 13mm;
+      position: relative;
+      page-break-after: always;
+      overflow: hidden;
+    }
+    .page:last-child { page-break-after: auto; }
+    .cover {
+      color: white;
+      background:
+        radial-gradient(circle at 88% 11%, rgba(66, 198, 161, .34), transparent 27%),
+        radial-gradient(circle at 3% 96%, rgba(46, 110, 191, .42), transparent 34%),
+        linear-gradient(145deg, #0d1e34 0%, #102b46 57%, #12374a 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 19mm 18mm 17mm;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-mark {
+      width: 43px;
+      height: 43px;
+      border: 1px solid rgba(255,255,255,.35);
+      border-radius: 13px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(145deg, #31b792, #2878b9);
+      font-weight: 800;
+      letter-spacing: -.06em;
+      box-shadow: 0 10px 30px rgba(0,0,0,.18);
+    }
+    .brand-copy strong { display: block; font-size: 15pt; letter-spacing: .04em; }
+    .brand-copy span { color: rgba(255,255,255,.7); font-size: 8.8pt; }
+    .cover-main { margin-top: 29mm; max-width: 165mm; }
+    .eyebrow {
+      color: #5ee0bc;
+      text-transform: uppercase;
+      letter-spacing: .16em;
+      font-size: 8.2pt;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 37pt;
+      line-height: 1.02;
+      letter-spacing: -.045em;
+      font-weight: 780;
+    }
+    .cover h1 span { color: #78ddc1; }
+    .cover-lead {
+      margin-top: 15px;
+      max-width: 148mm;
+      color: rgba(255,255,255,.78);
+      font-size: 13pt;
+      line-height: 1.48;
+    }
+    .cover-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 18mm;
+    }
+    .cover-stat {
+      border: 1px solid rgba(255,255,255,.17);
+      border-radius: 12px;
+      background: rgba(255,255,255,.075);
+      padding: 12px 11px;
+      min-height: 86px;
+    }
+    .cover-stat strong { display: block; font-size: 23pt; line-height: 1; }
+    .cover-stat span { display: block; margin-top: 7px; color: rgba(255,255,255,.66); font-size: 8.2pt; }
+    .cover-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      border-top: 1px solid rgba(255,255,255,.16);
+      padding-top: 14px;
+      color: rgba(255,255,255,.68);
+      font-size: 8.5pt;
+    }
+    .cover-meta strong { color: white; font-weight: 650; }
+
+    .running-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 7px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 7.8pt;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .running-head b { color: var(--navy); letter-spacing: .1em; }
+    h2 { margin: 0 0 8px; color: var(--navy); font-size: 21.5pt; letter-spacing: -.035em; line-height: 1.08; }
+    h3 { margin: 15px 0 6px; color: var(--navy); font-size: 13pt; letter-spacing: -.015em; }
+    h4 { margin: 0 0 4px; color: var(--navy); font-size: 10.5pt; }
+    p { margin: 0 0 7px; }
+    .lead { color: var(--muted); font-size: 10.3pt; max-width: 168mm; }
+    .small { font-size: 8.35pt; color: var(--muted); }
+    .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: .92em; }
+    .callout {
+      margin: 11px 0;
+      padding: 9px 12px;
+      border-left: 4px solid var(--blue);
+      background: var(--blue-soft);
+      border-radius: 0 9px 9px 0;
+    }
+    .callout strong { color: #173f77; }
+    .callout.good { border-left-color: var(--green); background: var(--green-soft); }
+    .callout.good strong { color: #075c4a; }
+    .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; margin: 12px 0; }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: white;
+      break-inside: avoid;
+    }
+    .card .kicker { color: var(--muted); text-transform: uppercase; letter-spacing: .08em; font-size: 7.5pt; font-weight: 750; }
+    .card .big { font-size: 22pt; font-weight: 780; line-height: 1.05; margin: 4px 0; color: var(--navy); }
+    .card p { margin: 0; color: var(--muted); font-size: 8.65pt; }
+    table { width: 100%; border-collapse: collapse; margin: 8px 0 11px; font-size: 8pt; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; }
+    th {
+      background: var(--navy);
+      color: white;
+      text-align: left;
+      font-size: 7.35pt;
+      letter-spacing: .045em;
+      text-transform: uppercase;
+      padding: 6px 7px;
+      border-right: 1px solid rgba(255,255,255,.13);
+    }
+    td { padding: 6px 7px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    tbody tr:nth-child(even) td { background: #f7f9fa; }
+    td:first-child { font-weight: 650; }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 7px;
+      font-size: 7pt;
+      font-weight: 800;
+      letter-spacing: .045em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .pill.done { background: var(--green-soft); color: #08705a; }
+    .pill.local { background: var(--blue-soft); color: #1c4f91; }
+    .timeline { margin: 11px 0 0; }
+    .timeline-item { display: grid; grid-template-columns: 24mm 1fr; gap: 9px; padding: 0 0 10px; position: relative; }
+    .timeline-item::before { content: ""; position: absolute; left: 25.7mm; top: 10px; bottom: -2px; width: 1px; background: var(--line); }
+    .timeline-item:last-child::before { display: none; }
+    .timeline-date { color: var(--muted); font-size: 8pt; padding-top: 2px; }
+    .timeline-copy { padding-left: 13px; position: relative; }
+    .timeline-copy::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--green); position: absolute; left: -4px; top: 5px; box-shadow: 0 0 0 3px var(--green-soft); }
+    .timeline-copy p { color: var(--muted); font-size: 8.55pt; margin: 2px 0 0; }
+    .issue-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; margin-top: 8px; }
+    .issue-block { border: 1px solid var(--line); border-radius: 9px; padding: 8px 9px; break-inside: avoid; }
+    .issue-block b { color: var(--navy); }
+    .issue-block p { margin: 3px 0 0; color: var(--muted); font-size: 7.85pt; }
+    .ledger-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: 12px;
+      row-gap: 4px;
+      margin: 10px 0 12px;
+    }
+    .ledger-row {
+      display: grid;
+      grid-template-columns: 12mm 1fr;
+      gap: 5px;
+      align-items: start;
+      min-height: 24px;
+      padding: 5px 7px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #f9fbfc;
+      color: #354355;
+      font-size: 7.45pt;
+      line-height: 1.22;
+      break-inside: avoid;
+    }
+    .ledger-row .issue-no { color: var(--green); font-weight: 850; white-space: nowrap; }
+    .ledger-row.duplicate { background: #f3f5f7; color: var(--muted); }
+    .ledger-row.duplicate .issue-no { color: #65717f; }
+    .ledger-summary {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      margin: 9px 0 5px;
+      color: var(--muted);
+      font-size: 8pt;
+    }
+    .ledger-summary strong { color: var(--navy); }
+    ul { margin: 6px 0 10px 18px; padding: 0; }
+    li { margin: 2px 0; }
+    .checklist { list-style: none; margin-left: 0; }
+    .checklist li { padding-left: 18px; position: relative; margin: 4px 0; }
+    .checklist li::before { content: "✓"; position: absolute; left: 0; top: 0; color: var(--green); font-weight: 900; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .code-line { border: 1px solid var(--line); border-radius: 7px; background: #f7f9fa; padding: 7px 9px; font-family: Consolas, monospace; font-size: 7.5pt; overflow-wrap: anywhere; }
+    .footer {
+      position: absolute;
+      bottom: 8mm;
+      left: 16mm;
+      right: 16mm;
+      display: flex;
+      justify-content: space-between;
+      color: #83909d;
+      font-size: 7.2pt;
+    }
+    @page { size: A4; margin: 0; }
+    @media print {
+      html, body { background: white; }
+      body { width: 210mm; }
+      .page { width: 210mm; height: 297mm; min-height: 297mm; }
+    }
+  </style>
+</head>
+<body>
+  <section class="page cover">
+    <div>
+      <div class="brand">
+        <div class="brand-mark">L</div>
+        <div class="brand-copy"><strong>LARO</strong><span>Engineering delivery record</span></div>
+      </div>
+
+      <div class="cover-main">
+        <div class="eyebrow">Completion-only report · Milestones 2 &amp; 3</div>
+        <h1>Implemented.<br><span>Verified. Recorded.</span></h1>
+        <p class="cover-lead">A concise record of work already delivered in GitHub or implemented and verified in the exact local candidate.</p>
+      </div>
+
+      <div class="cover-grid">
+        <div class="cover-stat"><strong>8</strong><span>original branches consolidated</span></div>
+        <div class="cover-stat"><strong>71</strong><span>local remediation commits</span></div>
+        <div class="cover-stat"><strong>90</strong><span>roadmap issue implementations</span></div>
+        <div class="cover-stat"><strong>9</strong><span>verified localization checkpoints</span></div>
+      </div>
+    </div>
+
+    <div class="cover-meta">
+      <div><strong>Prepared for</strong><br>Angel Huang</div>
+      <div><strong>Exact local head</strong><br><span class="mono">3ca8e45</span></div>
+      <div><strong>Snapshot</strong><br>25 September 2026</div>
+    </div>
+  </section>
+
+  <section class="page">
+    <div class="running-head"><b>LARO</b><span>Completed delivery outputs</span></div>
+    <h2>Repository consolidation and deliverables</h2>
+    <p class="lead">These outputs are already present either on remote <span class="mono">main</span> or in the verified delivery artifacts.</p>
+
+    <table>
+      <thead><tr><th style="width:25%">Completed item</th><th style="width:16%">Evidence state</th><th>Implemented result</th></tr></thead>
+      <tbody>
+        <tr><td>Eight-branch consolidation</td><td><span class="pill done">On GitHub</span></td><td>Main, the hosted architecture branch, and six dependency-update branches were integrated. Pull request #224 records the consolidated result on default main.</td></tr>
+        <tr><td>Updated default main</td><td><span class="pill done">On GitHub</span></td><td>Remote main records commit <span class="mono">046a484bb0040c40951400789ed103ab97563db9</span>, “Merge pull request #224 from Robert-Velhorst/build/windows-consolidated”.</td></tr>
+        <tr><td>Browser application path</td><td><span class="pill done">Implemented</span></td><td>The React application is served by the shared server so the product can run through a web browser rather than only as a backend endpoint.</td></tr>
+        <tr><td>Connected desktop path</td><td><span class="pill done">Implemented</span></td><td>Electron can connect to the same remote server while retaining the local-workspace mode and its separate runtime behavior.</td></tr>
+        <tr><td>Windows executable</td><td><span class="pill local">Built locally</span></td><td><span class="mono">release/1.3.0/LARO Desktop 1.3.0.exe</span> was built at 160,637,500 bytes. Windows x64 application, SQLite, and Canvas structures were inspected.</td></tr>
+        <tr><td>Shared-server package</td><td><span class="pill done">Prepared</span></td><td>Docker/Compose configuration, persistent-volume handling, reverse-proxy guidance, backup operations, connected-desktop arguments, and a Hetzner operator runbook are present.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Completed sequence</h3>
+    <div class="timeline">
+      <div class="timeline-item"><div class="timeline-date">13 Sep</div><div class="timeline-copy"><h4>Repository and branch inventory</h4><p>The requested eight branches and developer handoff were inspected and mapped.</p></div></div>
+      <div class="timeline-item"><div class="timeline-date">13 Sep</div><div class="timeline-copy"><h4>Eight-way integration</h4><p>The hosted architecture work and six dependency lines were consolidated with main.</p></div></div>
+      <div class="timeline-item"><div class="timeline-date">14 Sep</div><div class="timeline-copy"><h4>Browser, desktop, and Windows delivery</h4><p>The shared browser runtime, connected-desktop mode, packaging controls, and Windows candidate were produced.</p></div></div>
+      <div class="timeline-item"><div class="timeline-date">14 Sep</div><div class="timeline-copy"><h4>Consolidation merged</h4><p>PR #224 placed the consolidation result on remote default main.</p></div></div>
+    </div>
+
+    <div class="callout"><strong>Evidence boundary:</strong> “On GitHub,” “implemented,” and “built locally” are kept distinct so this report records completed outputs without converting local verification into a remote-deployment claim.</div>
+    <div class="footer"><span>LARO implemented work report</span><span>2</span></div>
+  </section>
+
+  <section class="page">
+    <div class="running-head"><b>LARO</b><span>Completed remediation · #104–#115</span></div>
+    <h2>Foundation, schema, and collection fixes</h2>
+    <p class="lead">Each completed issue is shown explicitly. These twelve implementation records are present in the local remediation candidate.</p>
+
+    <div class="ledger-summary"><strong>12 implemented issues</strong><span class="pill local">Verified local</span></div>
+    <div class="ledger-grid">
+      <div class="ledger-row"><span class="issue-no">#104</span><span>Add executable issue and pull-request templates</span></div>
+      <div class="ledger-row"><span class="issue-no">#105</span><span>Add the duplicate-system review tripwire</span></div>
+      <div class="ledger-row"><span class="issue-no">#106</span><span>Define contribution rules and code ownership</span></div>
+      <div class="ledger-row"><span class="issue-no">#107</span><span>Make the maintenance cadence executable</span></div>
+      <div class="ledger-row"><span class="issue-no">#108</span><span>Use one Gmail keyword-search request</span></div>
+      <div class="ledger-row"><span class="issue-no">#109</span><span>Route collection reports through real notifications</span></div>
+      <div class="ledger-row"><span class="issue-no">#110</span><span>Prevent empty-keyword scheduled collection failures</span></div>
+      <div class="ledger-row"><span class="issue-no">#111</span><span>Establish a non-destructive migration baseline</span></div>
+      <div class="ledger-row"><span class="issue-no">#112</span><span>Replace relationship triggers with native foreign keys</span></div>
+      <div class="ledger-row"><span class="issue-no">#113</span><span>Normalize historical numeric text columns</span></div>
+      <div class="ledger-row"><span class="issue-no">#114</span><span>Reconcile the obsolete billing compatibility schema</span></div>
+      <div class="ledger-row"><span class="issue-no">#115</span><span>Remove the dead auto-collection pipeline</span></div>
+    </div>
+
+    <h3>Measured results</h3>
+    <div class="cards">
+      <div class="card"><div class="kicker">Native relationships</div><div class="big">108</div><p>Declared foreign keys replace generated relationship triggers.</p></div>
+      <div class="card"><div class="kicker">Numeric fields</div><div class="big">27</div><p>Counts, byte sizes, percentages, quantities, distances, and durations use native storage.</p></div>
+      <div class="card"><div class="kicker">Tables rebuilt</div><div class="big">10</div><p>Rows, indexes, triggers, values, and relationships are verified before commit.</p></div>
+      <div class="card"><div class="kicker">Compatibility archive</div><div class="big">Read-only</div><p>Historical non-empty billing values remain preserved outside the active model.</p></div>
+    </div>
+
+    <div class="code-line">0032 numeric normalization · 0033 billing compatibility archive · canonical auto-collection path proof</div>
+    <div class="footer"><span>LARO implemented work report</span><span>3</span></div>
+  </section>
+
+  <section class="page">
+    <div class="running-head"><b>LARO</b><span>Completed remediation · #123–#153</span></div>
+    <h2>Security and integrity ledger</h2>
+    <p class="lead">Thirty-one completed issue implementations cover behavioral security, ownership, exports, identity, canonical data, provider safety, and second-round verification.</p>
+
+    <div class="ledger-summary"><strong>31 implemented issues</strong><span class="pill local">Verified local</span></div>
+    <div class="ledger-grid">
+      <div class="ledger-row"><span class="issue-no">#123</span><span>Replace source-text security checks with behavioral contracts</span></div>
+      <div class="ledger-row"><span class="issue-no">#124</span><span>Reject scanner JWTs from Socket.IO sessions</span></div>
+      <div class="ledger-row"><span class="issue-no">#125</span><span>Bind rate limits to trusted client IPs</span></div>
+      <div class="ledger-row"><span class="issue-no">#126</span><span>Stop implicit team grants from authorizing irreversible actions</span></div>
+      <div class="ledger-row"><span class="issue-no">#127</span><span>Neutralize spreadsheet formulas in every CSV export</span></div>
+      <div class="ledger-row"><span class="issue-no">#128</span><span>Report every missing source in evidence exports</span></div>
+      <div class="ledger-row"><span class="issue-no">#129</span><span>Include every account-scoped store in GDPR rights</span></div>
+      <div class="ledger-row"><span class="issue-no">#130</span><span>Remove provider tokens from requests and logs</span></div>
+      <div class="ledger-row"><span class="issue-no">#131</span><span>Make bulk CSV import status truthful</span></div>
+      <div class="ledger-row"><span class="issue-no">#132</span><span>Normalize account email identity</span></div>
+      <div class="ledger-row"><span class="issue-no">#133</span><span>Make support follow-up claims honest</span></div>
+      <div class="ledger-row"><span class="issue-no">#134</span><span>Stream large evidence packages instead of buffering them</span></div>
+      <div class="ledger-row"><span class="issue-no">#135</span><span>Replace JSON team memberships with canonical records</span></div>
+      <div class="ledger-row"><span class="issue-no">#136</span><span>Unify owned and shared-case queries</span></div>
+      <div class="ledger-row"><span class="issue-no">#137</span><span>Remove or implement the unused operator role</span></div>
+      <div class="ledger-row"><span class="issue-no">#138</span><span>Consolidate legacy evidence stores into evidence</span></div>
+      <div class="ledger-row"><span class="issue-no">#139</span><span>Retire disconnected Trello and Telegram connector stacks</span></div>
+      <div class="ledger-row"><span class="issue-no">#140</span><span>Enforce the maintained renderer source boundary</span></div>
+      <div class="ledger-row"><span class="issue-no">#141</span><span>Scope default local folders to the signed-in owner</span></div>
+      <div class="ledger-row"><span class="issue-no">#142</span><span>Remove local filesystem paths from evidence exports</span></div>
+      <div class="ledger-row"><span class="issue-no">#143</span><span>Route bulk case rows through canonical intake</span></div>
+      <div class="ledger-row"><span class="issue-no">#144</span><span>Gate transactional test email delivery</span></div>
+      <div class="ledger-row"><span class="issue-no">#145</span><span>Derive distinct stages for the admin conversion funnel</span></div>
+      <div class="ledger-row"><span class="issue-no">#146</span><span>Apply case search and filters before pagination</span></div>
+      <div class="ledger-row"><span class="issue-no">#147</span><span>Wire or remove the Evidence Summary export action</span></div>
+      <div class="ledger-row"><span class="issue-no">#148</span><span>Fix the case-scoped evidence analytics contract</span></div>
+      <div class="ledger-row"><span class="issue-no">#149</span><span>Paginate Gmail evidence discovery</span></div>
+      <div class="ledger-row"><span class="issue-no">#150</span><span>Preserve changed source versions during repeated pulls</span></div>
+      <div class="ledger-row"><span class="issue-no">#151</span><span>Remove the disconnected Gmail sync and auto-sync stack</span></div>
+      <div class="ledger-row"><span class="issue-no">#152</span><span>Bind generated legal drafts to a reviewed recipient</span></div>
+      <div class="ledger-row"><span class="issue-no">#153</span><span>Verify the second-round trust and workflow fixes</span></div>
+    </div>
+
+    <div class="callout good"><strong>Implemented result:</strong> consequential reads and writes now use explicit owner, case, session, provider, audit, and integrity boundaries; disconnected or misleading paths were removed or redirected to maintained implementations.</div>
+    <div class="footer"><span>LARO implemented work report</span><span>4</span></div>
+  </section>
+
+  <section class="page">
+    <div class="running-head"><b>LARO</b><span>Completed remediation · #154–#178</span></div>
+    <h2>Trust and resource ledger</h2>
+    <p class="lead">Twenty-five completed issue implementations cover immutable delivery controls, authentication boundaries, grounded AI, durable audit, bounded resources, and canonical workflows.</p>
+
+    <div class="ledger-summary"><strong>25 implemented issues</strong><span class="pill local">Verified local</span></div>
+    <div class="ledger-grid">
+      <div class="ledger-row"><span class="issue-no">#154</span><span>Pin GitHub Actions to immutable revisions</span></div>
+      <div class="ledger-row"><span class="issue-no">#155</span><span>Bind OAuth callbacks to the initiating session</span></div>
+      <div class="ledger-row"><span class="issue-no">#156</span><span>Remove the unused full-session API token</span></div>
+      <div class="ledger-row"><span class="issue-no">#157</span><span>Restrict loopback origins to the active renderer</span></div>
+      <div class="ledger-row"><span class="issue-no">#158</span><span>Bound password-reset guessing per account</span></div>
+      <div class="ledger-row"><span class="issue-no">#159</span><span>Require grounded review for AI timeline corrections</span></div>
+      <div class="ledger-row"><span class="issue-no">#160</span><span>Keep the no-case assistant out of ungrounded legal advice</span></div>
+      <div class="ledger-row"><span class="issue-no">#161</span><span>Enforce safe client-facing error envelopes</span></div>
+      <div class="ledger-row"><span class="issue-no">#162</span><span>Encrypt recovery backups independently of app secrets</span></div>
+      <div class="ledger-row"><span class="issue-no">#163</span><span>Bind scanner approval to immutable file bytes</span></div>
+      <div class="ledger-row"><span class="issue-no">#164</span><span>Remove unsupported legal conclusions from KvK lookup</span></div>
+      <div class="ledger-row"><span class="issue-no">#165</span><span>Make mandatory audit events durable</span></div>
+      <div class="ledger-row"><span class="issue-no">#166</span><span>Make scanner uploads bounded and resumable</span></div>
+      <div class="ledger-row"><span class="issue-no">#167</span><span>Apply clarification answers to the case</span></div>
+      <div class="ledger-row"><span class="issue-no">#168</span><span>Make outreach initiation atomic and state-valid</span></div>
+      <div class="ledger-row"><span class="issue-no">#169</span><span>Route global search results to real case views</span></div>
+      <div class="ledger-row"><span class="issue-no">#170</span><span>Make lawyer comparison use canonical data and actions</span></div>
+      <div class="ledger-row"><span class="issue-no">#171</span><span>Replace timestamp-derived user and lawyer IDs</span></div>
+      <div class="ledger-row"><span class="issue-no">#172</span><span>Enforce one owner-scoped AI usage budget</span></div>
+      <div class="ledger-row"><span class="issue-no">#173</span><span>Enforce bounded evidence-ingestion budgets</span></div>
+      <div class="ledger-row"><span class="issue-no">#174</span><span>Unify OAuth credential lifecycle and exported routes</span></div>
+      <div class="ledger-row"><span class="issue-no">#175</span><span>Wire or retire the lawyer-rating feedback loop</span></div>
+      <div class="ledger-row"><span class="issue-no">#176</span><span>Reconcile the duplicate onboarding implementations</span></div>
+      <div class="ledger-row"><span class="issue-no">#177</span><span>Remove dead feature flags and unify demo mode</span></div>
+      <div class="ledger-row"><span class="issue-no">#178</span><span>Verify the third-round trust and resource fixes</span></div>
+    </div>
+
+    <div class="callout good"><strong>Implemented result:</strong> credentials, recovery material, scanner approvals, audit writes, uploads, AI usage, evidence ingestion, and outreach initiation now use enforceable lifecycle and resource limits.</div>
+    <div class="footer"><span>LARO implemented work report</span><span>5</span></div>
+  </section>
+
+  <section class="page">
+    <div class="running-head"><b>LARO</b><span>Completed remediation · #179–#201</span></div>
+    <h2>Consent, workflow, and lifecycle ledger</h2>
+    <p class="lead">Twenty-two completed implementations cover real-path acceptance, consent, provider scope, truthful workflow states, owner isolation, account lifecycle, and final local verification.</p>
+
+    <div class="ledger-summary"><strong>22 implemented issues + 1 resolved duplicate</strong><span class="pill local">Verified local</span></div>
+    <div class="ledger-grid">
+      <div class="ledger-row"><span class="issue-no">#179</span><span>Make acceptance tests exercise real product paths</span></div>
+      <div class="ledger-row"><span class="issue-no">#180</span><span>Add blocking source, secret, and container scans</span></div>
+      <div class="ledger-row"><span class="issue-no">#181</span><span>Require explicit consent before cloud document processing</span></div>
+      <div class="ledger-row"><span class="issue-no">#182</span><span>Scope HAI credentials to reviewed cases and fields</span></div>
+      <div class="ledger-row"><span class="issue-no">#183</span><span>Split public health from protected operator diagnostics</span></div>
+      <div class="ledger-row"><span class="issue-no">#184</span><span>Remove unsupported legal-merit and completeness framing</span></div>
+      <div class="ledger-row"><span class="issue-no">#185</span><span>Scope automatic shortlist review to the active discovery run</span></div>
+      <div class="ledger-row"><span class="issue-no">#186</span><span>Make Google disconnect represent the shared grant</span></div>
+      <div class="ledger-row"><span class="issue-no">#187</span><span>Make public-record research case-scoped and failure-aware</span></div>
+      <div class="ledger-row"><span class="issue-no">#188</span><span>Invalidate gap analysis when evidence inputs change</span></div>
+      <div class="ledger-row"><span class="issue-no">#189</span><span>Make text search literal-safe and completeness-aware</span></div>
+      <div class="ledger-row"><span class="issue-no">#190</span><span>Make notifications typed, actionable, and durable</span></div>
+      <div class="ledger-row"><span class="issue-no">#191</span><span>Retire the disconnected Google Drive import stack</span></div>
+      <div class="ledger-row"><span class="issue-no">#192</span><span>Persist reviewed draft snapshots with source provenance</span></div>
+      <div class="ledger-row"><span class="issue-no">#193</span><span>Verify the fourth-round consent and workflow fixes</span></div>
+      <div class="ledger-row"><span class="issue-no">#194</span><span>Bind desktop scanner state to the authenticated owner</span></div>
+      <div class="ledger-row"><span class="issue-no">#195</span><span>Make privacy preferences control real processing</span></div>
+      <div class="ledger-row"><span class="issue-no">#196</span><span>Require verified provider-aware account erasure</span></div>
+      <div class="ledger-row"><span class="issue-no">#197</span><span>Bind assistant requests to an explicit visible case</span></div>
+      <div class="ledger-row"><span class="issue-no">#198</span><span>Wire the Home dashboard to canonical workflow data</span></div>
+      <div class="ledger-row"><span class="issue-no">#199</span><span>Make collection monitoring use canonical pull-job data</span></div>
+      <div class="ledger-row duplicate"><span class="issue-no">#200</span><span>Closed duplicate; consolidated into #139 connector cleanup</span></div>
+      <div class="ledger-row"><span class="issue-no">#201</span><span>Verify the final account and lifecycle fixes</span></div>
+    </div>
+
+    <div class="callout"><strong>Counting rule:</strong> #200 is recorded for completeness but is not counted as a separate implementation. The 90 completed issue implementations are #104–#115, #123–#199, and #201.</div>
+    <div class="footer"><span>LARO implemented work report</span><span>6</span></div>
+  </section>
+
+  <section class="page">
+    <div class="running-head"><b>LARO</b><span>Completed #116 localization checkpoints</span></div>
+    <h2>Typed NL/EN workflow migration</h2>
+    <p class="lead">Nine finished, committed, and browser-verified sub-deliverables are recorded separately from the 90 full-issue implementations.</p>
+
+    <table>
+      <thead><tr><th style="width:15%">Commit</th><th style="width:27%">Completed surface</th><th>Implemented result</th></tr></thead>
+      <tbody>
+        <tr><td><span class="mono">b0d2ee6</span></td><td>Case and collection workflows</td><td>Mounted case overview, documents, timeline, matching, outreach, status, actions, and collection controls use the shared typed catalog.</td></tr>
+        <tr><td><span class="mono">88ae8ce</span></td><td>Settings workflows</td><td>Settings navigation, account/source controls, preference states, and related user-facing messages are catalog-driven.</td></tr>
+        <tr><td><span class="mono">fef4cfe</span></td><td>Document reconstruction</td><td>Map, Gantt, list, source actions, route/category/relationship labels, correction review, and dates/numbers render in the selected locale.</td></tr>
+        <tr><td><span class="mono">ce1064f</span></td><td>Document-source workflows</td><td>Source setup, job status, quick screening, coded failure guidance, filters, progress, retry/recheck controls, and pagination use the typed catalog and locale-aware formatting.</td></tr>
+        <tr><td><span class="mono">402a929</span></td><td>Public research</td><td>Case-scoped KvK, Rechtspraak, and KOOP states, provenance, status, warnings, and recovery controls use the NL/EN catalog.</td></tr>
+        <tr><td><span class="mono">30e879e</span></td><td>Evidence coverage</td><td>Coverage revisions, review states, limitations, unknown legal basis, and freshness states render in the selected locale.</td></tr>
+        <tr><td><span class="mono">5717d1c</span></td><td>Shared search filters</td><td>Case, lawyer, and evidence filters plus saved/recent-search feedback use translated labels and locale-aware metadata.</td></tr>
+        <tr><td><span class="mono">366b0b8</span></td><td>Case list</td><td>Case list filters, empty/results states, action labels, metadata, and dates use typed translations and locale formatting.</td></tr>
+        <tr><td><span class="mono">3ca8e45</span></td><td>Document inbox</td><td>Inbox discovery, assignment, correction, reversal, source context, and workflow status copy use the shared catalog.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Current checkpoint evidence</h3>
+    <div class="cards">
+      <div class="card"><div class="kicker">Focused tests</div><div class="big">62 passed</div><p>Catalog, accessibility contracts, public research, and production-readiness behavior on current head.</p></div>
+      <div class="card"><div class="kicker">Additional migration</div><div class="big">328</div><p>Audited legacy-copy candidates removed since the prior report checkpoint.</p></div>
+      <div class="card"><div class="kicker">Copy audit</div><div class="big">1,142</div><p>Acknowledged candidates across 49 files; the current baseline has zero unreviewed drift.</p></div>
+      <div class="card"><div class="kicker">Real browser</div><div class="big">EN + NL</div><p>Stable Chrome passed the persisted locale workflow on exact current source.</p></div>
+    </div>
+
+    <div class="callout good"><strong>Current-head verification:</strong> server/main/renderer typechecks, full lint, copy-audit drift protection, 62 focused tests, production renderer build, bundle budgets, and the stable-Chrome locale workflow passed on <span class="mono">3ca8e45</span>.</div>
+    <div class="footer"><span>LARO implemented work report</span><span>7</span></div>
+  </section>
+
+  <section class="page">
+    <div class="running-head"><b>LARO</b><span>Verification record</span></div>
+    <h2>Recorded tests and artifacts</h2>
+    <p class="lead">Results are tied to their candidate so older broad gates and newer focused checkpoints are not blended into one unsupported claim.</p>
+
+    <table>
+      <thead><tr><th style="width:27%">Candidate / check</th><th style="width:17%">Result</th><th>Recorded evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Lifecycle candidate<br><span class="mono">ec94985</span></td><td><span class="pill done">Gate passed</span></td><td>188 test files passed, one skipped; 1,080 tests passed, two skipped. Type, lint, traceability, safety, recovery, Node, and Python stages passed.</td></tr>
+        <tr><td>Stable Chrome matrix</td><td><span class="pill done">45 / 45</span></td><td>Desktop/mobile workflows checked HTTP and request failures, page and console errors, accessibility, keyboard behavior, and route-specific states.</td></tr>
+        <tr><td>Python suite</td><td><span class="pill done">223 / 223</span></td><td>Isolated Python 3.12 discovery passed together with dependency-compatibility checks.</td></tr>
+        <tr><td>Dependencies and image</td><td><span class="pill done">Clean</span></td><td>Full/runtime npm audits recorded zero vulnerabilities; the container scan recorded zero HIGH/CRITICAL Debian or Node findings.</td></tr>
+        <tr><td>Encrypted recovery</td><td><span class="pill done">Passed</span></td><td>Recovery restored database, desktop secrets, and managed evidence while preserving prior state.</td></tr>
+        <tr><td>Windows candidate</td><td><span class="pill local">Built</span></td><td>Portable EXE plus x64 native SQLite/Canvas structures verified; runtime state and desktop-secret files were excluded.</td></tr>
+        <tr><td>Reconstruction checkpoint<br><span class="mono">fef4cfe</span></td><td><span class="pill local">Verified local</span></td><td>52 focused unit/security tests and two real-Chrome flows passed with lint, all typechecks, production build, copy audit, and bundle budget.</td></tr>
+        <tr><td>Source checkpoint<br><span class="mono">ce1064f</span></td><td><span class="pill local">Verified local</span></td><td>61 focused tests, targeted EN/NL Playwright coverage, and the full standalone source-recheck Chrome flow passed with lint, typechecks, production renderer build, copy audit, and bundle budget.</td></tr>
+        <tr><td>Current localization head<br><span class="mono">3ca8e45</span></td><td><span class="pill local">Verified local</span></td><td>All three typechecks, full lint, 62 focused tests, copy-audit drift protection, production renderer build, bundle budgets, and the stable-Chrome persisted EN/NL workflow passed.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout"><strong>Verification chronology:</strong> the broad lifecycle release evidence remains tied to <span class="mono">ec94985</span>; the current-head row records only the focused checks rerun after the five newer localization commits.</div>
+    <div class="footer"><span>LARO implemented work report</span><span>8</span></div>
+  </section>
+
+  <section class="page">
+    <div class="running-head"><b>LARO</b><span>Candidate and artifact identity</span></div>
+    <h2>Exact delivery identity</h2>
+    <p class="lead">Branch, artifact, build-budget, and source records identify exactly what this report covers.</p>
+
+    <h3>Exact candidate identity</h3>
+    <div class="code-line">milestone3/remediate-roadmap · 3ca8e450ff62c41f90cd29ae524474296ed5a888 · 71 commits ahead of origin/main at report generation</div>
+
+    <h3>Artifact identity</h3>
+    <div class="code-line">LARO Desktop 1.3.0.exe · 160,637,500 bytes · SHA-256 a51bb2755a978113d145335df03ba7e6ad0fab8b4acf099d042bd3ea0de294e2</div>
+
+    <h3>Latest renderer budget</h3>
+    <div class="code-line">Largest JavaScript chunk: index-CxeyU_m7.js · 188,742 bytes · budget passed</div>
+
+    <h3>Source snapshot</h3>
+    <ul class="small">
+      <li>Local repository, Git history, committed documentation, and verification output on 25 September 2026.</li>
+      <li>Remote consolidation identity from GitHub main and PR #224.</li>
+      <li>Verification records in the repository’s lifecycle, round, migration, i18n, readiness, and recovery documentation.</li>
+      <li>Local implementation status is separate from GitHub issue closure; this report makes no new push, merge, deployment, or issue-closure claim.</li>
+      <li>No credentials, provider secrets, recovery keys, private owner data, or server login details are included.</li>
+    </ul>
+
+    <div class="callout good"><strong>Report scope:</strong> every item above has an implementation, commit, artifact, or recorded passing check. Work without completed evidence is omitted.</div>
+    <div class="footer"><span>LARO implemented work report</span><span>9</span></div>
+  </section>
+</body>
+</html>
