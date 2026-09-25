@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, realpathSync, writeFileSync } from "fs";
 import { join } from "path";
 import { eq } from "drizzle-orm";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
@@ -115,6 +115,7 @@ suite("scheduled collection ownership and eligibility", () => {
   it("keeps folder-first setup inactive until keywords are configured", async () => {
     const owner = await insertOwnerWithCases("SCHEDULE_FOLDER_OWNER", []);
     const caseId = "SCHEDULE_FOLDER_CASE";
+    const canonicalTmpDir = realpathSync(app.tmpDir);
     await app.db.insert(app.schema.cases).values(buildCase({ id: caseId, userId: owner.id }));
     const {
       runAutoCollectionForAllCases,
@@ -127,7 +128,7 @@ suite("scheduled collection ownership and eligibility", () => {
       .where(eq(app.schema.autoCollectionSettings.caseId, caseId));
     expect(settings).toMatchObject({ isEnabled: false, status: "configured", keywords: "[]" });
     expect(await app.makeCaller(owner).autoCollection.getLocalFolders({ caseId }))
-      .toMatchObject({ paths: [app.tmpDir], scheduleActive: false });
+      .toMatchObject({ paths: [canonicalTmpDir], scheduleActive: false });
 
     const runCase = vi.fn(async () => ({ emailsFound: 0, emailsProcessed: 0, filesFound: 0, filesDownloaded: 0, errors: [] }));
     const writeNotification = vi.fn(async (): Promise<NotificationWriteResult> => ({
@@ -151,7 +152,7 @@ suite("scheduled collection ownership and eligibility", () => {
       .where(eq(app.schema.autoCollectionSettings.caseId, caseId));
     expect(settings).toMatchObject({ isEnabled: true, status: "active", keywords: '["contract"]' });
     expect(await app.makeCaller(owner).autoCollection.getLocalFolders({ caseId }))
-      .toMatchObject({ paths: [app.tmpDir], scheduleActive: true });
+      .toMatchObject({ paths: [canonicalTmpDir], scheduleActive: true });
 
     await runAutoCollectionForAllCases({ runCase, writeNotification });
     expect(runCase).toHaveBeenCalledWith(caseId);

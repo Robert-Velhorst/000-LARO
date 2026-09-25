@@ -782,9 +782,10 @@ test("keyboard navigation exposes the skip link, traps the mobile menu, and keep
 
   const mobileMenuClose = page.getByRole("button", { name: "Collapse sidebar" });
   await expectVisibleKeyboardFocus(page, mobileMenuClose);
-  await page.keyboard.press("Shift+Tab");
-  await expectVisibleKeyboardFocus(page, page.getByRole("button", { name: "Open account menu" }));
-  await page.keyboard.press("Escape");
+  await mobileMenuClose.press("Shift+Tab");
+  const mobileAccountMenu = page.getByRole("button", { name: "Open account menu" });
+  await expectVisibleKeyboardFocus(page, mobileAccountMenu);
+  await mobileAccountMenu.press("Escape");
   await expect(mobileMenuTrigger).toBeFocused();
 
   const notificationTrigger = page.getByRole("button", { name: /Open notifications/ });
