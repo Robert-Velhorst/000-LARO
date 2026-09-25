@@ -81,21 +81,20 @@ function reviewError(error: unknown): FileReviewRequiredError {
 export async function inspectRegularFile(filePath: string, maxBytes: number): Promise<FileSnapshot> {
   let handle: fs.FileHandle | undefined;
   try {
+    const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
+    handle = await fs.open(filePath, constants.O_RDONLY | noFollow);
+    const openedBefore = await handle.stat({ bigint: true });
     const pathBefore = await fs.lstat(filePath, { bigint: true });
     if (pathBefore.isSymbolicLink()) {
       throw new FileReviewRequiredError('symlink', 'Linked files cannot be approved for upload.');
     }
-    if (!pathBefore.isFile()) {
+    if (!pathBefore.isFile() || !openedBefore.isFile()) {
       throw new FileReviewRequiredError('not_regular', 'Only regular files can be approved for upload.');
     }
-
-    const realPathBefore = await fs.realpath(filePath);
-    const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
-    handle = await fs.open(filePath, constants.O_RDONLY | noFollow);
-    const openedBefore = await handle.stat({ bigint: true });
-    if (!openedBefore.isFile() || !sameOpenedFile(pathBefore, openedBefore)) {
+    if (!sameOpenedFile(pathBefore, openedBefore)) {
       throw new FileReviewRequiredError('changed', 'The file changed while it was being checked. Review it again.');
     }
+    const realPathBefore = await fs.realpath(filePath);
     if (openedBefore.size < 1n || openedBefore.size > BigInt(maxBytes)) {
       throw new FileReviewRequiredError('size', 'Evidence files must be between 1 byte and 7 MB.');
     }

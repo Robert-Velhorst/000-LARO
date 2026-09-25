@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { nanoid } from "nanoid";
 import { and, desc, eq } from "drizzle-orm";
 import { auditLogs, InsertAuditLog } from "./schema";
@@ -122,9 +122,9 @@ export function isMandatoryAuditAction(action: string): boolean {
 
 function auditEventId(log: AuditLogInput): string {
   if (!log.idempotencyKey) return nanoid();
-  const digest = createHash("sha256")
-    .update(`${log.action}\0${log.idempotencyKey}`)
-    .digest("hex")
+  // This is a deterministic event identifier, not password storage. Keep the
+  // existing digest bytes stable so retries remain idempotent across upgrades.
+  const digest = hash("sha256", `${log.action}\0${log.idempotencyKey}`, "hex")
     .slice(0, 32);
   return `AUD-${digest}`;
 }

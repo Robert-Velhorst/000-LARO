@@ -155,7 +155,8 @@ function tokenize(value: string): string[] {
 function normalizePublicUrl(rawUrl: string): string | null {
   try {
     let url = new URL(rawUrl, PUBLIC_DISCOVERY_URL);
-    if (url.hostname.endsWith("duckduckgo.com")) {
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === "duckduckgo.com" || hostname.endsWith(".duckduckgo.com")) {
       const redirect = url.searchParams.get("uddg");
       if (redirect) url = new URL(decodeURIComponent(redirect));
     }

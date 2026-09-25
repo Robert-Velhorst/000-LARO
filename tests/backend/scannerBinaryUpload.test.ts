@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
-import cookieParser from "cookie-parser";
 import express from "express";
 import jwt from "jsonwebtoken";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -13,6 +12,7 @@ import { DESKTOP_SCANNER_HEADER } from "../../shared/desktopScannerAuth";
 import { MAX_EVIDENCE_FILE_BYTES } from "../../shared/evidenceFiles";
 import { SCANNER_UPLOAD_HEADERS, SCANNER_UPLOAD_PATH } from "../../shared/scannerUpload";
 import { storageRead } from "../../server/storage";
+import { cookieMiddleware } from "../../server/cookieMiddleware";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 import { buildCase, buildUser } from "../factories";
 
@@ -33,7 +33,7 @@ suite("bounded binary scanner upload boundary", () => {
     await app.db.insert(app.schema.users).values(owner);
     await app.db.insert(app.schema.cases).values(caseRow);
     const httpApp = express();
-    httpApp.use(cookieParser());
+    httpApp.use(cookieMiddleware);
     httpApp.use(scannerUploadRouter);
     server = createServer(httpApp);
     const port = await listenHttpServer(server, 0, "127.0.0.1");

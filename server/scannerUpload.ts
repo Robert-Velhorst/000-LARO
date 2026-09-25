@@ -145,7 +145,8 @@ export async function persistScannerUpload(
   metadata: ScannerUploadMetadata,
   bytes: Buffer,
 ): Promise<ScannerUploadResult> {
-  if (!bytes.length || bytes.length > MAX_EVIDENCE_FILE_BYTES) {
+  const byteLength = Buffer.byteLength(bytes);
+  if (!byteLength || byteLength > MAX_EVIDENCE_FILE_BYTES) {
     throw new ScannerUploadError("Evidence uploads must be between 1 byte and 7 MB.", 413, "PAYLOAD_TOO_LARGE");
   }
   const calculatedHash = hashBuffer(bytes);
@@ -158,7 +159,7 @@ export async function persistScannerUpload(
   }
 
   const evidenceId = evidenceIdForUpload(userId, metadata);
-  const previous = await existingUpload(userId, evidenceId, metadata, bytes.length);
+  const previous = await existingUpload(userId, evidenceId, metadata, byteLength);
   if (previous) return previous;
 
   const fileName = sanitizeFilename(metadata.fileName);
@@ -173,7 +174,7 @@ export async function persistScannerUpload(
       type: metadata.evidenceType,
       source: metadata.source,
       fileName,
-      fileSize: bytes.length,
+      fileSize: byteLength,
       mimeType: metadata.mimeType,
       fileUrl: stored.url,
       contentHash: stored.sha256,
@@ -190,7 +191,7 @@ export async function persistScannerUpload(
     let raced: ScannerUploadResult | null = null;
     let conflict: ScannerUploadError | null = null;
     try {
-      raced = await existingUpload(userId, evidenceId, metadata, bytes.length);
+      raced = await existingUpload(userId, evidenceId, metadata, byteLength);
     } catch (lookupError) {
       if (lookupError instanceof ScannerUploadError) conflict = lookupError;
     }

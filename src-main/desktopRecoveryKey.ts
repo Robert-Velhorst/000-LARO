@@ -29,19 +29,24 @@ function hasEncryptedBackup(directory: string): boolean {
 
 function readRecoveryKey(keyPath: string): string {
   let value: string;
+  let keyFd: number | undefined;
   try {
-    const stat = fs.statSync(keyPath);
+    const noFollow = typeof fs.constants.O_NOFOLLOW === 'number' ? fs.constants.O_NOFOLLOW : 0;
+    keyFd = fs.openSync(keyPath, fs.constants.O_RDONLY | noFollow);
+    const stat = fs.fstatSync(keyFd);
     if (!stat.isFile()) throw new Error('not a regular file');
     if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) {
       throw new Error('permissions must be 0600');
     }
-    value = fs.readFileSync(keyPath, 'utf8').trim();
+    value = fs.readFileSync(keyFd, 'utf8').trim();
   } catch (error) {
     throw new Error(
       `Could not securely read the desktop recovery key at ${keyPath}. ` +
         'Restore the escrowed recovery key; do not replace it while encrypted backups are retained.',
       { cause: error },
     );
+  } finally {
+    if (keyFd !== undefined) fs.closeSync(keyFd);
   }
   if (!RECOVERY_KEY_PATTERN.test(value)) {
     throw new Error(

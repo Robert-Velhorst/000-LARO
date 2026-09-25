@@ -75,20 +75,39 @@ function resolveInside(rootPath: string, relativePath: string): string {
   return resolved;
 }
 
-function sha256File(filePath: string): string {
-  const digest = crypto.createHash("sha256");
-  const fd = fs.openSync(filePath, "r");
-  const buffer = Buffer.allocUnsafe(IO_CHUNK_BYTES);
+function openRegularReadOnly(filePath: string): { fd: number; stat: fs.Stats } {
+  const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
   try {
-    while (true) {
-      const read = fs.readSync(fd, buffer, 0, buffer.length, null);
-      if (read === 0) break;
-      digest.update(buffer.subarray(0, read));
-    }
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) throw new Error(`Expected a regular file: ${filePath}`);
+    return { fd, stat };
+  } catch (error) {
+    fs.closeSync(fd);
+    throw error;
+  }
+}
+
+function sha256Fd(fd: number): string {
+  const digest = crypto.createHash("sha256");
+  const buffer = Buffer.allocUnsafe(IO_CHUNK_BYTES);
+  let position = 0;
+  while (true) {
+    const read = fs.readSync(fd, buffer, 0, buffer.length, position);
+    if (read === 0) break;
+    digest.update(buffer.subarray(0, read));
+    position += read;
+  }
+  return digest.digest("hex");
+}
+
+function sha256File(filePath: string): string {
+  const { fd } = openRegularReadOnly(filePath);
+  try {
+    return sha256Fd(fd);
   } finally {
     fs.closeSync(fd);
   }
-  return digest.digest("hex");
 }
 
 function writeAll(fd: number, value: Buffer): void {
@@ -291,12 +310,15 @@ export function resolveRecoveryKey(options: RecoveryCredentialOptions = {}): str
   );
   if (configuredPath) {
     const keyPath = path.resolve(configuredPath);
-    const stat = fs.statSync(keyPath);
-    if (!stat.isFile()) throw new Error("The configured LARO recovery-key path is not a file.");
-    if (process.platform !== "win32" && (stat.mode & 0o077) !== 0) {
-      throw new Error("The LARO recovery-key file must be readable only by its owner (mode 0600).");
+    const { fd, stat } = openRegularReadOnly(keyPath);
+    try {
+      if (process.platform !== "win32" && (stat.mode & 0o077) !== 0) {
+        throw new Error("The LARO recovery-key file must be readable only by its owner (mode 0600).");
+      }
+      recoveryKey = fs.readFileSync(fd, "utf8").trim();
+    } finally {
+      fs.closeSync(fd);
     }
-    recoveryKey = fs.readFileSync(keyPath, "utf8").trim();
   }
   if (!recoveryKey) {
     throw new Error(
@@ -348,7 +370,8 @@ export function encryptBackupBundle(
 ): BackupEnvelopeManifest {
   const source = path.resolve(bundlePath);
   const destination = path.resolve(destinationPath);
-  const plaintextBytes = fs.statSync(source).size;
+  const { fd: inputFd, stat: sourceStat } = openRegularReadOnly(source);
+  const plaintextBytes = sourceStat.size;
   const salt = crypto.randomBytes(16);
   const iv = crypto.randomBytes(12);
   const key = deriveKey(recoveryKey, salt);
@@ -372,27 +395,40 @@ export function encryptBackupBundle(
   };
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
   cipher.setAAD(envelopeAad(manifest), { plaintextLength: plaintextBytes });
-  const inputFd = fs.openSync(source, "r");
-  const outputFd = fs.openSync(destination, "wx", 0o600);
+  let outputFd: number | undefined;
   const buffer = Buffer.allocUnsafe(IO_CHUNK_BYTES);
+  const encryptedDigest = crypto.createHash("sha256");
+  let plaintextRead = 0;
   try {
+    outputFd = fs.openSync(destination, "wx", 0o600);
     while (true) {
       const read = fs.readSync(inputFd, buffer, 0, buffer.length, null);
       if (read === 0) break;
-      writeAll(outputFd, cipher.update(buffer.subarray(0, read)));
+      plaintextRead += read;
+      const encrypted = cipher.update(buffer.subarray(0, read));
+      encryptedDigest.update(encrypted);
+      writeAll(outputFd, encrypted);
     }
-    writeAll(outputFd, cipher.final());
+    if (plaintextRead !== plaintextBytes || fs.fstatSync(inputFd).size !== plaintextBytes) {
+      throw new Error("Backup bundle changed while it was being encrypted.");
+    }
+    const finalBytes = cipher.final();
+    encryptedDigest.update(finalBytes);
+    writeAll(outputFd, finalBytes);
+    manifest.payload.bytes = fs.fstatSync(outputFd).size;
   } catch (error) {
-    fs.closeSync(inputFd);
-    fs.closeSync(outputFd);
+    if (outputFd !== undefined) {
+      fs.closeSync(outputFd);
+      outputFd = undefined;
+    }
     fs.rmSync(destination, { force: true });
     throw error;
+  } finally {
+    fs.closeSync(inputFd);
+    if (outputFd !== undefined) fs.closeSync(outputFd);
   }
-  fs.closeSync(inputFd);
-  fs.closeSync(outputFd);
   manifest.protection.authTag = cipher.getAuthTag().toString("hex");
-  manifest.payload.bytes = fs.statSync(destination).size;
-  manifest.payload.sha256 = sha256File(destination);
+  manifest.payload.sha256 = encryptedDigest.digest("hex");
   return manifest;
 }
 
@@ -440,40 +476,40 @@ export function decryptBackupBundle(
   if (manifest.payload.file !== path.basename(source)) {
     throw new Error("Encrypted backup filename does not match its manifest.");
   }
-  const stat = fs.statSync(source);
-  if (stat.size !== manifest.payload.bytes || sha256File(source) !== manifest.payload.sha256) {
-    throw new Error("Encrypted backup payload hash or size does not match its manifest.");
-  }
-  const salt = Buffer.from(manifest.protection.salt, "hex");
-  const key = deriveKey(recoveryKey, salt);
-  const actualKeyId = Buffer.from(keyIdentifier(key), "hex");
-  const expectedKeyId = Buffer.from(manifest.protection.keyId, "hex");
-  if (!crypto.timingSafeEqual(actualKeyId, expectedKeyId)) {
-    throw new Error("Recovery credential does not match this backup set.");
-  }
-  const decipher = crypto.createDecipheriv(ALGORITHM, key, Buffer.from(manifest.protection.iv, "hex"));
-  decipher.setAAD(envelopeAad(manifest), { plaintextLength: manifest.protection.plaintextBytes });
-  decipher.setAuthTag(Buffer.from(manifest.protection.authTag, "hex"));
-  const inputFd = fs.openSync(source, "r");
-  const outputFd = fs.openSync(destination, "wx", 0o600);
-  const buffer = Buffer.allocUnsafe(IO_CHUNK_BYTES);
+  const { fd: inputFd, stat } = openRegularReadOnly(source);
   try {
-    while (true) {
-      const read = fs.readSync(inputFd, buffer, 0, buffer.length, null);
-      if (read === 0) break;
-      writeAll(outputFd, decipher.update(buffer.subarray(0, read)));
+    if (stat.size !== manifest.payload.bytes || sha256Fd(inputFd) !== manifest.payload.sha256) {
+      throw new Error("Encrypted backup payload hash or size does not match its manifest.");
     }
-    writeAll(outputFd, decipher.final());
-  } catch (error) {
-    fs.closeSync(inputFd);
+    const salt = Buffer.from(manifest.protection.salt, "hex");
+    const key = deriveKey(recoveryKey, salt);
+    const actualKeyId = Buffer.from(keyIdentifier(key), "hex");
+    const expectedKeyId = Buffer.from(manifest.protection.keyId, "hex");
+    if (!crypto.timingSafeEqual(actualKeyId, expectedKeyId)) {
+      throw new Error("Recovery credential does not match this backup set.");
+    }
+    const decipher = crypto.createDecipheriv(ALGORITHM, key, Buffer.from(manifest.protection.iv, "hex"));
+    decipher.setAAD(envelopeAad(manifest), { plaintextLength: manifest.protection.plaintextBytes });
+    decipher.setAuthTag(Buffer.from(manifest.protection.authTag, "hex"));
+    const outputFd = fs.openSync(destination, "wx", 0o600);
+    const buffer = Buffer.allocUnsafe(IO_CHUNK_BYTES);
+    try {
+      while (true) {
+        const read = fs.readSync(inputFd, buffer, 0, buffer.length, null);
+        if (read === 0) break;
+        writeAll(outputFd, decipher.update(buffer.subarray(0, read)));
+      }
+      writeAll(outputFd, decipher.final());
+      if (fs.fstatSync(outputFd).size !== manifest.protection.plaintextBytes) {
+        throw new Error("Decrypted backup size does not match its authenticated manifest.");
+      }
+    } catch (error) {
+      fs.closeSync(outputFd);
+      fs.rmSync(destination, { force: true });
+      throw new Error("Encrypted backup authentication failed.", { cause: error });
+    }
     fs.closeSync(outputFd);
-    fs.rmSync(destination, { force: true });
-    throw new Error("Encrypted backup authentication failed.", { cause: error });
-  }
-  fs.closeSync(inputFd);
-  fs.closeSync(outputFd);
-  if (fs.statSync(destination).size !== manifest.protection.plaintextBytes) {
-    fs.rmSync(destination, { force: true });
-    throw new Error("Decrypted backup size does not match its authenticated manifest.");
+  } finally {
+    fs.closeSync(inputFd);
   }
 }

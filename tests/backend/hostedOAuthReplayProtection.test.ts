@@ -64,7 +64,7 @@ describe('hosted OAuth replay protection', () => {
     expect(new URL(activated.authorizationUrl).hostname).toBe('accounts.google.com');
 
     await expect(consumeOAuthStateAsync(state!, 'gmail', 'x'.repeat(43))).rejects.toBeInstanceOf(OAuthStateError);
-    await expect(consumeOAuthStateAsync(state!, 'gmail', activated.bindingSecret)).resolves.toMatchObject({ userId: 'public-user' });
-    await expect(consumeOAuthStateAsync(state!, 'gmail', activated.bindingSecret)).rejects.toBeInstanceOf(OAuthStateError);
+    await expect(consumeOAuthStateAsync(state!, 'gmail', activated.bindingCookieValue)).resolves.toMatchObject({ userId: 'public-user' });
+    await expect(consumeOAuthStateAsync(state!, 'gmail', activated.bindingCookieValue)).rejects.toBeInstanceOf(OAuthStateError);
   });
 });

@@ -1,5 +1,6 @@
 import { randomBytes } from 'crypto';
-import { Router, type Request, type Response } from 'express';
+import { Router, type CookieOptions, type Request, type Response } from 'express';
+import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
 import {
   activateOAuthStateAsync,
   OAuthStateError,
@@ -8,22 +9,46 @@ import {
   completeProviderConnectionCallback,
   ProviderCallbackError,
 } from './providerConnections';
-import { getSessionCookieOptions } from './cookies';
 import { SESSION_COOKIE_NAME } from './sessionCookie';
+import { resolveClientIp } from './clientIp';
 
 const router = Router();
 type OAuthProvider = 'gmail' | 'outlook';
 const OAUTH_BINDING_MAX_AGE_MS = 10 * 60 * 1_000;
+const OAUTH_CALLBACK_LIMIT = 40;
+const OAUTH_STATE_PATTERN = /^[A-Za-z0-9_-]{1,2048}$/;
+const OAUTH_TICKET_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
+
+const oauthRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1_000,
+  limit: OAUTH_CALLBACK_LIMIT,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(resolveClientIp(req)),
+  message: { error: 'Too many OAuth requests. Return to LARO and try again later.' },
+});
 
 export function oauthFlowBindingCookieName(provider: OAuthProvider): string {
   return `laro_oauth_${provider}_binding`;
 }
 
-function oauthBindingCookieOptions(req: Request) {
+function oauthBindingCookieOptions(): CookieOptions {
   return {
-    ...getSessionCookieOptions(req),
+    httpOnly: true,
     path: '/',
+    sameSite: 'lax',
+    secure: true,
   };
+}
+
+function requiredQueryValue(
+  req: Request,
+  name: 'code' | 'state' | 'ticket',
+  pattern: RegExp,
+): string {
+  const value = req.query[name];
+  if (typeof value !== 'string' || !pattern.test(value)) throw new OAuthStateError();
+  return value;
 }
 
 function isLoopbackPeer(req: Request): boolean {
@@ -104,27 +129,18 @@ function sendCallbackPage(
 function callbackHandler(provider: OAuthProvider) {
   return async (req: Request, res: Response) => {
     try {
-      const code = typeof req.query.code === 'string' ? req.query.code : '';
-      const state = typeof req.query.state === 'string' ? req.query.state : '';
-      if (!code || !state) {
-        sendCallbackPage(res, {
-          success: false,
-          title: 'Connection failed',
-          message: 'The provider did not return the required authorization details.',
-          status: 400,
-        });
-        return;
-      }
+      const code = requiredQueryValue(req, 'code', /^\S{1,4096}$/);
+      const state = requiredQueryValue(req, 'state', OAUTH_STATE_PATTERN);
 
-      const bindingSecret = typeof req.cookies?.[oauthFlowBindingCookieName(provider)] === 'string'
+      const bindingCookieValue = typeof req.cookies?.[oauthFlowBindingCookieName(provider)] === 'string'
         ? req.cookies[oauthFlowBindingCookieName(provider)]
         : '';
-      res.clearCookie(oauthFlowBindingCookieName(provider), oauthBindingCookieOptions(req));
+      res.clearCookie(oauthFlowBindingCookieName(provider), oauthBindingCookieOptions());
       const connected = await completeProviderConnectionCallback({
         provider,
         code,
         state,
-        bindingSecret,
+        bindingCookieValue,
       });
 
       const providerName = provider === 'gmail' ? 'Google' : 'Microsoft';
@@ -157,9 +173,8 @@ function callbackHandler(provider: OAuthProvider) {
 function startHandler(provider: OAuthProvider) {
   return async (req: Request, res: Response) => {
     try {
-      const state = typeof req.query.state === 'string' ? req.query.state : '';
-      const ticket = typeof req.query.ticket === 'string' ? req.query.ticket : '';
-      if (!state || !ticket) throw new OAuthStateError();
+      const state = requiredQueryValue(req, 'state', OAUTH_STATE_PATTERN);
+      const ticket = requiredQueryValue(req, 'ticket', OAUTH_TICKET_PATTERN);
       const initiatingSessionToken = typeof req.cookies?.[SESSION_COOKIE_NAME] === 'string'
         ? req.cookies[SESSION_COOKIE_NAME]
         : '';
@@ -172,8 +187,8 @@ function startHandler(provider: OAuthProvider) {
       );
       res.cookie(
         oauthFlowBindingCookieName(provider),
-        activated.bindingSecret,
-        { ...oauthBindingCookieOptions(req), maxAge: OAUTH_BINDING_MAX_AGE_MS },
+        activated.bindingCookieValue,
+        { ...oauthBindingCookieOptions(), maxAge: OAUTH_BINDING_MAX_AGE_MS },
       );
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('Referrer-Policy', 'no-referrer');
@@ -194,8 +209,8 @@ function startHandler(provider: OAuthProvider) {
   };
 }
 
-router.get('/api/oauth/gmail/start', startHandler('gmail'));
-router.get('/api/oauth/outlook/start', startHandler('outlook'));
-router.get('/api/oauth/gmail/callback', callbackHandler('gmail'));
-router.get('/api/oauth/outlook/callback', callbackHandler('outlook'));
+router.get('/api/oauth/gmail/start', oauthRateLimiter, startHandler('gmail'));
+router.get('/api/oauth/outlook/start', oauthRateLimiter, startHandler('outlook'));
+router.get('/api/oauth/gmail/callback', oauthRateLimiter, callbackHandler('gmail'));
+router.get('/api/oauth/outlook/callback', oauthRateLimiter, callbackHandler('outlook'));
 export default router;

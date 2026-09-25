@@ -222,7 +222,10 @@ function providerAuthorizationUrl(
 }
 
 function digestProof(value: string): string {
-  return crypto.createHash('sha256').update(value).digest('hex');
+  return crypto.createHmac('sha256', ENV.JWT_SECRET)
+    .update('LARO OAuth flow proof v1\0')
+    .update(value)
+    .digest('hex');
 }
 
 function callbackUsesLoopback(): boolean {
@@ -338,15 +341,15 @@ export async function activateOAuthStateAsync(
   startTicket: string,
   initiatingSessionToken = '',
   loopbackRequest = false,
-): Promise<{ authorizationUrl: string; bindingSecret: string }> {
+): Promise<{ authorizationUrl: string; bindingCookieValue: string }> {
   const payload = decodeOAuthState(state, provider);
   if (!/^[A-Za-z0-9_-]{32,128}$/.test(startTicket)) throw new OAuthStateError();
-  const bindingSecret = toBase64Url(crypto.randomBytes(32));
+  const bindingCookieValue = toBase64Url(crypto.randomBytes(32));
   try {
     const store = await oauthFlowStore();
     const flow = await store.activate(state, {
       startTicketHash: digestProof(startTicket),
-      bindingHash: digestProof(bindingSecret),
+      bindingHash: digestProof(bindingCookieValue),
       provider,
       flowId: payload.flowId,
       now: Date.now(),
@@ -360,7 +363,7 @@ export async function activateOAuthStateAsync(
   }
   return {
     authorizationUrl: providerAuthorizationUrl(provider, state, payload.codeVerifier),
-    bindingSecret,
+    bindingCookieValue,
   };
 }
 
@@ -372,14 +375,14 @@ export async function activateOAuthStateAsync(
 export async function consumeOAuthStateAsync(
   state: string,
   provider: OAuthProvider,
-  bindingSecret: string,
+  bindingCookieValue: string,
 ): Promise<{ userId: string; codeVerifier: string }> {
   const payload = decodeOAuthState(state, provider);
-  if (!/^[A-Za-z0-9_-]{32,128}$/.test(bindingSecret)) throw new OAuthStateError();
+  if (!/^[A-Za-z0-9_-]{32,128}$/.test(bindingCookieValue)) throw new OAuthStateError();
   try {
     const store = await oauthFlowStore();
     const flow = await store.consume(state, {
-      bindingHash: digestProof(bindingSecret),
+      bindingHash: digestProof(bindingCookieValue),
       provider,
       flowId: payload.flowId,
       now: Date.now(),

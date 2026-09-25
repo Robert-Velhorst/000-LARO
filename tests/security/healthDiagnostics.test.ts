@@ -1,9 +1,9 @@
-import cookieParser from 'cookie-parser';
 import express from 'express';
 import { createServer, type Server } from 'node:http';
 import jwt from 'jsonwebtoken';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ENV } from '../../server/_core/env';
+import { cookieMiddleware } from '../../server/cookieMiddleware';
 import healthRoutes from '../../server/healthRoutes';
 import { listenHttpServer } from '../../server/listen';
 import { operationalMetricsMiddleware } from '../../server/operationalMetrics';
@@ -28,7 +28,7 @@ suite('public health and protected operator diagnostics', () => {
     const httpApp = express();
     httpApp.use(publicPathPrefixMiddleware);
     httpApp.use(operationalMetricsMiddleware);
-    httpApp.use(cookieParser());
+    httpApp.use(cookieMiddleware);
     httpApp.use(healthRoutes);
     server = createServer(httpApp);
     const port = await listenHttpServer(server, 0, '127.0.0.1');

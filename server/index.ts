@@ -31,8 +31,8 @@ for (const envPath of possibleEnvPaths) {
 import express from 'express';
 import { createServer } from 'http';
 import { createExpressMiddleware } from '@trpc/server/adapters/express';
-import cookieParser from 'cookie-parser';
 import { corsMiddleware, csrfGuard } from './_core/csrf';
+import { cookieMiddleware } from './cookieMiddleware';
 
 import { appRouter } from './routers';
 import { createContext } from './context';
@@ -91,7 +91,7 @@ app.use(csrfGuard);
 // API resources remain isolated; HSTS is emitted only for production HTTPS.
 app.use(securityHeaders);
 
-app.use(cookieParser());
+app.use(cookieMiddleware);
 // Scanner evidence uses a dedicated bounded binary route. Mount it before the
 // JSON parsers so valid 7 MB files are never Base64-expanded or tRPC-batched.
 app.use(scannerUploadRouter);

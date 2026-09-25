@@ -279,9 +279,9 @@ export async function completeProviderConnectionCallback(input: {
   provider: OAuthProvider;
   code: string;
   state: string;
-  bindingSecret: string;
+  bindingCookieValue: string;
 }): Promise<{ accountId: string; email: string }> {
-  const oauthState = await consumeOAuthStateAsync(input.state, input.provider, input.bindingSecret);
+  const oauthState = await consumeOAuthStateAsync(input.state, input.provider, input.bindingCookieValue);
   let tokens: OAuth2Tokens;
   try {
     tokens = await exchangeCodeForTokens(input.provider, input.code, oauthState.codeVerifier);

@@ -1,5 +1,4 @@
 import { createServer, type Server } from 'node:http';
-import cookieParser from 'cookie-parser';
 import express from 'express';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { and, eq } from 'drizzle-orm';
@@ -7,6 +6,7 @@ import { bootTestApp, sqliteAvailable, type TestApp } from '../helpers/app';
 import { buildUser } from '../factories';
 import oauth2CallbacksRouter from '../../server/oauth2Callbacks';
 import { beginOAuthFlowAsync } from '../../server/oauth2';
+import { cookieMiddleware } from '../../server/cookieMiddleware';
 
 const suite = sqliteAvailable ? describe : describe.skip;
 const nativeFetch = globalThis.fetch;
@@ -25,7 +25,7 @@ suite('OAuth initiating-browser binding', () => {
     app = await bootTestApp();
     await app.db.insert(app.schema.users).values(buildUser(attacker));
     const expressApp = express();
-    expressApp.use(cookieParser());
+    expressApp.use(cookieMiddleware);
     expressApp.use(oauth2CallbacksRouter);
     server = createServer(expressApp);
     await new Promise<void>((resolve) => {

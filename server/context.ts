@@ -25,17 +25,17 @@ export const createContext = async ({
 }): Promise<TrpcContext> => {
   const correlationId = randomUUID();
   res.setHeader('X-Correlation-ID', correlationId);
-  const sessionToken = req.cookies[COOKIE_NAME];
+  const sessionToken = typeof req.cookies?.[COOKIE_NAME] === "string"
+    ? req.cookies[COOKIE_NAME]
+    : "";
   let userId: string | null = null;
   let authScope: AuthScope | undefined;
   const desktopScanner = isDesktopScannerRequest(req);
 
-  if (sessionToken) {
-    const claims = await verifySessionToken(sessionToken);
-    if (claims) {
-      userId = claims.userId;
-      authScope = "session";
-    }
+  const claims = await verifySessionToken(sessionToken);
+  if (claims) {
+    userId = claims.userId;
+    authScope = "session";
   }
 
   if (!userId) return { req, res, user: null, desktopScanner: false, correlationId };
