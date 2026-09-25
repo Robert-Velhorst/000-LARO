@@ -9,8 +9,9 @@ tech-debt register (docs/TECH_DEBT.md) with maintainability observations.
 - **Single retry primitive:** the job runner now delegates to `server/retry.ts`
   (`retryWithBackoff`) instead of a bespoke inline loop (Phase 110) — one tested
   implementation, `isRetryable` gating added.
-- **Reusable system switches:** emergency stop + per-user flags share
-  `server/systemState.ts` (get/set on `system_config`) — no duplicated config I/O.
+- **Explicit operational controls:** the emergency stop has its audited
+  `server/systemState.ts` contract, while the only maintained rollout flag is
+  defined and consumer-checked in `server/featureFlags.ts`.
 - **Honest confidence:** hardcoded confidence constants replaced by
   `scoreToConfidence` derived from real scores (Phase 107).
 
@@ -18,7 +19,7 @@ tech-debt register (docs/TECH_DEBT.md) with maintainability observations.
 | Area | Observation | Suggested refactor |
 |---|---|---|
 | `shared/` vs `src/shared/` | duplicated trees (D8) | merge into one |
-| Money/counts as TEXT (D13) | parsing scattered | typed accessors / numeric columns |
+| Retired monetary compatibility fields (D13) | isolated from the active model | inspect the read-only `legacy_billing_archive` only for migration/audit work; never reintroduce payment policy |
 | Router file `index.ts` | large; many inline routers | split inline routers into files |
 | Renderer types (D2) | ~425 tsc errors | incremental typing, then gate |
 | Dead deps (D6) | pdfkit/archiver/tesseract/stripe unused | remove or implement |

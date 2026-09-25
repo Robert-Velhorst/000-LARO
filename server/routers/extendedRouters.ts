@@ -26,9 +26,10 @@ import {
   channelIntegrations,
 } from "../schema";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { assertCaseOwnership } from "../_core/authz";
+import { assertCaseAccess, assertCaseOwnership } from "../_core/authz";
 import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "../audit";
 import { nanoid } from "nanoid";
+import { projectEvidenceForExport } from "../evidenceExport";
 
 const count = sql<number>`count(*)`;
 async function n(q: Promise<Array<{ c: number }>>): Promise<number> {
@@ -303,12 +304,12 @@ export const caseManagementRouter = router({
     return rows.map((r: any) => ({ action: r.action || "", at: r.createdAt }));
   }),
   exportCase: protectedProcedure.input(z.object({ caseId: z.string() })).query(async ({ input, ctx }) => {
-    await assertCaseOwnership(input.caseId, ctx.user.id);
+    await assertCaseAccess(input.caseId, ctx.user.id);
     const db = await getDb();
     if (!db) throw new Error("Database not available");
     const [c] = await db.select().from(casesTable).where(eq(casesTable.id, input.caseId)).limit(1);
     const ev = await db.select().from(evidenceRecords).where(eq(evidenceRecords.caseId, input.caseId));
-    return { format: "laro-case-export/v1", case: c ?? null, evidence: ev };
+    return { format: "laro-case-export/v1", case: c ?? null, evidence: ev.map(projectEvidenceForExport) };
   }),
   getUpcomingDeadlines: protectedProcedure.input(z.object({
     caseId: z.string().optional(), completed: z.boolean().optional(),
@@ -454,20 +455,6 @@ export const syncSchedulerRouter = router({
     await setSystemSwitch(`autosync:${ctx.user.id}`, false);
     return { enabled: false };
   }),
-});
-
-/* ─── trello (maps to real config; honest unavailable when not configured) ─ */
-export const trelloRouter = router({
-  getStatus: protectedProcedure.query(() => ({ connected: false, configured: !!process.env.TRELLO_API_KEY })),
-  getOAuthUrl: protectedProcedure.query(() => {
-    if (!process.env.TRELLO_API_KEY) return { url: null as string | null, reason: "Trello is not configured (TRELLO_API_KEY missing)." };
-    return { url: null as string | null, reason: "Trello OAuth is not enabled in this build." };
-  }),
-  listBoards: protectedProcedure.query((): Array<{ id: string; name: string }> => []),
-  listLists: protectedProcedure.input(z.object({ boardId: z.string() }).optional()).query((): Array<{ id: string; name: string }> => []),
-  listCards: protectedProcedure.input(z.object({ listId: z.string() }).optional()).query((): Array<{ id: string; name: string }> => []),
-  syncBoards: protectedProcedure.mutation(() => ({ synced: 0, reason: "Trello not connected." })),
-  disconnect: protectedProcedure.mutation(() => ({ ok: true as const })),
 });
 
 /* ─── unifiedInbox (real: conversationThreads + unifiedMessages) ─────────── */

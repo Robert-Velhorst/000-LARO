@@ -1,12 +1,13 @@
 # Data Reconciliation & Repair
 
-Updated: 2026-07-20
+Updated: 2026-09-23
 
-Recent tables use declared SQLite foreign keys. Historical tables cannot gain
-foreign keys without destructive table rebuilds, so database startup installs
-equivalent insert, update, and parent-delete triggers for case, user, account,
-lawyer, settings, file-tag, and conversation relationships. Existing rows are
-not silently changed when those guards are installed.
+All maintained owner, case, account, lawyer, settings, file-tag, and conversation
+relationships are declared as native SQLite foreign keys in `server/schema.ts`.
+Migration `0031` performs a backup-guarded transactional rebuild for historical
+tables that lack those declarations. It preserves valid rows and user-created
+indexes, removes the retired `laro_ri_*` trigger layer, and fails before mutation
+when existing relationship orphans require an operator decision.
 
 `server/reconcile.ts` detects historical drift across the same relationship
 registry and supports an explicit transactional repair.
@@ -26,7 +27,10 @@ and column counts. It only removes rows whose referenced parent is absent. Creat
 and validate a backup before repairing a real target database.
 
 ## Verification
-`tests/backend/relationshipIntegrity.backend.test.ts` verifies guard installation,
-insert/update rejection, parent-delete cascading, non-destructive startup over a
-legacy orphan, relationship reporting, and explicit repair. Production readiness
-also fails closed when a required trigger is missing.
+`tests/backend/relationshipIntegrity.backend.test.ts` verifies native-key
+installation, insert/update rejection, parent-delete cascading, relationship
+reporting, and explicit repair. `tests/backend/sqliteMigrationBaseline.test.ts`
+also upgrades a populated pre-0031 fixture and proves row/index preservation,
+cascade, set-null, and restrict behavior, legacy-trigger removal, and a clean
+`PRAGMA foreign_key_check`. Production readiness fails closed on either a missing
+declaration or an existing violation.

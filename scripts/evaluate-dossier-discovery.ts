@@ -57,6 +57,7 @@ async function main() {
   const { analyzeDocumentBytes } = await import("../server/documentIntelligence");
   const preferences: WorkflowPreferences = { analysisMode: "local", analysisProvider: "ollama",
     autoAnalyzeImports: true, autoOrganizeDocuments: true, shareRawDocumentContent: false,
+    externalDocumentSharingConsent: null,
     outreachReviewMode: "each", messageApprovalMode: "each" };
   const nativeFetch = globalThis.fetch;
   let transport: Array<Record<string, unknown>> = [];
@@ -94,7 +95,7 @@ async function main() {
       transport = [];
       const start = performance.now();
       const analysis = await analyzeDocumentBytes({ bytes: Buffer.from(sample.source), mimeType: "text/plain", deepAnalysis: false });
-      const decision = await discoverDossier({ analysis, sourceText: sample.source, cases: sample.cases, preferences });
+      const decision = await discoverDossier({ ownerId: "LOCAL-EVALUATION", analysis, sourceText: sample.source, cases: sample.cases, preferences });
       const exact = decision.action === sample.expectedAction && decision.caseId === sample.expectedCaseId;
       if (exact) report.exactMatches++;
       else if (decision.action !== "review") report.nonmatchingAutomaticDecisions++;

@@ -21,6 +21,7 @@ async function main() {
   const file = parsed.file;
   const desktopSecretsPath = parsed.desktopSecretsPath || process.env.LARO_DESKTOP_SECRETS_PATH;
   const localStoragePath = parsed.localStoragePath || process.env.LARO_LOCAL_STORAGE_PATH;
+  const recoveryKeyPath = parsed.recoveryKeyPath || process.env.LARO_RECOVERY_KEY_FILE;
 
   if (commandOrDest === '--restore') {
     if (!file) throw new Error('Usage: npm run db:restore -- <backup.sqlite>');
@@ -28,6 +29,7 @@ async function main() {
       const result = await restoreBackupSet(file, {
         desktopSecretsPath,
         localStoragePath,
+        recoveryKeyPath,
         allowMissingStorage: parsed.allowMissingStorage,
       });
       console.log(`[Restore] Restored verified backup set ${path.resolve(file)}.`);
@@ -52,7 +54,7 @@ async function main() {
   if (commandOrDest === '--validate') {
     if (!file) throw new Error('Usage: npm run db:validate -- <backup.sqlite>');
     if (fs.existsSync(backupSetManifestPath(file))) {
-      const result = validateBackupSet(file);
+      const result = validateBackupSet(file, { recoveryKeyPath });
       if (!result.valid) throw new Error(`Invalid backup set: ${result.reason}`);
       if (result.storageCoverage === 'legacy-missing' || result.storageCoverage === 'legacy-external-s3') {
         console.warn(
@@ -82,11 +84,11 @@ async function main() {
     'db-backups',
     `${path.basename(dbPath)}.${timestamp()}.bak`,
   );
-  const result = await createBackupSet(destination, { desktopSecretsPath, localStoragePath });
+  const result = await createBackupSet(destination, { desktopSecretsPath, localStoragePath, recoveryKeyPath });
   console.log(`[Backup] Wrote ${result.bytes} database bytes to ${result.databasePath}`);
   console.log(`[Backup] Recovery manifest: ${result.manifestPath}`);
-  console.log(`[Backup] Desktop secrets: ${result.secretsPath || 'external environment; retain JWT_SECRET separately'}`);
-  console.log(`[Backup] Evidence snapshot: ${result.storagePath || 'not bundled'}`);
+  console.log('[Backup] Database, application secrets, and evidence are inside the encrypted payload.');
+  console.log('[Backup] Keep the separate recovery credential outside the backup destination.');
 }
 
 main().catch((error) => {

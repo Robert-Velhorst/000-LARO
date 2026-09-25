@@ -8,6 +8,8 @@ interface Window {
     setConfig: (config: unknown) => Promise<unknown>;
     selectFolder: () => Promise<string[] | null>;
     startLocalSource?: () => Promise<{ id: string } | null>;
+    exportScannerHistory?: () => Promise<{ ownerId: string; scans: unknown[]; files: unknown[] }>;
+    eraseScannerHistory?: (ownerId: string) => Promise<{ scans: number; files: number }>;
   };
 }
 

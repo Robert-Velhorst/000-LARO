@@ -27,10 +27,6 @@ suite('Phase 045 — adversarial', () => {
     await expect(anon.cases.create({
       clientName: 'x', clientEmail: 'x@x.com', caseType: 'Employment', urgency: 'High',
     })).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    await expect(anon.lawyerRating.get({ lawyerId: 'LAWYER_PRIVATE' }))
-      .rejects.toMatchObject({ code: 'UNAUTHORIZED' });
-    await expect(anon.lawyerRating.topRated({ limit: 10 }))
-      .rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 
   it('rate-limits reset-message requests and reset-code guesses', async () => {

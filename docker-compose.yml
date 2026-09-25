@@ -22,6 +22,9 @@ services:
       PUBLIC_PATH_PREFIX: ${LARO_PUBLIC_PATH_PREFIX:-}
       LARO_PUBLIC_DEPLOYMENT_REQUIRED: ${LARO_PUBLIC_DEPLOYMENT_REQUIRED:-false}
       LARO_REQUIRED_LIVE_PROVIDERS: ${LARO_REQUIRED_LIVE_PROVIDERS:-}
+      # The published port is host-loopback-only. Trust the isolated Compose
+      # network hop so ngrok's appended client address can be used safely.
+      LARO_TRUSTED_PROXY_CIDRS: ${LARO_TRUSTED_PROXY_CIDRS:-loopback,linklocal,uniquelocal}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-}
@@ -34,6 +37,7 @@ services:
       DATABASE_URL: /data/laro-server.sqlite
       LOCAL_STORAGE_DIR: /data/uploads
       LARO_BACKUP_DIRECTORY: /backups
+      LARO_RECOVERY_KEY: ${LARO_RECOVERY_KEY:-}
       LARO_BACKUP_DESTINATION_KIND: ${LARO_BACKUP_DESTINATION_KIND:-local}
       LARO_BACKUP_RETENTION_COUNT: ${LARO_BACKUP_RETENTION_COUNT:-14}
       LARO_BACKUP_RETENTION_DAYS: ${LARO_BACKUP_RETENTION_DAYS:-30}

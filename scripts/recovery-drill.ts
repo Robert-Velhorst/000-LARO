@@ -28,6 +28,7 @@ async function main() {
   const storageKey = 'evidence/recovery/source.txt';
   const evidencePath = join(storagePath, ...storageKey.split('/'));
   const originalEvidence = 'recovery drill evidence bytes';
+  const recoveryKey = 'recovery-drill-key-material-'.padEnd(64, '7');
   writeFileSync(secretsPath, JSON.stringify(originalSecrets, null, 2), { mode: 0o600 });
   mkdirSync(dirname(evidencePath), { recursive: true });
   writeFileSync(evidencePath, originalEvidence, { encoding: 'utf8', flag: 'wx' });
@@ -49,7 +50,14 @@ async function main() {
   });
 
   const backupPath = join(workDir, 'verified-backup.sqlite');
-  await backup.createBackupSet(backupPath, { desktopSecretsPath: secretsPath });
+  await backup.createBackupSet(backupPath, { desktopSecretsPath: secretsPath, recoveryKey });
+  const encryptedPayload = readFileSync(backupPath);
+  if (encryptedPayload.subarray(0, 16).toString('utf8').startsWith('SQLite format 3')) {
+    throw new Error('Published recovery payload is still a plaintext SQLite database');
+  }
+  if (encryptedPayload.includes(Buffer.from(originalEvidence)) || encryptedPayload.includes(Buffer.from(originalSecrets.jwtSecret))) {
+    throw new Error('Published recovery payload exposes evidence or application secrets');
+  }
   (db as any).$client.prepare('DELETE FROM users WHERE id = ?').run(marker);
   writeFileSync(secretsPath, JSON.stringify({
     jwtSecret: 'c'.repeat(64),
@@ -57,7 +65,7 @@ async function main() {
   }, null, 2), { mode: 0o600 });
   writeFileSync(evidencePath, 'changed evidence bytes', 'utf8');
 
-  const restored = await backup.restoreBackupSet(backupPath, { desktopSecretsPath: secretsPath });
+  const restored = await backup.restoreBackupSet(backupPath, { desktopSecretsPath: secretsPath, recoveryKey });
   const reopened = await getDb();
   const row = (reopened as any).$client.prepare('SELECT id FROM users WHERE id = ?').get(marker);
   if (!row) throw new Error('Round-trip restore did not recover the marker row');

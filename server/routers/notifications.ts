@@ -1,8 +1,45 @@
 import { z } from "zod";
 import { router, protectedProcedure } from "../_core/trpc";
 import { getDb } from "../db";
-import { notifications } from "../schema";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { cases, evidence, lawyers, notifications, outreachStatus } from "../schema";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import {
+  buildNotificationDestination,
+  isNotificationKind,
+  isRegisteredNotificationDestination,
+  type NotificationKind,
+} from "../../shared/notifications";
+
+function parseMetadata(value: string | null): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function requiredContextExists(kind: NotificationKind, row: {
+  caseId: string | null;
+  lawyerId: string | null;
+  evidenceFileId: string | null;
+}): boolean {
+  switch (kind) {
+    case "lawyer_response":
+    case "new_match":
+      return Boolean(row.caseId && row.lawyerId);
+    case "case_status_change":
+    case "deadline_reminder":
+      return Boolean(row.caseId);
+    case "evidence_uploaded":
+      return Boolean(row.caseId && row.evidenceFileId);
+    case "system_announcement":
+      return !row.caseId && !row.lawyerId && !row.evidenceFileId;
+  }
+}
 
 /**
  * Notifications router — minimal implementation backed by the
@@ -31,19 +68,71 @@ export const notificationsRouter = router({
         .where(eq(notifications.userId, ctx.user.id))
         .orderBy(desc(notifications.createdAt))
         .limit(input.limit);
-      // Shape rows for the renderer — it expects both `read` and `isRead`
-      // (legacy alias) plus an optional `actionUrl` for click-through.
-      return rows.map((n) => ({
-        id: n.id,
-        userId: n.userId,
-        type: "system_announcement" as const,
-        title: n.title || "Notification",
-        message: n.body || "",
-        read: !!n.read,
-        isRead: !!n.read,
-        actionUrl: null as string | null,
-        createdAt: n.createdAt || new Date(),
-      }));
+
+      const caseIds = [...new Set(rows.flatMap((row) => row.caseId ? [row.caseId] : []))];
+      const evidenceIds = [...new Set(rows.flatMap((row) => row.evidenceFileId ? [row.evidenceFileId] : []))];
+      const lawyerIds = [...new Set(rows.flatMap((row) => row.lawyerId ? [row.lawyerId] : []))];
+      const [ownedCaseRows, ownedEvidenceRows, lawyerRows, caseLawyerRows] = await Promise.all([
+        caseIds.length
+          ? db.select({ id: cases.id }).from(cases).where(and(eq(cases.userId, ctx.user.id), inArray(cases.id, caseIds)))
+          : Promise.resolve([]),
+        evidenceIds.length
+          ? db.select({ id: evidence.id, caseId: evidence.caseId }).from(evidence).where(and(eq(evidence.userId, ctx.user.id), inArray(evidence.id, evidenceIds)))
+          : Promise.resolve([]),
+        lawyerIds.length
+          ? db.select({ id: lawyers.id }).from(lawyers).where(inArray(lawyers.id, lawyerIds))
+          : Promise.resolve([]),
+        caseIds.length && lawyerIds.length
+          ? db.select({ caseId: outreachStatus.caseId, lawyerId: outreachStatus.lawyerId }).from(outreachStatus).where(and(
+            inArray(outreachStatus.caseId, caseIds),
+            inArray(outreachStatus.lawyerId, lawyerIds),
+          ))
+          : Promise.resolve([]),
+      ]);
+      const ownedCaseIds = new Set(ownedCaseRows.map((row) => row.id));
+      const ownedEvidence = new Map(ownedEvidenceRows.map((row) => [row.id, row.caseId]));
+      const existingLawyerIds = new Set(lawyerRows.map((row) => row.id));
+      const caseLawyerPairs = new Set(caseLawyerRows.map((row) => `${row.caseId}\u0000${row.lawyerId}`));
+
+      return rows.map((n) => {
+        const kind: NotificationKind = isNotificationKind(n.kind) ? n.kind : "system_announcement";
+        const referencesAreOwned = requiredContextExists(kind, n)
+          && (!n.caseId || ownedCaseIds.has(n.caseId))
+          && (!n.evidenceFileId || ownedEvidence.get(n.evidenceFileId) === n.caseId)
+          && (!n.lawyerId || (
+            existingLawyerIds.has(n.lawyerId)
+            && Boolean(n.caseId)
+            && caseLawyerPairs.has(`${n.caseId}\u0000${n.lawyerId}`)
+          ));
+        const context = referencesAreOwned
+          ? { caseId: n.caseId, lawyerId: n.lawyerId, evidenceFileId: n.evidenceFileId }
+          : { caseId: null, lawyerId: null, evidenceFileId: null };
+        const expectedDestination = referencesAreOwned ? buildNotificationDestination(kind, context) : null;
+        const destinationAvailable = expectedDestination !== null
+          && isRegisteredNotificationDestination(n.actionUrl, kind, context);
+        const destinationStatus = kind === "system_announcement" && referencesAreOwned
+          ? "not_applicable" as const
+          : destinationAvailable
+            ? "available" as const
+            : "unavailable" as const;
+
+        return {
+          id: n.id,
+          userId: n.userId,
+          type: kind,
+          title: n.title || "Notification",
+          message: n.body || "",
+          read: !!n.read,
+          isRead: !!n.read,
+          actionUrl: destinationAvailable ? expectedDestination : null,
+          destinationStatus,
+          metadata: referencesAreOwned ? parseMetadata(n.metadata) : null,
+          caseId: context.caseId,
+          lawyerId: context.lawyerId,
+          evidenceFileId: context.evidenceFileId,
+          createdAt: n.createdAt || new Date(),
+        };
+      });
     }),
 
   unreadCount: protectedProcedure.query(async ({ ctx }) => {

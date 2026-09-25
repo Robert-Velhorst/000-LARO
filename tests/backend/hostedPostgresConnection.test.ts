@@ -31,26 +31,45 @@ suite('hosted PostgreSQL connection', () => {
 
   it('applies the complete LARO baseline and exposes its core tables', async () => {
     database ??= createHostedDatabase({ connectionString: connectionString! });
-    await expect(applyHostedMigrations(database)).resolves.toEqual(['0001_laro_baseline.sql']);
+    await expect(applyHostedMigrations(database)).resolves.toEqual([
+      '0001_laro_baseline.sql',
+      '0002_case_shares.sql',
+      '0003_account_email_identity.sql',
+      '0004_password_reset_budget.sql',
+      '0005_typed_clarifications.sql',
+      '0006_atomic_outreach_initiation.sql',
+      '0007_retire_lawyer_rating.sql',
+    ]);
     await expect(applyHostedMigrations(database)).resolves.toEqual([]);
     const tables = await database.transaction(async (client) => {
       const result = await client.query<{ table_name: string }>(`
         SELECT table_name
         FROM information_schema.tables
         WHERE table_schema = 'public'
-          AND table_name IN ('users', 'cases', 'evidence', 'document_analyses', 'outreach_status', 'storage_deletion_queue')
+          AND table_name IN ('users', 'cases', 'case_shares', 'evidence', 'document_analyses', 'outreach_status', 'storage_deletion_queue')
         ORDER BY table_name
       `);
       return result.rows.map((row) => row.table_name);
     });
     expect(tables).toEqual([
       'cases',
+      'case_shares',
       'document_analyses',
       'evidence',
       'outreach_status',
       'storage_deletion_queue',
       'users',
     ]);
+    const retiredTables = await database.transaction(async (client) => {
+      const result = await client.query<{ table_name: string }>(`
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name IN ('lawyer_ratings', 'lawyer_interactions', 'rating_calculation_logs')
+      `);
+      return result.rows.map((row) => row.table_name);
+    });
+    expect(retiredTables).toEqual([]);
 
     await database.transaction(async (client) => {
       await client.query(`

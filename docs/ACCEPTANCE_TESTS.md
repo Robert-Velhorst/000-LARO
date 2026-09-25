@@ -1,7 +1,10 @@
 # Acceptance Test Matrix
 
-Current as of 2026-08-14. Automated criteria exercise real tRPC procedures and
+Current as of 2026-09-23. Automated criteria exercise real tRPC procedures,
+HTTP middleware, renderer behavior, provider mocks at transport boundaries, and
 temporary SQLite databases; they do not contact external people or accounts.
+The evidence policy and per-test regression inventory are recorded in
+[`TEST_QUALITY_REVIEW.md`](TEST_QUALITY_REVIEW.md).
 
 | ID | Criterion | Evidence | Status |
 | --- | --- | --- | --- |
@@ -18,7 +21,7 @@ temporary SQLite databases; they do not contact external people or accounts.
 | AC11 | Export and erase user data | acceptance and GDPR suites | Automated |
 | AC12 | Prevent cross-user access | isolation and outreach lifecycle suites | Automated |
 | AC13 | Reject hostile input and unsafe paths | adversarial and file-safety suites | Automated |
-| AC14 | Recover validated SQLite, matching desktop encryption secrets, and referenced local evidence while preserving every previous path | backup-set suite and blocking recovery drill | Automated |
+| AC14 | Decrypt and recover validated SQLite, matching desktop secrets, and referenced evidence with a separately escrowed recovery key while preserving every previous path | backup-envelope suite and blocking recovery drill | Automated |
 | AC15 | Boot the packaged desktop on a free loopback port | clean-profile packaged runtime probe | Automated locally |
 | AC16 | Discover media/organization candidates without sharing case prose | `tests/backend/outreachDirectory.test.ts` | Automated with a controlled public-search response |
 | AC17 | Prevent unreviewed or rejected targets from appearing as active case matches | `tests/backend/outreachDirectory.test.ts` | Automated |
@@ -32,6 +35,10 @@ temporary SQLite databases; they do not contact external people or accounts.
 | AC25 | Run a resumable owner-only live outbound self-test, retain signed redacted proof, and remove transient business rows | `tests/security/liveOutboundAcceptance.test.ts` | Automated with injected delivery and inbox providers; target environment requires the operator command |
 | AC26 | Persist, analyze, retrieve, and audit one owner-only Gmail source through an integrity-checked HTTP link, retain signed redacted proof, and remove transient data | `tests/security/liveGoogleEvidenceAcceptance.test.ts`, `tests/security/evidenceAccess.test.ts` | Automated with controlled Gmail and HTTP boundaries; target environment requires the operator command |
 | AC27 | Persist, analyze, retrieve, and audit one owner-only Drive file with evidence and provider provenance, retain signed redacted proof, and remove transient data | `tests/security/liveGoogleDriveEvidenceAcceptance.test.ts`, `tests/security/evidenceAccess.test.ts` | Automated with controlled Drive and HTTP boundaries; target environment requires the operator command |
+| AC28 | Keep one Drive ingestion path and prove canonical create, unchanged skip, changed revision, bounded partial result, and failed-revision preservation | `tests/e2e/googleDriveCanonical.e2e.test.ts`, `tests/backend/googleDriveAccountSelection.test.ts`, `tests/security/productionReadiness.test.ts` | Automated with controlled Drive responses and real tRPC, SQLite, and managed-storage boundaries |
+| AC29 | Bind legal drafts to a reviewed recipient and immutable source/input snapshot; serve exact reviewed bytes with owner-only historical re-download, content-free audit, and account erasure | `tests/backend/legalDraftSnapshots.test.ts`, acceptance and production-readiness suites | Automated with real tRPC, SQLite, SHA-256, one-use download-ticket, ownership, and erasure boundaries |
+| AC30 | Preserve the integrated consent and workflow boundaries across cloud processing, reviewed HAI scope, minimal public health, run-scoped discovery, shared Google revocation, failure-aware research/search, fresh derived analysis, durable notifications, canonical Drive ingestion, and reviewed draft versions | Focused backend/e2e/security suites plus `tests/browser/rendererAccessibility.spec.ts`; consolidated evidence in `FOURTH_ROUND_VERIFICATION.md` | Automated on recorded implementation commit `dc3884b`; public deployment and native Windows acceptance remain external |
+| AC31 | Preserve scanner ownership and retention, enforced optional analytics, fresh verified provider-aware account erasure, explicit assistant context, truthful Home workflow state, restart-safe canonical collection monitoring, and the absence of callable Trello/Telegram connectors together | Focused backend/e2e/security suites, maintained-source audit, complete gate, stable-Chrome suite, fresh-database/recovery checks, scans, Docker build, and Windows packaging; consolidated evidence in `FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md` | Automated on recorded implementation commit `ec94985`; protected GitHub checks, native Windows execution, provider retest, data migration, and Hetzner acceptance remain external |
 
 ## Target-Environment Acceptance
 

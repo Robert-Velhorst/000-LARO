@@ -11,8 +11,14 @@ import {
   initDatabase as initAgentDb,
   closeDatabase as closeAgentDb,
   createScan,
+  cancelPausedScanUpload,
+  getScan,
   getScanFiles,
+  getScanCaseId,
   setScanFileSelection,
+  cleanupOldScans,
+  exportScannerHistory,
+  eraseScannerHistory,
 } from './database';
 import { FileScanner } from './scanner';
 import { FileUploader } from './uploader';
@@ -20,8 +26,11 @@ import { isDesktopDevelopmentMode, resolveDesktopServerPort } from './desktopPor
 import { acquireSingleInstanceLock } from './singleInstance';
 import { installDenyByDefaultPermissions } from './sessionPermissions';
 import { ensureDesktopSecrets } from './desktopSecrets';
+import { ensureDesktopRecoveryKey } from './desktopRecoveryKey';
 import { loadProtectedProviderConfig } from './providerConfig';
-import { getDesktopScannerAuth, getRemoteUploadAuth, createDesktopScannerHeaders } from './scannerAuth';
+import { createDesktopScannerHeaders } from './scannerAuth';
+import { COOKIE_NAME } from '../shared/const';
+import { resolveScannerOwner, type ScannerOwner } from './scannerOwner';
 import { resolveDesktopConnection } from './remoteConnection';
 import { pickAndStartLocalSource } from './documentSources';
 import { createTRPCProxyClient, httpBatchLink } from '@trpc/client';
@@ -53,8 +62,16 @@ process.on('unhandledRejection', (reason) => {
 
 let scanPanel: BrowserWindow | null = null;
 let currentScanner: FileScanner | null = null;
+let scanStarting = false;
 let currentUploader: FileUploader | null = null;
 let uploadStarting = false;
+let currentScannerOwnerId: string | null = null;
+let currentScannerScanId: string | null = null;
+let currentScannerTask: Promise<void> | null = null;
+let currentUploaderOwnerId: string | null = null;
+let currentUploaderScanId: string | null = null;
+let currentUploaderTask: Promise<void> | null = null;
+let scannerSessionEpoch = 0;
 const approvedScanFolders = new Set<string>();
 
 let agentConfig: AgentConfig = {
@@ -62,6 +79,7 @@ let agentConfig: AgentConfig = {
   apiUrl: laroUrl,
   deviceName: os.hostname(),
 };
+let agentConfigOwnerId: string | null = null;
 
 function getPlatform(): Platform {
   if (process.platform === 'win32') return 'windows';
@@ -84,11 +102,97 @@ function assertTrustedIpc(event: Electron.IpcMainInvokeEvent): void {
   if (!isTrustedAppUrl(senderUrl)) throw new Error('Blocked IPC from an untrusted renderer');
 }
 
+async function ownerForScanner(event: Electron.IpcMainInvokeEvent, caseId?: string): Promise<ScannerOwner> {
+  assertTrustedIpc(event);
+  if (!isTrustedAppUrl(agentConfig.apiUrl)) throw new Error('Scanner API URL is not trusted');
+  return resolveScannerOwner({
+    apiUrl: agentConfig.apiUrl,
+    cookieStore: event.sender.session.cookies,
+    cookieName: process.env.LARO_SESSION_COOKIE_NAME,
+    scannerSecret: process.env.LARO_DESKTOP_SCANNER_SECRET || '',
+    remote: Boolean(remoteServerUrl),
+    caseId,
+  });
+}
+
+async function ownerForScan(event: Electron.IpcMainInvokeEvent, scanId: string): Promise<ScannerOwner | null> {
+  const owner = await ownerForScanner(event);
+  const caseId = getScanCaseId(scanId, owner.ownerId);
+  if (!caseId) return null;
+  await owner.assertCurrent(caseId);
+  return owner;
+}
+
+function installScannerSessionWatcher(): void {
+  const cookieName = remoteServerUrl ? COOKIE_NAME : process.env.LARO_SESSION_COOKIE_NAME || COOKIE_NAME;
+  const hostname = new URL(laroUrl).hostname;
+  session.defaultSession.cookies.on('changed', (_event, cookie) => {
+    const domain = cookie.domain?.replace(/^\./, '');
+    if (cookie.name !== cookieName || (domain && hostname !== domain && !hostname.endsWith(`.${domain}`))) return;
+    scannerSessionEpoch += 1;
+    currentScanner?.stop();
+    currentUploader?.stop();
+    approvedScanFolders.clear();
+    agentConfig = { ...agentConfig, caseId: null };
+    agentConfigOwnerId = null;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.SCAN_SESSION_CHANGED);
+    }
+    if (scanPanel && !scanPanel.isDestroyed()) {
+      scanPanel.webContents.send(IPC_CHANNELS.SCAN_SESSION_CHANGED);
+      scanPanel.webContents.reload();
+    }
+  });
+}
+
+function installScannerRetentionSweep(): void {
+  const run = () => {
+    try {
+      const active = [currentScannerScanId, currentUploaderScanId].filter((id): id is string => Boolean(id));
+      const result = cleanupOldScans(new Date(), active);
+      log.info('[ScannerRetention] 30-day sweep completed', result);
+    } catch (error) {
+      log.error('[ScannerRetention] 30-day sweep failed', error);
+    }
+  };
+  run();
+  setInterval(run, 24 * 60 * 60 * 1_000).unref();
+}
+
+async function stopAndEraseScannerHistory(ownerId: string): Promise<{ scans: number; files: number }> {
+  scannerSessionEpoch += 1;
+  if (currentScannerOwnerId === ownerId) currentScanner?.stop();
+  if (currentUploaderOwnerId === ownerId) currentUploader?.stop();
+  await Promise.allSettled([
+    ...(currentScannerOwnerId === ownerId && currentScannerTask ? [currentScannerTask] : []),
+    ...(currentUploaderOwnerId === ownerId && currentUploaderTask ? [currentUploaderTask] : []),
+  ]);
+  const result = eraseScannerHistory(ownerId);
+  approvedScanFolders.clear();
+  agentConfig = { ...agentConfig, caseId: null };
+  agentConfigOwnerId = null;
+  scanPanel?.webContents.send(IPC_CHANNELS.SCAN_SESSION_CHANGED);
+  log.info('[ScannerPrivacy] Erased owner-scoped scanner history', result);
+  return result;
+}
+
 function isOAuthProviderUrl(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl);
     if (url.protocol !== 'https:') return false;
     return url.hostname === 'accounts.google.com' || url.hostname === 'login.microsoftonline.com';
+  } catch {
+    return false;
+  }
+}
+
+function isOAuthStartUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.origin === new URL(laroUrl).origin &&
+      /\/api\/oauth\/(gmail|outlook)\/start$/.test(url.pathname) &&
+      Boolean(url.searchParams.get('state')) &&
+      Boolean(url.searchParams.get('ticket'));
   } catch {
     return false;
   }
@@ -102,7 +206,7 @@ function hardenWindowNavigation(window: BrowserWindow): void {
     }
   });
   window.webContents.setWindowOpenHandler(({ url }: { url: string }) => {
-    if (isOAuthProviderUrl(url)) {
+    if (isOAuthProviderUrl(url) || isOAuthStartUrl(url)) {
       // Google forbids OAuth inside embedded user agents. Use the operating
       // system browser and let the renderer poll the saved connection state.
       void openExternalUrl(url).catch((error) => console.error('[Electron] OAuth browser failed:', error));
@@ -224,6 +328,7 @@ function createScanPanel(): void {
     scanPanel = null;
     approvedScanFolders.clear();
     agentConfig = { ...agentConfig, caseId: null };
+    agentConfigOwnerId = null;
   });
 }
 
@@ -284,6 +389,8 @@ if (ownsDesktopProfile) app.whenReady().then(async () => {
     // Keep native scan/review state local and isolated per server. Cases,
     // evidence, provider tokens, and sign-in are owned by the remote backend.
     initAgentDb(remoteServerUrl);
+    installScannerRetentionSweep();
+    installScannerSessionWatcher();
     buildMenu();
     setupIPC();
     await createMainWindow();
@@ -324,12 +431,15 @@ if (ownsDesktopProfile) app.whenReady().then(async () => {
   try {
     const secretResult = ensureDesktopSecrets(userDataPath);
     console.log(`[Electron] Desktop secrets ready (${secretResult.source}).`);
+    const backupDirectory = process.env.LARO_BACKUP_DIRECTORY || path.join(userDataPath, 'backups');
+    const recoveryResult = ensureDesktopRecoveryKey(userDataPath, backupDirectory);
+    console.log(`[Electron] Separate recovery key ready (${recoveryResult.source}).`);
   } catch (error) {
     log.error('[Electron] Desktop secret initialization failed:', error);
     dialog.showErrorBox(
       'Security Setup Error',
-      "LARO could not securely load or persist this installation's secrets. " +
-        'Check the user-data permissions or restore laro-secrets.json. LARO will close without opening the database.',
+      "LARO could not securely load or persist this installation's secrets or recovery key. " +
+        'Check the user-data permissions or restore the separately escrowed key files. LARO will close without opening the database.',
     );
     app.quit();
     return;
@@ -347,6 +457,7 @@ if (ownsDesktopProfile) app.whenReady().then(async () => {
 
   // Initialize Agent DB (scanning state)
   initAgentDb();
+  installScannerRetentionSweep();
 
   // Start the integrated backend server.
   // Pin NODE_ENV from the packaging state BEFORE importing the server (whose
@@ -369,6 +480,8 @@ if (ownsDesktopProfile) app.whenReady().then(async () => {
 
   try {
     const { startServer, stopServer } = await import('../server/index');
+    const { registerDesktopScannerPrivacyProvider } = await import('../server/gdpr');
+    registerDesktopScannerPrivacyProvider({ export: exportScannerHistory, erase: stopAndEraseScannerHistory });
     const requestedPort = app.isPackaged
       ? resolveDesktopServerPort(process.env.OAUTH_REDIRECT_BASE_URL)
       : DEFAULT_PORT;
@@ -376,6 +489,7 @@ if (ownsDesktopProfile) app.whenReady().then(async () => {
     stopIntegratedServer = stopServer;
     laroUrl = `http://127.0.0.1:${actualPort}`;
     agentConfig.apiUrl = laroUrl;
+    installScannerSessionWatcher();
     const allowedOrigins = new Set(
       (process.env.ALLOWED_ORIGINS || '').split(',').map((origin) => origin.trim()).filter(Boolean)
     );
@@ -420,15 +534,31 @@ app.on('before-quit', (event) => {
 });
 
 function setupIPC(): void {
-  ipcMain.handle(IPC_CHANNELS.CONFIG_GET, (event) => {
+  ipcMain.handle(IPC_CHANNELS.CONFIG_GET, async (event) => {
     assertTrustedIpc(event);
-    return { ...agentConfig, localSourcesAvailable: !remoteServerUrl };
+    try {
+      const owner = await ownerForScanner(event);
+      return { ...agentConfig, caseId: agentConfigOwnerId === owner.ownerId ? agentConfig.caseId : null,
+        localSourcesAvailable: !remoteServerUrl };
+    } catch {
+      return { ...agentConfig, caseId: null, localSourcesAvailable: !remoteServerUrl };
+    }
   });
-  ipcMain.handle(IPC_CHANNELS.CONFIG_SET, (event, c: Partial<AgentConfig>) => {
+  ipcMain.handle(IPC_CHANNELS.CONFIG_SET, async (event, c: Partial<AgentConfig>) => {
     assertTrustedIpc(event);
     if (!c || typeof c !== 'object' || Array.isArray(c)) throw new Error('Invalid scanner configuration');
+    const sessionEpoch = scannerSessionEpoch;
     const next: Partial<AgentConfig> = {};
-    if (c.caseId === null || (typeof c.caseId === 'string' && c.caseId.length <= 200)) next.caseId = c.caseId;
+    if (c.caseId === null) {
+      next.caseId = null;
+      agentConfigOwnerId = null;
+    }
+    else if (typeof c.caseId === 'string' && c.caseId.length <= 200) {
+      const owner = await ownerForScanner(event, c.caseId);
+      if (sessionEpoch !== scannerSessionEpoch) throw new Error('Scanner session changed');
+      agentConfigOwnerId = owner.ownerId;
+      next.caseId = c.caseId;
+    }
     agentConfig = { ...agentConfig, ...next };
     return { ...agentConfig };
   });
@@ -469,8 +599,21 @@ function setupIPC(): void {
     assertTrustedIpc(event);
     return createScanPanel();
   });
+  ipcMain.handle(IPC_CHANNELS.SCAN_HISTORY_EXPORT, async (event) => {
+    const owner = await ownerForScanner(event);
+    const history = exportScannerHistory(owner.ownerId);
+    await owner.assertCurrent();
+    return { ownerId: owner.ownerId, ...history };
+  });
+  ipcMain.handle(IPC_CHANNELS.SCAN_HISTORY_ERASE, async (event, expectedOwnerId: string) => {
+    const owner = await ownerForScanner(event);
+    if (owner.ownerId !== expectedOwnerId) throw new Error('Scanner session changed during account erasure');
+    await owner.assertCurrent();
+    return stopAndEraseScannerHistory(owner.ownerId);
+  });
   ipcMain.handle(IPC_CHANNELS.FOLDER_SELECT, async (event) => {
-    assertTrustedIpc(event);
+    const sessionEpoch = scannerSessionEpoch;
+    const owner = await ownerForScanner(event);
     const parent = scanPanel ?? mainWindow;
     if (!parent) return null;
     const result = await dialog.showOpenDialog(parent, {
@@ -478,16 +621,16 @@ function setupIPC(): void {
       title: 'Select folders to scan',
     });
     if (result.canceled) return null;
+    await owner.assertCurrent();
+    if (sessionEpoch !== scannerSessionEpoch) throw new Error('Scanner session changed');
     const folders = result.filePaths.map((folder) => path.resolve(folder));
     for (const folder of folders) approvedScanFolders.add(folder);
     return folders;
   });
   
   ipcMain.handle(IPC_CHANNELS.SOURCE_FOLDER_START, async (event) => {
-    assertTrustedIpc(event);
+    const owner = await ownerForScanner(event);
     if (!isTrustedAppUrl(agentConfig.apiUrl)) throw new Error('Source API URL is not trusted');
-    const cookieUrl = event.sender.getURL();
-    const browserSession = event.sender.session;
     const apiUrl = agentConfig.apiUrl;
     return pickAndStartLocalSource({
       apiUrl,
@@ -496,137 +639,293 @@ function setupIPC(): void {
         const parent = mainWindow ?? scanPanel;
         if (!parent) return null;
         const result = await dialog.showOpenDialog(parent, { properties: ['openDirectory'], title: 'Select source folder' });
-        assertTrustedIpc(event);
+        await owner.assertCurrent();
         return result.canceled ? null : result.filePaths[0] || null;
       },
       start: async (input) => {
+        await owner.assertCurrent();
         const client = createTRPCProxyClient<AppRouter>({ transformer: superjson, links: [httpBatchLink({
           url: `${apiUrl.replace(/\/$/, '')}/api/trpc`,
-          headers: createDesktopScannerHeaders(() => getDesktopScannerAuth({ cookieUrl,
-            cookieName: process.env.LARO_SESSION_COOKIE_NAME,
-            scannerSecret: process.env.LARO_DESKTOP_SCANNER_SECRET || '', cookieStore: browserSession.cookies })),
+          headers: createDesktopScannerHeaders(owner.getAuth),
         })] });
-        return client.documentSources.start.mutate(input);
+        const result = await client.documentSources.start.mutate(input);
+        await owner.assertCurrent();
+        return result;
       },
     });
   });
 
   ipcMain.handle(IPC_CHANNELS.SCAN_START, async (event, config: ScanConfig) => {
-    assertTrustedIpc(event);
-    if (currentScanner) throw new Error('Scan already in progress');
+    if (currentScanner || scanStarting) throw new Error('Scan already in progress');
     if (!config || typeof config.caseId !== 'string' || !config.caseId.trim()) throw new Error('Select a case first');
-    const folders = Array.isArray(config.folders) ? config.folders.map((folder) => path.resolve(String(folder))) : [];
-    if (!folders.length) throw new Error('Select at least one folder to scan');
-    for (const folder of folders) {
-      if (!approvedScanFolders.has(folder)) throw new Error('Every scan folder must be selected through the folder picker');
-      if (!fs.statSync(folder).isDirectory()) throw new Error(`Scan path is not a directory: ${folder}`);
-    }
-    approvedScanFolders.clear();
-    const safeConfig: ScanConfig = {
-      caseId: config.caseId.trim(),
-      caseName: String(config.caseName || config.caseId).slice(0, 500),
-      autoUpload: false,
-      folders,
-      excludedFolders: [],
-    };
-    const scanId = nanoid();
-    createScan(scanId, safeConfig.caseId, safeConfig.caseName, false, []);
-    currentScanner = new FileScanner({ scanId, config: safeConfig, platform: getPlatform() });
-    currentScanner.on('progress', (p) => scanPanel?.webContents.send(IPC_CHANNELS.SCAN_PROGRESS, { scanId, ...p }));
-    currentScanner.on('completed', async (result) => {
-      scanPanel?.webContents.send(IPC_CHANNELS.SCAN_PROGRESS, {
-        scanId,
-        status: 'review',
-        ...result,
+    scanStarting = true;
+    const startingEpoch = scannerSessionEpoch;
+    try {
+      const owner = await ownerForScanner(event, config.caseId.trim());
+      const folders = Array.isArray(config.folders) ? config.folders.map((folder) => path.resolve(String(folder))) : [];
+      if (!folders.length) throw new Error('Select at least one folder to scan');
+      for (const folder of folders) {
+        if (!approvedScanFolders.has(folder)) throw new Error('Every scan folder must be selected through the folder picker');
+        if (!fs.statSync(folder).isDirectory()) throw new Error(`Scan path is not a directory: ${folder}`);
+      }
+      await owner.assertCurrent(config.caseId.trim());
+      if (startingEpoch !== scannerSessionEpoch) throw new Error('Scanner session changed');
+      approvedScanFolders.clear();
+      const safeConfig: ScanConfig = {
+        caseId: config.caseId.trim(),
+        caseName: String(config.caseName || config.caseId).slice(0, 500),
+        autoUpload: false,
+        folders,
+        excludedFolders: [],
+      };
+      const scanId = nanoid();
+      const sessionEpoch = scannerSessionEpoch;
+      createScan(scanId, owner.ownerId, safeConfig.caseId, safeConfig.caseName, false, []);
+      currentScannerOwnerId = owner.ownerId;
+      currentScannerScanId = scanId;
+      currentScanner = new FileScanner({ scanId, config: safeConfig, platform: getPlatform() });
+      const sendProgress = (progress: Record<string, unknown>) => {
+        if (scannerSessionEpoch === sessionEpoch) {
+          scanPanel?.webContents.send(IPC_CHANNELS.SCAN_PROGRESS, { scanId, ...progress });
+        }
+      };
+      currentScanner.on('progress', sendProgress);
+      currentScanner.on('completed', (result) => {
+        sendProgress({ status: 'review', ...result });
+        if (scannerSessionEpoch === sessionEpoch) mainWindow?.webContents.send(IPC_CHANNELS.EVIDENCE_UPDATED, { scanId });
       });
-      mainWindow?.webContents.send(IPC_CHANNELS.EVIDENCE_UPDATED, { scanId });
-      currentScanner = null;
-    });
-    currentScanner.on('cancelled', () => {
-      scanPanel?.webContents.send(IPC_CHANNELS.SCAN_PROGRESS, { scanId, status: 'cancelled' });
-      currentScanner = null;
-    });
-    currentScanner.on('error', (e: Error) => {
-      scanPanel?.webContents.send(IPC_CHANNELS.SCAN_PROGRESS, { scanId, status: 'failed', errorMessage: e.message });
-      currentScanner = null;
-    });
-    currentScanner.start().catch(console.error);
-    return { scanId };
+      currentScanner.on('cancelled', () => {
+        sendProgress({ status: 'cancelled' });
+      });
+      currentScanner.on('error', (e: Error) => {
+        sendProgress({ status: 'failed', errorMessage: e.message });
+      });
+      const scanner = currentScanner;
+      currentScannerTask = scanner.start().catch(console.error).finally(() => {
+        if (currentScanner === scanner) currentScanner = null;
+        if (currentScannerScanId === scanId) {
+          currentScannerOwnerId = null;
+          currentScannerScanId = null;
+        }
+        currentScannerTask = null;
+      });
+      return { scanId };
+    } finally {
+      scanStarting = false;
+    }
   });
 
-  ipcMain.handle(IPC_CHANNELS.SCAN_STOP, (event) => { assertTrustedIpc(event); currentScanner?.stop(); return { success: true }; });
-  ipcMain.handle(IPC_CHANNELS.SCAN_PAUSE, (event) => { assertTrustedIpc(event); currentScanner?.pause(); return { success: true }; });
-  ipcMain.handle(IPC_CHANNELS.SCAN_RESUME, (event) => { assertTrustedIpc(event); currentScanner?.resume(); return { success: true }; });
-  ipcMain.handle(IPC_CHANNELS.SCAN_FILES_GET, (event, id: string) => {
-    assertTrustedIpc(event);
-    return { files: getScanFiles(String(id).slice(0, 200)) };
+  ipcMain.handle(IPC_CHANNELS.SCAN_STOP, async (event) => {
+    const owner = await ownerForScanner(event);
+    if (!currentScanner || currentScannerOwnerId !== owner.ownerId || !currentScannerScanId) return { success: false };
+    const caseId = getScanCaseId(currentScannerScanId, owner.ownerId);
+    if (!caseId) return { success: false };
+    await owner.assertCurrent(caseId);
+    currentScanner.stop();
+    return { success: true };
   });
-  ipcMain.handle(IPC_CHANNELS.SCAN_FILES_SELECT, (event, id: string, fileIds: string[]) => {
-    assertTrustedIpc(event);
+  ipcMain.handle(IPC_CHANNELS.SCAN_PAUSE, async (event) => {
+    const owner = await ownerForScanner(event);
+    if (!currentScanner || currentScannerOwnerId !== owner.ownerId || !currentScannerScanId) return { success: false };
+    const caseId = getScanCaseId(currentScannerScanId, owner.ownerId);
+    if (!caseId) return { success: false };
+    await owner.assertCurrent(caseId);
+    currentScanner.pause();
+    return { success: true };
+  });
+  ipcMain.handle(IPC_CHANNELS.SCAN_RESUME, async (event) => {
+    const owner = await ownerForScanner(event);
+    if (!currentScanner || currentScannerOwnerId !== owner.ownerId || !currentScannerScanId) return { success: false };
+    const caseId = getScanCaseId(currentScannerScanId, owner.ownerId);
+    if (!caseId) return { success: false };
+    await owner.assertCurrent(caseId);
+    currentScanner.resume();
+    return { success: true };
+  });
+  ipcMain.handle(IPC_CHANNELS.SCAN_FILES_GET, async (event, id: string) => {
+    const scanId = String(id).slice(0, 200);
+    const owner = await ownerForScan(event, scanId);
+    if (!owner) return { files: [] };
+    const files = getScanFiles(scanId, owner.ownerId);
+    await owner.assertCurrent(getScanCaseId(scanId, owner.ownerId) ?? undefined);
+    return { files };
+  });
+  ipcMain.handle(IPC_CHANNELS.SCAN_PROGRESS_GET, async (event, id: string) => {
+    const scanId = String(id).slice(0, 200);
+    const owner = await ownerForScan(event, scanId);
+    if (!owner) return { progress: null };
+    const progress = getScan(scanId, owner.ownerId);
+    await owner.assertCurrent(getScanCaseId(scanId, owner.ownerId) ?? undefined);
+    return { progress };
+  });
+  ipcMain.handle(IPC_CHANNELS.SCAN_FILES_SELECT, async (event, id: string, fileIds: string[]) => {
+    const scanId = String(id).slice(0, 200);
+    const owner = await ownerForScan(event, scanId);
+    if (!owner) throw new Error('Owned scan is unavailable');
+    const caseId = getScanCaseId(scanId, owner.ownerId)!;
     const safeIds = Array.isArray(fileIds) ? fileIds.map(String).filter((value) => value.length <= 200) : [];
-    const selected = setScanFileSelection(String(id).slice(0, 200), safeIds);
-    return { selected };
+    return setScanFileSelection(scanId, safeIds, owner.ownerId, () => owner.assertCurrent(caseId));
   });
-  ipcMain.handle(IPC_CHANNELS.UPLOAD_START, (event, id: string) => {
-    assertTrustedIpc(event);
-    const rendererUrl = event.senderFrame?.url || event.sender.getURL();
-    return startUpload(id, rendererUrl);
+  ipcMain.handle(IPC_CHANNELS.UPLOAD_START, async (event, id: string) => {
+    const scanId = String(id).slice(0, 200);
+    const owner = await ownerForScan(event, scanId);
+    if (!owner) throw new Error('Owned scan is unavailable');
+    return startUpload(scanId, owner);
   });
-  ipcMain.handle(IPC_CHANNELS.UPLOAD_PAUSE, (event) => { assertTrustedIpc(event); currentUploader?.pause(); return { success: true }; });
-  ipcMain.handle(IPC_CHANNELS.UPLOAD_RESUME, (event) => { assertTrustedIpc(event); currentUploader?.resume(); return { success: true }; });
+  ipcMain.handle(IPC_CHANNELS.UPLOAD_PAUSE, async (event) => {
+    const owner = await ownerForScanner(event);
+    if (!currentUploader || currentUploaderOwnerId !== owner.ownerId || !currentUploaderScanId) return { success: false };
+    const caseId = getScanCaseId(currentUploaderScanId, owner.ownerId);
+    if (!caseId) return { success: false };
+    await owner.assertCurrent(caseId);
+    currentUploader.pause();
+    return { success: true };
+  });
+  ipcMain.handle(IPC_CHANNELS.UPLOAD_RESUME, async (event) => {
+    const owner = await ownerForScanner(event);
+    if (!currentUploader || currentUploaderOwnerId !== owner.ownerId || !currentUploaderScanId) return { success: false };
+    const caseId = getScanCaseId(currentUploaderScanId, owner.ownerId);
+    if (!caseId) return { success: false };
+    await owner.assertCurrent(caseId);
+    currentUploader.resume();
+    return { success: true };
+  });
+  ipcMain.handle(IPC_CHANNELS.UPLOAD_STOP, async (event, id: string) => {
+    const scanId = String(id).slice(0, 200);
+    const owner = await ownerForScan(event, scanId);
+    if (!owner) return { success: false };
+    if (currentUploader && currentUploaderOwnerId === owner.ownerId && currentUploaderScanId === scanId) {
+      currentUploader.stop();
+      return { success: true };
+    }
+    return { success: cancelPausedScanUpload(scanId, owner.ownerId) };
+  });
 }
 
-async function startUpload(scanId: string, cookieUrl: string): Promise<{ success: boolean }> {
+async function startUpload(
+  scanId: string,
+  owner: ScannerOwner,
+): Promise<{ success: boolean }> {
   if (currentUploader || uploadStarting) throw new Error('Upload in progress');
   if (!isTrustedAppUrl(agentConfig.apiUrl)) throw new Error('Scanner API URL is not trusted');
   uploadStarting = true;
+  const startingEpoch = scannerSessionEpoch;
   try {
-    const browserSession = (mainWindow ?? scanPanel)?.webContents.session ?? session.defaultSession;
-    const resolveAuth = () => remoteServerUrl ? getRemoteUploadAuth({
-      cookieUrl: remoteServerUrl,
-      cookieStore: browserSession.cookies,
-    }) : getDesktopScannerAuth({
-      cookieUrl,
-      cookieName: process.env.LARO_SESSION_COOKIE_NAME,
-      scannerSecret: process.env.LARO_DESKTOP_SCANNER_SECRET || '',
-      cookieStore: browserSession.cookies,
-    });
+    const caseId = getScanCaseId(scanId, owner.ownerId);
+    if (!caseId) throw new Error('Owned scan is unavailable');
+    const authorize = () => owner.assertCurrent(caseId);
+    const resolveAuth = async () => {
+      await authorize();
+      return owner.getAuth();
+    };
     await resolveAuth();
+    if (startingEpoch !== scannerSessionEpoch) throw new Error('Scanner session changed');
     const safeScanId = String(scanId).slice(0, 200);
+    const sessionEpoch = scannerSessionEpoch;
+    currentUploaderOwnerId = owner.ownerId;
+    currentUploaderScanId = safeScanId;
     currentUploader = new FileUploader({
       scanId: safeScanId,
+      ownerId: owner.ownerId,
       apiUrl: agentConfig.apiUrl,
       resolveAuth,
+      authorize,
       remote: !!remoteServerUrl,
-      concurrency: 3,
+      // One raw binary body at a time keeps scanner memory and server request
+      // admission bounded even when several files are at the 7 MB limit.
+      concurrency: 1,
       maxRetries: 3,
     });
-    currentUploader.on('progress', (p) => scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, { scanId: safeScanId, ...p }));
+    const sendProgress = (progress: Record<string, unknown>) => {
+      if (scannerSessionEpoch === sessionEpoch) {
+        scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, { scanId: safeScanId, ...progress });
+      }
+    };
+    currentUploader.on('progress', sendProgress);
     currentUploader.on('completed', (r) => {
-      scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, { scanId: safeScanId, done: true, ...r });
-      mainWindow?.webContents.send(IPC_CHANNELS.EVIDENCE_UPDATED, { scanId: safeScanId });
-      currentUploader = null;
+      sendProgress({
+        done: true,
+        status: r.partial ? 'failed' : 'completed',
+        ...r,
+      });
+      if (scannerSessionEpoch === sessionEpoch) mainWindow?.webContents.send(IPC_CHANNELS.EVIDENCE_UPDATED, { scanId: safeScanId });
     });
     currentUploader.on('file-failed', (failure) => {
-      scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, {
-        scanId: safeScanId,
+      sendProgress({
         fileId: failure.fileId,
         failed: true,
+        uploadStatus: failure.uploadStatus,
         errorMessage: failure.error,
       });
     });
-    currentUploader.on('cancelled', () => { currentUploader = null; });
+    currentUploader.on('file-retryable', (failure) => {
+      sendProgress({
+        fileId: failure.fileId,
+        retryable: true,
+        uploadStatus: failure.uploadStatus,
+        authorizationRequired: failure.authorizationRequired,
+        errorMessage: failure.error,
+      });
+    });
+    currentUploader.on('file-cancelled', (failure) => {
+      sendProgress({
+        fileId: failure.fileId,
+        cancelled: true,
+        uploadStatus: failure.uploadStatus,
+        errorMessage: failure.error,
+      });
+    });
+    currentUploader.on('file-review-required', (failure) => {
+      sendProgress({
+        fileId: failure.fileId,
+        reviewRequired: true,
+        uploadStatus: failure.uploadStatus,
+        errorMessage: failure.error,
+      });
+    });
+    currentUploader.on('review-required', (result) => {
+      sendProgress({
+        done: true,
+        reviewRequired: true,
+        ...result,
+      });
+    });
+    const pauseForRetry = (result: any) => {
+      sendProgress({
+        done: true,
+        retryable: true,
+        status: 'upload-paused',
+        errorMessage: result.error || `${result.retryableFiles || 1} upload(s) can be resumed.`,
+        ...result,
+      });
+    };
+    currentUploader.on('retryable-pending', pauseForRetry);
+    currentUploader.on('authorization-required', pauseForRetry);
+    currentUploader.on('cancelled', () => {
+      sendProgress({
+        done: true,
+        cancelled: true,
+        status: 'cancelled',
+        errorMessage: 'Upload cancelled. Approved files can be resumed.',
+      });
+    });
     currentUploader.on('error', (error: Error) => {
-      scanPanel?.webContents.send(IPC_CHANNELS.UPLOAD_PROGRESS, {
-        scanId: safeScanId,
+      sendProgress({
         done: true,
         failed: true,
         failedFiles: 1,
         errorMessage: error.message,
       });
-      currentUploader = null;
     });
-    currentUploader.start().catch(console.error);
+    const uploader = currentUploader;
+    currentUploaderTask = uploader.start().catch(console.error).finally(() => {
+      if (currentUploader === uploader) {
+        currentUploader = null;
+        currentUploaderOwnerId = null;
+        currentUploaderScanId = null;
+      }
+      currentUploaderTask = null;
+    });
     return { success: true };
   } finally {
     uploadStarting = false;

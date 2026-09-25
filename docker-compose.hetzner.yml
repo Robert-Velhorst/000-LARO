@@ -27,6 +27,7 @@ services:
       DATABASE_URL: /data/laro-server.sqlite
       LOCAL_STORAGE_DIR: /data/uploads
       LARO_BACKUP_DIRECTORY: /backups
+      LARO_RECOVERY_KEY: ${LARO_RECOVERY_KEY:?Set a separate LARO_RECOVERY_KEY in .env.hetzner}
       LARO_BACKUP_DESTINATION_KIND: local
       LARO_PUBLIC_DEPLOYMENT_REQUIRED: "true"
       LARO_PUBLIC_BASE_URL: https://${LARO_DOMAIN:?Set LARO_DOMAIN in .env.hetzner}

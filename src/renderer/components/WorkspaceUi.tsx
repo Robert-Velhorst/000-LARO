@@ -37,17 +37,26 @@ export function SectionNavigation({ label, items, value, onChange }: {
   </nav>;
 }
 
-export function CasePicker({ value, onChange, disabled = false, requireSelection = false, emptyLabel: customEmptyLabel }: { value: string | null; onChange: (id: string | null) => void; disabled?: boolean; requireSelection?: boolean; emptyLabel?: string }) {
+export function CasePicker({ value, onChange, disabled = false, requireSelection = false, emptyLabel: customEmptyLabel, ownerId }: { value: string | null; onChange: (id: string | null) => void; disabled?: boolean; requireSelection?: boolean; emptyLabel?: string; ownerId?: string | null }) {
   const { locale, t } = useI18n();
   const nl = locale === "nl";
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
-  const query = trpc.cases.list.useQuery({ page, limit: 10, search }, { enabled: open });
+  const query = trpc.cases.list.useQuery({ page, limit: 10, search }, {
+    enabled: open,
+    // The query key is shared across accounts. Always refresh when this picker
+    // opens; owner filtering below hides any old cached rows meanwhile.
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
   const selected = trpc.cases.byId.useQuery(value || "", { enabled: !!value });
   const choose = (id: string | null) => { onChange(id); setOpen(false); };
   const emptyLabel = customEmptyLabel || (requireSelection ? (nl ? "Dossier kiezen" : "Select a case") : (nl ? "Alle dossiers" : "All cases"));
-  const label = value ? selected.data?.clientName || selected.data?.caseType || (selected.isLoading ? t("common.loading") : nl ? "Dossier niet beschikbaar" : "Case unavailable") : emptyLabel;
+  const selectedForOwner = selected.data && (ownerId === undefined || selected.data.userId === ownerId)
+    ? selected.data : null;
+  const availableCases = query.data?.cases.filter(row => ownerId === undefined || row.userId === ownerId);
+  const label = value ? selectedForOwner?.clientName || selectedForOwner?.caseType || (selected.isLoading ? t("common.loading") : nl ? "Dossier niet beschikbaar" : "Case unavailable") : emptyLabel;
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger asChild><Button disabled={disabled} variant="outline" aria-label={nl ? `Dossier: ${label}` : `Case: ${label}`} className="max-w-full sm:max-w-sm">
       <FolderOpen className="h-4 w-4" /><span className="truncate">{label}</span><ChevronDown className="h-4 w-4" />
@@ -60,10 +69,10 @@ export function CasePicker({ value, onChange, disabled = false, requireSelection
       {query.isLoading && <p role="status" className="text-sm">{t("common.loading")}</p>}
       {query.error && <QueryNotice error={query.error} retry={query.refetch} />}
       <div className="max-h-64 overflow-y-auto">
-        {query.data?.cases.map(row => <Button key={row.id} variant="ghost" className="w-full justify-start text-left" onClick={() => choose(row.id)}>
+        {availableCases?.map(row => <Button key={row.id} variant="ghost" className="w-full justify-start text-left" onClick={() => choose(row.id)}>
           <span className="min-w-0 flex-1 break-words">{row.clientName || row.caseType || row.id}</span>{row.id === value && <Check className="h-4 w-4" />}
         </Button>)}
-        {query.data?.cases.length === 0 && <p className="py-4 text-sm text-muted-foreground">{nl ? "Geen dossiers gevonden" : "No cases found"}</p>}
+        {availableCases?.length === 0 && <p className="py-4 text-sm text-muted-foreground">{nl ? "Geen dossiers gevonden" : "No cases found"}</p>}
       </div>
       {(query.data?.pagination.totalPages ?? 0) > 1 && <div className="flex items-center justify-between border-t border-border pt-3 text-sm">
         <Button variant="ghost" size="icon" aria-label={nl ? "Vorige dossiers" : "Previous cases"} disabled={page === 1 || query.isFetching} onClick={() => setPage(page - 1)}><ChevronLeft /></Button>

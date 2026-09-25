@@ -96,7 +96,7 @@ suite("live Google evidence acceptance", () => {
           description: "Controlled Gmail acceptance source",
           fileUrl: stored.url,
           fileName: "test-message.eml",
-          fileSize: String(body.length),
+          fileSize: body.length,
           mimeType: "message/rfc822",
           metadata: JSON.stringify({
             storageKey: stored.key,
@@ -114,9 +114,9 @@ suite("live Google evidence acceptance", () => {
           caseId: params.caseId,
           userId,
           status: "completed",
-          emailsFound: "1",
-          emailsProcessed: "1",
-          errorCount: "0",
+          emailsFound: 1,
+          emailsProcessed: 1,
+          errorCount: 0,
           createdAt: new Date(),
         });
         return {

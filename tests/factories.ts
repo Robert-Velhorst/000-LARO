@@ -13,13 +13,16 @@ const nextId = (prefix: string) => `${prefix}_${(++seq).toString().padStart(4, '
 
 export function buildUser(over: Record<string, any> = {}) {
   const id = over.id ?? nextId('USER');
+  const email = over.email === null
+    ? null
+    : String(over.email ?? `${id.toLowerCase()}@example.com`).normalize('NFKC').trim().toLowerCase();
   return {
     id,
     name: `User ${id}`,
-    email: `${id.toLowerCase()}@example.com`,
     role: 'user',
     createdAt: new Date(),
     ...over,
+    email,
   };
 }
 
@@ -55,11 +58,11 @@ export function buildLawyer(over: Record<string, any> = {}) {
     caseStop: 'No',
     currentlyAccepting: 'Yes',
     permanentlyFiltered: 'No',
-    caseLoad: '5',
-    experienceYears: '10',
-    totalOutreaches: '0',
-    totalResponses: '0',
-    totalAcceptances: '0',
+    caseLoad: 5,
+    experienceYears: 10,
+    totalOutreaches: 0,
+    totalResponses: 0,
+    totalAcceptances: 0,
     languages: JSON.stringify([]),
     createdAt: new Date(),
     updatedAt: new Date(),

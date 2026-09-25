@@ -124,7 +124,8 @@ export function useGoogleOAuthConnection({
     if (connectingRef.current) return false;
     const authorizationUrl = new URL(authUrl);
     const redirectUri = authorizationUrl.searchParams.get('redirect_uri');
-    if (!redirectUri) throw new Error('OAuth callback URL is missing');
+    const isBoundStartRoute = /\/api\/oauth\/(gmail|outlook)\/start$/.test(authorizationUrl.pathname);
+    if (!redirectUri && !isBoundStartRoute) throw new Error('OAuth callback URL is missing');
 
     const oauthWindow = window.open(authUrl, 'laro-google-oauth', 'popup,width=520,height=720');
     if (!oauthWindow && !isElectron()) {
@@ -133,7 +134,9 @@ export function useGoogleOAuthConnection({
     }
 
     oauthWindowRef.current = oauthWindow;
-    oauthCallbackOriginRef.current = new URL(redirectUri).origin;
+    oauthCallbackOriginRef.current = redirectUri
+      ? new URL(redirectUri).origin
+      : authorizationUrl.origin;
     connectingRef.current = true;
     setConnecting(true);
     toast.info('Google sign-in opened in your browser. Return to LARO when finished.');

@@ -2,7 +2,8 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { evidence } from "../schema";
-import { and, desc, eq, like, or } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
+import { literalSearchCondition } from "../literalSearch";
 
 /**
  * Evidence Timeline router.
@@ -20,7 +21,7 @@ export const evidenceTimelineRouter = router({
           caseId: z.string().optional(),
           source: z.string().optional(),
           type: z.string().optional(),
-          search: z.string().optional(),
+          search: z.string().max(500).optional(),
         })
         .optional()
     )
@@ -35,9 +36,12 @@ export const evidenceTimelineRouter = router({
       if (input?.source) conditions.push(eq(evidence.source, input.source));
       if (input?.type) conditions.push(eq(evidence.type, input.type));
       if (input?.search?.trim()) {
-        const q = `%${input.search.trim()}%`;
         conditions.push(
-          or(like(evidence.title, q), like(evidence.description, q), like(evidence.fileName, q))!
+          or(
+            literalSearchCondition(evidence.title, input.search),
+            literalSearchCondition(evidence.description, input.search),
+            literalSearchCondition(evidence.fileName, input.search),
+          )!
         );
       }
 

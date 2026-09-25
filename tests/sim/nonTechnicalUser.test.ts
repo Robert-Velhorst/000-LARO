@@ -106,7 +106,12 @@ suite('Phase 081 — non-technical user journey simulation', () => {
     expect(full.success).toBe(true);
     expect(full.data).toBeTruthy();
 
-    const del = await me().gdpr.deleteData({ confirm: true });
+    const caller = me();
+    const { proof } = await caller.gdpr.reauthenticateForErasure({
+      expectedUserId: userId,
+      password: 'my-password-123',
+    });
+    const del = await caller.gdpr.deleteData({ confirm: true, expectedUserId: userId, proof });
     expect(del.success).toBe(true);
     // Account is really gone — a subsequent read finds no user.
     const rows = await app.db.select().from(app.schema.users);

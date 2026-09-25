@@ -16,7 +16,6 @@ suite("live outbound acceptance", () => {
   const originalClientSecret = ENV.GOOGLE_CLIENT_SECRET;
 
   beforeAll(async () => {
-    delete process.env.FEATURE_OUTREACH_SEND_ENABLED;
     app = await bootTestApp();
     ENV.GOOGLE_CLIENT_ID = "acceptance.apps.googleusercontent.com";
     ENV.GOOGLE_CLIENT_SECRET = "acceptance-client-secret";
@@ -38,7 +37,6 @@ suite("live outbound acceptance", () => {
   afterAll(() => {
     ENV.GOOGLE_CLIENT_ID = originalClientId;
     ENV.GOOGLE_CLIENT_SECRET = originalClientSecret;
-    delete process.env.FEATURE_OUTREACH_SEND_ENABLED;
     app?.cleanup();
   });
 

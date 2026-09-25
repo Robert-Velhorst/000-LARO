@@ -8,7 +8,8 @@ import {
   isSupportedDocumentAnalysisMimeType,
   isSupportedImageOcrMimeType,
 } from "../shared/evidenceFiles";
-import { getLLMProviderDescriptors, invokeLLM, isLLMProviderConfigured, type LLMProvider } from "./llm";
+import { getLLMProviderDescriptors, invokeLLM, isLLMProviderConfigured, isLocalLLMProvider, type LLMProvider } from "./llm";
+import { isLLMUsageLimitError } from "./llmUsageBudget";
 import { extractImageBatchText, extractImageText } from "./ocr";
 
 export const DOCUMENT_ANALYSIS_VERSION = "3.0.0";
@@ -772,11 +773,20 @@ const FINDING_SCHEMA = {
   required: ["text", "citations", "evidenceQuotes"],
 };
 
-async function analyzeProviderChunk(provider: LLMProvider, citations: Citation[], beforeDispatch?: () => Promise<boolean>): Promise<AiResult> {
+type DocumentAnalysisBudget = { ownerId: string; caseId?: string };
+
+async function analyzeProviderChunk(
+  provider: LLMProvider,
+  citations: Citation[],
+  budget: DocumentAnalysisBudget,
+  beforeDispatch?: () => Promise<boolean>,
+): Promise<AiResult> {
   const sourceText = citations.map((citation) => `[${citation.id}] ${citation.quote}`).join("\n");
   const response = await invokeLLM({
     provider,
+    budget: { ...budget, operation: "document_analysis" },
     beforeDispatch,
+    max_tokens: 4_096,
     messages: [
       {
         role: "system",
@@ -847,7 +857,12 @@ async function analyzeProviderChunk(provider: LLMProvider, citations: Citation[]
   return parsed;
 }
 
-async function analyzeProviderChunks(provider: LLMProvider, chunks: Citation[][], beforeDispatch?: () => Promise<boolean>): Promise<Array<{ result?: AiResult; error?: string }>> {
+async function analyzeProviderChunks(
+  provider: LLMProvider,
+  chunks: Citation[][],
+  budget: DocumentAnalysisBudget,
+  beforeDispatch?: () => Promise<boolean>,
+): Promise<Array<{ result?: AiResult; error?: string }>> {
   const outcomes: Array<{ result?: AiResult; error?: string }> = new Array(chunks.length);
   let next = 0;
   const workers = Array.from({ length: Math.min(2, chunks.length) }, async () => {
@@ -855,8 +870,9 @@ async function analyzeProviderChunks(provider: LLMProvider, chunks: Citation[][]
       const index = next;
       next += 1;
       try {
-        outcomes[index] = { result: await analyzeProviderChunk(provider, chunks[index], beforeDispatch) };
+        outcomes[index] = { result: await analyzeProviderChunk(provider, chunks[index], budget, beforeDispatch) };
       } catch (error) {
+        if (isLLMUsageLimitError(error)) throw error;
         outcomes[index] = { error: error instanceof Error ? error.message.slice(0, 300) : "Provider chunk failed" };
       }
     }
@@ -875,7 +891,12 @@ function uniqueContradictions(items: AiContradiction[]): ContradictionFinding[] 
   });
 }
 
-async function enrichAnalysis(base: DocumentAnalysisResult, provider: LLMProvider, beforeDispatch?: () => Promise<boolean>): Promise<DocumentAnalysisResult> {
+async function enrichAnalysis(
+  base: DocumentAnalysisResult,
+  provider: LLMProvider,
+  budget: DocumentAnalysisBudget,
+  beforeDispatch?: () => Promise<boolean>,
+): Promise<DocumentAnalysisResult> {
   const providerModel = getLLMProviderDescriptors().find((item) => item.id === provider)?.model ?? null;
   if (!isLLMProviderConfigured(provider)) {
     return {
@@ -887,7 +908,7 @@ async function enrichAnalysis(base: DocumentAnalysisResult, provider: LLMProvide
     };
   }
   const chunks = providerChunks(base.citations);
-  const outcomes = await analyzeProviderChunks(provider, chunks, beforeDispatch);
+  const outcomes = await analyzeProviderChunks(provider, chunks, budget, beforeDispatch);
   const valid = outcomes.flatMap((outcome) => outcome.result ? [outcome.result] : []);
   const failures = outcomes.filter((outcome) => !outcome.result);
   if (!valid.length) {
@@ -932,6 +953,7 @@ export async function analyzeDocumentBytes(options: {
   mimeType: string;
   deepAnalysis: boolean;
   provider?: LLMProvider;
+  budget?: DocumentAnalysisBudget;
   beforeDispatch?: () => Promise<boolean>;
 }): Promise<DocumentAnalysisResult> {
   const extraction = await extractDocumentText(options.bytes, options.mimeType);
@@ -942,6 +964,7 @@ export async function analyzeDocumentExtraction(options: {
   extraction: ExtractionResult;
   deepAnalysis: boolean;
   provider?: LLMProvider;
+  budget?: DocumentAnalysisBudget;
   beforeDispatch?: () => Promise<boolean>;
 }): Promise<DocumentAnalysisResult> {
   const extraction = options.extraction;
@@ -953,5 +976,11 @@ export async function analyzeDocumentExtraction(options: {
     );
   }
   const base = deterministicAnalysis(extraction);
-  return options.deepAnalysis ? enrichAnalysis(base, options.provider || "forge", options.beforeDispatch) : base;
+  if (!options.deepAnalysis) return base;
+  if (!options.budget?.ownerId.trim()) throw new Error("Deep document analysis requires an owner-scoped model budget");
+  const provider = options.provider || "forge";
+  if (!isLocalLLMProvider(provider) && !options.beforeDispatch) {
+    throw new Error("External document analysis requires a dispatch-time consent check");
+  }
+  return enrichAnalysis(base, provider, options.budget, options.beforeDispatch);
 }

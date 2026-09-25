@@ -29,6 +29,12 @@ suite("review-gated media and organization outreach directory", () => {
         legalAreas: JSON.stringify(["Employment Law"]),
       }),
       buildCase({
+        id: "CASE_TARGET_OWNER_B",
+        userId: owner.id,
+        caseSummary: "A second employment matter used to verify discovery-run isolation",
+        legalAreas: JSON.stringify(["Employment Law"]),
+      }),
+      buildCase({
         id: "CASE_TARGET_UNSUPPORTED",
         userId: owner.id,
         legalAreas: JSON.stringify(["Confidential custom dispute label"]),
@@ -151,7 +157,7 @@ suite("review-gated media and organization outreach directory", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("supports one-action batch review and automatic shortlist preparation", async () => {
+  it("supports one-action batch review", async () => {
     const caller = app.makeCaller(owner);
     const first = await caller.outreachDirectory.createManual({
       targetType: "organization",
@@ -186,23 +192,134 @@ suite("review-gated media and organization outreach directory", () => {
     });
     expect(batch.reviewed).toBe(2);
     expect(batch.matches?.length).toBeGreaterThanOrEqual(2);
+  });
 
-    await caller.userPreferences.updateWorkflow({ outreachReviewMode: "automatic" });
+  it("auto-reviews only active-run candidates and preserves manual, historical, and repeated records", async () => {
+    const caller = app.makeCaller(owner);
+    const manual = await caller.outreachDirectory.createManual({
+      targetType: "media",
+      name: "Manual employment newsroom",
+      url: "https://manual-scope.example.nl/employment",
+      legalAreas: ["Employment Law"],
+    });
+
+    await caller.userPreferences.updateWorkflow({ outreachReviewMode: "each" });
     vi.stubGlobal("fetch", vi.fn(async () => new Response(`
       <div class="result">
-        <a class="result__a" href="https://automatic.example.nl/employment-desk">Employment Desk News</a>
-        <div class="result__snippet">Public-interest employment reporting.</div>
+        <a class="result__a" href="https://historical-scope.example.nl/employment">Historical Employment Desk</a>
+        <div class="result__snippet">Employment reporting discovered for the first case.</div>
       </div>`, { status: 200, headers: { "Content-Type": "text/html" } })));
-    const report = await caller.outreachDirectory.discoverForCase({
+    const historical = await caller.outreachDirectory.discoverForCase({
       caseId: "CASE_TARGET_OWNER",
       targetType: "media",
       maxQueries: 1,
       maxResults: 5,
     });
-    expect(report.reviewMode).toBe("automatic");
-    expect(report.autoReviewed).toBeGreaterThanOrEqual(1);
-    expect(report.automaticMatches).toBeGreaterThanOrEqual(1);
-    expect(await caller.outreachDirectory.list({ targetType: "media", status: "pending" })).toHaveLength(0);
-    await caller.userPreferences.updateWorkflow({ outreachReviewMode: "each" });
+    expect(historical.createdTargetIds).toHaveLength(1);
+    const historicalId = historical.createdTargetIds[0];
+    expect(historical.leftPendingTargetIds).toContain(historicalId);
+
+    await caller.userPreferences.updateWorkflow({ outreachReviewMode: "automatic" });
+    try {
+      const activeRunHtml = `
+        <div class="result">
+          <a class="result__a" href="https://manual-scope.example.nl/employment">Manual employment newsroom from search</a>
+          <div class="result__snippet">The provider returned a URL that belongs to a manual record.</div>
+        </div>
+        <div class="result">
+          <a class="result__a" href="https://automatic-scope.example.nl/employment-desk">Employment Desk News</a>
+          <div class="result__snippet">Public-interest employment reporting and workplace support.</div>
+        </div>`;
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(activeRunHtml, {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      })));
+
+      const report = await caller.outreachDirectory.discoverForCase({
+        caseId: "CASE_TARGET_OWNER_B",
+        targetType: "media",
+        maxQueries: 1,
+        maxResults: 5,
+      });
+      expect(report.reviewMode).toBe("automatic");
+      expect(report.status).toBe("complete");
+      expect(report.runId).toMatch(/^DISCOVERY-/);
+      expect(report.createdTargetIds).toHaveLength(1);
+      expect(report.refreshedTargetIds).toEqual([]);
+      const activeTargetId = report.createdTargetIds[0];
+      expect(report.candidateTargetIds).toEqual(expect.arrayContaining([manual.id, activeTargetId]));
+      expect(report.candidateTargetIds).not.toContain(historicalId);
+      expect(report.autoReviewedTargetIds).toEqual([activeTargetId]);
+      expect(report.autoReviewed).toBe(1);
+      expect(report.automaticMatchedTargetIds).toEqual([activeTargetId]);
+      expect(report.automaticMatches).toBe(1);
+      expect(report.skippedTargets).toContainEqual({
+        id: manual.id,
+        status: "pending",
+        reason: "manual_record_preserved",
+      });
+      expect(report.leftPendingTargetIds).toEqual([manual.id]);
+
+      const pendingIds = (await caller.outreachDirectory.list({ targetType: "media", status: "pending" }))
+        .map((target) => target.id);
+      expect(pendingIds).toEqual(expect.arrayContaining([manual.id, historicalId]));
+      expect(pendingIds).not.toContain(activeTargetId);
+
+      const repeated = await caller.outreachDirectory.discoverForCase({
+        caseId: "CASE_TARGET_OWNER_B",
+        targetType: "media",
+        maxQueries: 1,
+        maxResults: 5,
+      });
+      expect(repeated.createdTargetIds).toEqual([]);
+      expect(repeated.refreshedTargetIds).toEqual([activeTargetId]);
+      expect(repeated.autoReviewedTargetIds).toEqual([]);
+      expect(repeated.skippedTargets).toEqual(expect.arrayContaining([
+        { id: manual.id, status: "pending", reason: "manual_record_preserved" },
+        { id: activeTargetId, status: "approved", reason: "already_approved" },
+      ]));
+      expect(repeated.leftPendingTargetIds).toEqual([manual.id]);
+      expect(repeated.automaticMatchedTargetIds).toEqual([activeTargetId]);
+    } finally {
+      await caller.userPreferences.updateWorkflow({ outreachReviewMode: "each" });
+    }
+  });
+
+  it("reports a partial result when provider candidates exceed the supported bound", async () => {
+    const html = Array.from({ length: 62 }, (_, index) => `
+      <div class="result">
+        <a class="result__a" href="https://provider-bound.example.org/target-${index}">Employment Support ${index}</a>
+        <div class="result__snippet">Employment support and public advocacy ${index}.</div>
+      </div>`).join("");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(html, {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    })));
+
+    const report = await app.makeCaller(owner).outreachDirectory.discoverForCase({
+      caseId: "CASE_TARGET_OWNER",
+      targetType: "organization",
+      maxQueries: 1,
+      maxResults: 60,
+    });
+    expect(report).toMatchObject({
+      status: "partial",
+      completedQueries: 1,
+      failedQueries: 0,
+      supportedCandidateBound: 60,
+      candidateLimit: 60,
+      candidateLimitReached: true,
+      providerResultTruncated: true,
+      truncatedQueries: 1,
+      observedCandidates: 61,
+      discoveredCandidates: 60,
+      omittedCandidateCountAtLeast: 2,
+    });
+    expect(report.createdTargetIds).toHaveLength(60);
+    expect(report.leftPendingTargetIds).toHaveLength(60);
+    expect(report.partialReasons).toEqual(expect.arrayContaining([
+      expect.stringContaining("candidate supported bound"),
+      expect.stringContaining("persisted the first 60"),
+    ]));
   });
 });

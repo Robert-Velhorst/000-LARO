@@ -15,8 +15,9 @@ const analysis = { coverage: { complete: true }, extractionConfidence: null,
   summary: source, citations: [{ id: "source:1", quote: source }] } as DocumentAnalysisResult;
 const preferences: WorkflowPreferences = { analysisMode: "local", analysisProvider: "ollama",
   autoAnalyzeImports: true, autoOrganizeDocuments: true, shareRawDocumentContent: false,
+  externalDocumentSharingConsent: null,
   outreachReviewMode: "each", messageApprovalMode: "each" };
-const run = () => discoverDossier({ analysis, sourceText: source, cases: [], preferences });
+const run = () => discoverDossier({ ownerId: "DOSSIER_TIMEOUT_TEST", analysis, sourceText: source, cases: [], preferences });
 
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); gateway.mockReset(); });
 

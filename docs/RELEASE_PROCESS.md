@@ -113,7 +113,7 @@ Its JSON output contains counts and evidence identifiers only. For the API-only
 container, run the compiled equivalent:
 
 ```powershell
-docker exec <laro-container> node /app/dist/server/server/liveProviderAcceptance.js --user-id <owner-id> --google-account-id <account-id>
+docker exec <laro-container> /nodejs/bin/node /app/dist/server/server/liveProviderAcceptance.js --user-id <owner-id> --google-account-id <account-id>
 ```
 
 The probe sends no message, creates no case/evidence/outreach record, never
@@ -123,7 +123,7 @@ token vault. Missing representative case activity remains visible as pending
 rather than being inferred from configuration or unit tests.
 
 An approved `liveProviders` gate must use the supported provider identifiers
-`google`, `outboundEmail`, `inboundEmail`, `s3`, `forgeLlm`, or `telegram`.
+`google`, `outboundEmail`, `inboundEmail`, `s3`, or `forgeLlm`.
 For every identifier in `providerScope`, add a matching `providerChecks` entry
 with `status: "passed"`, a non-future `testedAt` timestamp, evidence references,
 and every mandatory check reported by `npm run release:check`. Generic approval

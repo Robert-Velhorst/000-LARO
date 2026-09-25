@@ -41,7 +41,7 @@ router.get(HAI_FEED_PATH, async (req, res) => {
     const rawLimit = typeof req.query.limit === "string" ? Number(req.query.limit) : HAI_FEED_DEFAULT_LIMIT;
     if (!Number.isFinite(rawLimit)) throw new HaiIntegrationError("Feed limit is invalid", 400);
     const result = await buildHaiFeed(
-      auth.userId,
+      auth,
       typeof req.query.cursor === "string" ? req.query.cursor : undefined,
       rawLimit,
     );

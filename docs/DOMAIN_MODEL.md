@@ -1,6 +1,6 @@
 # Domain Model
 
-Current as of 2026-07-15.
+Current as of 2026-09-20.
 
 | Entity | Persistence | Ownership | Purpose |
 | --- | --- | --- | --- |
@@ -10,7 +10,7 @@ Current as of 2026-07-15.
 | Lawyer | `lawyers` | global reference | Directory and matching attributes |
 | Outreach | `outreach_status` | through `caseId` | Draft, approval, delivery and response state |
 | Timeline | `timeline` and evidence analysis | through case ownership | Source-linked chronology |
-| Notification | `notifications` | `userId` | Persisted user events |
+| Notification | `notifications` | `userId`; referenced case/evidence context is revalidated | Typed user events with registered internal destinations and atomic deduplication |
 | Audit log | `audit_logs` | `userId` or operator scope | Traceable actions |
 
 ```text
@@ -33,6 +33,8 @@ User 1 -> N Audit log
 - Delivery cannot occur while the feature flag or emergency stop blocks it.
 - Provider failure cannot produce `Sent`.
 - Interested and declined responses follow declared state transitions.
+- A notification is created and deduplicated by one durable row; unavailable or
+  cross-owner destination context is never returned as an action.
 
 ## Critical path
 

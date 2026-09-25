@@ -41,7 +41,7 @@ Ledger reconciled: 2026-07-15.
 | 024 | Templates, presets, defaults | **Implemented** | `server/routers/messageTemplates.ts` provides real per-user CRUD. |
 | 025 | AI/provider abstraction & deterministic fallback | **Implemented** | `server/classification.ts` deterministic classifier wired into `cases.create`/`cases.classify`; unblocks matching. Tested. |
 | 026 | Human review queue & approval gates | **Implemented** | `server/routers/workflow.ts` provides prepare/review/approve/reject plus real gated send: emergency stop, feature flag, Approved state, ownership, and idempotency. Tested. |
-| 027 | Notifications & reminders | **Implemented** | `createNotification` real; **reminder sweep** (`server/reminders.ts` + `notifications.runReminders` + daily cron) — idempotent per case/kind/day (approval-pending, urgent-no-evidence). Tested. |
+| 027 | Notifications & reminders | **Implemented** | `server/notifications.ts` and `shared/notifications.ts` persist type, owner-validated context, registered destination, metadata, and deduplication together and return created/already-exists/failure. `server/reminders.ts` is atomically idempotent per case/kind/day and retries failed storage; `tests/backend/notificationDurability.test.ts` covers the boundary. |
 | 028 | Privacy controls & data deletion | **Implemented** | `server/gdpr.ts` real export + erasure; `gdpr.*` no longer stubs. |
 | 029 | Security headers & web security | **Implemented** | CSP/HSTS/frame/referrer/permissions headers in `server/index.ts`. |
 | 030 | Secrets management & credential rotation | **Implemented** | `.env` unbundled + `.env.example` + per-install secrets (006/007); **OAuth-token crypto now authenticated AES-256-GCM** (`server/crypto.ts`, D4 closed). Account-safety scan (100) enforces no leaked secrets. Tested. |
@@ -49,8 +49,8 @@ Ledger reconciled: 2026-07-15.
 | 032 | Docker & deployment readiness | **Implemented** | `Dockerfile`, `.dockerignore`, `docker-compose.yml`, npm Docker scripts, and deployment steps in `docs/DEPLOYMENT.md`; the production image has since been built and deployed. |
 | 033 | Database migrations & rollback safety | **Implemented** | `scripts/backup.ts` (verified backup/validate/restore) + `npm run db:backup`; `docs/MIGRATIONS.md`. |
 | 034 | CLI / doctor self-diagnostic | **Implemented** | `scripts/doctor.mjs` + `npm run doctor`; exits non-zero on prod-critical issues. |
-| 035 | Observability, health, readiness | **Implemented** | `server/routers/health.ts` and `server/index.ts` expose `/api/live`, `/api/ready`, and `/api/health` with database readiness, version, environment, and uptime. |
-| 036 | Admin/operator diagnostics | **Implemented** | `server/routers/admin.ts` exposes admin-only diagnostics and table counts without secret values. |
+| 035 | Observability, health, readiness | **Implemented** | `server/healthRoutes.ts` exposes minimal `/api/live`, `/api/ready`, and `/api/health` contracts; `server/operatorDiagnostics.ts` keeps topology and metrics out of public probes. |
+| 036 | Admin/operator diagnostics | **Implemented** | `server/operatorDiagnostics.ts` feeds operator/admin HTTP and tRPC diagnostics; table counts remain admin-only and no secret values are returned. |
 | 037 | Demo mode with explicit labelling | **Implemented** | `server/_core/systemRouter.ts` reports demo state from `ENV.isDemo`; production forces it off and the mounted shell labels it. |
 | 038 | Fake provider lab for tests only | **Implemented** | `server/testing/fakeProviders.ts`, prod-guarded (throws in production). |
 | 039 | Test-data factories & fixtures | **Implemented** | `tests/factories.ts` (user/case/lawyer/evidence). |
@@ -72,7 +72,7 @@ Ledger reconciled: 2026-07-15.
 | 055 | Product analytics local-first | **Implemented** | `server/analytics.ts` real metrics wired into `analytics.*`; `docs/ANALYTICS.md`. |
 | 056 | Local operation without forced billing | **Implemented** | `billing.status` reports a local unmetered plan; usage is observational and core actions have no payment or quota gate; `docs/SAAS_READINESS.md`. |
 | 057 | Internationalization (NL/EN) | **Implemented** | `shared/i18n.ts`, `src/renderer/contexts/I18nContext.tsx`, and `src/renderer/components/LanguageSelector.tsx` provide a persisted NL/EN runtime used by authentication, navigation, legal notice, and the complete scanner workflow; unit and browser persistence coverage is in `tests/backend/i18n.test.ts` and `tests/browser/rendererAccessibility.spec.ts`. |
-| 058 | Feature flags & rollout controls | **Implemented** | `server/featureFlags.ts` + router; `outreach.send.enabled` default OFF; `docs/FEATURE_FLAGS.md`. |
+| 058 | Feature flags & rollout controls | **Implemented** | `server/featureFlags.ts` retains only the consumed `outreach.send.enabled` flag with a typed owner/default/reader/consumer/test registry; `tests/backend/featureFlags.test.ts` enforces the registry and both values, while `docs/FEATURE_FLAGS.md` documents the separate canonical `DEMO_MODE` decision. |
 | 059 | Formal state machines | **Implemented** | `server/stateMachines.ts` enforced in cases.update + approval gate; `docs/STATE_MACHINES.md`. |
 | 060 | Domain model specification | **Implemented** | `docs/DOMAIN_MODEL.md`. |
 | 061 | Data invariants & constraints | **Implemented** | `server/invariants.ts` + `admin.invariants`; verifies email/ownership/outreach/orphans/legalAreas. Tested. |
@@ -85,7 +85,7 @@ Ledger reconciled: 2026-07-15.
 | 068 | CI/CD quality gates | **Implemented** | `.github/workflows/ci.yml` and `scripts/stabilization-gate.mjs` block on server, main, and renderer typechecks, lint, complete traceability, safety scans, recovery, and tests. |
 | 069 | Release process, canary & rollback | **Implemented** | `docs/RELEASE_PROCESS.md` (flags=canary, backup=rollback, gates). |
 | 070 | Operator runbook | **Implemented** | `docs/OPERATOR_RUNBOOK.md` expanded (health/integrity/backup/flags/rotation/incident). |
-| 016 | Background jobs, schedulers & workers | **Implemented** | `runJob()` error-isolation + retry/backoff + status; honest outreach heartbeat (no fake send); `health.readiness` exposes job status. `docs/OPERATOR_RUNBOOK.md`. |
+| 016 | Background jobs, schedulers & workers | **Implemented** | `runJob()` error-isolation + retry/backoff + status; honest outreach heartbeat (no fake send); operator-only `health.readiness` exposes job status. `docs/OPERATOR_RUNBOOK.md`. |
 | 017 | Idempotency & duplicate-action prevention | **Implemented** | `server/outreachSend.ts` enforces a per-outreach guard and Sent state, while the database uniquely binds case/lawyer outreach; `tests/backend/realSend.test.ts` proves double-send blocking. |
 | 018 | Rate limits, cooldowns & provider quotas | **Implemented** | `server/rateLimit.ts` is applied to login, case creation, matching, outreach, search, and reset flows. A distributed store is only needed for a future multi-node topology. |
 | 019 | Audit logging & event history | **Implemented** | `server/audit.ts` and `server/routers/audit.ts` provide real filtering, case/outreach/login writes, and a user-scoped read path. |
@@ -124,7 +124,7 @@ Ledger reconciled: 2026-07-15.
 | 102 | Data retention & archival policy | **Implemented** | `server/retention.ts` validates bounded configuration and implements the idempotent audit-only sweep; `tests/backend/retentionConfiguration.test.ts` and `tests/backend/phase101_115.test.ts` cover startup, preview, and execution. |
 | 103 | Prototype → production migration | **Implemented** | `scripts/prod-preflight.mjs` (`npm run preflight`) — blocks go-live on weak secrets/demo/migrations/tracked-.env; `docs/PROD_MIGRATION.md`. |
 | 104 | Operator safety stop / emergency controls | **Implemented** | `server/systemState.ts` + `admin.setEmergencyStop/emergencyStopStatus`; wired into `workflow.prepareDrafts/approveDraft` (halts outreach). Tested. |
-| 105 | Onboarding & first-run | **Implemented** | `server/onboarding.ts` + `onboarding.steps/state/complete`; per-user completion tracked. Tested. |
+| 105 | Onboarding & first-run | **Implemented** | One owner-scoped lifecycle in `server/onboarding.ts`, `server/routers/onboarding.ts`, and the mounted `src/renderer/components/OnboardingFlow.tsx`; real case/evidence/outreach milestones drive completion, with resume/skip/reset and legacy-state migration covered by `tests/backend/onboardingLifecycle.test.ts` and `tests/browser/rendererAccessibility.spec.ts`. |
 | 106 | Role-based settings & permissions | **Implemented** | Roles (`server/_core/roles.ts` + `system.capabilities`) + **real multi-user teams** (`server/teams.ts` + `teams` router): shared case access enforced in `assertCaseOwnership`; stranger still blocked (isolation preserved). Tested. |
 | 107 | Quality scoring & confidence display | **Implemented** | `server/confidence.ts` — honest confidence derived from real match score (no hardcoded 0.98); applied in `matching.findLawyers`. Tested. |
 | 108 | Human decision minimization | **Implemented** | `docs/DECISION_MINIMIZATION.md` — auto vs human decisions; exceptions + clarifications minimize prompts (real endpoints). |

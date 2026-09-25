@@ -1,9 +1,11 @@
 /**
- * Shared test harness (Phases 040–048).
+ * Shared test harness (Phases 040–048, S0-06, and S0-09).
  *
  * Boots the REAL app against a throwaway temp SQLite database (migrations run),
  * and provides `makeCaller(user)` — a real tRPC caller built from `appRouter`, so
  * tests exercise the actual API layer (auth, ownership, rate limits, audit).
+ * Security suites own hostile-boundary assertions; acceptance/smoke suites own
+ * successful product behavior. Both deliberately boot this same infrastructure.
  *
  * If the better-sqlite3 native binding is not built, `sqliteAvailable` is false
  * and suites should skip rather than fail.
@@ -12,6 +14,8 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'module';
+import { randomBytes } from 'crypto';
+import { SESSION_COOKIE_NAME } from '../../server/sessionCookie';
 
 export let sqliteAvailable = true;
 try {
@@ -29,6 +33,7 @@ export interface TestApp {
     user: { id: string; name?: string; role?: string; email?: string | null } | null,
     authScope?: "session",
     desktopScanner?: boolean,
+    request?: { headers?: Record<string, string>; remoteAddress?: string },
   ) => any;
   cleanup: () => void;
 }
@@ -64,8 +69,16 @@ export async function bootTestApp(): Promise<TestApp> {
 
   const db = await dbmod.getDb();
 
-  const makeCaller = (user: any, authScope: "session" = "session", desktopScanner = false) => {
+  const makeCaller = (
+    user: any,
+    authScope: "session" = "session",
+    desktopScanner = false,
+    request?: { headers?: Record<string, string>; remoteAddress?: string },
+  ) => {
     const { req, res } = fakeReqRes();
+    if (user) req.cookies[SESSION_COOKIE_NAME] = randomBytes(32).toString('base64url');
+    if (request?.headers) req.headers = { ...request.headers };
+    if (request?.remoteAddress) req.socket.remoteAddress = request.remoteAddress;
     return appRouter.createCaller({ req, res, user, authScope, desktopScanner });
   };
 

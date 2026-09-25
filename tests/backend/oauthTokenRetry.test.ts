@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { exchangeCodeForTokens, getAccountInfo, isRetryableOAuthNetworkError, refreshAccessToken } from '../../server/oauth2';
-import { refreshGmailToken, refreshOutlookToken } from '../../server/emailOAuth';
+import { exchangeCodeForTokens, getAccountInfo, isRetryableOAuthNetworkError } from '../../server/oauth2';
 
 function networkError(code: string): TypeError {
   return new TypeError('fetch failed', { cause: Object.assign(new Error(code), { code }) });
@@ -52,7 +51,7 @@ describe('OAuth token exchange network resilience', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('bounds every OAuth refresh request with a provider timeout', async () => {
+  it('bounds every OAuth code exchange with a provider timeout', async () => {
     process.env.GOOGLE_OAUTH_CLIENT_ID = 'google-client';
     process.env.MICROSOFT_OAUTH_CLIENT_ID = 'microsoft-client';
     process.env.MICROSOFT_OAUTH_CLIENT_SECRET = 'microsoft-secret';
@@ -64,12 +63,10 @@ describe('OAuth token exchange network resilience', () => {
     }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await refreshAccessToken('gmail', 'refresh-one');
-    await refreshAccessToken('outlook', 'refresh-two');
-    await refreshGmailToken('refresh-three');
-    await refreshOutlookToken('refresh-four');
+    await exchangeCodeForTokens('gmail', 'code-one', 'verifier-one');
+    await exchangeCodeForTokens('outlook', 'code-two', 'verifier-two');
 
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     for (const [, request] of fetchMock.mock.calls) {
       expect(request).toMatchObject({ signal: expect.any(AbortSignal) });
     }

@@ -23,18 +23,14 @@ import { documentAnalysisRouter } from "./documentAnalysis";
 import { searchRouter } from "./search";
 import { messagesRouter } from "./messages";
 import { messageTemplatesRouter } from "./messageTemplates";
-import { lawyerRatingRouter } from "./lawyerRating";
-import { trelloEnhancedRouter } from "./trelloEnhanced";
-import { telegramEnhancedRouter } from "./telegramEnhanced";
 import { gapAnalysisRouter } from "./gapAnalysis";
-import { emailAccountsRouter } from "./emailAccounts";
+import { providerConnectionsRouter } from "./providerConnections";
 import { emailRouter } from "./email";
 import { userPreferencesRouter } from "./userPreferences";
 import { bulkImportRouter } from "./bulkImport";
 import { supportRouter } from "./support";
 import { evidenceAnalyticsRouter } from "./evidenceAnalytics";
 import { autoCollectionRouter } from "./autoCollection";
-import { googleDriveRouter } from "./googleDrive";
 import { notificationsRouter } from "./notifications";
 import { relevanceScoringRouter } from "./relevanceScoring";
 import { featureFlagsRouter } from "./featureFlags";
@@ -43,24 +39,18 @@ import { onboardingRouter } from "./onboarding";
 import { teamsRouter } from "./teams";
 import { legacyImportsRouter } from "./legacyImports";
 import { haiIntegrationRouter } from "./haiIntegration";
+import { clarificationsRouter } from "./clarifications";
 import {
   adminAnalyticsRouter, outreachAnalyticsRouter,
   evidenceAggregationRouter, enrichmentRouter, evidenceRouter,
   bulkFileOperationsRouter, caseManagementRouter, legalChecklistsRouter,
-  emailMessagesRouter, syncSchedulerRouter, trelloRouter, unifiedInboxRouter,
+  emailMessagesRouter, syncSchedulerRouter, unifiedInboxRouter,
 } from "./extendedRouters";
 import { adminRouter } from "./admin";
 import { auditRouter } from "./audit";
-import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
+import { enforcePersistentRateLimit, enforceRateLimit, RATE_LIMITS } from "../rateLimit";
 import { createAuditLog, writeAuditLogOrThrow, AUDIT_ACTIONS } from "../audit";
 import { verifyLocalTestTicket } from "../localTestAccess";
-import {
-  gmailEnhancedRouter,
-  outlookEnhancedRouter,
-  googleDriveEnhancedRouter,
-  oneDriveEnhancedRouter,
-  slackEnhancedRouter,
-} from "./enhancedConnections";
 import { z } from "zod";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
@@ -68,12 +58,11 @@ import crypto from "crypto";
 import { ENV } from "../_core/env";
 import { sendPasswordResetEmail } from "../systemEmail";
 import { getUser, getDb } from "../db";
-import { users, cases, systemConfig } from "../schema";
-import { and, count, eq, gte, lt } from "drizzle-orm";
+import { users, systemConfig } from "../schema";
+import { and, count, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { invokeLLM, isLLMProviderConfigured } from "../llm";
 import { answerCaseQuestion } from "../caseAssistant";
-import { getWorkflowPreferences } from "../workflowPreferences";
+import { answerProductQuestion } from "../productAssistant";
 import { extractImageText } from "../ocr";
 import {
   isSupportedImageOcrMimeType,
@@ -81,7 +70,20 @@ import {
   MAX_EVIDENCE_FILE_BYTES,
 } from "../../shared/evidenceFiles";
 import { standaloneSignupAllowed } from "../signupPolicy";
-import { hashPasswordResetCode } from "../passwordResetSecurity";
+import {
+  hashPasswordResetCode,
+  PASSWORD_RESET_LOCK_MS,
+  PASSWORD_RESET_MAX_FAILURES,
+  passwordResetHashMatches,
+  passwordResetLockTimestamp,
+} from "../passwordResetSecurity";
+import { findUserByEmailIdentity, normalizeAccountEmail } from "../emailIdentity";
+import { createUserId, isGeneratedIdCollision } from "../ids";
+
+function isCanonicalEmailCollision(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /users_email_canonical_unique|unique constraint failed: users\.email/i.test(message);
+}
 
 export const appRouter = router({
   system: systemRouter,
@@ -104,18 +106,14 @@ export const appRouter = router({
   search: searchRouter,
   messages: messagesRouter,
   messageTemplates: messageTemplatesRouter,
-  lawyerRating: lawyerRatingRouter,
-  trelloEnhanced: trelloEnhancedRouter,
-  telegramEnhanced: telegramEnhancedRouter,
   gapAnalysis: gapAnalysisRouter,
-  emailAccounts: emailAccountsRouter,
+  providerConnections: providerConnectionsRouter,
   email: emailRouter,
   userPreferences: userPreferencesRouter,
   bulkImport: bulkImportRouter,
   evidenceAnalytics: evidenceAnalyticsRouter,
   support: supportRouter,
   autoCollection: autoCollectionRouter,
-  googleDrive: googleDriveRouter,
   notifications: notificationsRouter,
   featureFlags: featureFlagsRouter, // Phase 058
   help: helpRouter, // Phase 071/072
@@ -136,11 +134,11 @@ export const appRouter = router({
   legalChecklists: legalChecklistsRouter,
   emailMessages: emailMessagesRouter,
   syncScheduler: syncSchedulerRouter,
-  trello: trelloRouter,
   unifiedInbox: unifiedInboxRouter,
 
-  // Local operation has no paid tier or quota gate. Usage is observational and
-  // helps the owner understand workload without blocking a core action.
+  // Local operation has no paid tier or checkout gate. The returned usage
+  // summary contains only owner-opted-in analytics; required safety budgets are
+  // maintained separately and never presented as billing.
   billing: router({
     status: protectedProcedure.query(async ({ ctx }) => {
       let usage: unknown = null;
@@ -160,12 +158,6 @@ export const appRouter = router({
   admin: adminRouter,
   audit: auditRouter, // Phase 019 — event-history read path
   
-  gmailEnhanced: gmailEnhancedRouter,
-  outlookEnhanced: outlookEnhancedRouter,
-  googleDriveEnhanced: googleDriveEnhancedRouter,
-  oneDriveEnhanced: oneDriveEnhancedRouter,
-  slackEnhanced: slackEnhancedRouter,
-
   // Auth procedures
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
@@ -209,7 +201,7 @@ export const appRouter = router({
     
     signup: publicProcedure
       .input(z.object({
-        email: z.string().email(),
+        email: z.string().trim().email(),
         password: z.string().min(8),
         name: z.string().min(2),
         bootstrapToken: z.string().max(256).optional(),
@@ -232,29 +224,37 @@ export const appRouter = router({
           });
         }
 
-        const existing = await db.select().from(users).where(eq(users.email, input.email)).limit(1);
-        if (existing.length > 0) {
+        const normalizedEmail = normalizeAccountEmail(input.email);
+        const existing = await findUserByEmailIdentity(db, normalizedEmail);
+        if (existing) {
           throw new TRPCError({ code: "CONFLICT", message: "A user with this email already exists" });
         }
 
         const hashedPassword = await bcrypt.hash(input.password, 10);
-        const userId = `USER${Date.now()}`;
-
-        const user = {
-          id: userId,
-          email: input.email,
+        const userValues = (id: string) => ({
+          id,
+          email: normalizedEmail,
           password: hashedPassword,
           name: input.name,
           role: ENV.SERVER_ONLY ? "admin" : "user",
           createdAt: new Date(),
-        };
+        });
+        let userId = "";
 
         if (ENV.SERVER_ONLY) {
           const claimed = db.transaction((tx) => {
             const [currentCount] = tx.select({ value: count() }).from(users).all();
             if (Number(currentCount?.value || 0) !== 0) return false;
-            tx.insert(users).values(user).run();
-            return true;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              const candidate = createUserId();
+              try {
+                tx.insert(users).values(userValues(candidate)).run();
+                return candidate;
+              } catch (error) {
+                if (!isGeneratedIdCollision(error, "users") || attempt === 2) throw error;
+              }
+            }
+            return false;
           });
           if (!claimed) {
             throw new TRPCError({
@@ -262,9 +262,23 @@ export const appRouter = router({
               message: "Standalone account enrollment is closed.",
             });
           }
+          userId = claimed;
         } else {
-          await db.insert(users).values(user);
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            const candidate = createUserId();
+            try {
+              await db.insert(users).values(userValues(candidate));
+              userId = candidate;
+              break;
+            } catch (error) {
+              if (isCanonicalEmailCollision(error)) {
+                throw new TRPCError({ code: "CONFLICT", message: "A user with this email already exists" });
+              }
+              if (!isGeneratedIdCollision(error, "users") || attempt === 2) throw error;
+            }
+          }
         }
+        if (!userId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Account could not be created" });
 
         const token = jwt.sign({ userId }, ENV.JWT_SECRET, { expiresIn: SESSION_EXPIRES_IN });
         const cookieOptions = getSessionCookieOptions(ctx.req);
@@ -278,7 +292,7 @@ export const appRouter = router({
 
     login: publicProcedure
       .input(z.object({ 
-        email: z.string().email(),
+        email: z.string().trim().email(),
         password: z.string()
       }))
       .mutation(async ({ input, ctx }) => {
@@ -287,8 +301,7 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
 
-        const userResults = await db.select().from(users).where(eq(users.email, input.email)).limit(1);
-        const user = userResults[0];
+        const user = await findUserByEmailIdentity(db, input.email);
 
         if (!user || !user.password) {
           throw new TRPCError({
@@ -350,27 +363,31 @@ export const appRouter = router({
     // success regardless of whether the email exists, to avoid leaking which
     // addresses have accounts (no user enumeration).
     requestPasswordReset: publicProcedure
-      .input(z.object({ email: z.string().email() }))
+      .input(z.object({ email: z.string().trim().email() }))
       .mutation(async ({ input, ctx }) => {
         enforceRateLimit(ctx, "passwordResetRequest", RATE_LIMITS.passwordResetRequest);
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
 
         const TTL_MINUTES = 15;
-        const user = (
-          await db.select().from(users).where(eq(users.email, input.email)).limit(1)
-        )[0];
+        const user = await findUserByEmailIdentity(db, input.email);
 
         // Only generate + send a code for accounts that have a password set
         // (OAuth-only accounts have nothing to reset).
-        if (user && user.password) {
+        const lockedUntil = passwordResetLockTimestamp(user?.resetCodeLockedUntil);
+        if (user && user.password && lockedUntil <= Date.now()) {
           const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
           const codeHash = hashPasswordResetCode(code);
           const expiresAt = Date.now() + TTL_MINUTES * 60 * 1000;
 
           await db
             .update(users)
-            .set({ resetCodeHash: codeHash, resetCodeExpiresAt: String(expiresAt) })
+            .set({
+              resetCodeHash: codeHash,
+              resetCodeExpiresAt: String(expiresAt),
+              resetCodeFailures: 0,
+              resetCodeLockedUntil: null,
+            })
             .where(eq(users.id, user.id));
 
           try {
@@ -389,7 +406,7 @@ export const appRouter = router({
     resetPassword: publicProcedure
       .input(
         z.object({
-          email: z.string().email(),
+          email: z.string().trim().email(),
           code: z.string().regex(/^\d{6}$/, "Enter the 6-digit code"),
           newPassword: z.string().min(8),
         })
@@ -399,102 +416,76 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
 
-        const user = (
-          await db.select().from(users).where(eq(users.email, input.email)).limit(1)
-        )[0];
+        const user = await findUserByEmailIdentity(db, input.email);
 
         const invalid = new TRPCError({
           code: "BAD_REQUEST",
           message: "Invalid or expired reset code",
         });
 
+        const now = Date.now();
         if (!user || !user.resetCodeHash || !user.resetCodeExpiresAt) throw invalid;
-        if (Date.now() > Number(user.resetCodeExpiresAt)) throw invalid;
+        if (passwordResetLockTimestamp(user.resetCodeLockedUntil) > now) throw invalid;
+        if (Number(user.resetCodeFailures ?? 0) >= PASSWORD_RESET_MAX_FAILURES) throw invalid;
+        if (now > Number(user.resetCodeExpiresAt)) throw invalid;
 
         const candidateHash = hashPasswordResetCode(input.code);
-        const a = Buffer.from(candidateHash);
-        const b = Buffer.from(user.resetCodeHash);
-        if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw invalid;
+        if (!passwordResetHashMatches(candidateHash, user.resetCodeHash)) {
+          db.transaction((tx) => {
+            const current = tx.select().from(users).where(eq(users.id, user.id)).get();
+            if (!current?.resetCodeHash || current.resetCodeHash !== user.resetCodeHash) return;
+            if (passwordResetLockTimestamp(current.resetCodeLockedUntil) > now) return;
+            const failures = Number(current.resetCodeFailures ?? 0) + 1;
+            const exhausted = failures >= PASSWORD_RESET_MAX_FAILURES;
+            tx.update(users).set({
+              resetCodeFailures: failures,
+              resetCodeHash: exhausted ? null : current.resetCodeHash,
+              resetCodeExpiresAt: exhausted ? null : current.resetCodeExpiresAt,
+              resetCodeLockedUntil: exhausted ? new Date(now + PASSWORD_RESET_LOCK_MS) : null,
+            }).where(eq(users.id, user.id)).run();
+          });
+          throw invalid;
+        }
 
         const hashedPassword = await bcrypt.hash(input.newPassword, 10);
-        await db
-          .update(users)
-          .set({ password: hashedPassword, resetCodeHash: null, resetCodeExpiresAt: null })
-          .where(eq(users.id, user.id));
+        const resetCommitted = db.transaction((tx) => {
+          const current = tx.select().from(users).where(eq(users.id, user.id)).get();
+          if (
+            !current?.resetCodeHash ||
+            current.resetCodeHash !== candidateHash ||
+            !current.resetCodeExpiresAt ||
+            Date.now() > Number(current.resetCodeExpiresAt) ||
+            passwordResetLockTimestamp(current.resetCodeLockedUntil) > Date.now() ||
+            Number(current.resetCodeFailures ?? 0) >= PASSWORD_RESET_MAX_FAILURES
+          ) return false;
+          const result = tx.update(users).set({
+            password: hashedPassword,
+            resetCodeHash: null,
+            resetCodeExpiresAt: null,
+            resetCodeFailures: 0,
+            resetCodeLockedUntil: null,
+          }).where(and(eq(users.id, user.id), eq(users.resetCodeHash, candidateHash))).run();
+          if (Number(result.changes ?? 0) !== 1) return false;
+          writeAuditLogOrThrow(tx, {
+            userId: user.id,
+            action: AUDIT_ACTIONS.USER_PASSWORD_RESET,
+            entityType: "user",
+            entityId: user.id,
+          });
+          return true;
+        });
+        if (!resetCommitted) throw invalid;
 
         const { revokeUserSessions } = await import("../sessionRevocation");
         await revokeUserSessions(user.id);
         const cookieOptions = getSessionCookieOptions(ctx.req);
         ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
-        await createAuditLog({
-          userId: user.id,
-          action: AUDIT_ACTIONS.USER_PASSWORD_RESET,
-          entityType: "user",
-          entityId: user.id,
-        });
-
         return { success: true } as const;
       }),
 
   }),
 
-  // Clarifications procedures
-  // Phase 111 — ambiguous external-action resolution. Real logic (was an empty
-  // stub): computes genuine clarifications the user must resolve BEFORE outreach
-  // can proceed — e.g. a case with no recipient-resolvable matches, or a case
-  // classified into multiple legal areas where the user hasn't confirmed intent.
-  // Resolutions are persisted in system_config keyed per user+clarification, so
-  // an answered clarification stops reappearing. Nothing external happens here.
-  clarifications: router({
-    pending: protectedProcedure.query(async ({ ctx }) => {
-      const db = await getDb();
-      if (!db) return [] as Array<{ id: string; caseId: string; question: string; context: string }>;
-      const resolutionPrefix = `clarify:${ctx.user.id}:`;
-      const [rows, resolutionRows] = await Promise.all([
-        db
-        .select({ id: cases.id, clientName: cases.clientName, clientEmail: cases.clientEmail, legalAreas: cases.legalAreas, status: cases.status })
-        .from(cases)
-        .where(eq(cases.userId, ctx.user.id)),
-        db
-          .select({ key: systemConfig.configKey })
-          .from(systemConfig)
-          .where(and(
-            gte(systemConfig.configKey, resolutionPrefix),
-            lt(systemConfig.configKey, `${resolutionPrefix}\uffff`),
-            eq(systemConfig.configValue, "true"),
-          )),
-      ]);
-      const resolved = new Set(resolutionRows.map((row) => row.key));
-      const out: Array<{ id: string; caseId: string; question: string; context: string }> = [];
-      for (const c of rows) {
-        let areas: string[] = [];
-        try { areas = JSON.parse(c.legalAreas || "[]"); } catch { areas = []; }
-        // Ambiguity 1: multiple legal areas → which should drive matching?
-        if (areas.length > 1) {
-          const cid = `${c.id}:primary-area`;
-          if (!resolved.has(`${resolutionPrefix}${cid}`)) {
-            out.push({ id: cid, caseId: c.id, question: `This case matches multiple legal areas (${areas.join(", ")}). Which is the primary area for lawyer matching?`, context: "multiple-legal-areas" });
-          }
-        }
-        // Ambiguity 2: no client email → outreach recipient is unresolved.
-        if (!c.clientEmail) {
-          const cid = `${c.id}:contact`;
-          if (!resolved.has(`${resolutionPrefix}${cid}`)) {
-            out.push({ id: cid, caseId: c.id, question: `This case has no client contact email. Add one before preparing outreach.`, context: "missing-contact" });
-          }
-        }
-      }
-      return out;
-    }),
-    answer: protectedProcedure
-      .input(z.object({ questionId: z.string(), answer: z.string().min(1) }))
-      .mutation(async ({ ctx, input }) => {
-        const { setSystemSwitch } = await import("../systemState");
-        // Mark this clarification resolved for this user so it stops surfacing.
-        await setSystemSwitch(`clarify:${ctx.user.id}:${input.questionId}`, true);
-        return { ok: true as const, resolved: input.questionId };
-      }),
-  }),
+  clarifications: clarificationsRouter,
 
   assistant: router({
     ask: protectedProcedure
@@ -502,66 +493,24 @@ export const appRouter = router({
         z.object({
           question: z.string().trim().min(1).max(2000),
           caseId: z.string().optional(),
+          expectedUserId: z.string().min(1).optional(),
           page: z.string().optional(),
         })
       )
       .mutation(async ({ ctx, input }) => {
+        if (input.expectedUserId && input.expectedUserId !== ctx.user.id) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Account changed while asking the assistant' });
+        }
         if (input.caseId) {
-          return answerCaseQuestion({
+          const result = await answerCaseQuestion({
             userId: ctx.user.id,
             caseId: input.caseId,
             question: input.question,
           });
+          return { ...result, caseId: input.caseId, ownerId: ctx.user.id };
         }
 
-        try {
-          const preferences = await getWorkflowPreferences(ctx.user.id);
-          const provider = preferences.analysisProvider === "local" ? null : preferences.analysisProvider;
-          if (!provider || !isLLMProviderConfigured(provider)) {
-            return {
-              answer: "General AI guidance is disabled while local analysis is selected. Select a configured external provider in Settings to enable it.",
-              citations: [],
-              grounded: false,
-              mode: "local" as const,
-              notice: "No case is selected and no external provider was used.",
-            };
-          }
-          const result = await invokeLLM({
-            provider,
-            messages: [
-              {
-                role: "system",
-                content: "You are LARO, a legal assistant for general product and legal-workflow guidance. If the user asks case-specific questions without a selected case, ask them to open a case first.",
-              },
-              { role: "user", content: input.question },
-            ],
-            maxTokens: 700,
-          });
-          const content = result.choices?.[0]?.message?.content;
-          const text =
-            typeof content === "string"
-              ? content
-              : Array.isArray(content)
-                ? content
-                    .map((part: any) => (part?.type === "text" ? part.text : ""))
-                    .join("\n")
-                : "";
-          return {
-            answer: text || "I could not generate an answer right now. Please try again.",
-            citations: [],
-            grounded: false,
-            mode: "general" as const,
-            notice: "No case is selected, so case evidence was not used.",
-          };
-        } catch {
-          return {
-            answer: "I am currently unable to reach the AI service. Please try again in a moment.",
-            citations: [],
-            grounded: false,
-            mode: "general" as const,
-            notice: "No case is selected, so case evidence was not used.",
-          };
-        }
+        return { ...answerProductQuestion(input.question), caseId: null, ownerId: ctx.user.id };
       }),
   }),
   
@@ -653,57 +602,126 @@ export const appRouter = router({
 
   // GDPR procedures — Phase 028: real access + erasure (were empty stubs).
   gdpr: router({
-    getConsent: protectedProcedure.query(async ({ ctx }) => {
-      const { getPrivacyPreferences } = await import('../privacyPreferences');
-      const preferences = await getPrivacyPreferences(ctx.user.id);
+    erasureState: protectedProcedure.query(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Database not available' });
+      const row = db.select({ value: systemConfig.configValue }).from(systemConfig)
+        .where(eq(systemConfig.configKey, `erasure:pending:${ctx.user.id}`)).get();
+      let state: { erasureStatus?: string; erasureRequestId?: string } | null = null;
+      try { state = row?.value ? JSON.parse(row.value) : null; } catch { /* fail closed */ }
       return {
-        // This describes required service processing, not proof of a GDPR legal
-        // basis. The deployment operator must document that basis separately.
-        dataProcessing: true,
-        ...preferences,
+        ownerId: ctx.user.id,
+        erasureStatus: state?.erasureStatus === 'revocation_pending' || state?.erasureStatus === 'failed'
+          ? state.erasureStatus : null,
+        erasureRequestId: typeof state?.erasureRequestId === 'string' ? state.erasureRequestId : null,
       };
     }),
+    erasureAuthMethod: protectedProcedure.query(async ({ ctx }) => {
+      const { getErasureAuthMethod } = await import('../erasureProof');
+      return { method: await getErasureAuthMethod(ctx.user.id) };
+    }),
+    requestErasureCode: protectedProcedure
+      .input(z.object({ expectedUserId: z.string().min(1) }).strict())
+      .mutation(async ({ ctx, input }) => {
+        if (input.expectedUserId !== ctx.user.id) throw new TRPCError({ code: 'FORBIDDEN' });
+        await enforcePersistentRateLimit(ctx, 'erasureCodeRequest', RATE_LIMITS.passwordResetRequest);
+        const { requestErasureCode } = await import('../erasureProof');
+        try {
+          await requestErasureCode(ctx.user.id, ctx.req.cookies);
+        } catch {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Could not send account-erasure verification code. Check email delivery and try again.' });
+        }
+        return { success: true } as const;
+      }),
+    reauthenticateForErasure: protectedProcedure
+      .input(z.object({
+        expectedUserId: z.string().min(1),
+        password: z.string().max(1_024).optional(),
+        code: z.string().regex(/^\d{8}$/).optional(),
+      }).strict())
+      .mutation(async ({ ctx, input }) => {
+        if (input.expectedUserId !== ctx.user.id) throw new TRPCError({ code: 'FORBIDDEN' });
+        await enforcePersistentRateLimit(ctx, 'erasureReauthenticate', RATE_LIMITS.passwordResetVerify);
+        const { reauthenticateForErasure } = await import('../erasureProof');
+        try {
+          return await reauthenticateForErasure({
+            userId: ctx.user.id,
+            cookies: ctx.req.cookies,
+            password: input.password,
+            code: input.code,
+          });
+        } catch {
+          throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Account-erasure verification failed or expired.' });
+        }
+      }),
+    getConsent: protectedProcedure
+      .input(z.object({ expectedUserId: z.string().trim().min(1).max(256) }).strict().optional())
+      .query(async ({ ctx, input }) => {
+        if (input?.expectedUserId !== undefined && input.expectedUserId !== ctx.user.id) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Account changed while loading privacy preferences' });
+        }
+        const { getPrivacyPreferences } = await import('../privacyPreferences');
+        const preferences = await getPrivacyPreferences(ctx.user.id);
+        return {
+          ownerId: ctx.user.id,
+          // This describes required service processing, not proof of a GDPR legal
+          // basis. The deployment operator must document that basis separately.
+          dataProcessing: true,
+          ...preferences,
+        };
+      }),
     // Full data export (right of access). Returns every row owned by the user.
     exportData: protectedProcedure.mutation(async ({ ctx }) => {
       const { exportUserData } = await import("../gdpr");
       const data = await exportUserData(ctx.user.id);
-      await createAuditLog({ userId: ctx.user.id, action: "gdpr.export", entityType: "user", entityId: ctx.user.id });
+      const db = await getDb();
+      writeAuditLogOrThrow(db, {
+        userId: ctx.user.id,
+        action: "gdpr.export",
+        entityType: "user",
+        entityId: ctx.user.id,
+        details: { tablesIncluded: Object.keys(data).filter((key) => key !== "_meta").sort() },
+      });
       return { success: true, data };
     }),
     // Permanent account + data deletion (right of erasure).
     deleteData: protectedProcedure
-      .input(z.object({ confirm: z.literal(true) }))
-      .mutation(async ({ ctx }) => {
+      .input(z.object({ confirm: z.literal(true), expectedUserId: z.string().min(1), proof: z.string().min(1).max(256) }).strict())
+      .mutation(async ({ ctx, input }) => {
+        if (input.expectedUserId !== ctx.user.id) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Account changed during erasure confirmation' });
+        }
+        const { consumeErasureProof } = await import('../erasureProof');
+        if (!await consumeErasureProof(ctx.user.id, ctx.req.cookies, input.proof)) {
+          throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Verify your identity again before erasing the account.' });
+        }
         const { deleteUserData } = await import("../gdpr");
-        // Audit BEFORE deleting (the audit row for this user is erased too, but
-        // the action is recorded in the same transaction window).
-        await createAuditLog({ userId: ctx.user.id, action: "gdpr.delete", entityType: "user", entityId: ctx.user.id });
         const result = await deleteUserData(ctx.user.id);
-        // Clear the session cookie since the account no longer exists.
-        try {
-          const { getSessionCookieOptions } = await import("../cookies");
+        if (result.erasureStatus !== 'revocation_pending') {
+          // Clear only after the account actually disappeared. A retryable
+          // provider-revocation failure retains the session and local secrets.
           ctx.res.clearCookie(COOKIE_NAME, { ...getSessionCookieOptions(ctx.req), maxAge: -1 });
-        } catch { /* ignore */ }
-        return { success: result.storageCleanupPending === 0, ...result };
+        }
+        return { success: result.erasureStatus === 'completed', ...result };
       }),
     updateConsent: protectedProcedure
       .input(
-        z.object({ marketing: z.boolean().optional(), analytics: z.boolean().optional() })
-          .refine((input) => input.marketing !== undefined || input.analytics !== undefined, {
-            message: 'At least one privacy preference is required',
-          })
+        z.object({
+          analytics: z.boolean(),
+          expectedUserId: z.string().trim().min(1).max(256).optional(),
+        }).strict()
       )
       .mutation(async ({ ctx, input }) => {
+        if (input.expectedUserId && input.expectedUserId !== ctx.user.id) {
+          throw new TRPCError({ code: 'FORBIDDEN', message: 'Account changed during privacy preference update' });
+        }
         const { updatePrivacyPreferences } = await import('../privacyPreferences');
-        const preferences = await updatePrivacyPreferences(ctx.user.id, input);
-        await createAuditLog({
-          userId: ctx.user.id,
-          action: "gdpr.consent_updated",
-          entityType: "user",
-          entityId: ctx.user.id,
-          details: preferences,
-        });
-        return { success: true, ...preferences };
+        const preferences = await updatePrivacyPreferences(
+          ctx.user.id,
+          { analytics: input.analytics },
+          { mandatoryAudit: true },
+        );
+        return { success: true, ownerId: ctx.user.id, ...preferences };
       }),
   }),
 

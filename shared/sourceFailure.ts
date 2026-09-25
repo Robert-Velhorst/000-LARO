@@ -33,7 +33,7 @@ export function describeSourceFailure(error: unknown) {
   else if (/timed? ?out|timeout|exceeded the .* (minute|second).*limit/i.test(text)) code = "timeout";
   else if (/ECONNREFUSED|ENOTFOUND|ECONNRESET|fetch failed/i.test(text)) code = "connection";
   else if (/HTTP 429|queue is full|processing is busy/i.test(text)) code = "rate_limit";
-  else if (/Google.*(HTTP (401|403)|unavailable|reconnection|reconnect)|invalid_grant/i.test(text)) code = "google_access";
+  else if (/Google.*(HTTP (401|403)|unavailable|reconnection|reconnect)|invalid_grant|selected provider account.*(not found|unsupported)|reconnect the selected provider account|multiple provider accounts.*select one account/i.test(text)) code = "google_access";
   else if (/HTTP 5\d\d/.test(text)) code = "provider_error";
   else if (/password.?protected|encrypted (pdf|document)|PasswordException|no password given|incorrect password/i.test(text)) code = "protected_document";
   else if (/invalid pdf|invalid.*(image|archive|zip)|end of central directory|unsupported image|corrupt/i.test(text)) code = "unreadable";

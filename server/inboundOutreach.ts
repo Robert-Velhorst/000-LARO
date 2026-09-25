@@ -101,7 +101,7 @@ export async function linkInboundOutreachReply(options: {
 
   const firstContact = outreach.initialContact ?? outreach.lastContact ?? outreach.createdAt;
   const responseTimeHours = firstContact
-    ? Math.max(0, (options.message.receivedAt.getTime() - firstContact.getTime()) / 3_600_000).toFixed(2)
+    ? Math.max(0, (options.message.receivedAt.getTime() - firstContact.getTime()) / 3_600_000)
     : null;
   db.transaction((tx: any) => {
     const mutation = tx.update(outreachStatus).set({
@@ -142,8 +142,13 @@ export async function linkInboundOutreachReply(options: {
   });
   await createNotification({
     userId: options.userId,
+    kind: "lawyer_response",
     title: "New outreach reply",
     body: `A reply to ${options.message.subject || "an outreach message"} was linked to its case and is ready for review.`,
+    caseId: options.caseId,
+    lawyerId: outreach.lawyerId ?? undefined,
+    metadata: { outreachId: outreach.id, gmailMessageId: options.message.gmailMessageId },
+    dedupKey: `outreach-reply:${outreach.id}:${options.message.gmailMessageId}`,
   });
   return { status: "linked", outreachId: outreach.id };
 }

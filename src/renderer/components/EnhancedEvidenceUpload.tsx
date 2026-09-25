@@ -7,6 +7,7 @@ import {
   isSupportedEvidenceMimeType,
   MAX_EVIDENCE_FILE_BYTES,
 } from "../../../shared/evidenceFiles";
+import { EVIDENCE_INGESTION_LIMITS } from "../../../shared/evidenceIngestion";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -98,18 +99,27 @@ export default function EnhancedEvidenceUpload({ caseId }: { caseId?: string }) 
 
     const accepted: UploadedFile[] = [];
     let rejected = 0;
+    let acceptedBytes = 0;
     for (const file of Array.from(fileList)) {
       const mimeType = mimeForFile(file);
-      if (!file.size || file.size > MAX_EVIDENCE_FILE_BYTES || !isSupportedEvidenceMimeType(mimeType)) {
+      if (
+        !file.size ||
+        file.size > MAX_EVIDENCE_FILE_BYTES ||
+        !isSupportedEvidenceMimeType(mimeType) ||
+        accepted.length >= EVIDENCE_INGESTION_LIMITS.maxJobItems ||
+        acceptedBytes + file.size > EVIDENCE_INGESTION_LIMITS.maxJobBytes
+      ) {
         rejected += 1;
         continue;
       }
       accepted.push({ id: crypto.randomUUID(), file, mimeType, status: "uploading" });
+      acceptedBytes += file.size;
     }
 
     if (rejected) toast.error(`${rejected} unsupported, empty, or oversized file${rejected === 1 ? " was" : "s were"} skipped`);
     if (!accepted.length) return;
     setFiles((previous) => [...previous, ...accepted]);
+    const ingestionJobId = crypto.randomUUID();
 
     for (const item of accepted) {
       try {
@@ -120,8 +130,13 @@ export default function EnhancedEvidenceUpload({ caseId }: { caseId?: string }) 
           fileName: item.file.name,
           mimeType: item.mimeType,
           base64: await fileToBase64(item.file),
+          ingestionJobId,
+          ingestionItemId: item.id,
         });
-        if (isSupportedDocumentAnalysisMimeType(item.mimeType)) {
+        const analysisSupported = isSupportedDocumentAnalysisMimeType(item.mimeType);
+        const shouldAnalyze = analysisSupported && uploaded.analysisEligible;
+        const analysisDeferred = analysisSupported && !uploaded.analysisEligible;
+        if (shouldAnalyze) {
           setFiles((previous) => previous.map((file) => file.id === item.id ? { ...file, status: "analyzing" } : file));
           try {
             await analyzeEvidence.mutateAsync({ evidenceId: uploaded.id });
@@ -135,8 +150,15 @@ export default function EnhancedEvidenceUpload({ caseId }: { caseId?: string }) 
             continue;
           }
         }
-        setFiles((previous) => previous.map((file) => file.id === item.id ? { ...file, status: "complete" } : file));
-        toast.success(`${item.file.name} stored${isSupportedDocumentAnalysisMimeType(item.mimeType) ? " and analyzed" : " as evidence"}`);
+        setFiles((previous) => previous.map((file) => file.id === item.id
+          ? {
+            ...file,
+            status: "complete",
+            ...(analysisDeferred ? { analysisWarning: "Automatic analysis deferred by the ingestion job limit" } : {}),
+          }
+          : file));
+        if (analysisDeferred) toast.warning(`${item.file.name} was stored; automatic analysis was deferred by the job limit`);
+        else toast.success(`${item.file.name} stored${shouldAnalyze ? " and analyzed" : " as evidence"}`);
         await refreshEvidenceWorkspace();
       } catch (error) {
         const message = error instanceof Error ? error.message : "Upload failed";

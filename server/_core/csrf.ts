@@ -13,45 +13,64 @@ import type { Request, Response, NextFunction } from 'express';
  * Origin to cross-origin state-changing requests, so their absence is safe.
  */
 
-const STATIC_ALLOWED = [
+const DEVELOPMENT_ALLOWED = [
   'http://localhost:3000',
   'http://localhost:5173',
   'http://localhost:5181',
   'http://127.0.0.1:3000',
   'http://127.0.0.1:5173',
   'http://127.0.0.1:5181',
-  'app://.',
-  'file://',
 ];
 
+function canonicalHttpOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
 export function allowedOrigins(): string[] {
-  const extra = (process.env.ALLOWED_ORIGINS || '')
+  const configured = (process.env.ALLOWED_ORIGINS || '')
     .split(',')
     .map((s) => s.trim())
-    .filter(Boolean);
-  return [...STATIC_ALLOWED, ...extra];
+    .map(canonicalHttpOrigin)
+    .filter((origin): origin is string => Boolean(origin));
+  const development = process.env.NODE_ENV === 'development' ? DEVELOPMENT_ALLOWED : [];
+  return [...new Set([...development, ...configured])];
 }
 
 export function isAllowedOrigin(origin: string | undefined | null): boolean {
   if (!origin) return false;
-  return allowedOrigins().includes(origin);
+  const canonical = canonicalHttpOrigin(origin);
+  return canonical !== null && allowedOrigins().includes(canonical);
 }
 
-function isRequestOrigin(req: Request, candidate: string): boolean {
+function requestOrigin(req: Request): string | null {
   const host = req.get?.('host') || req.headers.host;
-  if (!host) return false;
+  if (!host) return null;
   const protocol = req.protocol || ((req.socket as { encrypted?: boolean } | undefined)?.encrypted ? 'https' : 'http');
-  try {
-    return new URL(candidate).origin === `${protocol}://${host}`;
-  } catch {
-    return false;
-  }
+  return canonicalHttpOrigin(`${protocol}://${host}`);
+}
+
+/** One canonical decision shared by preflight, CORS response, and CSRF. */
+export function isOriginAllowedForRequest(
+  req: Request,
+  candidate: string | undefined | null,
+): boolean {
+  if (!candidate) return false;
+  const canonical = canonicalHttpOrigin(candidate);
+  if (!canonical) return false;
+  return allowedOrigins().includes(canonical) || canonical === requestOrigin(req);
 }
 
 /** Strict CORS: only ever echo an allowlisted origin — never `*` with credentials. */
 export function corsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const origin = req.headers.origin;
-  if (origin && (isAllowedOrigin(origin) || isRequestOrigin(req, origin))) {
+  const permitted = isOriginAllowedForRequest(req, origin);
+  if (origin && permitted) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -59,7 +78,7 @@ export function corsMiddleware(req: Request, res: Response, next: NextFunction):
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
   }
   if (req.method === 'OPTIONS') {
-    res.sendStatus((!!origin && isRequestOrigin(req, origin)) || isAllowedOrigin(origin) || !origin ? 200 : 403);
+    res.sendStatus(permitted || !origin ? 200 : 403);
     return;
   }
   next();
@@ -73,7 +92,7 @@ export function csrfGuard(req: Request, res: Response, next: NextFunction): void
 
   const origin = req.headers.origin;
   if (origin) {
-    if (!isAllowedOrigin(origin) && !isRequestOrigin(req, origin)) {
+    if (!isOriginAllowedForRequest(req, origin)) {
       res.status(403).json({ error: 'CSRF: origin not allowed' });
       return;
     }
@@ -84,7 +103,7 @@ export function csrfGuard(req: Request, res: Response, next: NextFunction): void
   if (referer) {
     try {
       const refOrigin = new URL(referer).origin;
-      if (!isAllowedOrigin(refOrigin) && !isRequestOrigin(req, refOrigin)) {
+      if (!isOriginAllowedForRequest(req, refOrigin)) {
         res.status(403).json({ error: 'CSRF: referer not allowed' });
         return;
       }

@@ -1,15 +1,13 @@
-const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
+import {
+  numericColumnPolicies,
+  type NumericColumnPolicy,
+} from "./numericColumns";
 
 type SqliteClient = {
   prepare: (statement: string) => {
     all: (...params: unknown[]) => unknown[];
     get: (...params: unknown[]) => unknown;
   };
-};
-
-type NumericField = {
-  table: string;
-  column: string;
 };
 
 type NumericConstraint = {
@@ -43,37 +41,6 @@ export interface NumericIntegrityReport {
   constraints: NumericConstraintIntegrity[];
 }
 
-const numericFields: NumericField[] = [
-  { table: "lawyers", column: "totalOutreaches" },
-  { table: "lawyers", column: "totalResponses" },
-  { table: "lawyers", column: "totalAcceptances" },
-  { table: "lawyers", column: "caseLoad" },
-  { table: "bulk_import_jobs", column: "totalRows" },
-  { table: "bulk_import_jobs", column: "processedRows" },
-  { table: "bulk_import_jobs", column: "failedRows" },
-  { table: "lawyer_ratings", column: "totalInteractions" },
-  { table: "lawyer_ratings", column: "fastResponses" },
-  { table: "lawyer_ratings", column: "mediumResponses" },
-  { table: "lawyer_ratings", column: "slowResponses" },
-  { table: "lawyer_ratings", column: "verySlowResponses" },
-  { table: "lawyer_ratings", column: "completeAnswers" },
-  { table: "lawyer_ratings", column: "partialAnswers" },
-  { table: "lawyer_ratings", column: "incompleteAnswers" },
-  { table: "lawyer_ratings", column: "casesAccepted" },
-  { table: "lawyer_ratings", column: "casesDeclined" },
-  { table: "lawyer_ratings", column: "casesNoResponse" },
-  { table: "lawyer_interactions", column: "responseLength" },
-  { table: "rating_calculation_logs", column: "interactionsAnalyzed" },
-  { table: "auto_collection_settings", column: "totalItemsCollected" },
-  { table: "auto_collection_settings", column: "totalEmailsCollected" },
-  { table: "auto_collection_settings", column: "totalFilesCollected" },
-  { table: "auto_collection_logs", column: "emailsFound" },
-  { table: "auto_collection_logs", column: "emailsProcessed" },
-  { table: "auto_collection_logs", column: "filesFound" },
-  { table: "auto_collection_logs", column: "filesDownloaded" },
-  { table: "auto_collection_logs", column: "errorCount" },
-];
-
 const numericConstraints: NumericConstraint[] = [
   {
     name: "lawyer responses do not exceed outreaches",
@@ -100,13 +67,6 @@ const numericConstraints: NumericConstraint[] = [
     violation: (value) => `${value("failedRows")} > ${value("processedRows")}`,
   },
   {
-    name: "lawyer rating outcomes do not exceed interactions",
-    table: "lawyer_ratings",
-    columns: ["casesAccepted", "casesDeclined", "casesNoResponse", "totalInteractions"],
-    violation: (value) =>
-      `${value("casesAccepted")} + ${value("casesDeclined")} + ${value("casesNoResponse")} > ${value("totalInteractions")}`,
-  },
-  {
     name: "processed emails do not exceed found emails",
     table: "auto_collection_logs",
     columns: ["emailsProcessed", "emailsFound"],
@@ -131,25 +91,24 @@ function quoteIdentifier(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
 }
 
-function columnExpression(column: string): string {
-  return `TRIM(CAST(${quoteIdentifier(column)} AS TEXT))`;
-}
-
 function isEmpty(column: string): string {
-  return `${quoteIdentifier(column)} IS NULL OR ${columnExpression(column)} = ''`;
+  return `${quoteIdentifier(column)} IS NULL`;
 }
 
-function isInvalid(column: string): string {
-  const value = columnExpression(column);
-  return `NOT (${isEmpty(column)}) AND (${value} GLOB '*[^0-9]*' OR CAST(${value} AS INTEGER) > ${MAX_SAFE_INTEGER})`;
+function isValid(policy: NumericColumnPolicy): string {
+  const column = quoteIdentifier(policy.column);
+  const storage = policy.storage === "integer"
+    ? `typeof(${column}) = 'integer'`
+    : `typeof(${column}) IN ('integer', 'real')`;
+  return `(${column} IS NULL OR (${storage} AND ${column} >= ${policy.minimum} AND ${column} <= ${policy.maximum}))`;
 }
 
-function isCompatible(column: string): string {
-  return `NOT (${isInvalid(column)})`;
+function isInvalid(policy: NumericColumnPolicy): string {
+  return `NOT ${isValid(policy)}`;
 }
 
 function numericValue(column: string): string {
-  return `CASE WHEN ${isEmpty(column)} THEN 0 ELSE CAST(${columnExpression(column)} AS INTEGER) END`;
+  return `COALESCE(${quoteIdentifier(column)}, 0)`;
 }
 
 function tableColumns(sqlite: SqliteClient, table: string): Set<string> {
@@ -159,11 +118,12 @@ function tableColumns(sqlite: SqliteClient, table: string): Set<string> {
 
 export function assessNumericIntegrity(sqlite: SqliteClient): NumericIntegrityReport {
   const tableNames = new Set([
-    ...numericFields.map((field) => field.table),
+    ...numericColumnPolicies.map((field) => field.table),
     ...numericConstraints.map((constraint) => constraint.table),
   ]);
-  const fields = numericFields.map<NumericFieldIntegrity>((field) => ({
-    ...field,
+  const fields = numericColumnPolicies.map<NumericFieldIntegrity>((field) => ({
+    table: field.table,
+    column: field.column,
     available: false,
     totalRows: 0,
     emptyValues: 0,
@@ -183,7 +143,7 @@ export function assessNumericIntegrity(sqlite: SqliteClient): NumericIntegrityRe
   for (const table of tableNames) {
     const availableColumns = tableColumns(sqlite, table);
     if (availableColumns.size === 0) continue;
-    const tableFields = numericFields
+    const tableFields = numericColumnPolicies
       .map((field, index) => ({ field, index }))
       .filter(({ field }) => field.table === table);
     const tableConstraints = numericConstraints
@@ -195,12 +155,16 @@ export function assessNumericIntegrity(sqlite: SqliteClient): NumericIntegrityRe
       if (!availableColumns.has(field.column)) continue;
       selections.push(
         `sum(CASE WHEN ${isEmpty(field.column)} THEN 1 ELSE 0 END) AS ${quoteIdentifier(`empty_${index}`)}`,
-        `sum(CASE WHEN ${isInvalid(field.column)} THEN 1 ELSE 0 END) AS ${quoteIdentifier(`invalid_${index}`)}`,
+        `sum(CASE WHEN ${isInvalid(field)} THEN 1 ELSE 0 END) AS ${quoteIdentifier(`invalid_${index}`)}`,
       );
     }
     for (const { constraint, index } of tableConstraints) {
       if (!constraint.columns.every((column) => availableColumns.has(column))) continue;
-      const compatible = constraint.columns.map(isCompatible).join(" AND ");
+      const policies = constraint.columns.map((column) =>
+        numericColumnPolicies.find((policy) => policy.table === table && policy.column === column),
+      );
+      if (policies.some((policy) => policy === undefined)) continue;
+      const compatible = policies.map((policy) => isValid(policy!)).join(" AND ");
       const violation = constraint.violation(numericValue);
       selections.push(
         `sum(CASE WHEN ${compatible} AND (${violation}) THEN 1 ELSE 0 END) AS ${quoteIdentifier(`constraint_${index}`)}`,

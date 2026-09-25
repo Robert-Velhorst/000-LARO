@@ -100,6 +100,14 @@ suite("auto-collection query efficiency", () => {
       });
       expect(result.gmailMessages).toBe(0);
       expect(result.errors).toEqual([]);
+      expect(result.monitoring).toMatchObject({
+        completeness: "complete_zero",
+        requestedKeywords: ["contract"],
+        requestedSources: ["gmail"],
+        completedSources: ["gmail"],
+        storedItems: 0,
+      });
+      expect(result.monitoring.durationMs).toBeGreaterThan(0);
     } finally {
       vi.unstubAllGlobals();
     }

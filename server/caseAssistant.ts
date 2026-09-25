@@ -8,8 +8,9 @@ import {
   type TimelineFinding,
   findingHasLiteralSourceSupport,
 } from "./documentIntelligence";
-import { invokeLLM, isLLMProviderConfigured, isLocalLLMProvider } from "./llm";
-import { getWorkflowPreferences } from "./workflowPreferences";
+import { invokeLLM, isLLMProviderConfigured } from "./llm";
+import { isLLMUsageLimitError } from "./llmUsageBudget";
+import { documentContentAuthorizationToken, getWorkflowPreferences } from "./workflowPreferences";
 import { cases, documentAnalyses, evidence } from "./schema";
 
 const MAX_RETRIEVAL_SOURCES = 16;
@@ -347,9 +348,10 @@ export async function answerCaseQuestion(options: {
 }): Promise<CaseAssistantAnswer> {
   const preferences = await getWorkflowPreferences(options.userId);
   const provider = preferences.analysisProvider === "local" ? null : preferences.analysisProvider;
+  const authorizationToken = provider ? documentContentAuthorizationToken(preferences, provider, options.userId) : null;
   const providerAvailable = Boolean(
     provider &&
-    (isLocalLLMProvider(provider) || preferences.shareRawDocumentContent) &&
+    authorizationToken &&
     isLLMProviderConfigured(provider)
   );
   const { caseContext, sources } = await loadCaseSources(options.userId, options.caseId);
@@ -384,6 +386,12 @@ export async function answerCaseQuestion(options: {
   try {
     const response = await invokeLLM({
       provider,
+      beforeDispatch: async () => {
+        const currentPreferences = await getWorkflowPreferences(options.userId);
+        return Boolean(authorizationToken &&
+          documentContentAuthorizationToken(currentPreferences, provider, options.userId) === authorizationToken);
+      },
+      budget: { ownerId: options.userId, operation: "case_assistant", caseId: options.caseId },
       messages: [
         {
           role: "system",
@@ -446,7 +454,8 @@ export async function answerCaseQuestion(options: {
       mode: "provider",
       notice: null,
     };
-  } catch {
+  } catch (error) {
+    if (isLLMUsageLimitError(error)) throw error;
     return buildCaseAssistantRetrievalAnswer(options.question, rankedSources, "provider_failed");
   }
 }

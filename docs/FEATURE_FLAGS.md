@@ -1,22 +1,36 @@
-# Feature Flags & Rollout Controls (Phase 058)
+# Feature flags and demo configuration
 
-Date: 2026-07-06 · Branch `Phase-Imp`
+LARO keeps only flags that own a real runtime decision. The typed registry in
+`server/featureFlags.ts` records each flag's owner, conservative default,
+storage key, canonical reader, maintained consumers, and two-state behavioral
+test. `tests/backend/featureFlags.test.ts` verifies every registered consumer
+and test path so a definition with no maintained use fails the release suite.
 
-`server/featureFlags.ts` — boolean flags with three-layer resolution:
-1. env override `FEATURE_<UPPER_SNAKE>` (e.g. `FEATURE_OUTREACH_SEND_ENABLED=true`),
-2. persisted value in `system_config` (`flag:<key>`),
-3. built-in default.
+## Maintained flag
 
-## Flags
-| Key | Default | Purpose |
-|---|---|---|
-| `outreach.send.enabled` | **false** | Gates the future real outreach send. Stays OFF until an operator enables it — upholds the "no contact without approval" boundary during rollout. |
-| `analytics.enabled` | true | Local analytics. |
-| `demo.mode` | false | Demo labelling. |
+| Key | Owner | Default | Runtime reader and consumers | Two-state proof |
+|---|---|---:|---|---|
+| `outreach.send.enabled` | Outreach delivery | `false` | `isOutreachSendingEnabled()` in the pre-send review, approval response, live-acceptance check, and provider send gate | `tests/backend/realSend.test.ts` proves disabled rejection and enabled delivery behavior |
 
-## API
-- `featureFlags.list` (any authenticated user) — current flags.
-- `featureFlags.set` (admin only) — toggle a flag.
-- `workflow.approveDraft` returns `sendEnabled` from the flag (currently false).
+The effective value is the persisted `system_config` row
+`flag:outreach.send.enabled`, or `false` when the row is absent or unreadable.
+There is no environment override, so an audited admin change cannot report
+success while a hidden environment value keeps the behavior unchanged.
 
-Verified in `tests/backend/phase051_060.test.ts`.
+The protected `featureFlags.list` procedure returns only registered flags.
+`featureFlags.set` is admin-only, persists only a registered key, and records a
+mandatory `feature_flag.changed` audit event. Enabling this flag does not bypass
+case ownership, Approved state, emergency stop, provider readiness,
+idempotency, or audit requirements.
+
+## Demo mode is configuration, not a flag
+
+`DEMO_MODE` is the sole demo request. `ENV.isDemo` is its canonical runtime
+decision and always resolves to `false` when `NODE_ENV=production`.
+`system.appInfo`, admin diagnostics, and debug bundles read that same value.
+Demo mode is not listed or mutable through the feature-flag API.
+
+The retired `analytics.enabled` and `demo.mode` definitions had no maintained
+behavior. Migrations `drizzle/0025_remove_dead_feature_flags.sql` and
+`deploy/postgres/migrations/0008_remove_dead_feature_flags.sql` delete their
+legacy storage rows.

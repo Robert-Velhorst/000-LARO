@@ -3,6 +3,7 @@ export interface BackupCliArguments {
   file?: string;
   desktopSecretsPath?: string;
   localStoragePath?: string;
+  recoveryKeyPath?: string;
   allowLegacy: boolean;
   allowMissingStorage: boolean;
 }
@@ -11,6 +12,7 @@ export function parseBackupArguments(args: string[]): BackupCliArguments {
   const positional: string[] = [];
   let desktopSecretsPath: string | undefined;
   let localStoragePath: string | undefined;
+  let recoveryKeyPath: string | undefined;
   let allowLegacy = false;
   let allowMissingStorage = false;
 
@@ -42,6 +44,15 @@ export function parseBackupArguments(args: string[]): BackupCliArguments {
       index += 1;
       continue;
     }
+    if (argument === '--recovery-key-file') {
+      const value = args[index + 1];
+      if (!value || value.startsWith('--')) {
+        throw new Error('--recovery-key-file requires a file path.');
+      }
+      recoveryKeyPath = value;
+      index += 1;
+      continue;
+    }
     if (argument.startsWith('--') && argument !== '--restore' && argument !== '--validate') {
       throw new Error(`Unknown database-maintenance option: ${argument}`);
     }
@@ -53,6 +64,7 @@ export function parseBackupArguments(args: string[]): BackupCliArguments {
     file: positional[1],
     desktopSecretsPath,
     localStoragePath,
+    recoveryKeyPath,
     allowLegacy,
     allowMissingStorage,
   };

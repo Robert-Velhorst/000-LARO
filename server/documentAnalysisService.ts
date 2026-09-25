@@ -12,8 +12,8 @@ import {
 import { getEvidenceFile } from "./evidence";
 import { documentAnalyses } from "./schema";
 import { storageRead } from "./storage";
-import { getWorkflowPreferences } from "./workflowPreferences";
-import { getLLMProviderDescriptors, isLLMProviderConfigured, isLocalLLMProvider } from "./llm";
+import { documentContentAuthorizationToken, getWorkflowPreferences } from "./workflowPreferences";
+import { getLLMProviderDescriptors, isLLMProviderConfigured } from "./llm";
 import { MAX_EVIDENCE_FILE_BYTES } from "../shared/evidenceFiles";
 
 const PROVIDER_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
@@ -41,12 +41,9 @@ export async function analyzeStoredEvidence(options: {
   const metadata = parseMetadata(item.metadata);
   const preferences = await getWorkflowPreferences(options.userId);
   const provider = preferences.analysisProvider === "local" ? undefined : preferences.analysisProvider;
+  const authorizationToken = provider ? documentContentAuthorizationToken(preferences, provider, options.userId) : null;
   const requestedDeepAnalysis = options.deepAnalysis ?? true;
-  const deepAnalysis = Boolean(
-    requestedDeepAnalysis &&
-    provider &&
-    (isLocalLLMProvider(provider) || preferences.shareRawDocumentContent)
-  );
+  const deepAnalysis = Boolean(requestedDeepAnalysis && provider && authorizationToken);
   const storageKey = metadata.storageKey;
   if (typeof storageKey !== "string" || !storageKey) {
     throw new Error("This evidence record has no stored source file to analyze");
@@ -104,13 +101,15 @@ export async function analyzeStoredEvidence(options: {
     extraction,
     deepAnalysis,
     provider,
+    budget: { ownerId: options.userId, caseId: item.caseId },
     beforeDispatch: async () => {
       const current = await getEvidenceFile(options.userId, item.id);
       if (!current || current.caseId !== item.caseId || current.metadata !== item.metadata) return false;
       await assertCaseOwnership(current.caseId, options.userId);
       const currentPreferences = await getWorkflowPreferences(options.userId);
       return currentPreferences.analysisProvider === preferences.analysisProvider &&
-        Boolean(provider && (isLocalLLMProvider(provider) || currentPreferences.shareRawDocumentContent));
+        Boolean(provider && authorizationToken &&
+          documentContentAuthorizationToken(currentPreferences, provider, options.userId) === authorizationToken);
     },
   });
   const id = cached?.id ?? randomUUID();

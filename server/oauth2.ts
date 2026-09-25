@@ -1,15 +1,12 @@
 
-import { getDb } from "./db";
-import { emailAccounts } from "./schema";
-import { eq, and, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import crypto from "crypto";
 import { encryptToken, decryptToken } from "./emailOAuth";
 import { ENV } from "./_core/env";
-import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
 import { readBoundedResponseJson, withBoundedHttpResponse } from "./boundedHttpResponse";
 import { getHostedRedisOAuthStateClient } from "./hostedRedis";
-import { createRedisOAuthStateStore } from "./oauthStateStore";
+import { createRedisOAuthStateStore, type StoredOAuthFlow } from "./oauthStateStore";
+import { createLocalOAuthStateStore } from "./localOAuthStateStore";
 
 export interface OAuth2Config {
   clientId: string;
@@ -43,9 +40,10 @@ export class OAuthStateError extends Error {
 
 
 interface OAuthStatePayload {
-  userId: string;
+  flowId: string;
   provider: OAuthProvider;
   codeVerifier: string;
+  codeChallenge: string;
   nonce: string;
   createdAt: number;
 }
@@ -173,33 +171,29 @@ function generatePkcePair(): { codeVerifier: string; codeChallenge: string } {
   return { codeVerifier, codeChallenge };
 }
 
-/**
- * Build a self-contained, encrypted OAuth state. Everything the callback needs
- * (userId, provider, PKCE codeVerifier) is encrypted into the state itself, so
- * the flow survives server/process restarts without any server-side storage.
- */
+/** The portable state contains PKCE material and an opaque flow ID, never user authority. */
 function buildOAuthState(
   provider: OAuthProvider,
-  userId: string,
-  codeVerifier: string
+  flowId: string,
+  codeVerifier: string,
+  codeChallenge: string,
 ): string {
   const payload: OAuthStatePayload = {
     provider,
-    userId,
+    flowId,
     codeVerifier,
+    codeChallenge,
     nonce: nanoid(),
     createdAt: Date.now(),
   };
   return toBase64Url(Buffer.from(encryptToken(JSON.stringify(payload)), "utf8"));
 }
 
-/**
- * Start OAuth flow with PKCE and state protection.
- */
-export function beginOAuthFlow(provider: OAuthProvider, userId: string): string {
-  const { codeVerifier, codeChallenge } = generatePkcePair();
-  const state = buildOAuthState(provider, userId, codeVerifier);
-
+function providerAuthorizationUrl(
+  provider: OAuthProvider,
+  state: string,
+  codeChallenge: string,
+): string {
   const config = getOAuth2Config(provider);
   if (!config.clientId) {
     throw new Error(`${provider} OAuth client ID is not configured`);
@@ -233,29 +227,30 @@ export function beginOAuthFlow(provider: OAuthProvider, userId: string): string 
   return `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params.toString()}`;
 }
 
-/** Starts an OAuth flow with a shared one-time state marker when hosted. */
-export async function beginOAuthFlowAsync(provider: OAuthProvider, userId: string): Promise<string> {
-  const authorizationUrl = beginOAuthFlow(provider, userId);
-  if (!ENV.isHosted) return authorizationUrl;
-
-  const state = new URL(authorizationUrl).searchParams.get("state");
-  if (!state) throw new OAuthStateError();
-  try {
-    const store = createRedisOAuthStateStore(await getHostedRedisOAuthStateClient());
-    await store.record(state, OAUTH_STATE_TTL_MS);
-  } catch {
-    throw new Error("OAuth flow could not be started safely because shared state storage is unavailable.");
-  }
-  return authorizationUrl;
+function digestProof(value: string): string {
+  return crypto.createHmac('sha256', ENV.JWT_SECRET)
+    .update('LARO OAuth flow proof v1\0')
+    .update(value)
+    .digest('hex');
 }
 
-/**
- * Consume and validate one-time OAuth state.
- */
-export function consumeOAuthState(
-  state: string,
-  provider: OAuthProvider
-): { userId: string; codeVerifier: string } {
+function callbackUsesLoopback(): boolean {
+  try {
+    const hostname = new URL(getOAuthRedirectBaseUrl()).hostname.toLowerCase();
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
+async function oauthFlowStore() {
+  if (ENV.isHosted) {
+    return createRedisOAuthStateStore(await getHostedRedisOAuthStateClient());
+  }
+  return createLocalOAuthStateStore();
+}
+
+function decodeOAuthState(state: string, provider: OAuthProvider): OAuthStatePayload {
   if (
     !state ||
     state.length > OAUTH_STATE_MAX_LENGTH ||
@@ -281,53 +276,129 @@ export function consumeOAuthState(
 
   if (
     !payload ||
-    typeof payload.userId !== "string" ||
+    typeof payload.flowId !== "string" ||
     typeof payload.codeVerifier !== "string" ||
-    typeof payload.createdAt !== "number"
+    typeof payload.codeChallenge !== "string" ||
+    typeof payload.createdAt !== "number" ||
+    typeof payload.nonce !== "string" ||
+    payload.flowId.length < 20 ||
+    !/^[A-Za-z0-9_-]{43,128}$/.test(payload.codeVerifier) ||
+    !/^[A-Za-z0-9_-]{43}$/.test(payload.codeChallenge)
   ) {
     throw new OAuthStateError();
   }
-
-  if (Date.now() - payload.createdAt > OAUTH_STATE_TTL_MS) {
+  if (Date.now() - payload.createdAt > OAUTH_STATE_TTL_MS || payload.createdAt > Date.now() + 30_000) {
     throw new OAuthStateError();
   }
-
-  if (payload.provider !== provider) {
-    throw new OAuthStateError();
-  }
-
-  return { userId: payload.userId, codeVerifier: payload.codeVerifier };
-}
-
-/**
- * Validates and consumes the hosted replay marker after local cryptographic
- * validation. A Redis outage or a repeated callback is invalid state.
- */
-export async function consumeOAuthStateAsync(
-  state: string,
-  provider: OAuthProvider
-): Promise<{ userId: string; codeVerifier: string }> {
-  const payload = consumeOAuthState(state, provider);
-  if (!ENV.isHosted) return payload;
-  try {
-    const store = createRedisOAuthStateStore(await getHostedRedisOAuthStateClient());
-    if (!await store.consume(state)) throw new OAuthStateError();
-  } catch (error) {
-    if (error instanceof OAuthStateError) throw error;
-    throw new OAuthStateError();
-  }
+  if (payload.provider !== provider) throw new OAuthStateError();
   return payload;
 }
 
 /**
- * Generate OAuth2 authorization URL
+ * Start with a one-time server-held record. The renderer receives only the
+ * local/public start route; the provider URL is issued after that browser has
+ * received its HttpOnly flow binding.
  */
-export function getAuthorizationUrl(provider: 'gmail' | 'outlook', userId: string): string {
-  return beginOAuthFlow(provider, userId);
+export async function beginOAuthFlowAsync(
+  provider: OAuthProvider,
+  userId: string,
+  initiatingSessionToken = '',
+): Promise<string> {
+  const { codeVerifier, codeChallenge } = generatePkcePair();
+  const flowId = toBase64Url(crypto.randomBytes(24));
+  const state = buildOAuthState(provider, flowId, codeVerifier, codeChallenge);
+  const startTicket = toBase64Url(crypto.randomBytes(32));
+  // Validate provider configuration before leaving a durable pending record.
+  if (!getOAuth2Config(provider).clientId) {
+    throw new Error(`${provider} OAuth client ID is not configured`);
+  }
+  const allowLoopbackHandoff = !ENV.isHosted && callbackUsesLoopback();
+  if (!initiatingSessionToken && !allowLoopbackHandoff) {
+    throw new Error('OAuth flow requires an authenticated initiating browser session.');
+  }
+  const flow: StoredOAuthFlow = {
+    flowId,
+    userId,
+    provider,
+    initiatingSessionHash: digestProof(initiatingSessionToken),
+    allowLoopbackHandoff,
+    startTicketHash: digestProof(startTicket),
+    bindingHash: null,
+    status: 'pending',
+    expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
+  };
+  try {
+    const store = await oauthFlowStore();
+    await store.record(state, flow, OAUTH_STATE_TTL_MS);
+  } catch {
+    throw new Error("OAuth flow could not be started safely because one-time flow storage is unavailable.");
+  }
+  const startUrl = new URL(`${getOAuthRedirectBaseUrl()}/api/oauth/${provider}/start`);
+  startUrl.searchParams.set('state', state);
+  startUrl.searchParams.set('ticket', startTicket);
+  return startUrl.toString();
 }
 
-export async function getAuthorizationUrlAsync(provider: 'gmail' | 'outlook', userId: string): Promise<string> {
-  return await beginOAuthFlowAsync(provider, userId);
+/**
+ * Redeem the one-time start ticket and bind this flow to the browser that will
+ * return from the provider. A copied provider URL never contains this proof.
+ */
+export async function activateOAuthStateAsync(
+  state: string,
+  provider: OAuthProvider,
+  startTicket: string,
+  bindingCookieValue: string,
+  initiatingSessionToken = '',
+  loopbackRequest = false,
+): Promise<string> {
+  const payload = decodeOAuthState(state, provider);
+  if (!/^[A-Za-z0-9_-]{32,128}$/.test(startTicket)) throw new OAuthStateError();
+  if (!/^[A-Za-z0-9_-]{43}$/.test(bindingCookieValue)) throw new OAuthStateError();
+  try {
+    const store = await oauthFlowStore();
+    const flow = await store.activate(state, {
+      startTicketHash: digestProof(startTicket),
+      bindingHash: digestProof(bindingCookieValue),
+      provider,
+      flowId: payload.flowId,
+      now: Date.now(),
+      initiatingSessionHash: digestProof(initiatingSessionToken),
+      loopbackRequest,
+    });
+    if (!flow) throw new OAuthStateError();
+  } catch (error) {
+    if (error instanceof OAuthStateError) throw error;
+    throw new OAuthStateError();
+  }
+  return providerAuthorizationUrl(provider, state, payload.codeChallenge);
+}
+
+/**
+ * Validate and atomically consume the browser-bound flow before exchanging the
+ * provider code. Missing proof, another browser/session, expiry, or replay all
+ * fail identically without revealing flow ownership.
+ */
+export async function consumeOAuthStateAsync(
+  state: string,
+  provider: OAuthProvider,
+  bindingCookieValue: string,
+): Promise<{ userId: string; codeVerifier: string }> {
+  const payload = decodeOAuthState(state, provider);
+  if (!/^[A-Za-z0-9_-]{32,128}$/.test(bindingCookieValue)) throw new OAuthStateError();
+  try {
+    const store = await oauthFlowStore();
+    const flow = await store.consume(state, {
+      bindingHash: digestProof(bindingCookieValue),
+      provider,
+      flowId: payload.flowId,
+      now: Date.now(),
+    });
+    if (!flow) throw new OAuthStateError();
+    return { userId: flow.userId, codeVerifier: payload.codeVerifier };
+  } catch (error) {
+    if (error instanceof OAuthStateError) throw error;
+    throw new OAuthStateError();
+  }
 }
 
 /**
@@ -434,136 +505,5 @@ export async function getAccountInfo(
   return {
     email: d.mail || d.userPrincipalName || "",
     displayName: d.displayName,
-  };
-}
-
-export async function saveEmailAccount(
-  userId: string,
-  provider: "gmail" | "outlook",
-  tokens: OAuth2Tokens,
-  accountInfo: EmailAccountInfo
-): Promise<string> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const normalizedEmail = accountInfo.email.trim().toLowerCase();
-  if (
-    !tokens.accessToken.trim() ||
-    normalizedEmail.length > 320 ||
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
-  ) {
-    throw new Error("Provider connection did not return valid account credentials");
-  }
-
-  const row = {
-    userId,
-    provider,
-    email: normalizedEmail,
-    accessToken: encryptToken(tokens.accessToken),
-    refreshToken: tokens.refreshToken ? encryptToken(tokens.refreshToken) : null,
-    tokenExpiry: new Date(Date.now() + tokens.expiresIn * 1000),
-    status: "connected",
-    connectedAt: new Date(),
-    metadata: JSON.stringify({
-      displayName: accountInfo.displayName,
-      profilePicture: accountInfo.profilePicture,
-      tokenType: tokens.tokenType,
-      expiresIn: tokens.expiresIn,
-    }),
-    updatedAt: new Date(),
-  };
-
-  return db.transaction((tx: any) => {
-    const existing = tx.select()
-      .from(emailAccounts)
-      .where(and(
-        eq(emailAccounts.userId, userId),
-        eq(emailAccounts.provider, provider),
-        sql`lower(trim(${emailAccounts.email})) = ${normalizedEmail}`,
-      ))
-      .limit(1)
-      .get();
-    const accountId = existing?.id ?? nanoid();
-    if (existing) {
-      tx.update(emailAccounts).set({
-        ...row,
-        refreshToken: row.refreshToken ?? existing.refreshToken,
-      }).where(eq(emailAccounts.id, existing.id)).run();
-    } else {
-      tx.insert(emailAccounts).values({ id: accountId, ...row, createdAt: new Date() }).run();
-    }
-    writeAuditLogOrThrow(tx, {
-      userId,
-      action: AUDIT_ACTIONS.PROVIDER_CONNECTED,
-      entityType: "provider_connection",
-      entityId: accountId,
-      details: {
-        provider: provider === "gmail" ? "google" : "microsoft",
-        requestedScopes: getOAuth2Config(provider).scopes,
-        tokenReportedScopes: tokens.scope ? tokens.scope.split(/\s+/).filter(Boolean) : [],
-        refreshGrantStored: Boolean(row.refreshToken ?? existing?.refreshToken),
-      },
-    });
-    return accountId;
-  });
-}
-
-export async function refreshAccessToken(
-  provider: "gmail" | "outlook",
-  refreshToken: string
-): Promise<OAuth2Tokens> {
-  const config = getOAuth2Config(provider);
-  if (provider === "gmail") {
-    const body = new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: config.clientId,
-      grant_type: "refresh_token",
-    });
-    if (config.clientSecret) {
-      body.set("client_secret", config.clientSecret);
-    }
-    const { response: res, data } = await fetchOAuthJson<Record<string, string>>(
-      () => fetchTokenEndpoint("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-      }),
-      "Google OAuth response",
-    );
-    if (!res.ok) {
-      throw new Error(data.error_description || data.error || "Gmail refresh failed");
-    }
-    return {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token || refreshToken,
-      expiresIn: Number(data.expires_in) || 3600,
-      tokenType: data.token_type || "Bearer",
-      scope: data.scope,
-    };
-  }
-
-  const body = new URLSearchParams({
-    refresh_token: refreshToken,
-    client_id: config.clientId,
-    client_secret: config.clientSecret,
-    grant_type: "refresh_token",
-    scope: config.scopes.join(" "),
-  });
-  const { response: res, data } = await fetchOAuthJson<Record<string, string>>(
-    () => fetchTokenEndpoint("https://login.microsoftonline.com/common/oauth2/v2.0/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    }),
-    "Microsoft OAuth response",
-  );
-  if (!res.ok) {
-    throw new Error(data.error_description || data.error || "Outlook refresh failed");
-  }
-  return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token || refreshToken,
-    expiresIn: Number(data.expires_in) || 3600,
-    tokenType: data.token_type || "Bearer",
-    scope: data.scope,
   };
 }

@@ -10,14 +10,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, Plus, X, Search, Calendar, Mail, Play, Settings2, Sparkles, Folder, Cloud } from "lucide-react";
 import { toast } from "sonner";
-import { GoogleDriveFolderBrowser } from "./GoogleDriveFolderBrowser";
+import { GoogleDriveSourceSelector } from "./GoogleDriveSourceSelector";
 import { savedGoogleDriveSources, type GoogleDriveSource } from "../../../shared/googleDriveSources";
+import { useI18n } from "@/contexts/I18nContext";
 
 interface AutoCollectionSettingsProps {
   caseId: string;
 }
 
 export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) {
+  const { t } = useI18n();
   const [keywords, setKeywords] = useState<string[]>([]);
   const [newKeyword, setNewKeyword] = useState("");
   const [keywordMatchMode, setKeywordMatchMode] = useState<"all" | "any">("any");
@@ -38,7 +40,10 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
   );
 
   // Fetch connected email accounts
-  const { data: accountsData } = trpc.emailAccounts.list.useQuery(undefined, { refetchOnWindowFocus: true });
+  const { data: accountsData } = trpc.providerConnections.list.useQuery(
+    { provider: "gmail" },
+    { refetchOnWindowFocus: true },
+  );
   
   const emailAccounts = accountsData ?? [];
   const googleAccounts = emailAccounts.filter((account) => account.provider === "gmail");
@@ -46,28 +51,33 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
   // Mutations
   const upsertMutation = trpc.autoCollection.upsertSettings.useMutation({
     onSuccess: (data) => {
-      toast.success("Auto-collection settings saved");
+      toast.success(t("collection.settings.saved"));
       if (data.runResult) {
-        toast.success(`Evidence automatically pulled: ${data.runResult.emailsProcessed} emails, ${data.runResult.filesDownloaded} files`);
+        toast.success(t("collection.settings.pulled", {
+          emails: data.runResult.emailsProcessed,
+          files: data.runResult.filesDownloaded,
+        }));
         if (data.runResult.errors.length) toast.error(data.runResult.errors.join("; "));
       } else if (data.error) {
-        toast.error(`Settings saved, but auto-pull failed: ${data.error}`);
+        toast.error(t("collection.settings.savedPullFailed", { message: data.error }));
       }
     },
     onError: (error) => {
-      toast.error(`Failed to save settings: ${error.message}`);
+      toast.error(t("collection.settings.saveFailed", { message: error.message }));
     },
   });
 
   const runCollectionMutation = trpc.autoCollection.runCollection.useMutation({
     onSuccess: (data) => {
-      toast.success(
-        `Collection complete: ${data.result.emailsProcessed} emails, ${data.result.filesDownloaded} files`
-      );
-      if (data.result.errors.length) toast.error(data.result.errors.join("; "));
+      const summary = t("collection.run.summary", {
+        emails: data.result.emailsProcessed,
+        files: data.result.filesDownloaded,
+      });
+      if (data.success) toast.success(summary);
+      else toast.warning(t("collection.run.withErrors", { summary }), { description: data.result.errors[0] });
     },
     onError: (error) => {
-      toast.error(`Collection failed: ${error.message}`);
+      toast.error(t("collection.run.failed", { message: error.message }));
     },
   });
 
@@ -100,7 +110,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
           accountId: legacyId, folderIds: legacyFolders.length ? legacyFolders : ["root"],
         }] : []));
       } catch {
-        setDriveSelectionError("Saved Drive selection could not be read. Reload before saving.");
+        setDriveSelectionError(t("collection.drive.selectionUnreadable"));
       }
       
       setAutoDownloadAttachments(s.autoDownloadAttachments ?? true);
@@ -114,7 +124,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
         setDateRangeEnd(new Date(s.dateRangeEnd).toISOString().split("T")[0]);
       }
     }
-  }, [settingsData]);
+  }, [settingsData, t]);
 
   const handleAddKeyword = () => {
     const trimmed = newKeyword.trim();
@@ -130,11 +140,11 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
 
   const handleSaveSettings = () => {
     if (driveSelectionError || driveSources.some((source) => !source.accountId)) {
-      toast.error(driveSelectionError || "Select the Google account for the existing Drive folders first.");
+      toast.error(driveSelectionError || t("collection.drive.accountRequired"));
       return;
     }
     if (keywords.length === 0) {
-      toast.error("Please add at least one keyword");
+      toast.error(t("collection.keywords.required"));
       return;
     }
 
@@ -153,7 +163,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
 
   const handleRunCollection = () => {
     if (keywords.length === 0) {
-      toast.error("Please configure keywords first");
+      toast.error(t("collection.keywords.configureFirst"));
       return;
     }
     runCollectionMutation.mutate({ caseId });
@@ -178,7 +188,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
     });
     setSelectedDriveAccountId(accountId);
     setShowFolderBrowser(false);
-    toast.success(`Selected ${folderIds.length} folder(s)`);
+    toast.success(t("collection.drive.foldersSelected", { count: folderIds.length }));
   };
 
   if (isLoadingSettings) {
@@ -197,10 +207,9 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
             variant="outline"
             onClick={() => setShowFolderBrowser(false)}
           >
-            ← Back to Settings
+            &larr; {t("collection.backToSettings")}
           </Button>
-          <GoogleDriveFolderBrowser
-            caseId={caseId}
+          <GoogleDriveSourceSelector
             initialAccountId={selectedDriveAccountId}
             onFoldersSelected={handleFoldersSelected}
             multiSelect={true}
@@ -211,11 +220,10 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-primary" />
-              Auto-Collection Settings
+              {t("collection.settings.title")}
             </CardTitle>
             <CardDescription>
-              Configure automatic evidence collection from your connected email accounts and Google Drive.
-              The system will search for emails and files matching your keywords.
+              {t("collection.settings.description")}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -223,15 +231,15 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
               <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="keywords">
                   <Search className="h-4 w-4 mr-2" />
-                  Keywords
+                  {t("collection.tabs.keywords")}
                 </TabsTrigger>
                 <TabsTrigger value="sources">
                   <Mail className="h-4 w-4 mr-2" />
-                  Sources
+                  {t("collection.tabs.sources")}
                 </TabsTrigger>
                 <TabsTrigger value="options">
                   <Settings2 className="h-4 w-4 mr-2" />
-                  Options
+                  {t("collection.tabs.options")}
                 </TabsTrigger>
               </TabsList>
 
@@ -240,11 +248,11 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                 <div className="space-y-3">
                   <Label className="flex items-center gap-2">
                     <Search className="h-4 w-4" />
-                    Keywords to Search
+                    {t("collection.keywords.label")}
                   </Label>
                   <div className="flex gap-2">
                     <Input
-                      placeholder="Enter a keyword..."
+                      placeholder={t("collection.keywords.placeholder")}
                       value={newKeyword}
                       onChange={(e) => setNewKeyword(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handleAddKeyword()}
@@ -266,27 +274,27 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                       </Badge>
                     ))}
                     {keywords.length === 0 && (
-                      <span className="text-sm text-muted-foreground">No keywords added yet</span>
+                      <span className="text-sm text-muted-foreground">{t("collection.keywords.none")}</span>
                     )}
                   </div>
                 </div>
 
                 {/* Match Mode */}
                 <div className="space-y-3">
-                  <Label>Keyword Match Mode</Label>
+                  <Label>{t("collection.matchMode.label")}</Label>
                   <Select value={keywordMatchMode} onValueChange={(v: "all" | "any") => setKeywordMatchMode(v)}>
                     <SelectTrigger className="w-[200px]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="any">Match ANY keyword</SelectItem>
-                      <SelectItem value="all">Match ALL keywords</SelectItem>
+                      <SelectItem value="any">{t("collection.matchMode.any")}</SelectItem>
+                      <SelectItem value="all">{t("collection.matchMode.all")}</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
                     {keywordMatchMode === "any"
-                      ? "Items containing at least one keyword will be collected"
-                      : "Only items containing all keywords will be collected"}
+                      ? t("collection.matchMode.anyHint")
+                      : t("collection.matchMode.allHint")}
                   </p>
                 </div>
 
@@ -294,11 +302,11 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                 <div className="space-y-3">
                   <Label className="flex items-center gap-2">
                     <Calendar className="h-4 w-4" />
-                    Date Range (Optional)
+                    {t("collection.dateRange")}
                   </Label>
                   <div className="flex gap-4">
                     <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">From</Label>
+                      <Label className="text-xs text-muted-foreground">{t("collection.dateFrom")}</Label>
                       <Input
                         type="date"
                         value={dateRangeStart}
@@ -306,7 +314,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">To</Label>
+                      <Label className="text-xs text-muted-foreground">{t("collection.dateTo")}</Label>
                       <Input
                         type="date"
                         value={dateRangeEnd}
@@ -322,11 +330,11 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                 <div className="space-y-3">
                   <Label className="flex items-center gap-2">
                     <Mail className="h-4 w-4" />
-                    Email Accounts to Search
+                    {t("collection.emailAccounts")}
                   </Label>
                   {emailAccounts.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
-                      No email accounts connected. Go to Settings → Email to connect your accounts.
+                      {t("collection.emailAccounts.none")}
                     </p>
                   ) : (
                     <div className="space-y-2">
@@ -356,28 +364,28 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                 <div className="space-y-3">
                   <Label className="flex items-center gap-2">
                     <Cloud className="h-4 w-4" />
-                    Google Drive Folders
+                    {t("collection.drive.folders")}
                   </Label>
                   <p className="text-xs text-muted-foreground">
-                    Select specific folders in Google Drive to monitor for evidence
+                    {t("collection.drive.foldersHint")}
                   </p>
 
                   {driveSelectionError && <p role="alert" className="text-sm text-destructive">{driveSelectionError}</p>}
                   {driveSources.map((source) => (
                     <div key={source.accountId} className="space-y-2 border-b pb-3" data-testid="drive-source-selection">
                       <p className="break-all text-sm font-medium">
-                        {googleAccounts.find((account) => account.id === source.accountId)?.email || "Google account unavailable"}
+                        {googleAccounts.find((account) => account.id === source.accountId)?.email || t("collection.drive.accountUnavailable")}
                       </p>
                       {!source.accountId && <Select onValueChange={(accountId) => setDriveSources((sources) => sources.map((item) => item === source ? { ...item, accountId } : item))}>
-                        <SelectTrigger aria-label="Account for existing Drive folders"><SelectValue placeholder="Select account for existing folders" /></SelectTrigger>
+                        <SelectTrigger aria-label={t("collection.drive.existingAccountLabel")}><SelectValue placeholder={t("collection.drive.existingAccountPlaceholder")} /></SelectTrigger>
                         <SelectContent>{googleAccounts.filter((account) => !driveSources.some((item) => item.accountId === account.id)).map((account) => <SelectItem key={account.id} value={account.id}>{account.email}</SelectItem>)}</SelectContent>
                       </Select>}
                       <div className="flex flex-wrap gap-2">
                         {source.folderIds.map((folderId, index) => (
                           <Badge key={folderId} variant="secondary" className="max-w-full gap-1 px-3 py-1">
                             <Folder className="h-3 w-3 shrink-0" />
-                            <span className="break-all">{folderId === "root" ? "My Drive (all folders)" : source.folderNames?.[index] || folderId}</span>
-                            <button type="button" aria-label={`Remove ${source.folderNames?.[index] || folderId}`}
+                            <span className="break-all">{folderId === "root" ? t("collection.drive.myDrive") : source.folderNames?.[index] || folderId}</span>
+                            <button type="button" aria-label={t("collection.drive.removeFolder", { name: source.folderNames?.[index] || folderId })}
                               onClick={() => handleRemoveDriveFolder(source.accountId, folderId)} className="ml-1 shrink-0 hover:text-destructive">
                               <X className="h-3 w-3" />
                             </button>
@@ -386,7 +394,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                       </div>
                     </div>
                   ))}
-                  {driveSources.length === 0 && <p className="text-sm text-muted-foreground">No Drive folders selected</p>}
+                  {driveSources.length === 0 && <p className="text-sm text-muted-foreground">{t("collection.drive.none")}</p>}
 
                   <Button
                     variant="outline"
@@ -394,7 +402,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                     disabled={googleAccounts.length === 0}
                   >
                     <Folder className="h-4 w-4 mr-2" />
-                    Browse Google Drive
+                    {t("collection.drive.browse")}
                   </Button>
                 </div>
               </TabsContent>
@@ -404,7 +412,7 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                 <div className="space-y-3">
                   <Label className="flex items-center gap-2">
                     <Settings2 className="h-4 w-4" />
-                    Collection Options
+                    {t("collection.options.title")}
                   </Label>
                   <div className="space-y-3">
                     <div className="flex items-center gap-3">
@@ -412,14 +420,14 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                         checked={autoDownloadAttachments}
                         onCheckedChange={setAutoDownloadAttachments}
                       />
-                      <span className="text-sm">Automatically download email attachments</span>
+                      <span className="text-sm">{t("collection.options.emailAttachments")}</span>
                     </div>
                     <div className="flex items-center gap-3">
                       <Switch
                         checked={autoDownloadGoogleDriveFiles}
                         onCheckedChange={setAutoDownloadGoogleDriveFiles}
                       />
-                      <span className="text-sm">Automatically download Google Drive files</span>
+                      <span className="text-sm">{t("collection.options.driveFiles")}</span>
                     </div>
                   </div>
                 </div>
@@ -435,10 +443,10 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                 {upsertMutation.isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    Saving...
+                    {t("collection.saving")}
                   </>
                 ) : (
-                  "Save Settings"
+                  t("collection.saveSettings")
                 )}
               </Button>
               <Button
@@ -449,12 +457,12 @@ export function AutoCollectionSettings({ caseId }: AutoCollectionSettingsProps) 
                 {runCollectionMutation.isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    Collecting...
+                    {t("collection.collecting")}
                   </>
                 ) : (
                   <>
                     <Play className="h-4 w-4 mr-2" />
-                    Run Collection Now
+                    {t("collection.runNow")}
                   </>
                 )}
               </Button>

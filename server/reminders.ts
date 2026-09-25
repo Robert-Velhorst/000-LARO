@@ -12,9 +12,8 @@
  * that triggered it; nothing external is sent.
  */
 import { getDb } from "./db";
-import { cases as casesTable, evidence as evidenceTable, outreachStatus, notifications } from "./schema";
+import { cases as casesTable, evidence as evidenceTable, outreachStatus } from "./schema";
 import { and, eq, sql } from "drizzle-orm";
-import { getSystemSwitch, setSystemSwitch } from "./systemState";
 import { createNotification } from "./notifications";
 
 export interface ReminderResult {
@@ -76,11 +75,16 @@ export async function runRemindersForUser(userId: string, now: Date = new Date()
 
 /** Create a notification at most once per (case, kind, day). */
 async function emitOnce(userId: string, caseId: string, kind: string, day: string, message: string): Promise<number> {
-  const guardKey = `reminder:${userId}:${caseId}:${kind}:${day}`;
-  if (await getSystemSwitch(guardKey)) return 0;
-  await createNotification({ userId, title: "Reminder", body: message });
-  await setSystemSwitch(guardKey, true);
-  return 1;
+  const result = await createNotification({
+    userId,
+    kind: "deadline_reminder",
+    title: "Reminder",
+    body: message,
+    caseId,
+    metadata: { reminderKind: kind, day },
+    dedupKey: `reminder:${caseId}:${kind}:${day}`,
+  });
+  return result.outcome === "created" ? 1 : 0;
 }
 
 /** Sweep reminders for all users (for the scheduled job). */

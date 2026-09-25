@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { bootTestApp, sqliteAvailable, type TestApp } from '../helpers/app';
+import { verifiedErasureInput } from '../helpers/erasure';
 import { buildUser, buildLawyer } from '../factories';
 
 const suite = sqliteAvailable ? describe : describe.skip;
@@ -37,6 +38,12 @@ suite('Phases 071–080', () => {
     await expect(app.makeCaller(null).system.providerChecklist()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     const ok = await app.makeCaller(U).system.providerChecklist();
     expect(ok.total).toBeGreaterThan(0);
+  });
+
+  it('refuses GDPR erasure if the confirmed account differs from the current session', async () => {
+    await expect(app.makeCaller(U).gdpr.deleteData({ confirm: true, expectedUserId: 'OTHER_ACCOUNT', proof: 'invalid-proof' }))
+      .rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect((await app.makeCaller(U).auth.me())?.id).toBe(U.id);
   });
 
   it('case deletion removes managed evidence objects before metadata', async () => {
@@ -91,7 +98,7 @@ suite('Phases 071–080', () => {
     expect(before.length).toBeGreaterThan(0);
 
     // Erase the account.
-    const del = await caller.gdpr.deleteData({ confirm: true });
+    const del = await caller.gdpr.deleteData(await verifiedErasureInput(app, caller, U.id));
     expect(del.deleted.users).toBe(1);
 
     // The caseId-scoped outreach rows must be gone (no orphans left behind).

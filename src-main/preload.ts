@@ -16,11 +16,16 @@ const IPC_CHANNELS = {
   SCAN_PAUSE: 'scan:pause',
   SCAN_RESUME: 'scan:resume',
   SCAN_PROGRESS: 'scan:progress',
+  SCAN_PROGRESS_GET: 'scan:progress:get',
   SCAN_FILES_GET: 'scan:files:get',
   SCAN_FILES_SELECT: 'scan:files:select',
+  SCAN_SESSION_CHANGED: 'scan:session:changed',
+  SCAN_HISTORY_EXPORT: 'scan:history:export',
+  SCAN_HISTORY_ERASE: 'scan:history:erase',
   UPLOAD_START: 'upload:start',
   UPLOAD_PAUSE: 'upload:pause',
   UPLOAD_RESUME: 'upload:resume',
+  UPLOAD_STOP: 'upload:stop',
   UPLOAD_PROGRESS: 'upload:progress',
   EVIDENCE_UPDATED: 'evidence:updated',
   OPEN_EXTERNAL: 'open:external',
@@ -29,6 +34,10 @@ const IPC_CHANNELS = {
 
 ipcRenderer.on(IPC_CHANNELS.EVIDENCE_UPDATED, (_event, detail) => {
   window.dispatchEvent(new CustomEvent('laro:evidence-updated', { detail }));
+});
+
+ipcRenderer.on(IPC_CHANNELS.SCAN_SESSION_CHANGED, () => {
+  window.dispatchEvent(new Event('laro:scanner-session-changed'));
 });
 
 // Expose protected methods that allow the renderer process to use
@@ -55,6 +64,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pauseScan: () => ipcRenderer.invoke(IPC_CHANNELS.SCAN_PAUSE),
   resumeScan: () => ipcRenderer.invoke(IPC_CHANNELS.SCAN_RESUME),
   getScanFiles: (scanId: string) => ipcRenderer.invoke(IPC_CHANNELS.SCAN_FILES_GET, scanId),
+  getScanProgress: (scanId: string) => ipcRenderer.invoke(IPC_CHANNELS.SCAN_PROGRESS_GET, scanId),
+  exportScannerHistory: () => ipcRenderer.invoke(IPC_CHANNELS.SCAN_HISTORY_EXPORT),
+  eraseScannerHistory: (ownerId: string) => ipcRenderer.invoke(IPC_CHANNELS.SCAN_HISTORY_ERASE, ownerId),
   setScanFileSelection: (scanId: string, fileIds: string[]) =>
     ipcRenderer.invoke(IPC_CHANNELS.SCAN_FILES_SELECT, scanId, fileIds),
   
@@ -62,6 +74,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startUpload: (scanId: string) => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_START, scanId),
   pauseUpload: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_PAUSE),
   resumeUpload: () => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_RESUME),
+  stopUpload: (scanId: string) => ipcRenderer.invoke(IPC_CHANNELS.UPLOAD_STOP, scanId),
   
   // Event listeners
   onScanProgress(callback: (progress: any) => void) {
@@ -95,10 +108,14 @@ declare global {
       pauseScan: () => Promise<{ success: boolean }>;
       resumeScan: () => Promise<{ success: boolean }>;
       getScanFiles: (scanId: string) => Promise<{ files: any[] }>;
-      setScanFileSelection: (scanId: string, fileIds: string[]) => Promise<{ selected: number }>;
+      getScanProgress: (scanId: string) => Promise<{ progress: any | null }>;
+      exportScannerHistory: () => Promise<{ ownerId: string; scans: unknown[]; files: unknown[] }>;
+      eraseScannerHistory: (ownerId: string) => Promise<{ scans: number; files: number }>;
+      setScanFileSelection: (scanId: string, fileIds: string[]) => Promise<{ selected: number; reviewRequired: number }>;
       startUpload: (scanId: string) => Promise<{ success: boolean }>;
       pauseUpload: () => Promise<{ success: boolean }>;
       resumeUpload: () => Promise<{ success: boolean }>;
+      stopUpload: (scanId: string) => Promise<{ success: boolean }>;
       onScanProgress: (callback: (progress: any) => void) => void;
       onUploadProgress: (callback: (progress: any) => void) => void;
       clearScanProgressListeners: () => void;

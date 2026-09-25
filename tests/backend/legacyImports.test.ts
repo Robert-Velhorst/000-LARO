@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildCase, buildEvidence } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
+import { verifiedErasureInput } from "../helpers/erasure";
 
 const suite = sqliteAvailable ? describe : describe.skip;
 
@@ -129,7 +130,8 @@ suite("legacy import archive boundaries", () => {
     expect(exported.data.legacy_import_runs).toHaveLength(1);
     expect(exported.data.legacy_import_records).toHaveLength(1);
 
-    await app.makeCaller(ownerB).gdpr.deleteData({ confirm: true });
+    const caller = app.makeCaller(ownerB);
+    await caller.gdpr.deleteData(await verifiedErasureInput(app, caller, ownerB.id));
     const after = await app.makeCaller(ownerA).legacyImports.tableCounts({ runId: "LEGACY_RUN_B" });
     expect(after).toEqual([]);
   });

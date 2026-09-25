@@ -4,7 +4,7 @@ vi.mock("../../server/llm", () => ({ invokeLLM: gateway }));
 import { compareDossierSituations } from "../../server/dossierComparison";
 const cases = [{ id: "a", title: "A", summary: "First concrete dispute", metadata: null },
   { id: "b", title: "B", summary: "Second concrete dispute", metadata: null }];
-const run = () => compareDossierSituations({ sourceText: "An incoming source", cases, provider: "ollama",
+const run = () => compareDossierSituations({ ownerId: "DOSSIER_COMPARISON_TEST", sourceText: "An incoming source", cases, provider: "ollama",
   signal: new AbortController().signal, timeoutMs: 90_000 });
 const valid = () => ({ singleSituation: true, relations: [
   { caseId: "a", relation: "same", reason: "Same concrete situation" },
@@ -27,7 +27,7 @@ describe("complete independent dossier comparison", () => {
       return { choices: [{ message: { content: JSON.stringify({ singleSituation: true,
         relations: result.relations.filter(r => batch.some((c: any) => c.id === r.caseId)) }) } }] };
     });
-    expect(await compareDossierSituations({ sourceText: "Incoming situation", cases: inventory, provider: "ollama",
+    expect(await compareDossierSituations({ ownerId: "DOSSIER_COMPARISON_TEST", sourceText: "Incoming situation", cases: inventory, provider: "ollama",
       signal: new AbortController().signal, timeoutMs: 90_000 })).toEqual(result);
     expect(gateway.mock.calls[0][0].maxTokens).toBe(Math.min(32768, Math.max(2500, 512 + Math.min(count, 20) * 256)));
   });
@@ -58,7 +58,7 @@ describe("complete independent dossier comparison", () => {
     });
     const signal = new AbortController().signal;
     const beforeDispatch = vi.fn().mockResolvedValue(true);
-    const result = await compareDossierSituations({ sourceText: "Complete incoming source", cases: inventory, provider: "ollama", signal, timeoutMs: 90_000, beforeDispatch });
+    const result = await compareDossierSituations({ ownerId: "DOSSIER_COMPARISON_TEST", sourceText: "Complete incoming source", cases: inventory, provider: "ollama", signal, timeoutMs: 90_000, beforeDispatch });
     expect(result.relations).toHaveLength(205);
     expect(result.relations.at(-1)).toMatchObject({ caseId: "case-204", relation: "same" });
     expect(gateway.mock.calls.length).toBeGreaterThan(1);
@@ -71,7 +71,7 @@ describe("complete independent dossier comparison", () => {
   });
 
   it("rejects an oversized individual context before dispatch instead of truncating", async () => {
-    await expect(compareDossierSituations({ sourceText: "Incoming source", cases: [{ ...cases[0], summary: "x".repeat(32_000) }],
+    await expect(compareDossierSituations({ ownerId: "DOSSIER_COMPARISON_TEST", sourceText: "Incoming source", cases: [{ ...cases[0], summary: "x".repeat(32_000) }],
       provider: "ollama", signal: new AbortController().signal, timeoutMs: 90_000 })).rejects.toThrow(/context/i);
     expect(gateway).not.toHaveBeenCalled();
   });
@@ -87,7 +87,7 @@ describe("complete independent dossier comparison", () => {
           caseId: c.id, relation: c.id === "case-0" ? "same" : "different", reason: "Controlled comparison",
         })) }) } }] };
     });
-    await expect(compareDossierSituations({ sourceText: "Incoming situation", cases: inventory, provider: "ollama", signal: controller.signal, timeoutMs: 90_000 })).rejects.toThrow();
+    await expect(compareDossierSituations({ ownerId: "DOSSIER_COMPARISON_TEST", sourceText: "Incoming situation", cases: inventory, provider: "ollama", signal: controller.signal, timeoutMs: 90_000 })).rejects.toThrow();
     expect(gateway).toHaveBeenCalledTimes(defect === "aborted" ? 1 : 2);
   });
 });

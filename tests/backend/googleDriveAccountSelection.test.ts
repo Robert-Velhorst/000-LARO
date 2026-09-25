@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { buildCase, buildEvidence, buildUser } from "../factories";
+import { buildCase, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 
 const googleMocks = vi.hoisted(() => ({
@@ -108,7 +108,7 @@ suite("Google Drive account selection", () => {
   it("fails closed when multiple accounts exist without a selection", async () => {
     const { listGoogleDriveFolders } = await import("../../server/googleDriveService");
     await expect(listGoogleDriveFolders(userId)).rejects.toThrow(
-      "Multiple Google accounts are connected",
+      "Multiple provider accounts are connected",
     );
   });
 
@@ -116,7 +116,7 @@ suite("Google Drive account selection", () => {
     const { listGoogleDriveFolders } = await import("../../server/googleDriveService");
     await expect(
       listGoogleDriveFolders(userId, undefined, "GOOGLE_DRIVE_OTHER_OWNER"),
-    ).rejects.toThrow("Selected Google account is not connected");
+    ).rejects.toThrow("The selected provider account was not found");
   });
 
   it("rejects oversized Drive files from metadata before downloading media", async () => {
@@ -138,6 +138,38 @@ suite("Google Drive account selection", () => {
     )).rejects.toThrow("Google Drive file exceeds the 7 MB evidence limit");
     expect(googleMocks.getRequests).toHaveLength(1);
     expect(googleMocks.getRequests[0]).not.toHaveProperty("alt", "media");
+  });
+
+  it("does not request Drive media after the cumulative job budget rejects metadata", async () => {
+    googleMocks.getRequests.length = 0;
+    googleMocks.getResponses.push({
+      data: { name: "budgeted.pdf", mimeType: "application/pdf", size: "2" },
+    });
+    const { EvidenceIngestionBudget } = await import("../../server/evidenceIngestionBudget");
+    const { downloadAndUploadGoogleDriveFile } = await import("../../server/googleDriveService");
+    const budget = new EvidenceIngestionBudget(undefined, {
+      maxFileBytes: 7 * 1024 * 1024,
+      maxJobBytes: 1,
+      maxJobItems: 10,
+      maxConcurrentOperations: 2,
+      maxAnalysisItems: 2,
+      minLocalStorageHeadroomBytes: 0,
+    });
+
+    await expect(downloadAndUploadGoogleDriveFile(
+      "BUDGETED_FILE",
+      "CASE_DRIVE_ACCOUNT_SELECTION",
+      userId,
+      "GOOGLE_DRIVE_FIRST",
+      { budget },
+    )).rejects.toThrow("ingestion reached");
+    expect(googleMocks.getRequests).toHaveLength(1);
+    expect(googleMocks.getRequests[0]).not.toHaveProperty("alt", "media");
+    expect(budget.summary()).toMatchObject({
+      outcome: "partial",
+      processedItems: 0,
+      reasons: [{ source: "google_drive", code: "job_byte_limit", count: 1 }],
+    });
   });
 
   it("reads every Drive listing page before returning folder files", async () => {
@@ -232,46 +264,19 @@ suite("Google Drive account selection", () => {
     );
   });
 
-  it("rejects mismatched Drive import arrays before contacting the provider", async () => {
-    const caller = app.makeCaller({ id: userId, role: "user" });
-
-    await expect(caller.googleDrive.importFiles({
-      caseId: "CASE_DRIVE_ACCOUNT_SELECTION",
-      accountId: "GOOGLE_DRIVE_SECOND",
-      fileIds: ["file-one"],
-      fileNames: ["One.pdf", "Two.pdf"],
-    })).rejects.toMatchObject({ code: "BAD_REQUEST" });
-  });
-
-  it("allows large folder resyncs when every discovered file was already imported", async () => {
-    const { PROVIDER_LIMITS } = await import("../../server/providerLimits");
-    const count = PROVIDER_LIMITS.googleDrive.maxImportFiles + 1;
-    const files = Array.from(
-      { length: count },
-      (_, index) => ({ id: `existing-drive-${index}`, name: `Existing ${index}.pdf`, mimeType: "application/pdf" }),
-    );
-    await app.db.insert(app.schema.evidence).values(files.map((file, index) => buildEvidence({
-      id: `EXISTING_DRIVE_EVIDENCE_${index}`,
-      caseId: "CASE_DRIVE_ACCOUNT_SELECTION",
-      userId,
-      source: "google_drive",
-      metadata: JSON.stringify({ driveFileId: file.id }),
-    })));
+  it("lists source-selector folders through the maintained auto-collection router", async () => {
     googleMocks.listRequests.length = 0;
-    googleMocks.listResponses.push({ data: { files } });
+    googleMocks.listResponses.push({
+      data: { files: [{ id: "canonical-folder", name: "Canonical folder" }] },
+    });
     const caller = app.makeCaller({ id: userId, role: "user" });
 
-    await expect(caller.googleDrive.importFolder({
-      caseId: "CASE_DRIVE_ACCOUNT_SELECTION",
-      folderId: "incremental-folder",
-      folderName: "Incremental folder",
-      recursive: false,
+    await expect(caller.autoCollection.listDriveFolders({
       accountId: "GOOGLE_DRIVE_SECOND",
-    })).resolves.toMatchObject({
-      success: true,
-      imported: 0,
-      skipped: count,
+    })).resolves.toEqual({
+      folders: [{ id: "canonical-folder", name: "Canonical folder" }],
     });
+    expect(googleMocks.credentials.at(-1)).toEqual({ access_token: "second-access-token" });
   });
 
   it("finds exact Drive names globally across every result page", async () => {
@@ -381,9 +386,9 @@ suite("Google Drive account selection", () => {
   });
 
   it("reconnecting the same email preserves its refresh grant and other accounts", async () => {
-    const { saveEmailAccount } = await import("../../server/oauth2");
+    const { storeProviderConnection } = await import("../../server/providerConnections");
     const { decryptToken } = await import("../../server/emailOAuth");
-    const id = await saveEmailAccount(userId, "gmail", {
+    const id = await storeProviderConnection(userId, "gmail", {
       accessToken: "renewed-first", expiresIn: 3600, tokenType: "Bearer",
     }, { email: " FIRST@example.com " });
     expect(id).toBe("GOOGLE_DRIVE_FIRST");
@@ -393,16 +398,16 @@ suite("Google Drive account selection", () => {
   });
 
   it("adding a different email creates a separate account without replacing existing grants", async () => {
-    const { saveEmailAccount } = await import("../../server/oauth2");
+    const { storeProviderConnection } = await import("../../server/providerConnections");
     const { decryptToken } = await import("../../server/emailOAuth");
-    const id = await saveEmailAccount(userId, "gmail", {
+    const id = await storeProviderConnection(userId, "gmail", {
       accessToken: "third-access", refreshToken: "third-refresh", expiresIn: 3600, tokenType: "Bearer",
     }, { email: "third@example.com" });
     const accounts = await app.db.select().from(app.schema.emailAccounts);
     expect(accounts.filter((account: any) => account.userId === userId)).toHaveLength(3);
     expect(decryptToken(accounts.find((account: any) => account.id === id).accessToken)).toBe("third-access");
     expect(decryptToken(accounts.find((account: any) => account.id === "GOOGLE_DRIVE_SECOND").accessToken)).toBe("second-access-token");
-    const listed = await app.makeCaller({ id: userId, role: "user" }).emailAccounts.list();
+    const listed = await app.makeCaller({ id: userId, role: "user" }).providerConnections.list({ provider: "gmail" });
     expect(listed).toHaveLength(3);
     expect(JSON.stringify(listed)).not.toContain("accessToken");
     expect(JSON.stringify(listed)).not.toContain("other@example.com");

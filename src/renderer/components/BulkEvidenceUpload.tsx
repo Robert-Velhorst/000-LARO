@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import { EVIDENCE_INGESTION_LIMITS } from "../../../shared/evidenceIngestion";
 
 interface FileWithPreview {
   file: File;
@@ -70,7 +71,7 @@ export default function BulkEvidenceUpload({
       "application/vnd.ms-outlook": [".msg"],
       "text/*": [".txt", ".csv"],
     },
-    maxSize: 7 * 1024 * 1024,
+    maxSize: EVIDENCE_INGESTION_LIMITS.maxFileBytes,
   } as any);
 
   const removeFile = (id: string) => {
@@ -109,7 +110,7 @@ export default function BulkEvidenceUpload({
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
   };
 
-  const uploadFile = async (fileWithPreview: FileWithPreview) => {
+  const uploadFile = async (fileWithPreview: FileWithPreview, ingestionJobId: string) => {
     try {
       // Update status to uploading
       setFiles((prev) =>
@@ -130,6 +131,8 @@ export default function BulkEvidenceUpload({
         fileName: fileWithPreview.file.name,
         mimeType: fileWithPreview.file.type || "application/octet-stream",
         base64,
+        ingestionJobId,
+        ingestionItemId: fileWithPreview.id,
       });
 
       // Update status to completed
@@ -158,12 +161,28 @@ export default function BulkEvidenceUpload({
     setIsUploading(true);
 
     const pendingFiles = files.filter((f) => f.status === "pending");
-    let ok = 0;
-    let failed = 0;
-
+    const admitted: FileWithPreview[] = [];
+    let admittedBytes = 0;
     for (const file of pendingFiles) {
+      if (
+        admitted.length >= EVIDENCE_INGESTION_LIMITS.maxJobItems ||
+        admittedBytes + file.file.size > EVIDENCE_INGESTION_LIMITS.maxJobBytes
+      ) {
+        setFiles((previous) => previous.map((entry) => entry.id === file.id
+          ? { ...entry, status: "failed", error: "Deferred: ingestion job resource limit reached" }
+          : entry));
+        continue;
+      }
+      admitted.push(file);
+      admittedBytes += file.file.size;
+    }
+    let ok = 0;
+    let failed = pendingFiles.length - admitted.length;
+    const ingestionJobId = crypto.randomUUID();
+
+    for (const file of admitted) {
       try {
-        await uploadFile(file);
+        await uploadFile(file, ingestionJobId);
         ok++;
       } catch {
         failed++;

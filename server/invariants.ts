@@ -38,11 +38,11 @@ export async function verifyInvariants(): Promise<{ ok: boolean; invariants: Inv
     try { return (sqlite.prepare(sql).get() as any)?.c ?? 0; } catch { return 0; }
   };
 
-  // 1. No duplicate user emails (unique index should prevent this).
+  // 1. No duplicate canonical user email identities (expression index should prevent this).
   const dupEmails = scalar(
-    "SELECT count(*) AS c FROM (SELECT email FROM users WHERE email IS NOT NULL GROUP BY email HAVING count(*) > 1)"
+    "SELECT count(*) AS c FROM (SELECT lower(trim(email)) FROM users WHERE email IS NOT NULL GROUP BY lower(trim(email)) HAVING count(*) > 1)"
   );
-  add({ name: "users.email unique", severity: "error", ok: dupEmails === 0, count: dupEmails });
+  add({ name: "users.email canonical unique", severity: "error", ok: dupEmails === 0, count: dupEmails });
 
   // 2. Every case has an owner.
   const caseNoOwner = scalar("SELECT count(*) AS c FROM cases WHERE userId IS NULL OR userId = ''");
@@ -74,17 +74,15 @@ export async function verifyInvariants(): Promise<{ ok: boolean; invariants: Inv
   } catch { /* table may be empty */ }
   add({ name: "cases.legalAreas is valid canonical JSON", severity: "warning", ok: badAreas === 0, count: badAreas });
 
-  // SQLite cannot add foreign keys to legacy tables without rebuilding them,
-  // so readiness separately verifies the non-destructive relationship guards.
   const relationshipIntegrity = relationshipIntegrityReport(sqlite);
   add({
-    name: "database relationship guards installed",
+    name: "database native relationships valid",
     severity: "error",
     ok: relationshipIntegrity.ok,
-    count: relationshipIntegrity.missing.length,
+    count: relationshipIntegrity.missing.length + relationshipIntegrity.violations.length,
     detail: relationshipIntegrity.ok
-      ? `${relationshipIntegrity.installed} triggers installed`
-      : `Missing: ${relationshipIntegrity.missing.join(", ")}`,
+      ? `${relationshipIntegrity.installed} foreign keys installed; foreign_key_check clean`
+      : `Missing: ${relationshipIntegrity.missing.join(", ")}; violations: ${relationshipIntegrity.violations.length}`,
   });
 
   const ok = inv.filter((i) => i.severity === "error").every((i) => i.ok);

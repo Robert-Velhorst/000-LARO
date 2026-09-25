@@ -1,6 +1,6 @@
-import { createContext, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation } from "wouter";
-import { Briefcase, ChevronDown, FileSearch, HelpCircle, Home, LogOut, Megaphone, MessageSquare, PanelLeft, Settings, Shield, StickyNote } from "lucide-react";
+import { Briefcase, ChevronDown, FileSearch, HelpCircle, Home, ListChecks, LogOut, Megaphone, MessageSquare, PanelLeft, Settings, Shield, StickyNote } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { useI18n } from "@/contexts/I18nContext";
 import { APP_LOGO, APP_TITLE } from "@/const";
@@ -14,9 +14,20 @@ import { LegalAdviceNotice } from "./LegalAdviceNotice";
 import { ConnectionStatus } from "./ConnectionStatus";
 import NotificationCenter from "./NotificationCenter";
 import ChatWidget, { useChatSession } from "./ChatWidget";
+import GlobalSearch from "./GlobalSearch";
 import type { TranslationKey } from "../../../shared/i18n";
 
 const LayoutContext = createContext(false);
+type AssistantCaseContextValue = {
+  selectFromCaseView: (caseId: string) => void;
+  clearCaseView: (caseId: string) => void;
+};
+const AssistantCaseContext = createContext<AssistantCaseContextValue | null>(null);
+
+/** Case views may explicitly select a case for the visible assistant picker. */
+export function useAssistantCaseContext(): AssistantCaseContextValue | null {
+  return useContext(AssistantCaseContext);
+}
 const mainItems = [
   { icon: Home, label: "nav.home", path: "/" },
   { icon: Briefcase, label: "nav.cases", path: "/cases" },
@@ -72,6 +83,7 @@ function WorkspaceFrame({ children, width, setWidth }: { children: ReactNode; wi
   const collapsed = !isMobile && state === "collapsed";
   const [assistantOpen, setAssistantOpen] = useState(false);
   const chatSession = useChatSession();
+  const clearAssistantCase = chatSession.setCaseId;
   const [resizing, setResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const activePath = activeWorkspacePath(location);
@@ -81,6 +93,28 @@ function WorkspaceFrame({ children, width, setWidth }: { children: ReactNode; wi
     setOpenMobile(false);
     document.title = `${title ? t(title) : t("route.notFound")} | LARO`;
   }, [location, setOpenMobile, t, title]);
+  useEffect(() => {
+    clearAssistantCase(null);
+    chatSession.setMessages([]);
+    setAssistantOpen(false);
+  }, [location, clearAssistantCase, chatSession.setMessages]);
+  useEffect(() => {
+    // An older build wrote the last viewed case to a global key. Never use it
+    // as assistant authority, and remove it on the next authenticated mount.
+    try { localStorage.removeItem('active-case-context-id'); } catch { /* optional storage */ }
+  }, []);
+  const selectFromCaseView = useCallback((caseId: string) => {
+    if (!user?.id) return;
+    chatSession.setMessages([]);
+    clearAssistantCase(caseId);
+    setAssistantOpen(true);
+  }, [chatSession.setMessages, clearAssistantCase, user?.id]);
+  const clearCaseView = useCallback((caseId: string) => {
+    if (chatSession.caseId !== caseId) return;
+    chatSession.setMessages([]);
+    clearAssistantCase(null);
+  }, [chatSession.caseId, chatSession.setMessages, clearAssistantCase]);
+  const assistantCaseContext = useMemo(() => ({ selectFromCaseView, clearCaseView }), [selectFromCaseView, clearCaseView]);
   useEffect(() => {
     const open = () => setAssistantOpen(true);
     window.addEventListener("laro:open-assistant", open);
@@ -109,7 +143,7 @@ function WorkspaceFrame({ children, width, setWidth }: { children: ReactNode; wi
     </SidebarMenuButton>
   </SidebarMenuItem>;
 
-  return <>
+  return <AssistantCaseContext.Provider value={assistantCaseContext}>
     <div ref={sidebarRef} className="relative shrink-0">
       <Sidebar collapsible="icon" disableTransition={resizing} className="border-border bg-sidebar text-sidebar-foreground">
         <SidebarHeader className="h-16 flex-row items-center justify-between border-b border-border px-3">
@@ -139,8 +173,10 @@ function WorkspaceFrame({ children, width, setWidth }: { children: ReactNode; wi
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <div className="border-b border-border p-2"><LanguageSelector /></div>
+              <DropdownMenuItem onClick={() => window.dispatchEvent(new Event("laro:open-onboarding"))}><ListChecks className="mr-2 h-4 w-4" />{t("nav.setupGuide")}</DropdownMenuItem>
               <DropdownMenuItem onClick={() => navigate("/settings")}><Settings className="mr-2 h-4 w-4" />{t("nav.settings")}</DropdownMenuItem>
-              <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive"><LogOut className="mr-2 h-4 w-4" />{t("nav.signOut")}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/privacy")}><Shield className="mr-2 h-4 w-4" />{t("nav.privacy")}</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { clearAssistantCase(null); chatSession.setMessages([]); setAssistantOpen(false); void logout(); }} className="text-destructive focus:text-destructive"><LogOut className="mr-2 h-4 w-4" />{t("nav.signOut")}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </SidebarFooter>
@@ -161,6 +197,7 @@ function WorkspaceFrame({ children, width, setWidth }: { children: ReactNode; wi
           <span className="truncate text-sm font-medium text-muted-foreground">{title ? t(title) : APP_TITLE}</span>
         </div>
         <div className="flex shrink-0 items-center gap-1 sm:gap-3">
+          <GlobalSearch />
           <div className="hidden sm:block"><ConnectionStatus /></div>
           <Button variant="outline" onClick={() => setAssistantOpen(true)} aria-label={t("nav.openAssistant")} title={t("nav.openAssistant")}>
             <MessageSquare className="h-4 w-4" /><span className="hidden sm:inline">{t("nav.assistant")}</span>
@@ -176,8 +213,8 @@ function WorkspaceFrame({ children, width, setWidth }: { children: ReactNode; wi
     <Dialog open={assistantOpen} onOpenChange={setAssistantOpen}>
       <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-xl overflow-y-auto p-0">
         <DialogHeader className="sr-only"><DialogTitle>{t("nav.assistant")}</DialogTitle><DialogDescription>{t("nav.assistantContext")}</DialogDescription></DialogHeader>
-        <ChatWidget embedded session={chatSession} />
+        <ChatWidget embedded session={chatSession} ownerId={user?.id ?? null} />
       </DialogContent>
     </Dialog>
-  </>;
+  </AssistantCaseContext.Provider>;
 }

@@ -13,16 +13,24 @@ import { evidenceFiles } from "../schema";
 import { eq, and, desc } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { assertCaseOwnership } from "../_core/authz";
-import { sanitizeFilename, storageDelete, storagePut } from "../storage";
+import { hashBuffer, sanitizeFilename, storageDelete, storagePut } from "../storage";
 import { managedStorageKeyFromMetadata } from "../managedStorage";
 import { processQueuedStorageDeletions } from "../storageDeletionQueue";
 import {
+  isSupportedDocumentAnalysisMimeType,
   isSupportedEvidenceMimeType,
   MAX_EVIDENCE_BASE64_CHARS,
   MAX_EVIDENCE_FILE_BYTES,
 } from "../../shared/evidenceFiles";
 import { TRPCError } from "@trpc/server";
 import { getEvidenceDownloadUrl, recordEvidenceSourceOpened } from "../evidenceAccess";
+import { AUDIT_ACTIONS, createAuditLog } from "../audit";
+import {
+  admitEvidenceIngestionRequest,
+  EvidenceIngestionLimitError,
+  withEvidenceIngestionRequestOperation,
+} from "../evidenceIngestionBudget";
+import { decodedBase64ByteLength, EVIDENCE_INGESTION_LIMITS } from "../../shared/evidenceIngestion";
 
 export const evidenceFilesRouter = router({
 
@@ -30,7 +38,7 @@ export const evidenceFilesRouter = router({
   search: protectedProcedure
     .input(z.object({
       caseId: z.string().optional(),
-      query:  z.string().optional(),
+      query:  z.string().max(500).optional(),
       limit:  z.number().optional(),
       offset: z.number().optional(),
     }).optional())
@@ -69,7 +77,7 @@ export const evidenceFilesRouter = router({
       description: z.string().optional(),
       fileUrl:     z.string().optional(),
       fileName:    z.string().optional(),
-      fileSize:    z.string().optional(),
+      fileSize:    z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
       mimeType:    z.string().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
@@ -87,6 +95,9 @@ export const evidenceFilesRouter = router({
       fileName: z.string().min(1).max(255),
       mimeType: z.string().min(1).max(255),
       source: z.enum(["manual", "desktop_scanner"]).optional().default("manual"),
+      approvedSha256: z.string().regex(/^[a-f0-9]{64}$/, "Invalid approved file digest").optional(),
+      ingestionJobId: z.string().min(1).max(200).optional(),
+      ingestionItemId: z.string().min(1).max(200).optional(),
       base64: z.string().min(1).max(MAX_EVIDENCE_BASE64_CHARS).regex(
         /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/,
         "Invalid base64 evidence payload"
@@ -102,34 +113,118 @@ export const evidenceFilesRouter = router({
             : "Desktop scanner provenance requires a scanner credential",
         });
       }
-      await assertCaseOwnership(input.caseId, ctx.user.id);
-      const bytes = Buffer.from(input.base64, "base64");
-      if (!bytes.length || bytes.length > MAX_EVIDENCE_FILE_BYTES) {
-        throw new Error("Evidence uploads must be between 1 byte and 7 MB");
+      if (input.source === "desktop_scanner" && !input.approvedSha256) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Desktop scanner uploads require an approved file digest",
+        });
       }
+      await assertCaseOwnership(input.caseId, ctx.user.id);
       if (!isSupportedEvidenceMimeType(input.mimeType)) {
         throw new Error("Evidence file type is not supported");
+      }
+      const declaredBytes = decodedBase64ByteLength(input.base64);
+      const ingestionJobId = input.ingestionJobId ?? randomUUID();
+      const ingestionItemId = input.ingestionItemId ?? randomUUID();
+      const ingestionSource = input.source === "desktop_scanner" ? "desktop_scanner" as const : "manual" as const;
+      let ingestion: Awaited<ReturnType<typeof admitEvidenceIngestionRequest>>;
+      try {
+        ingestion = await admitEvidenceIngestionRequest({
+          ownerId: ctx.user.id,
+          jobId: ingestionJobId,
+          itemId: ingestionItemId,
+          source: ingestionSource,
+          bytes: declaredBytes,
+        });
+      } catch (error) {
+        if (error instanceof EvidenceIngestionLimitError) {
+          throw new TRPCError({
+            code: error.code === "file_empty" || error.code === "file_too_large"
+              ? "PAYLOAD_TOO_LARGE"
+              : error.code === "source_changed" ? "CONFLICT" : "TOO_MANY_REQUESTS",
+            message: error.message,
+          });
+        }
+        throw error;
+      }
+      const bytes = Buffer.from(input.base64, "base64");
+      if (!bytes.length || bytes.length > MAX_EVIDENCE_FILE_BYTES || bytes.length !== declaredBytes) {
+        throw new Error("Evidence uploads must be between 1 byte and 7 MB");
+      }
+      const calculatedHash = hashBuffer(bytes);
+      if (input.approvedSha256 && calculatedHash !== input.approvedSha256) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Uploaded bytes do not match the approved file digest",
+        });
       }
 
       const fileName = sanitizeFilename(input.fileName);
       const storageKey = `evidence/${input.caseId}/manual/${randomUUID()}-${fileName}`;
-      const stored = await storagePut(storageKey, bytes, input.mimeType);
       try {
-        const id = await createEvidenceFile(ctx.user.id, {
-          caseId: input.caseId,
-          title: input.title,
-          type: input.type,
-          source: input.source,
-          fileName,
-          fileSize: String(bytes.length),
-          mimeType: input.mimeType,
-          fileUrl: stored.url,
-          contentHash: stored.sha256,
-          metadata: JSON.stringify({ storageKey: stored.key }),
+        return await withEvidenceIngestionRequestOperation({
+          ownerId: ctx.user.id,
+          jobId: ingestionJobId,
+          source: ingestionSource,
+        }, async () => {
+          const stored = await storagePut(storageKey, bytes, input.mimeType);
+          try {
+            const id = await createEvidenceFile(ctx.user.id, {
+              caseId: input.caseId,
+              title: input.title,
+              type: input.type,
+              source: input.source,
+              fileName,
+              fileSize: bytes.length,
+              mimeType: input.mimeType,
+              fileUrl: stored.url,
+              contentHash: stored.sha256,
+              metadata: JSON.stringify({
+                storageKey: stored.key,
+                ...(input.approvedSha256 ? { approvedContentHash: input.approvedSha256 } : {}),
+              }),
+            });
+            if (input.approvedSha256) {
+              await createAuditLog({
+                userId: ctx.user.id,
+                action: AUDIT_ACTIONS.EVIDENCE_SCANNER_UPLOADED,
+                entityType: "evidence",
+                entityId: id,
+                details: {
+                  caseId: input.caseId,
+                  approvedContentHash: input.approvedSha256,
+                  storedContentHash: stored.sha256,
+                },
+              });
+            }
+            const analysisEligible = isSupportedDocumentAnalysisMimeType(input.mimeType)
+              && ingestion.items <= EVIDENCE_INGESTION_LIMITS.maxAnalysisItems;
+            const analysisDeferred = isSupportedDocumentAnalysisMimeType(input.mimeType) && !analysisEligible;
+            return {
+              id,
+              sha256: stored.sha256,
+              analysisEligible,
+              ingestion: {
+                outcome: analysisDeferred ? "partial" as const : "completed" as const,
+                processedItems: ingestion.items,
+                processedBytes: ingestion.bytes,
+                reasons: analysisDeferred
+                  ? [{ source: ingestionSource, code: "analysis_limit" as const, count: 1 }]
+                  : [],
+              },
+            };
+          } catch (error) {
+            await storageDelete(stored.key).catch(() => undefined);
+            throw error;
+          }
         });
-        return { id, sha256: stored.sha256 };
       } catch (error) {
-        await storageDelete(stored.key).catch(() => undefined);
+        if (error instanceof EvidenceIngestionLimitError) {
+          throw new TRPCError({
+            code: error.code === "source_changed" ? "CONFLICT" : "TOO_MANY_REQUESTS",
+            message: error.message,
+          });
+        }
         throw error;
       }
     }),

@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { eq } from "drizzle-orm";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 import { buildUser } from "../factories";
+import { EXTERNAL_DOCUMENT_SHARING_SCOPE } from "../../shared/workflowConsent";
 
 (sqliteAvailable ? describe : describe.skip)("autonomous document inbox", () => {
   let app: TestApp;
@@ -30,6 +31,30 @@ import { buildUser } from "../factories";
     await expect(app.makeCaller(null).documentInbox.list()).rejects.toThrow();
     expect(await upload(text)).toMatchObject({ id: item.id, duplicate: true });
     expect((await upload(text + " Revised.")).id).not.toBe(item.id);
+  });
+
+  it("stores originals but reports bounded partial work after the per-job analysis cap", async () => {
+    const caller = app.makeCaller(owner);
+    const ingestionJobId = `inbox-analysis-budget-${Date.now()}`;
+    let last: Awaited<ReturnType<typeof caller.documentInbox.upload>> | undefined;
+    for (let index = 0; index <= 20; index += 1) {
+      last = await caller.documentInbox.upload({
+        fileName: `analysis-budget-${index}.txt`,
+        mimeType: "text/plain",
+        base64: Buffer.from(`Analysis budget document ${index}.`).toString("base64"),
+        ingestionJobId,
+        ingestionItemId: `analysis-budget-${index}`,
+      });
+    }
+
+    expect(last).toMatchObject({
+      analysisEligible: false,
+      ingestion: {
+        outcome: "partial",
+        processedItems: 21,
+        reasons: [{ source: "document_inbox", code: "analysis_limit", count: 1 }],
+      },
+    });
   });
 
   it("stores long original names without making Windows storage paths too long", async () => {
@@ -114,9 +139,13 @@ import { buildUser } from "../factories";
     expect(JSON.parse(rows[0].result).timelineEvents.length).toBeGreaterThan(0);
   });
 
-  it("keeps analysis local when external sharing is disabled", async () => {
+  it("keeps a future inbox import local when an external provider has no consent", async () => {
     const caller = app.makeCaller(owner);
-    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: false });
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai" });
+    await expect(caller.userPreferences.workflow()).resolves.toMatchObject({
+      autoAnalyzeImports: true,
+      shareRawDocumentContent: false,
+    });
     vi.stubEnv("OPENAI_API_KEY", "test-not-a-real-key");
     const fetch = vi.fn(() => Promise.reject(new Error("No cloud requests allowed")));
     vi.stubGlobal("fetch", fetch);
@@ -124,7 +153,7 @@ import { buildUser } from "../factories";
     await caller.documentInbox.process({ id: item.id });
     expect((await caller.documentInbox.get({ id: item.id })).analysis.providerStatus).toBe("not_requested");
     expect(fetch).not.toHaveBeenCalled();
-    await caller.userPreferences.updateWorkflow({ analysisProvider: "local", shareRawDocumentContent: true });
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
   });
 
   it("persists extraction failures without discarding the original and supports pagination", async () => {
@@ -138,25 +167,29 @@ import { buildUser } from "../factories";
     expect(first.items[0].id).not.toBe(second.items[0].id);
   });
 
-  it.each([
-    { shareRawDocumentContent: false },
-    { analysisProvider: "local" as const },
-  ])("rechecks analysis permission after extraction: %j", async (change) => {
+  it.each(["revoke", "provider"] as const)("rechecks analysis permission after extraction: %s", async (change) => {
     const caller = app.makeCaller(owner);
     const intelligence = await import("../../server/documentIntelligence");
     const originalExtract = intelligence.extractDocumentTextInAcquiredSlot;
-    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai", shareRawDocumentContent: true });
+    await caller.userPreferences.updateWorkflow({ analysisProvider: "openai" });
+    await caller.userPreferences.grantExternalDocumentSharing({ provider: "openai", scope: EXTERNAL_DOCUMENT_SHARING_SCOPE, automaticImports: true,
+      acknowledgeFullDocumentContent: true, acknowledgeAutomaticImports: true });
     vi.stubEnv("OPENAI_API_KEY", "test-not-a-real-key");
     const fetch = vi.fn(() => Promise.reject(new Error("Revoked document must not leave this computer")));
     vi.stubGlobal("fetch", fetch);
     const extraction = vi.spyOn(intelligence, "extractDocumentTextInAcquiredSlot").mockImplementation(async (...args) => {
       const result = await originalExtract(...args);
-      await caller.userPreferences.updateWorkflow(change);
+      if (change === "revoke") {
+        const current = await caller.userPreferences.workflow();
+        await caller.userPreferences.revokeExternalDocumentSharing({ consentId: current.externalDocumentSharingConsent!.id });
+      } else {
+        await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
+      }
       return result;
     });
     try {
       const text = "Private correspondence about an unresolved housing dispute, without a case reference.";
-      const item = await upload(text, `revocation-${Object.keys(change)[0]}.txt`);
+      const item = await upload(text, `revocation-${change}.txt`);
       await caller.documentInbox.process({ id: item.id });
       expect(extraction).toHaveBeenCalledOnce();
       expect(fetch).not.toHaveBeenCalled();
@@ -164,7 +197,7 @@ import { buildUser } from "../factories";
       expect(Buffer.from((await caller.documentInbox.download({ id: item.id })).base64, "base64").toString()).toBe(text);
     } finally {
       extraction.mockRestore();
-      await caller.userPreferences.updateWorkflow({ analysisProvider: "local", shareRawDocumentContent: true });
+      await caller.userPreferences.updateWorkflow({ analysisProvider: "local" });
     }
   });
 
@@ -176,7 +209,8 @@ import { buildUser } from "../factories";
       base64: Buffer.from("A synthetic document for account erasure verification.").toString("base64") });
     const row = (await app.db.select().from(app.schema.documentInbox).where(eq(app.schema.documentInbox.id, item.id)))[0];
     expect((await caller.gdpr.exportData()).data.document_inbox).toContainEqual(expect.objectContaining({ id: item.id }));
-    expect(await caller.gdpr.deleteData({ confirm: true })).toMatchObject({ success: true, erasureStatus: "completed" });
+    const { verifiedErasureInput } = await import("../helpers/erasure");
+    expect(await caller.gdpr.deleteData(await verifiedErasureInput(app, caller, user.id))).toMatchObject({ success: true, erasureStatus: "completed" });
     const { storageRead } = await import("../../server/storage");
     await expect(storageRead(row.storageKey)).rejects.toThrow();
     await expect(caller.documentInbox.get({ id: item.id })).rejects.toThrow();

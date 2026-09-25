@@ -1,8 +1,8 @@
 interface GapAnalysisData {
   caseId: string;
   clientName: string;
-  opponentName: string;
-  opponentAddress?: string;
+  recipientName: string;
+  recipientAddress: string;
   gaps: Array<{ type: string; description: string; durationDays?: number }>;
   missingDocuments: Array<{ type: string; legalRequirement?: string; deadline?: string }>;
   suspiciousPatterns: Array<{ pattern: string; evidence: string }>;
@@ -152,7 +152,7 @@ For ${data.clientName}`,
     return {
       type,
       title,
-      content: `${REVIEW_HEADER}\n\nDate: ${this.formatDate(new Date())}\nTo: ${data.opponentName}\n${data.opponentAddress || "[Address to verify]"}\n\n${body}`,
+      content: `${REVIEW_HEADER}\n\nDate: ${this.formatDate(new Date())}\nTo: ${data.recipientName}\n${data.recipientAddress}\n\n${body}`,
       legalBasis: [],
       deadline: deadline ? this.formatDate(deadline) : undefined,
       consequences: reviewChecklist,

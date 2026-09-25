@@ -216,7 +216,7 @@ export default function EvidenceSummaryDashboard({ caseId }: EvidenceSummaryDash
       typeStats[ft] = (typeStats[ft] || 0) + 1;
 
       if (f.relevant !== false) totalRelevant++;
-      totalSizeBytes += parseInt(f.fileSize ?? "0") || 0;
+      totalSizeBytes += f.fileSize ?? 0;
     });
 
     // Always use filtered files count for selected case dashboard consistency.

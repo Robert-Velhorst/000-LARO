@@ -69,14 +69,16 @@ suite('Phases 101–115', () => {
   });
 
   // ---- Phase 105: onboarding ----
-  it('105 — onboarding steps ordered; completion tracked per user', async () => {
-    const steps = await app.makeCaller(null).onboarding.steps();
-    expect(steps[0].order).toBe(1);
-    const before = await app.makeCaller(U).onboarding.state();
+  it('105 — onboarding is protected and resumes per user', async () => {
+    await expect(app.makeCaller(null).onboarding.state()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    const caller = app.makeCaller(U);
+    const before = await caller.onboarding.state();
     expect(before.complete).toBe(false);
-    await app.makeCaller(U).onboarding.complete();
-    const after = await app.makeCaller(U).onboarding.state();
-    expect(after.complete).toBe(true);
+    expect(before.status).toBe('active');
+    expect(before.steps.map((step: any) => step.key)).toEqual(['case', 'evidence', 'outreach']);
+    await caller.onboarding.setCurrentStep({ stepKey: 'evidence' });
+    expect((await caller.onboarding.state()).currentStepKey).toBe('evidence');
+    expect((await caller.onboarding.skip()).status).toBe('skipped');
   });
 
   // ---- Phase 104: emergency stop ----

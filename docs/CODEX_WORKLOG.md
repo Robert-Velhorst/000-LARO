@@ -65,9 +65,10 @@ is only partially done, that is stated here and reflected in
   paywall); `docs/SAAS_READINESS.md`.
 - **057 i18n**: `shared/i18n.ts` NL+EN catalog + `t()`/fallback/interpolation;
   `docs/I18N.md`. **Partial** (renderer string migration is a follow-up).
-- **058 Feature flags**: `server/featureFlags.ts` (env → system_config → default),
-  `featureFlags` router, `outreach.send.enabled` default OFF gating the future
-  send; `docs/FEATURE_FLAGS.md`.
+- **058 Feature flags**: `server/featureFlags.ts` retains the consumed
+  `outreach.send.enabled` control (system_config → safe default), with a typed
+  owner/consumer/test registry and an audited admin router; demo mode is the
+  separate production-disabled `DEMO_MODE` decision; `docs/FEATURE_FLAGS.md`.
 - **059 Formal state machines**: `server/stateMachines.ts` for case + outreach;
   enforced in `cases.update` and the approval gate; `docs/STATE_MACHINES.md`.
 - **060 Domain model spec**: `docs/DOMAIN_MODEL.md`.

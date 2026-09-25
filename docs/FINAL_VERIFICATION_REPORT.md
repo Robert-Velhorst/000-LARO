@@ -1,5 +1,79 @@
 # Final Verification Report
 
+## 2026-09-23 final account/lifecycle addendum
+
+The current local milestone implementation candidate is
+`ec94985e9d78fc95ad14e89473f79dec287b1825` on
+`milestone3/remediate-roadmap`. Its scanner, privacy, erasure, provider,
+assistant-context, Home, collection-monitoring, and unsupported-connector
+verification is recorded in
+[`FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md`](FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md).
+
+On that implementation tree, `npm run gate` passed with 188 test files passed,
+one skipped, 1,080 tests passed, and two skipped. The complete stable-Chrome run
+passed 45/45 scenarios, isolated Python 3.12 discovery passed 223/223 tests,
+fresh-database readiness validated 273 relationship guards, both npm audits
+reported zero vulnerabilities, recovery restored database/secrets/evidence, and
+the production builds passed.
+
+The refreshed Docker image is
+`sha256:9049b144a83899b841ee731e997e996337d98436d0f39ede7f714d6b7022f99f`;
+Trivy 0.74.0 reports zero HIGH/CRITICAL Debian or Node findings. The Windows
+portable artifact passed x64 PE app/SQLite/Canvas checks and has SHA-256
+`a51bb2755a978113d145335df03ba7e6ad0fab8b4acf099d042bd3ea0de294e2`.
+
+This is repository-local evidence. It does not replace protected-`main`/CodeQL,
+native Windows launch/OCR, live-provider retest, real-workspace migration, or
+Hetzner browser/desktop acceptance, and it does not claim a push, merge,
+publication, deployment, or GitHub issue closure.
+
+## 2026-09-22 fourth-round addendum
+
+The earlier fourth-round implementation candidate is
+`dc3884b5db3521101a2c735f7d49be0ddc18f0fe` on
+`milestone3/remediate-roadmap`. Its integrated consent/workflow verification is
+recorded in [`FOURTH_ROUND_VERIFICATION.md`](FOURTH_ROUND_VERIFICATION.md).
+
+On that implementation commit, all blocking gates pass: 183 test files passed
+and one was skipped; 1,077 tests passed and two were skipped. The exact-commit
+stable-Chrome run passed 37/37 scenarios, isolated Python 3.12 discovery passed
+223/223 tests, fresh-database readiness validated 273 relationship guards, both
+npm audits reported zero vulnerabilities, recovery restored the database,
+secrets, and managed evidence, and the production builds passed.
+
+The refreshed Docker image is
+`sha256:f1c65ef844f29b7c60e2a79382c2894ccaeba65fa23bc1fdf8223f09270bd8d5`;
+Trivy 0.74.0 reports zero HIGH/CRITICAL Debian or Node findings. The Windows
+portable artifact passed x64 PE app/SQLite/Canvas checks and has SHA-256
+`0decd4422424ab7517f2a6db7fe7b39ce544fc828346fdb44475f40a0078b60d`.
+
+This is repository-local evidence. It does not replace protected-`main`, native
+Windows, live-provider, or Hetzner acceptance, and it does not claim a push,
+merge, publication, deployment, or GitHub issue closure.
+
+## 2026-09-19 third-round addendum
+
+The earlier third-round implementation candidate is
+`6011f45e03145b85820ed8cb94e57a3a94ed5ec8` on
+`milestone3/remediate-roadmap`. Its third-round trust/resource verification is
+recorded in [`THIRD_ROUND_VERIFICATION.md`](THIRD_ROUND_VERIFICATION.md).
+
+On that candidate, all blocking gates pass: 174 test files passed and one was
+skipped; 1,050 tests passed and two were skipped. The exact-commit browser run
+passed 27/27 scenarios in stable Chrome, Python discovery passed 223/223 tests,
+fresh-database readiness installed and validated 255 relationship guards, the
+encrypted recovery drill restored every member, both npm audits reported zero
+vulnerabilities, and the Node 22 Docker image built successfully.
+
+The Windows portable artifact now validates both the x64 PE SQLite binding and
+the x64 PE canvas binding required for scanned-PDF OCR. Its SHA-256 is
+`c11ebeef4efd5536380ecc2bb284ba506f5cd1380432aa9667fefe16b2dc401e`.
+
+This addendum is repository-local evidence. It does not replace the dated
+protected-`main`, live-provider, or deployment evidence below, and it does not
+claim a push, merge, native Windows launch, Hetzner deployment, or new public
+production acceptance.
+
 Date: 2026-08-14
 Verification target: protected `main` merge commit
 `1e46aac7c85ef5510d2d4ace4c3239c4b232d76d`.
@@ -242,7 +316,7 @@ development renderer path from the launching shell.
 - `main` requires pull requests, strict Node/Python status checks, stale-review
   dismissal, resolved review conversations, and disallows force pushes/deletion.
 
-## External acceptance state
+## Historical external acceptance state (protected main, 2026-08-14)
 
 | Gate | Current state | Required evidence |
 |---|---|---|
@@ -256,7 +330,10 @@ development builds may retain pending gates, but the tagged release workflow
 requires a reviewed approver, timestamp, evidence, provider scope, and complete
 provider-specific checks before it can publish. Public branding and the selected
 Google/outbound provider scope meet that record; no version tag was created in
-this verification pass.
+this verification pass. These dated checks apply to the protected-main snapshot
+named above; they do not establish live-provider or deployment acceptance for
+the unmerged `ec94985` implementation candidate. Repeat the applicable checks
+after review, merge, migration, and target deployment.
 
 ## Residual engineering work
 
@@ -277,10 +354,10 @@ this verification pass.
 
 ## Verdict
 
-The repository is a verified unsigned release candidate: the code,
-tests, recovery path, packaged startup, authenticated realtime channel, and
-tested user flow are operational. Public signing and Store certification are not
-part of the selected distribution path. Windows may show an unknown-publisher
-warning. Live-provider and public-brand acceptance are recorded. The exact-main
-portable artifact is checksum-verified but remains unexecuted on this host until
-the owner explicitly authorizes launching newly downloaded software.
+The `ec94985` implementation tree is a repository-verified unsigned release
+candidate under the 2026-09-23 addendum. Public signing and Store certification
+are not part of the selected distribution path, so Windows may show an
+unknown-publisher warning. The candidate has not been pushed, reviewed, merged,
+deployed, migrated with the owner's data, launched on native Windows, or
+accepted against live providers. The older protected-main provider and CI
+evidence above remains historical evidence, not acceptance of this candidate.

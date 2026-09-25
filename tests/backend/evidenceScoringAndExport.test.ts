@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { randomBytes } from "crypto";
+import JSZip from "jszip";
 import { buildCase, buildEvidence, buildUser } from "../factories";
 import { bootTestApp, sqliteAvailable, type TestApp } from "../helpers/app";
 
@@ -180,6 +181,125 @@ suite("evidence scoring and case export", () => {
     })).rejects.toThrow();
   });
 
+  it("refuses a ZIP before download when a local managed source is missing", async () => {
+    const evidenceId = "EVIDENCE_MISSING_LOCAL_EXPORT";
+    await app.db.insert(app.schema.evidence).values(buildEvidence({
+      id: evidenceId,
+      caseId: "CASE_SCORE_OWNER",
+      userId: owner.id,
+      title: "Expected local letter",
+      fileName: "expected-letter.pdf",
+      metadata: JSON.stringify({ storageKey: "evidence/CASE_SCORE_OWNER/missing-letter.pdf" }),
+    }));
+    try {
+      const result = await app.makeCaller(owner).evidenceExport.exportZIP({ caseId: "CASE_SCORE_OWNER" });
+      expect(result).toMatchObject({
+        completeness: "failed",
+        url: null,
+        omissions: [{
+          evidenceId,
+          expectedFilename: "expected-letter.pdf",
+          reason: "source object is unavailable",
+        }],
+      });
+      expect(JSON.stringify(result)).not.toContain("missing-letter.pdf\"");
+      const audit = await app.makeCaller(owner).audit.list({
+        entityType: "case",
+        entityId: "CASE_SCORE_OWNER",
+        action: "evidence.exported",
+      });
+      const failedAudit = audit.find((entry: any) => entry.details?.completeness === "failed");
+      expect(failedAudit?.details).toMatchObject({ completeness: "failed", omissionCount: 1 });
+    } finally {
+      await app.db.delete(app.schema.evidence).where(eq(app.schema.evidence.id, evidenceId));
+    }
+  });
+
+  it("reports an unavailable S3 source without exposing provider errors or keys", async () => {
+    const evidenceId = "EVIDENCE_MISSING_S3_EXPORT";
+    const previousBucket = process.env.AWS_S3_BUCKET;
+    process.env.AWS_S3_BUCKET = "acceptance-evidence";
+    const { S3Client } = await import("@aws-sdk/client-s3");
+    const send = vi.spyOn(S3Client.prototype, "send").mockRejectedValue(
+      new Error("AccessDenied https://acceptance-evidence.s3.invalid/private-secret-key"),
+    );
+    await app.db.insert(app.schema.evidence).values(buildEvidence({
+      id: evidenceId,
+      caseId: "CASE_SCORE_OWNER",
+      userId: owner.id,
+      title: "Expected S3 letter",
+      fileName: "remote-letter.pdf",
+      metadata: JSON.stringify({ storageKey: "private/secret/source.pdf" }),
+    }));
+    try {
+      const { inspectCaseZipCompleteness } = await import("../../server/evidenceExport");
+      const result = await inspectCaseZipCompleteness(owner.id, "CASE_SCORE_OWNER");
+      expect(result.omissions).toContainEqual({
+        evidenceId,
+        expectedFilename: "remote-letter.pdf",
+        reason: "source object is unavailable",
+      });
+      expect(JSON.stringify(result)).not.toMatch(/AccessDenied|private\/secret|s3\.invalid/);
+    } finally {
+      send.mockRestore();
+      if (previousBucket === undefined) delete process.env.AWS_S3_BUCKET;
+      else process.env.AWS_S3_BUCKET = previousBucket;
+      await app.db.delete(app.schema.evidence).where(eq(app.schema.evidence.id, evidenceId));
+    }
+  });
+
+  it("removes Windows and POSIX paths from JSON and ZIP evidence projections", async () => {
+    const evidenceId = "EVIDENCE_LOCAL_PATH_EXPORT";
+    const { storagePut } = await import("../../server/storage");
+    const stored = await storagePut(
+      "evidence/CASE_SCORE_OWNER/path-redaction.txt",
+      "source remains included",
+      "text/plain",
+    );
+    await app.db.insert(app.schema.evidence).values(buildEvidence({
+      id: evidenceId,
+      caseId: "CASE_SCORE_OWNER",
+      userId: owner.id,
+      source: "local",
+      title: "Local source",
+      description: "Auto-collected from /home/angel/private/client-a",
+      fileUrl: "file:///home/angel/private/client-a/letter.txt",
+      fileName: "C:\\Users\\Angel\\Documents\\letter.txt",
+      metadata: JSON.stringify({
+        storageKey: stored.key,
+        contentHash: stored.sha256,
+        absPath: "C:\\Users\\Angel\\Documents\\letter.txt",
+        sourceFolder: "/home/angel/private/client-a",
+        sourceFolderLabel: "Client A",
+        nested: { filePath: "/media/angel/archive/letter.txt" },
+      }),
+    }));
+    try {
+      const jsonExport = await app.makeCaller(owner).cases.export({ caseId: "CASE_SCORE_OWNER" });
+      const jsonText = JSON.stringify(jsonExport);
+      expect(jsonText).not.toMatch(/C:\\\\Users|\/home\/angel|\/media\/angel|file:\/\//);
+      const projected = jsonExport.evidence.find((item: any) => item.id === evidenceId);
+      expect(projected).toMatchObject({
+        fileName: "letter.txt",
+        fileUrl: null,
+        metadata: expect.objectContaining({ contentHash: stored.sha256, sourceFolderLabel: "Client A" }),
+      });
+
+      const { createCaseZipStream } = await import("../../server/evidenceExport");
+      const streamed = await createCaseZipStream(owner.id, "CASE_SCORE_OWNER");
+      const chunks: Buffer[] = [];
+      for await (const chunk of streamed.stream) chunks.push(Buffer.from(chunk));
+      await streamed.completion;
+      const zip = await JSZip.loadAsync(Buffer.concat(chunks));
+      const evidenceJson = await zip.file(`evidence/${evidenceId}.json`)!.async("string");
+      const manifestJson = await zip.file("manifest.json")!.async("string");
+      expect(evidenceJson + manifestJson).not.toMatch(/C:\\\\Users|\/home\/angel|\/media\/angel|file:\/\//);
+      expect(zip.file(`files/${evidenceId}-letter.txt`)).not.toBeNull();
+    } finally {
+      await app.db.delete(app.schema.evidence).where(eq(app.schema.evidence.id, evidenceId));
+    }
+  });
+
   it("keeps ZIP output backpressure-bounded and rejects export queue overflow", async () => {
     const { storagePut } = await import("../../server/storage");
     const stored = await storagePut(
@@ -195,7 +315,7 @@ suite("evidence scoring and case export", () => {
       fileName: "large.bin",
       mimeType: "application/octet-stream",
       source: "manual",
-      fileSize: String(4 * 1024 * 1024),
+      fileSize: 4 * 1024 * 1024,
       metadata: JSON.stringify({ storageKey: stored.key, contentHash: stored.sha256 }),
     }));
     const { createCaseZipStream } = await import("../../server/evidenceExport");
@@ -231,7 +351,10 @@ suite("evidence scoring and case export", () => {
     expect(() => consumeCaseZipDownloadTicket(attacked, owner.id)).toThrow("invalid or expired");
 
     const valid = issueCaseZipDownloadTicket(owner.id, "CASE_SCORE_OWNER");
-    expect(consumeCaseZipDownloadTicket(valid, owner.id)).toBe("CASE_SCORE_OWNER");
+    expect(consumeCaseZipDownloadTicket(valid, owner.id)).toEqual({
+      caseId: "CASE_SCORE_OWNER",
+      ownerId: owner.id,
+    });
     expect(() => consumeCaseZipDownloadTicket(valid, owner.id)).toThrow("invalid or expired");
   });
 

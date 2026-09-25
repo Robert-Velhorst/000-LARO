@@ -33,7 +33,9 @@ describe('production runtime operations', () => {
 
     expect(pkg.scripts['readiness:runtime']).toBe('node scripts/runtime-readiness.mjs');
     expect(dockerfile).toContain('COPY scripts/runtime-readiness.mjs ./scripts/runtime-readiness.mjs');
-    expect(launcher).toContain('exec -T laro-server npm run readiness:runtime');
+    expect(dockerfile).toContain('gcr.io/distroless/nodejs22-debian13:latest@sha256:');
+    expect(dockerfile).toContain('CMD ["/nodejs/bin/node", "-e"');
+    expect(launcher).toContain('exec -T laro-server /nodejs/bin/node scripts/runtime-readiness.mjs');
     expect(launcher).toContain('function Get-LaroNgrokProcesses');
     expect(launcher).toContain('function Find-ExistingLaroHttpsTunnel');
     expect(launcher).toContain('[int]$Attempts = 4');

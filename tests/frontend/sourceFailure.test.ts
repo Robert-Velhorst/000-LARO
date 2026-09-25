@@ -6,6 +6,7 @@ describe("source failure explanations", () => {
     ["EACCES", "file_access"], ["ENOENT", "file_missing"], ["ENOSPC", "storage_full"],
     ["Document extraction exceeded the 5 minute processing limit", "timeout"],
     ["ECONNREFUSED", "connection"], ["Google source request failed (HTTP 403)", "google_access"],
+    ["The selected provider account was not found.", "google_access"],
     ["Google source request failed (HTTP 429)", "rate_limit"], ["PDF requires OCR for more than 30 pages", "resource_limit"],
     ["Invalid PDF structure", "unreadable"], ["ollama is selected but not configured", "model_unconfigured"],
   ])("classifies %s", (message, code) => {

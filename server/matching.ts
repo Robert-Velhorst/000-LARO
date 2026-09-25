@@ -1,12 +1,13 @@
 // matching.ts
 import { getAllLawyers, getCaseById } from "./db";
-import { getLawyerRating } from "./routers/lawyerRating";
 import { syncNovaLawyersForCase, type NovaDirectoryReport } from "./novaDirectory";
+import { parseLegacyStringArray } from "./lawyerData";
+import { MATCH_SCORE_MAX } from "../shared/lawyerMatching";
 
 import * as fs from "fs";
 import * as path from "path";
 
-export const MATCH_SCORE_MAX = 245;
+export { MATCH_SCORE_MAX };
 
 interface TaxonomyMapping {
   courtCategoryToSpecializations: Record<string, string[]>;
@@ -185,7 +186,7 @@ export interface MatchedLawyer {
   website: string | null;
   languages: string[];
   legalAreas: string[];
-  experienceYears: string | null;
+  experienceYears: number | null;
   distance: number;
   distanceKnown: boolean;
   matchScore: number;
@@ -215,6 +216,21 @@ function parseJsonStringArray(value: string | null | undefined): string[] {
   }
 }
 
+function caseMatchingPreferences(metadata: string | null | undefined): {
+  requiresFinancedLegalAid?: boolean;
+} {
+  if (!metadata) return {};
+  try {
+    const parsed = JSON.parse(metadata);
+    const preferences = parsed?.matchingPreferences;
+    return typeof preferences?.requiresFinancedLegalAid === "boolean"
+      ? { requiresFinancedLegalAid: preferences.requiresFinancedLegalAid }
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 export interface MatchingOptions {
   maxDistance?: number; // Maximum distance in km
   maxResults?: number; // Maximum number of lawyers to return
@@ -224,6 +240,7 @@ export interface MatchingOptions {
   requireSpecializationAssociation?: boolean;
   requiresFinancedLegalAid?: boolean;
   refreshOfficialDirectory?: boolean;
+  lawyerIds?: string[];
 }
 
 export interface CaseLawyerMatches {
@@ -271,7 +288,9 @@ export async function findCaseLawyersWithOfficialDirectory(
 ): Promise<CaseLawyerMatches> {
   const caseData = await getCaseById(caseId);
   if (!caseData) throw new Error(`Case not found: ${caseId}`);
-  const effectiveLocation = options.location?.trim() || undefined;
+  const preferences = caseMatchingPreferences(caseData.metadata);
+  const effectiveLocation = options.location?.trim() || caseData.clientAddress?.trim() || undefined;
+  const requiresFinancedLegalAid = options.requiresFinancedLegalAid ?? preferences.requiresFinancedLegalAid;
   let directory = skippedDirectoryReport(caseData);
   const shouldRefresh = options.refreshOfficialDirectory !== false && process.env.NODE_ENV !== "test";
   if (shouldRefresh) {
@@ -281,7 +300,7 @@ export async function findCaseLawyersWithOfficialDirectory(
         radiusKm: options.maxDistance,
         maxResults: Math.max(options.maxResults || 10, 20),
         requireSpecializationAssociation: options.requireSpecializationAssociation,
-        requiresFinancedLegalAid: options.requiresFinancedLegalAid,
+        requiresFinancedLegalAid,
         enrichProfiles: true,
       });
     } catch (error) {
@@ -297,6 +316,7 @@ export async function findCaseLawyersWithOfficialDirectory(
   const lawyers = await findMatchingLawyers(caseId, {
     ...options,
     location: directory.resolvedLocation || effectiveLocation,
+    requiresFinancedLegalAid,
     refreshOfficialDirectory: false,
   });
   return { lawyers, directory };
@@ -312,7 +332,7 @@ export async function findCaseLawyersWithOfficialDirectory(
  * 4. Not permanently filtered (0% response rate with 3+ contacts)
  * 5. Within maximum distance
  * 
- * SCORING SYSTEM (Max 245 points):
+ * SCORING SYSTEM (Max 230 points):
  * - Case-load: 0-50 points (PRIMARY)
  * - Response Time: 0-50 points (PRIMARY)
  * - Acceptance Rate: 0-50 points (PRIMARY)
@@ -321,7 +341,6 @@ export async function findCaseLawyersWithOfficialDirectory(
  * - Distance: 0-10 points (LOW)
  * - Experience: 0-10 points (LOW)
  * - Curated legal terminology: 0-20 points
- * - Evidence-backed interaction rating: 0-15 points
  * Unknown metrics receive zero points and remain visible as unavailable.
  */
 export async function findMatchingLawyers(
@@ -344,21 +363,14 @@ export async function findMatchingLawyers(
   // Parse case requirements
   const caseLat = caseData.latitude ? parseFloat(caseData.latitude) : null;
   const caseLon = caseData.longitude ? parseFloat(caseData.longitude) : null;
+  const effectiveLocation = options.location?.trim() || caseData.clientAddress?.trim() || undefined;
+  const requiresFinancedLegalAid = options.requiresFinancedLegalAid
+    ?? caseMatchingPreferences(caseData.metadata).requiresFinancedLegalAid;
   
   // Parse legalAreas - handle both string[] and object[] formats
-  let caseLegalAreas: string[] = [];
-  if (caseData.legalAreas) {
-    const parsed = JSON.parse(caseData.legalAreas);
-    if (Array.isArray(parsed)) {
-      // Handle both ["Arbeidsrecht"] and [{area: "Arbeidsrecht", ...}] formats
-      caseLegalAreas = parsed.map(item => 
-        typeof item === 'string' ? item : (item.area || item.areaEn || item)
-      );
-    }
-  }
-  const caseLanguages = caseData.preferredLanguages
-    ? JSON.parse(caseData.preferredLanguages)
-    : requireLanguages;
+  const caseLegalAreas = parseLegacyStringArray(caseData.legalAreas);
+  const storedCaseLanguages = parseLegacyStringArray(caseData.preferredLanguages);
+  const caseLanguages = storedCaseLanguages.length > 0 ? storedCaseLanguages : requireLanguages;
 
   // Coordinates are optional - if not provided, distance-based filtering will be skipped
   // if (!caseLat || !caseLon) {
@@ -371,11 +383,13 @@ export async function findMatchingLawyers(
 
   // Get all lawyers
   const allLawyers = await getAllLawyers();
+  const requestedLawyerIds = options.lawyerIds ? new Set(options.lawyerIds) : null;
 
   // Filter and score lawyers
   const matchedLawyers: MatchedLawyer[] = [];
 
   for (const lawyer of allLawyers) {
+    if (requestedLawyerIds && !requestedLawyerIds.has(lawyer.id)) continue;
     if (!lawyer.name?.trim()) {
       continue;
     }
@@ -385,16 +399,8 @@ export async function findMatchingLawyers(
     // Coordinates are optional - if not available, distance scoring will be skipped
 
     // Parse lawyer data - handle both string[] and object[] formats
-    let lawyerAreas: string[] = [];
-    if (lawyer.legalAreas) {
-      const parsed = JSON.parse(lawyer.legalAreas);
-      if (Array.isArray(parsed)) {
-        lawyerAreas = parsed.map(item =>
-          typeof item === 'string' ? item : (item.area || item.areaEn || item)
-        );
-      }
-    }
-    const lawyerLanguages = lawyer.languages ? JSON.parse(lawyer.languages) : [];
+    const lawyerAreas = parseLegacyStringArray(lawyer.legalAreas);
+    const lawyerLanguages = parseLegacyStringArray(lawyer.languages);
 
     // MANDATORY FILTER 1: Check expertise match
     if (!hasMatchingExpertise(lawyerAreas, caseLegalAreas)) {
@@ -421,6 +427,10 @@ export async function findMatchingLawyers(
       // Filter expired, allow matching but reset flag would happen elsewhere
     }
 
+    if (requiresFinancedLegalAid === true && !/^(?:yes|true|available|ja)$/i.test(lawyer.financedLegalAid?.trim() || "")) {
+      continue;
+    }
+
     // Calculate distance (only if both case and lawyer have coordinates)
     let distance = 0;
     let distanceKnown = false;
@@ -431,13 +441,13 @@ export async function findMatchingLawyers(
       // MANDATORY FILTER 5: Check distance limit (only if coordinates available)
       if (distance > maxDistance) continue;
     } else if (
-      options.location &&
+      effectiveLocation &&
       lawyer.directorySearchLocation &&
-      lawyer.directorySearchLocation.toLowerCase() === options.location.toLowerCase() &&
+      lawyer.directorySearchLocation.toLowerCase() === effectiveLocation.toLowerCase() &&
       lawyer.directoryDistanceKm !== null &&
-      Number.isFinite(Number(lawyer.directoryDistanceKm))
+      Number.isFinite(lawyer.directoryDistanceKm)
     ) {
-      distance = Number(lawyer.directoryDistanceKm);
+      distance = lawyer.directoryDistanceKm;
       distanceKnown = true;
       if (distance > maxDistance) continue;
     }
@@ -453,7 +463,7 @@ export async function findMatchingLawyers(
 
     // PRIMARY METRIC 1: Case-load (0-50 points)
     let caseLoadScore = 0;
-    const caseLoad = lawyer.caseLoad ? parseInt(lawyer.caseLoad) : null;
+    const caseLoad = lawyer.caseLoad;
     
     if (caseLoad === null) {
       matchReasons.push("Case-load not available");
@@ -474,9 +484,7 @@ export async function findMatchingLawyers(
 
     // PRIMARY METRIC 2: Response Time (0-50 points)
     let responseTimeScore = 0;
-    const avgResponseTime = lawyer.averageResponseTimeHours
-      ? parseFloat(lawyer.averageResponseTimeHours)
-      : null;
+    const avgResponseTime = lawyer.averageResponseTimeHours;
 
     if (avgResponseTime === null) {
       matchReasons.push("Response history not available");
@@ -497,11 +505,11 @@ export async function findMatchingLawyers(
 
     // PRIMARY METRIC 2: Acceptance Rate (0-50 points)
     let acceptanceRateScore = 0;
-    const totalOutreaches = parseInt(lawyer.totalOutreaches || "0");
-    const totalResponses = parseInt(lawyer.totalResponses || "0");
-    const totalAcceptances = parseInt(lawyer.totalAcceptances || "0");
+    const totalOutreaches = lawyer.totalOutreaches;
+    const totalResponses = lawyer.totalResponses;
+    const totalAcceptances = lawyer.totalAcceptances;
 
-    if (totalResponses > 0) {
+    if (totalResponses !== null && totalResponses > 0 && totalAcceptances !== null && totalAcceptances <= totalResponses) {
       const acceptanceRate = (totalAcceptances / totalResponses) * 100;
       if (acceptanceRate >= 80) {
         acceptanceRateScore = 50;
@@ -516,6 +524,8 @@ export async function findMatchingLawyers(
         acceptanceRateScore = 0;
         matchReasons.push(`Low acceptance rate (${Math.round(acceptanceRate)}%)`);
       }
+    } else if (totalOutreaches === null || totalResponses === null || totalResponses === 0 || totalAcceptances === null || totalAcceptances > totalResponses) {
+      matchReasons.push("Acceptance history not available");
     }
     matchScore += acceptanceRateScore;
 
@@ -532,10 +542,8 @@ export async function findMatchingLawyers(
 
     // TERTIARY METRIC: Capacity Percentage (0-20 points)
     let capacityScore = 0;
-    const capacityFilled = lawyer.capacityPercentage === null || lawyer.capacityPercentage === undefined
-      ? null
-      : parseInt(lawyer.capacityPercentage);
-    if (capacityFilled === null || !Number.isFinite(capacityFilled)) {
+    const capacityFilled = lawyer.capacityPercentage;
+    if (capacityFilled === null) {
       matchReasons.push("Capacity not available");
     } else if (capacityFilled <= 25) {
       capacityScore = 20;
@@ -571,9 +579,7 @@ export async function findMatchingLawyers(
 
     // LOW WEIGHT: Experience (0-10 points)
     let experienceScore = 0;
-    const experience = lawyer.experienceYears
-      ? parseInt(lawyer.experienceYears)
-      : 0;
+    const experience = lawyer.experienceYears ?? 0;
     if (experience >= 10) {
       experienceScore = 10;
       matchReasons.push(`Highly experienced (${experience}+ years)`);
@@ -599,27 +605,6 @@ export async function findMatchingLawyers(
       );
     }
     matchScore += keywordBoostScore;
-
-    // AI RATING BOOST: Objective performance metrics (0-15 points)
-    let ratingBoostScore = 0;
-    try {
-      const rating = await getLawyerRating(lawyer.id);
-      if (rating && rating.ratingConfidence !== 'low') {
-        const overallRating = parseFloat(rating.overallRating);
-        // Scale 0-100 rating to 0-15 points
-        ratingBoostScore = (overallRating / 100) * 15;
-        if (overallRating >= 90) {
-          matchReasons.push(`Exceptional AI rating (${overallRating.toFixed(1)}/100)`);
-        } else if (overallRating >= 75) {
-          matchReasons.push(`Strong AI rating (${overallRating.toFixed(1)}/100)`);
-        } else if (overallRating >= 60) {
-          matchReasons.push(`Good AI rating (${overallRating.toFixed(1)}/100)`);
-        }
-      }
-    } catch (error) {
-      console.error('[Matching] Failed to get lawyer rating:', error);
-    }
-    matchScore += ratingBoostScore;
 
     matchedLawyers.push({
       id: lawyer.id,
@@ -656,8 +641,8 @@ export async function findMatchingLawyers(
       case "distance":
         return a.distance - b.distance; // Closest first
       case "experience":
-        const expA = a.experienceYears ? parseInt(a.experienceYears) : 0;
-        const expB = b.experienceYears ? parseInt(b.experienceYears) : 0;
+        const expA = a.experienceYears ?? 0;
+        const expB = b.experienceYears ?? 0;
         return expB - expA; // Most experienced first
       case "score":
       default:
@@ -699,4 +684,3 @@ export async function getNextLawyerToContact(
 
   return null; // No lawyers found
 }
-

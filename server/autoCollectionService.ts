@@ -1,13 +1,9 @@
 import { getDb } from './db';
-import { eq, and, desc, gt, lt } from 'drizzle-orm';
-import { notifyOwner } from './notification';
+import { eq, and, desc } from 'drizzle-orm';
+import { createNotification } from './notifications';
 import {
   autoCollectionSettings,
-  autoCollectionLogs,
   keywordPullJobs,
-  keywordMatches,
-  emailMessages,
-  googleDriveFiles,
   emailAccounts,
   evidence as evidenceTable,
   cases as casesTable,
@@ -18,12 +14,12 @@ import {
   downloadAndUploadGoogleDriveFile,
   findGoogleDriveFilesByExactName,
   getAllFilesInFolder,
-  getGoogleDriveFileMetadata,
+  googleDriveProviderRevision,
 } from './googleDriveService';
-import { decryptToken, encryptToken, refreshGmailToken } from './emailOAuth';
+import { getProviderAccessToken, listProviderConnections } from './providerConnections';
 import { getGmailMessage, getGmailAttachmentBytes } from './gmailService';
 import { searchGmailMessageIds } from './gmailMessageSearch';
-import { getLocalStorageDirectory, hashBuffer, storageDelete, storagePut } from './storage';
+import { getLocalStorageDirectory, storageDelete, storagePut, storagePutStream } from './storage';
 import { createEvidenceFile } from './evidence';
 import { analyzeStoredEvidence } from './documentAnalysisService';
 import { supportsDocumentAnalysisMime } from './documentIntelligence';
@@ -34,9 +30,18 @@ import { linkInboundOutreachReply } from './inboundOutreach';
 import * as fs from 'fs/promises';
 import { createReadStream } from 'fs';
 import * as path from 'path';
-import { collectBoundedBytes, withByteReadAdmission } from './boundedBytes';
+import { withByteReadAdmission } from './boundedBytes';
 import { MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
 import { googleDriveSourcesSchema, savedGoogleDriveSources, type GoogleDriveSource } from '../shared/googleDriveSources';
+import {
+  EvidenceIngestionBudget,
+  EvidenceIngestionLimitError,
+} from './evidenceIngestionBudget';
+import type {
+  EvidenceIngestionSource,
+  EvidenceIngestionSummary,
+} from '../shared/evidenceIngestion';
+import { EVIDENCE_INGESTION_LIMITS } from '../shared/evidenceIngestion';
 
 /**
  * Evidence Auto-Collection Service
@@ -58,6 +63,52 @@ interface AutoCollectionConfig {
   autoDownloadGoogleDriveFiles: boolean;
 }
 
+type AutoCollectionSettingsRecord = {
+  caseId?: string | null;
+  userId?: string | null;
+  keywords?: string | null;
+  isEnabled?: boolean | number | null;
+  status?: string | null;
+};
+
+type AutoCollectionRunResult = {
+  emailsFound: number;
+  emailsProcessed: number;
+  filesFound: number;
+  filesDownloaded: number;
+  errors: string[];
+};
+
+type AutoCollectionSchedulerDependencies = {
+  runCase?: (caseId: string) => Promise<AutoCollectionRunResult>;
+  writeNotification?: typeof createNotification;
+  now?: Date;
+};
+
+export function configuredAutoCollectionKeywords(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return [...new Set(parsed
+      .filter((keyword): keyword is string => typeof keyword === 'string')
+      .map((keyword) => keyword.trim())
+      .filter(Boolean))];
+  } catch {
+    return [];
+  }
+}
+
+export function isRunnableAutoCollectionSetting(settings: AutoCollectionSettingsRecord): boolean {
+  return Boolean(
+    settings.caseId
+    && settings.userId
+    && settings.isEnabled
+    && settings.status === 'active'
+    && configuredAutoCollectionKeywords(settings.keywords).length > 0,
+  );
+}
+
 async function analyzeImportedEvidence(
   evidenceId: string,
   userId: string,
@@ -65,11 +116,17 @@ async function analyzeImportedEvidence(
   label: string,
   errors: string[],
   autoAnalyzeImports?: boolean,
+  budget?: EvidenceIngestionBudget,
+  source: EvidenceIngestionSource = 'manual',
 ): Promise<number> {
   if (!supportsDocumentAnalysisMime(mimeType)) return 0;
   try {
     if (autoAnalyzeImports === false) return 0;
     if (autoAnalyzeImports === undefined && !(await getWorkflowPreferences(userId)).autoAnalyzeImports) return 0;
+    if (budget && !budget.claimAnalysis(source)) {
+      errors.push(`Analysis deferred for ${source}: the ingestion analysis limit was reached`);
+      return 0;
+    }
     const analysis = await analyzeStoredEvidence({ userId, evidenceId });
     return analysis.result.analyzedWords ?? countWords(analysis.result.summary || '');
   } catch (error) {
@@ -120,10 +177,12 @@ export async function upsertAutoCollectionSettings(config: AutoCollectionConfig)
     delete metadata.googleDriveSources;
   }
 
+  const keywords = [...new Set(config.keywords.map((keyword) => keyword.trim()).filter(Boolean))];
+  const scheduleActive = keywords.length > 0;
   const settingsData = {
     caseId: config.caseId,
     userId: config.userId,
-    keywords: JSON.stringify(config.keywords),
+    keywords: JSON.stringify(keywords),
     keywordMatchMode: config.keywordMatchMode,
     dateRangeStart: config.dateRangeStart,
     dateRangeEnd: config.dateRangeEnd,
@@ -132,6 +191,8 @@ export async function upsertAutoCollectionSettings(config: AutoCollectionConfig)
     googleDriveFolderIds: config.googleDriveSources !== undefined ? null : config.googleDriveFolderIds ? JSON.stringify(config.googleDriveFolderIds) : null,
     autoDownloadAttachments: config.autoDownloadAttachments,
     autoDownloadGoogleDriveFiles: config.autoDownloadGoogleDriveFiles,
+    isEnabled: scheduleActive,
+    status: scheduleActive ? 'active' : 'configured',
   };
 
   if (existing) {
@@ -143,8 +204,6 @@ export async function upsertAutoCollectionSettings(config: AutoCollectionConfig)
     await db.insert(autoCollectionSettings).values({
       id: uuidv4(),
       ...settingsData,
-      isEnabled: true,
-      status: 'active',
     });
   }
 }
@@ -161,334 +220,6 @@ function matchesKeywords(text: string, keywords: string[], mode: 'all' | 'any'):
   } else {
     return matchedKeywords.length > 0;
   }
-}
-
-/**
- * Run auto-collection for a case
- */
-async function runAutoCollectionLegacy(caseId: string): Promise<{
-  emailsFound: number;
-  emailsProcessed: number;
-  filesFound: number;
-  filesDownloaded: number;
-  errors: string[];
-}> {
-  const db = await getDb();
-  if (!db) {
-    throw new Error('Database not available');
-  }
-
-  const settings = await getAutoCollectionSettings(caseId);
-  if (!settings) {
-    throw new Error('Auto-collection settings not found for case');
-  }
-
-  const logId = uuidv4();
-  const startTime = new Date();
-  const errors: string[] = [];
-
-  let emailsFound = 0;
-  let emailsProcessed = 0;
-  let filesFound = 0;
-  let filesDownloaded = 0;
-
-  try {
-    const keywords = JSON.parse(settings.keywords || '[]');
-    const emailAccountIds = JSON.parse(settings.emailAccountIds || '[]');
-    const keywordMatchMode = (settings.keywordMatchMode as 'all' | 'any') || 'any';
-
-    // Collect emails from Gmail
-    for (const accountId of emailAccountIds) {
-      try {
-        const emailsResult = await collectEmailsFromGmail(
-          caseId,
-          accountId,
-          keywords,
-          keywordMatchMode,
-          settings.dateRangeStart || undefined,
-          settings.dateRangeEnd || undefined
-        );
-        emailsFound += emailsResult.found;
-        emailsProcessed += emailsResult.processed;
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : 'Unknown error collecting emails';
-        errors.push(`Email collection error for account ${accountId}: ${errorMsg}`);
-      }
-    }
-
-    // Collect files from Google Drive
-    if (settings.autoDownloadGoogleDriveFiles) {
-      const googleDriveFolderIds = settings.googleDriveFolderIds
-        ? JSON.parse(settings.googleDriveFolderIds)
-        : [];
-
-      for (const folderId of googleDriveFolderIds) {
-        try {
-          const filesResult = await collectFilesFromGoogleDrive(
-            caseId,
-            folderId,
-            keywords,
-            keywordMatchMode
-          );
-          filesFound += filesResult.found;
-          filesDownloaded += filesResult.downloaded;
-        } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : 'Unknown error collecting files';
-          errors.push(`File collection error for folder ${folderId}: ${errorMsg}`);
-        }
-      }
-    }
-
-    // Save log
-    const executionTime = (new Date().getTime() - startTime.getTime()) / 1000;
-    await db.insert(autoCollectionLogs).values({
-      id: logId,
-      caseId,
-      settingsId: settings.id,
-      userId: settings.userId,
-      runStartedAt: startTime,
-      runCompletedAt: new Date(),
-      status: 'completed',
-      emailsFound: String(emailsFound),
-      emailsProcessed: String(emailsProcessed),
-      filesFound: String(filesFound),
-      filesDownloaded: String(filesDownloaded),
-      errorCount: String(errors.length),
-      executionTimeSeconds: String(Math.round(executionTime)),
-    });
-
-    // Update settings
-    await db
-      .update(autoCollectionSettings)
-      .set({
-        lastRunAt: new Date(),
-        totalItemsCollected: String(emailsProcessed + filesDownloaded),
-        totalEmailsCollected: String(emailsProcessed),
-        totalFilesCollected: String(filesDownloaded),
-      })
-      .where(eq(autoCollectionSettings.caseId, caseId));
-
-    return {
-      emailsFound,
-      emailsProcessed,
-      filesFound,
-      filesDownloaded,
-      errors,
-    };
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-    errors.push(errorMsg);
-
-    // Save failed log
-    const executionTime = (new Date().getTime() - startTime.getTime()) / 1000;
-    await db.insert(autoCollectionLogs).values({
-      id: logId,
-      caseId,
-      settingsId: settings.id,
-      userId: settings.userId,
-      runStartedAt: startTime,
-      runCompletedAt: new Date(),
-      status: 'failed',
-      errorMessage: errorMsg,
-      errorCount: String(errors.length),
-      executionTimeSeconds: String(Math.round(executionTime)),
-    });
-
-    throw error;
-  }
-}
-
-/**
- * Collect emails from Gmail based on keywords
- */
-async function collectEmailsFromGmail(
-  caseId: string,
-  accountId: string,
-  keywords: string[],
-  matchMode: 'all' | 'any',
-  dateRangeStart?: Date,
-  dateRangeEnd?: Date
-): Promise<{
-  found: number;
-  processed: number;
-}> {
-  const db = await getDb();
-  if (!db) {
-    throw new Error('Database not available');
-  }
-
-  const conditions = [eq(emailMessages.accountId, accountId)];
-  
-  if (dateRangeStart) {
-    conditions.push(gt(emailMessages.date, dateRangeStart));
-  }
-  if (dateRangeEnd) {
-    conditions.push(lt(emailMessages.date, dateRangeEnd));
-  }
-  
-  const messages = await db.select().from(emailMessages).where(and(...conditions));
-
-  let found = 0;
-  let processed = 0;
-
-  for (const message of messages) {
-    // Check if message matches keywords
-    const searchText = `${message.subject || ''} ${message.body || ''} ${message.snippet || ''}`;
-    const matches = matchesKeywords(searchText, keywords, matchMode);
-
-    if (matches) {
-      found++;
-
-      // Link message to case if not already linked
-      if (!message.caseId) {
-        await db
-          .update(emailMessages)
-          .set({ caseId })
-          .where(eq(emailMessages.id, message.id));
-        processed++;
-      }
-
-      // Record keyword match
-      const matchedKeywords = keywords.filter((kw) => searchText.toLowerCase().includes(kw.toLowerCase()));
-      if (matchedKeywords.length > 0) {
-        await db.insert(keywordMatches).values({
-          id: uuidv4(),
-          caseId,
-          itemId: message.id,
-          itemType: 'email',
-          matchedKeywords: JSON.stringify(matchedKeywords),
-          matchCount: String(matchedKeywords.length),
-        });
-      }
-    }
-  }
-
-  return { found, processed };
-}
-
-/**
- * Collect files from Google Drive based on keywords
- */
-async function collectFilesFromGoogleDrive(
-  caseId: string,
-  folderId: string,
-  keywords: string[],
-  matchMode: 'all' | 'any'
-): Promise<{
-  found: number;
-  downloaded: number;
-}> {
-  const db = await getDb();
-  if (!db) throw new Error('Database not available');
-
-  const { evidence } = await import('./schema');
-
-  let found = 0;
-  let downloaded = 0;
-
-  try {
-    // Resolve the owner before opening Drive so background collection cannot
-    // fall back to an unrelated connected Google account.
-    const { cases } = await import('./schema');
-    const caseData = await db.select().from(cases).where(eq(cases.id, caseId)).limit(1);
-    if (!caseData[0]) throw new Error(`Case ${caseId} not found`);
-    const userId = caseData[0].userId;
-    if (!userId) throw new Error(`Case ${caseId} has no owner`);
-
-    // 1. Get file list from folder
-    const files = await getGoogleDriveFileMetadata(folderId, userId);
-    
-    for (const file of files) {
-      if (!file.name) continue;
-
-      // 2. Check file names against keywords
-      const matches = matchesKeywords(file.name, keywords, matchMode);
-      
-      if (matches) {
-        found++;
-
-        // 3. Check if already downloaded/exists in evidence table
-        const existingEvidence = await db
-          .select()
-          .from(evidence)
-          .where(and(
-            eq(evidence.caseId, caseId),
-            eq(evidence.source, 'google_drive')
-          ));
-
-        const alreadyImported = existingEvidence.some(e => {
-          const metadata = e.metadata ? JSON.parse(e.metadata) : {};
-          return metadata.driveFileId === file.id;
-        });
-
-        if (alreadyImported) {
-          console.log(`[AutoCollection] File ${file.name} already imported, skipping`);
-          continue;
-        }
-
-        try {
-          // 4. Download and upload to local storage/S3
-          const fileData = await downloadAndUploadGoogleDriveFile(file.id!, caseId, userId);
-          
-          // 5. Create evidence record
-          const evidenceId = uuidv4();
-          await db.insert(evidence).values({
-            id: evidenceId,
-            caseId,
-            userId,
-            type: determineEvidenceType(fileData.mimeType),
-            source: 'google_drive',
-            title: file.name,
-            description: `Auto-collected from Google Drive`,
-            fileUrl: fileData.url,
-            fileName: fileData.fileName,
-            fileSize: fileData.size,
-            mimeType: fileData.mimeType,
-            metadata: JSON.stringify({
-              driveFileId: file.id,
-              folderId,
-              autoCollected: true,
-              collectedAt: new Date().toISOString(),
-              modifiedTime: fileData.modifiedTime,
-            }),
-            relevant: true,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          });
-
-          // Also insert into googleDriveFiles for tracking
-          await db.insert(googleDriveFiles).values({
-            id: uuidv4(),
-            userId,
-            caseId,
-            googleFileId: file.id,
-            fileName: fileData.fileName,
-            mimeType: fileData.mimeType,
-            fileSize: fileData.size,
-            s3Key: fileData.key,
-            s3Url: fileData.url,
-            googleWebViewLink: file.webViewLink || null,
-            googleModifiedTime: fileData.modifiedTime,
-            evidenceType: determineEvidenceType(fileData.mimeType),
-            isIncluded: 'Yes',
-            metadata: JSON.stringify({
-              folderId,
-              sourceMimeType: fileData.sourceMimeType,
-            }),
-          });
-          
-          downloaded++;
-          console.log(`[AutoCollection] Downloaded and created evidence for: ${file.name}`);
-        } catch (downloadError) {
-          console.error(`[AutoCollection] Failed to download ${file.name}:`, downloadError);
-        }
-      }
-    }
-  } catch (error) {
-    console.error(`[AutoCollection] Google Drive scan failed for folder ${folderId}:`, error);
-  }
-
-  return { found, downloaded };
 }
 
 /**
@@ -510,29 +241,12 @@ function determineEvidenceType(mimeType?: string): string {
 }
 
 /**
- * Get auto-collection logs for a case
- */
-export async function getAutoCollectionLogs(caseId: string, limit: number = 10) {
-  const db = await getDb();
-  if (!db) {
-    return [];
-  }
-
-  const logs = await db
-    .select()
-    .from(autoCollectionLogs)
-    .where(eq(autoCollectionLogs.caseId, caseId))
-    .orderBy(desc(autoCollectionLogs.runStartedAt))
-    .limit(limit);
-
-  return logs;
-}
-
-/**
  * Run auto-collection for all cases with enabled settings
  * Called by cron scheduler daily at 2:00 AM
  */
-export async function runAutoCollectionForAllCases(): Promise<{
+export async function runAutoCollectionForAllCases(
+  dependencies: AutoCollectionSchedulerDependencies = {},
+): Promise<{
   casesProcessed: number;
   emailsCollected: number;
   filesCollected: number;
@@ -554,62 +268,112 @@ export async function runAutoCollectionForAllCases(): Promise<{
       )
     );
 
-  console.log(`[AutoCollection] Found ${enabledSettings.length} cases with enabled auto-collection`);
+  const runnableSettings = enabledSettings.filter(isRunnableAutoCollectionSetting);
+  const inactiveSources = enabledSettings.length - runnableSettings.length;
+  console.log(`[AutoCollection] Found ${runnableSettings.length} runnable scheduled collection(s)`);
+  if (inactiveSources > 0) {
+    console.log(`[AutoCollection] Skipped ${inactiveSources} saved source configuration(s) without an active keyword schedule`);
+  }
 
   let casesProcessed = 0;
   let totalEmailsCollected = 0;
   let totalFilesCollected = 0;
   const errors: string[] = [];
+  const reports = new Map<string, {
+    userId: string;
+    casesProcessed: number;
+    emailsCollected: number;
+    filesCollected: number;
+    errors: string[];
+  }>();
+  const runCase = dependencies.runCase ?? runAutoCollection;
+  const writeNotification = dependencies.writeNotification ?? createNotification;
+  const now = dependencies.now ?? new Date();
 
-  for (const settings of enabledSettings) {
-    if (!settings.caseId) {
-      errors.push(`Auto-collection setting ${settings.id} has no case and was skipped`);
-      continue;
-    }
+  for (const settings of runnableSettings) {
+    const caseId = settings.caseId!;
+    const userId = settings.userId!;
+    const report = reports.get(userId) ?? {
+      userId,
+      casesProcessed: 0,
+      emailsCollected: 0,
+      filesCollected: 0,
+      errors: [],
+    };
+    reports.set(userId, report);
     try {
-      console.log(`[AutoCollection] Processing case ${settings.caseId}...`);
-      const result = await runAutoCollection(settings.caseId);
+      console.log(`[AutoCollection] Processing case ${caseId}...`);
+      const result = await runCase(caseId);
       casesProcessed++;
+      report.casesProcessed++;
       totalEmailsCollected += result.emailsProcessed;
       totalFilesCollected += result.filesDownloaded;
+      report.emailsCollected += result.emailsProcessed;
+      report.filesCollected += result.filesDownloaded;
       
       if (result.errors.length > 0) {
-        errors.push(...result.errors.map(e => `Case ${settings.caseId}: ${e}`));
+        const caseErrors = result.errors.map((error) => `Case ${caseId}: ${error}`);
+        errors.push(...caseErrors);
+        report.errors.push(...caseErrors);
       }
       
-      console.log(`[AutoCollection] Case ${settings.caseId}: ${result.emailsProcessed} emails, ${result.filesDownloaded} files`);
+      console.log(`[AutoCollection] Case ${caseId}: ${result.emailsProcessed} emails, ${result.filesDownloaded} files`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      errors.push(`Case ${settings.caseId}: ${errorMsg}`);
-      console.error(`[AutoCollection] Error processing case ${settings.caseId}:`, errorMsg);
+      const caseError = `Case ${caseId}: ${errorMsg}`;
+      errors.push(caseError);
+      report.errors.push(caseError);
+      console.error(`[AutoCollection] Error processing case ${caseId}:`, errorMsg);
     }
   }
 
-  // Send notification to owner about collection results
-  if (casesProcessed > 0 || errors.length > 0) {
+  for (const report of reports.values()) {
+    const hasNewEvidence = report.emailsCollected > 0 || report.filesCollected > 0;
+    const title = hasNewEvidence
+      ? `Auto-Collection: ${report.emailsCollected + report.filesCollected} new items found`
+      : 'Auto-Collection completed';
+    const bodyLines = [
+      'Daily Evidence Auto-Collection Report',
+      '',
+      `- Cases processed: ${report.casesProcessed}`,
+      `- Emails collected: ${report.emailsCollected}`,
+      `- Files collected: ${report.filesCollected}`,
+    ];
+    if (report.errors.length > 0) {
+      bodyLines.push('', `Errors (${report.errors.length}):`);
+      bodyLines.push(...report.errors.slice(0, 5).map((error) => `- ${error.slice(0, 500)}`));
+      if (report.errors.length > 5) bodyLines.push(`- ... and ${report.errors.length - 5} more errors`);
+    }
+
     try {
-      const hasNewEvidence = totalEmailsCollected > 0 || totalFilesCollected > 0;
-      const title = hasNewEvidence 
-        ? `📧 Auto-Collection: ${totalEmailsCollected + totalFilesCollected} new items found`
-        : `📧 Auto-Collection completed`;
-      
-      let content = `**Daily Evidence Auto-Collection Report**\n\n`;
-      content += `- Cases processed: ${casesProcessed}\n`;
-      content += `- Emails collected: ${totalEmailsCollected}\n`;
-      content += `- Files collected: ${totalFilesCollected}\n`;
-      
-      if (errors.length > 0) {
-        content += `\n**Errors (${errors.length}):**\n`;
-        content += errors.slice(0, 5).map(e => `- ${e}`).join('\n');
-        if (errors.length > 5) {
-          content += `\n- ... and ${errors.length - 5} more errors`;
-        }
+      const notification = await writeNotification({
+        userId: report.userId,
+        kind: 'system_announcement',
+        title,
+        body: bodyLines.join('\n'),
+        metadata: {
+          source: 'auto_collection',
+          casesProcessed: report.casesProcessed,
+          emailsCollected: report.emailsCollected,
+          filesCollected: report.filesCollected,
+          errorCount: report.errors.length,
+        },
+        dedupKey: `auto-collection-report:${now.toISOString().slice(0, 10)}`,
+      });
+      if (notification.outcome === 'failure') {
+        const notificationError = `Collection report for user ${report.userId} was not persisted (${notification.reason})`;
+        errors.push(notificationError);
+        console.error(`[AutoCollection] ${notificationError}`);
+      } else if (notification.outcome === 'created') {
+        console.log(`[AutoCollection] Persisted collection report for user ${report.userId}`);
+      } else {
+        console.log(`[AutoCollection] Collection report already recorded for user ${report.userId}`);
       }
-      
-      await notifyOwner({ title, content });
-      console.log('[AutoCollection] Notification sent to owner');
     } catch (notifyError) {
-      console.error('[AutoCollection] Failed to send notification:', notifyError);
+      const message = notifyError instanceof Error ? notifyError.message : 'Unknown notification error';
+      const notificationError = `Collection report for user ${report.userId} was not persisted (${message})`;
+      errors.push(notificationError);
+      console.error(`[AutoCollection] ${notificationError}`);
     }
   }
 
@@ -619,23 +383,6 @@ export async function runAutoCollectionForAllCases(): Promise<{
     filesCollected: totalFilesCollected,
     errors,
   };
-}
-
-/**
- * Get keyword matches for a case
- */
-export async function getKeywordMatches(caseId: string) {
-  const db = await getDb();
-  if (!db) {
-    return [];
-  }
-
-  const matches = await db
-    .select()
-    .from(keywordMatches)
-    .where(eq(keywordMatches.caseId, caseId));
-
-  return matches;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -649,6 +396,63 @@ export interface PullByKeywordsResult {
   driveFiles: number;
   localFiles: number;
   errors: string[];
+  outcome?: EvidenceIngestionSummary['outcome'];
+  ingestion?: EvidenceIngestionSummary;
+  monitoring: KeywordPullMonitoring;
+}
+
+export const KEYWORD_PULL_SOURCES = ['gmail', 'google_drive', 'local'] as const;
+export type KeywordPullSource = typeof KEYWORD_PULL_SOURCES[number];
+export type KeywordPullCompleteness =
+  | 'queued'
+  | 'running'
+  | 'complete'
+  | 'complete_zero'
+  | 'partial'
+  | 'limited'
+  | 'interrupted'
+  | 'cancelled'
+  | 'failed';
+
+export interface KeywordPullSourceSummary {
+  source: KeywordPullSource;
+  status: 'queued' | 'running' | 'completed' | 'partial' | 'limited' | 'cancelled' | 'failed';
+  processedItems: number;
+  storedItems: number;
+  skippedItems: number;
+  matchedKeywords: string[];
+  errors: string[];
+}
+
+export interface KeywordPullRevision {
+  evidenceId: string;
+  source: string;
+  title: string;
+  sourceIdentity: string | null;
+  contentRevision: string | null;
+  revisionNumber: number | null;
+  matchedKeywords: string[];
+  matchReason: string;
+}
+
+export interface KeywordPullMonitoring {
+  schemaVersion: 1;
+  requestedKeywords: string[];
+  matchedKeywords: string[];
+  matchMode: 'all' | 'any';
+  requestedSources: KeywordPullSource[];
+  completedSources: KeywordPullSource[];
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  completeness: KeywordPullCompleteness;
+  processedItems: number;
+  storedItems: number;
+  skippedItems: number;
+  processedBytes: number;
+  matchReasons: string[];
+  sources: KeywordPullSourceSummary[];
+  revisions: KeywordPullRevision[];
 }
 
 export type PullProgressPhase = 'queued' | 'discovering' | 'gmail' | 'drive' | 'local' | 'finalizing';
@@ -664,6 +468,91 @@ export interface PullProgressUpdate {
 
 export type PullProgressReporter = (update: PullProgressUpdate) => void;
 
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
+}
+
+function matchingKeywords(text: string, keywords: string[]): string[] {
+  const normalized = text.toLocaleLowerCase();
+  return uniqueStrings(keywords.filter((keyword) => normalized.includes(keyword.toLocaleLowerCase())));
+}
+
+function requestedPullSources(params: {
+  includeGmail?: boolean;
+  includeDrive?: boolean;
+  includeLocal?: boolean;
+}): KeywordPullSource[] {
+  return KEYWORD_PULL_SOURCES.filter((source) => source === 'gmail'
+    ? params.includeGmail !== false
+    : source === 'google_drive'
+      ? params.includeDrive !== false
+      : params.includeLocal !== false);
+}
+
+function ingestionSourceGroup(source: EvidenceIngestionSource): KeywordPullSource | null {
+  if (source === 'gmail_message' || source === 'gmail_attachment') return 'gmail';
+  if (source === 'google_drive') return 'google_drive';
+  if (source === 'local') return 'local';
+  return null;
+}
+
+function initialKeywordPullMonitoring(
+  params: {
+    keywords: string[];
+    matchMode?: 'all' | 'any';
+    includeGmail?: boolean;
+    includeDrive?: boolean;
+    includeLocal?: boolean;
+  },
+  completeness: 'queued' | 'running' = 'queued',
+  startedAt: Date | null = null,
+): KeywordPullMonitoring {
+  const requestedSources = requestedPullSources(params);
+  return {
+    schemaVersion: 1,
+    requestedKeywords: uniqueStrings(params.keywords),
+    matchedKeywords: [],
+    matchMode: params.matchMode || 'any',
+    requestedSources,
+    completedSources: [],
+    startedAt: startedAt?.toISOString() ?? null,
+    completedAt: null,
+    durationMs: null,
+    completeness,
+    processedItems: 0,
+    storedItems: 0,
+    skippedItems: 0,
+    processedBytes: 0,
+    matchReasons: [],
+    sources: requestedSources.map((source) => ({
+      source,
+      status: completeness,
+      processedItems: 0,
+      storedItems: 0,
+      skippedItems: 0,
+      matchedKeywords: [],
+      errors: [],
+    })),
+    revisions: [],
+  };
+}
+
+class KeywordPullTracker {
+  readonly revisions: KeywordPullRevision[] = [];
+  readonly matchedKeywords = new Set<string>();
+  readonly matchReasons = new Set<string>();
+
+  observe(keywords: string[], reason: string): void {
+    keywords.forEach((keyword) => this.matchedKeywords.add(keyword));
+    if (reason.trim()) this.matchReasons.add(reason.trim());
+  }
+
+  revision(value: KeywordPullRevision): void {
+    this.revisions.push(value);
+    this.observe(value.matchedKeywords, value.matchReason);
+  }
+}
+
 function countWords(value: string): number {
   return value.match(/[\p{L}\p{N}]+(?:['\u2019-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
 }
@@ -673,45 +562,19 @@ function countWords(value: string): number {
  * Returns null when the user has no connected Gmail account.
  */
 async function getFreshGmailAccessToken(userId: string, accountId?: string): Promise<{ accessToken: string; accountId: string; email: string } | null> {
-  const db = await getDb();
-  if (!db) return null;
-
-  const rows = await db
-    .select()
-    .from(emailAccounts)
-    .where(and(
-      eq(emailAccounts.userId, userId),
-      eq(emailAccounts.provider, 'gmail'),
-      ...(accountId ? [eq(emailAccounts.id, accountId)] : []),
-    ))
-    .limit(2);
+  const rows = (await listProviderConnections(userId, 'gmail'))
+    .filter((account) => account.status === 'connected' && (!accountId || account.id === accountId));
 
   if (!accountId && rows.length > 1) {
     throw new Error('Multiple Google accounts are connected. Select the account to use.');
   }
   const account = rows[0];
-  if (!account || account.status !== 'connected' || !account.accessToken) return null;
-
-  let accessToken = decryptToken(account.accessToken);
-
-  // Refresh if expired (or within 60s of expiry).
-  const expiryMs = account.tokenExpiry ? new Date(account.tokenExpiry).getTime() : 0;
-  if (expiryMs && expiryMs - Date.now() < 60_000 && account.refreshToken) {
-    try {
-      const refreshed = await refreshGmailToken(decryptToken(account.refreshToken));
-      accessToken = refreshed.accessToken;
-      await db
-        .update(emailAccounts)
-        .set({
-          accessToken: encryptToken(accessToken),
-          tokenExpiry: new Date(refreshed.expiryDate),
-        })
-        .where(eq(emailAccounts.id, account.id));
-    } catch (err) {
-      console.warn('[AutoCollection] Gmail token refresh failed:', err);
-    }
-  }
-
+  if (!account) return null;
+  const accessToken = await getProviderAccessToken({
+    userId,
+    accountId: account.id,
+    provider: 'gmail',
+  });
   return { accessToken, accountId: account.id, email: account.email || '' };
 }
 
@@ -733,6 +596,9 @@ async function pullFromGmail(
   accountIds?: string[],
   onProgress?: PullProgressReporter,
   autoAnalyzeImports?: boolean,
+  budget: EvidenceIngestionBudget = new EvidenceIngestionBudget(),
+  collectionRunId?: string,
+  tracker?: KeywordPullTracker,
 ): Promise<{ messages: number; attachments: number }> {
   const db = await getDb();
   if (!db) return { messages: 0, attachments: 0 };
@@ -754,6 +620,9 @@ async function pullFromGmail(
         [selectedAccountId],
         onProgress,
         autoAnalyzeImports,
+        budget,
+        collectionRunId,
+        tracker,
       );
       messages += result.messages;
       attachments += result.attachments;
@@ -765,6 +634,10 @@ async function pullFromGmail(
   const cred = await getFreshGmailAccessToken(userId, selectedAccountId);
   if (!cred) {
     if (selectedAccountId) errors.push(`Selected Gmail account ${selectedAccountId} is unavailable.`);
+    return { messages: 0, attachments: 0 };
+  }
+  if (!budget.hasCapacity()) {
+    budget.recordCapacityLimit('gmail_message');
     return { messages: 0, attachments: 0 };
   }
 
@@ -782,7 +655,9 @@ async function pullFromGmail(
   ].filter(Boolean).join(' ');
   const query = [keywordPart, datePart].filter(Boolean).join(' ');
 
-  const search = await searchGmailMessageIds(cred.accessToken, query);
+  const search = await searchGmailMessageIds(
+    cred.accessToken, query, budget.remainingItems(), budget.signal,
+  );
   const threads = search.messages;
   errors.push(...search.warnings);
 
@@ -796,9 +671,14 @@ async function pullFromGmail(
   });
 
   for (const t of threads) {
+    if (budget.signal?.aborted) break;
+    if (!budget.hasCapacity()) {
+      budget.recordCapacityLimit('gmail_message');
+      break;
+    }
     let messageWords = 1;
     try {
-      const msg = await getGmailMessage(cred.accessToken, t.id);
+      const msg = await getGmailMessage(cred.accessToken, t.id, budget.signal);
       const headers = (msg.payload?.headers || []).reduce<Record<string, string>>(
         (acc, h) => ((acc[h.name.toLowerCase()] = h.value), acc),
         {},
@@ -820,6 +700,7 @@ async function pullFromGmail(
         cred.accountId,
         msg.id,
       );
+      if (storedState.messageStored) budget.recordSkip('gmail_message', 'duplicate');
 
       // Build a plain-text body excerpt.
       let body = '';
@@ -853,6 +734,11 @@ async function pullFromGmail(
         errors.push(`Reply linking for "${subject}" failed: ${error instanceof Error ? error.message : String(error)}`);
       }
       messageWords = Math.max(1, countWords(`${from} ${subject} ${body}`));
+      const messageMatchedKeywords = matchingKeywords(`${from} ${subject} ${body}`, keywords);
+      const messageMatchReason = messageMatchedKeywords.length > 0
+        ? 'Gmail message content matched the persisted pull keywords.'
+        : 'Gmail returned this message for the persisted keyword query.';
+      tracker?.observe(messageMatchedKeywords, messageMatchReason);
       onProgress?.({
         phase: 'gmail',
         message: `Reading Gmail message: ${subject}`,
@@ -867,34 +753,69 @@ async function pullFromGmail(
           '',
           body,
         ].join('\n');
-        const messageStorageKey = `evidence/${caseId}/gmail/${uuidv4()}-${msg.id}.eml`;
-        const storedMessage = await storagePut(messageStorageKey, Buffer.from(messageSource), 'message/rfc822');
-        const messageEvidenceId = await createEvidenceFile(userId, {
-          caseId,
-          type: 'email',
-          source: 'gmail',
-          title: subject,
-          description: `From ${from} on ${date.toISOString()}`,
-          fileUrl: storedMessage.url,
-          fileName: `${msg.id}.eml`,
-          fileSize: String(Buffer.byteLength(messageSource)),
-          mimeType: 'message/rfc822',
-          metadata: JSON.stringify({
-            storageKey: storedMessage.key,
-            gmailMessageId: msg.id,
-            gmailThreadId: (msg as any).threadId,
-            from,
-            subject,
-            date: date.toISOString(),
-            bodyExcerpt: body.slice(0, 2000),
-            accountId: cred.accountId,
-            autoCollected: true,
-          }),
-          contentHash: storedMessage.sha256,
-          relevant: true,
-        });
-        await analyzeImportedEvidence(messageEvidenceId, userId, 'message/rfc822', subject, errors, autoAnalyzeImports);
-        messagesIngested++;
+        const messageBytes = Buffer.from(messageSource);
+        const reservation = await budget.reserve('gmail_message', messageBytes.length);
+        if (reservation) {
+          const messageStorageKey = `evidence/${caseId}/gmail/${uuidv4()}-${msg.id}.eml`;
+          const storedMessageRef: { value: Awaited<ReturnType<typeof storagePut>> | null } = { value: null };
+          try {
+            await reservation.run(async () => {
+              const storedMessage = await storagePut(messageStorageKey, messageBytes, 'message/rfc822');
+              storedMessageRef.value = storedMessage;
+              const messageEvidenceId = await createEvidenceFile(userId, {
+                caseId,
+                type: 'email',
+                source: 'gmail',
+                title: subject,
+                description: `From ${from} on ${date.toISOString()}`,
+                fileUrl: storedMessage.url,
+                fileName: `${msg.id}.eml`,
+                fileSize: messageBytes.length,
+                mimeType: 'message/rfc822',
+                metadata: JSON.stringify({
+                  storageKey: storedMessage.key,
+                  gmailMessageId: msg.id,
+                  gmailThreadId: (msg as any).threadId,
+                  from,
+                  subject,
+                  date: date.toISOString(),
+                  bodyExcerpt: body.slice(0, 2000),
+                  accountId: cred.accountId,
+                  sourceIdentity: JSON.stringify(['gmail', cred.accountId, msg.id]),
+                  sourceRevision: String((msg as any).historyId || msg.internalDate || storedMessage.sha256),
+                  revisionNumber: 1,
+                  keywordPullJobId: collectionRunId,
+                  matchedKeywords: messageMatchedKeywords,
+                  matchReason: messageMatchReason,
+                  autoCollected: true,
+                  collectedAt: new Date().toISOString(),
+                }),
+                contentHash: storedMessage.sha256,
+                relevant: true,
+              });
+              await analyzeImportedEvidence(
+                messageEvidenceId, userId, 'message/rfc822', subject, errors,
+                autoAnalyzeImports, budget, 'gmail_message',
+              );
+              tracker?.revision({
+                evidenceId: messageEvidenceId,
+                source: 'gmail',
+                title: subject,
+                sourceIdentity: JSON.stringify(['gmail', cred.accountId, msg.id]),
+                contentRevision: String((msg as any).historyId || msg.internalDate || storedMessage.sha256),
+                revisionNumber: 1,
+                matchedKeywords: messageMatchedKeywords,
+                matchReason: messageMatchReason,
+              });
+            });
+            reservation.complete(messageBytes.length);
+            messagesIngested++;
+          } catch (error) {
+            reservation.skip(error instanceof EvidenceIngestionLimitError ? error.code : 'store_failed');
+            if (storedMessageRef.value) await storageDelete(storedMessageRef.value.key).catch(() => undefined);
+            throw error;
+          }
+        }
       }
 
       // Download attachments.
@@ -923,48 +844,87 @@ async function pullFromGmail(
       }
 
       for (const att of attachments) {
+        if (budget.signal?.aborted) break;
+        if (!budget.hasCapacity()) {
+          budget.recordCapacityLimit('gmail_attachment');
+          break;
+        }
         let attachmentWords = 0;
+        tracker?.observe(messageMatchedKeywords, 'Attachment from a Gmail message returned by the persisted keyword query.');
         try {
-          if (storedState.attachmentIds.has(att.attachmentId)) continue;
+          if (storedState.attachmentIds.has(att.attachmentId)) {
+            budget.recordSkip('gmail_attachment', 'duplicate');
+            continue;
+          }
           if (typeof att.size === 'number' && att.size > MAX_EVIDENCE_FILE_BYTES) {
+            budget.recordSkip('gmail_attachment', 'file_too_large');
             throw new Error('Gmail attachment exceeds the 7 MB evidence limit');
           }
-          const buf = await getGmailAttachmentBytes(cred.accessToken, msg.id, att.attachmentId);
-          if (!buf) continue;
-          const safeName = path.basename(att.filename.replace(/\\/g, '/')) || 'attachment';
-          const storageKey = `evidence/${caseId}/gmail/${uuidv4()}-${safeName}`;
-          const storedAttachment = await storagePut(storageKey, buf, att.mimeType);
-          const attachmentEvidenceId = await createEvidenceFile(userId, {
-            caseId,
-            type: determineEvidenceType(att.mimeType),
-            source: 'gmail',
-            title: safeName,
-            description: `Attachment from email "${subject}"`,
-            fileUrl: storedAttachment.url,
-            fileName: safeName,
-            fileSize: String(buf.length),
-            mimeType: att.mimeType,
-            metadata: JSON.stringify({
-              storageKey: storedAttachment.key,
-              gmailMessageId: msg.id,
-              attachmentId: att.attachmentId,
-              accountId: cred.accountId,
-              parentSubject: subject,
-              autoCollected: true,
-            }),
-            contentHash: storedAttachment.sha256,
-            relevant: true,
-          });
-          attachmentWords = await analyzeImportedEvidence(
-            attachmentEvidenceId,
-            userId,
-            att.mimeType,
-            safeName,
-            errors,
-            autoAnalyzeImports,
-          );
-          storedState.attachmentIds.add(att.attachmentId);
-          attachmentsIngested++;
+          const reservation = await budget.reserve('gmail_attachment', att.size);
+          if (!reservation) continue;
+          const storedAttachmentRef: { value: Awaited<ReturnType<typeof storagePut>> | null } = { value: null };
+          try {
+            await reservation.run(async () => {
+              const buf = await getGmailAttachmentBytes(
+                cred.accessToken, msg.id, att.attachmentId, budget.signal,
+              );
+              if (!buf) throw new Error('Gmail attachment returned no bytes');
+              reservation.validateActualBytes(buf.length);
+              const safeName = path.basename(att.filename.replace(/\\/g, '/')) || 'attachment';
+              const storageKey = `evidence/${caseId}/gmail/${uuidv4()}-${safeName}`;
+              const storedAttachment = await storagePut(storageKey, buf, att.mimeType);
+              storedAttachmentRef.value = storedAttachment;
+              const attachmentEvidenceId = await createEvidenceFile(userId, {
+                caseId,
+                type: determineEvidenceType(att.mimeType),
+                source: 'gmail',
+                title: safeName,
+                description: `Attachment from email "${subject}"`,
+                fileUrl: storedAttachment.url,
+                fileName: safeName,
+                fileSize: buf.length,
+                mimeType: att.mimeType,
+                metadata: JSON.stringify({
+                  storageKey: storedAttachment.key,
+                  gmailMessageId: msg.id,
+                  attachmentId: att.attachmentId,
+                  accountId: cred.accountId,
+                  parentSubject: subject,
+                  sourceIdentity: JSON.stringify(['gmail_attachment', cred.accountId, msg.id, att.attachmentId]),
+                  sourceRevision: att.attachmentId,
+                  revisionNumber: 1,
+                  keywordPullJobId: collectionRunId,
+                  matchedKeywords: messageMatchedKeywords,
+                  matchReason: 'Attachment from a Gmail message returned by the persisted keyword query.',
+                  autoCollected: true,
+                  collectedAt: new Date().toISOString(),
+                }),
+                contentHash: storedAttachment.sha256,
+                relevant: true,
+              });
+              attachmentWords = await analyzeImportedEvidence(
+                attachmentEvidenceId, userId, att.mimeType, safeName, errors,
+                autoAnalyzeImports, budget, 'gmail_attachment',
+              );
+              tracker?.revision({
+                evidenceId: attachmentEvidenceId,
+                source: 'gmail',
+                title: safeName,
+                sourceIdentity: JSON.stringify(['gmail_attachment', cred.accountId, msg.id, att.attachmentId]),
+                contentRevision: att.attachmentId,
+                revisionNumber: 1,
+                matchedKeywords: messageMatchedKeywords,
+                matchReason: 'Attachment from a Gmail message returned by the persisted keyword query.',
+              });
+              reservation.complete(buf.length);
+            });
+            storedState.attachmentIds.add(att.attachmentId);
+            attachmentsIngested++;
+          } catch (error) {
+            reservation.skip(error instanceof EvidenceIngestionLimitError ? error.code : 'store_failed');
+            if (storedAttachmentRef.value) await storageDelete(storedAttachmentRef.value.key).catch(() => undefined);
+            throw error;
+          }
         } catch (err) {
           errors.push(`Attachment "${att.filename}" failed: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
@@ -996,6 +956,26 @@ async function pullFromGmail(
  * Pull files from Google Drive that match keywords by filename.
  * If folderIds is empty, falls back to scanning the user's "root" folder.
  */
+interface StoredDriveRevision {
+  id: string;
+  sourceRevision: string | null;
+  revisionNumber: number;
+}
+
+function driveSourceIdentity(accountId: string, fileId: string): string {
+  return JSON.stringify(['google_drive', accountId, fileId]);
+}
+
+function readMetadataObject(value: string | null): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 async function pullFromDrive(
   caseId: string,
   userId: string,
@@ -1009,6 +989,9 @@ async function pullFromDrive(
   dateEnd?: Date,
   onProgress?: PullProgressReporter,
   autoAnalyzeImports?: boolean,
+  budget: EvidenceIngestionBudget = new EvidenceIngestionBudget(),
+  collectionRunId?: string,
+  tracker?: KeywordPullTracker,
 ): Promise<{ files: number }> {
   const db = await getDb();
   if (!db) return { files: 0 };
@@ -1022,6 +1005,34 @@ async function pullFromDrive(
     ? ['exact-name-query']
     : folderIds.length > 0 ? folderIds : ['root'];
   let downloaded = 0;
+
+  // Canonical evidence is the only Drive ingestion store. Load its version
+  // state once so every candidate avoids a per-file full-table scan.
+  const existingEvidence = await db
+    .select({ id: evidenceTable.id, metadata: evidenceTable.metadata })
+    .from(evidenceTable)
+    .where(and(
+      eq(evidenceTable.caseId, caseId),
+      eq(evidenceTable.userId, userId),
+      eq(evidenceTable.source, 'google_drive'),
+    ));
+  const storedByIdentity = new Map<string, StoredDriveRevision[]>();
+  for (const row of existingEvidence) {
+    const metadata = readMetadataObject(row.metadata);
+    const driveFileId = typeof metadata.driveFileId === 'string' ? metadata.driveFileId : null;
+    const driveAccountId = typeof metadata.driveAccountId === 'string' ? metadata.driveAccountId : null;
+    if (!driveFileId || driveAccountId !== cred.accountId) continue;
+    const identity = driveSourceIdentity(driveAccountId, driveFileId);
+    const revisions = storedByIdentity.get(identity) ?? [];
+    revisions.push({
+      id: row.id,
+      sourceRevision: typeof metadata.sourceRevision === 'string' ? metadata.sourceRevision : null,
+      revisionNumber: Number.isSafeInteger(metadata.revisionNumber) && Number(metadata.revisionNumber) > 0
+        ? Number(metadata.revisionNumber)
+        : 1,
+    });
+    storedByIdentity.set(identity, revisions);
+  }
 
   for (const folderId of folders) {
     try {
@@ -1050,66 +1061,102 @@ async function pullFromDrive(
         totalItemsDelta: candidates.length,
       });
       for (const file of candidates) {
+        if (budget.signal?.aborted) break;
+        if (!budget.hasCapacity()) {
+          budget.recordCapacityLimit('google_drive');
+          break;
+        }
         if (!file.name || !file.id) continue;
+        const fileMatchedKeywords = matchingKeywords(file.name, keywords);
+        const fileMatchReason = normalizedExactFileName
+          ? 'Google Drive file was selected by an exact-name pull.'
+          : 'Google Drive filename matched the persisted pull keywords.';
+        tracker?.observe(fileMatchedKeywords, fileMatchReason);
         let fileWords = 0;
         try {
-          const existing = await db
-            .select()
-            .from(evidenceTable)
-            .where(and(eq(evidenceTable.caseId, caseId), eq(evidenceTable.source, 'google_drive')));
-          const already = existing.some((e) => {
-            try {
-              const meta = e.metadata ? JSON.parse(e.metadata) : {};
-              return meta.driveFileId === file.id;
-            } catch {
-              return false;
-            }
-          });
-          if (already) continue;
+          const sourceIdentity = driveSourceIdentity(cred.accountId, file.id);
+          const priorVersions = storedByIdentity.get(sourceIdentity) ?? [];
+          const listedRevision = googleDriveProviderRevision(file);
+          if (listedRevision && priorVersions.some((version) => version.sourceRevision === listedRevision)) {
+            budget.recordSkip('google_drive', 'duplicate');
+            continue;
+          }
 
-          const fileData = await downloadAndUploadGoogleDriveFile(file.id, caseId, userId, cred.accountId);
-          const evidenceId = await createEvidenceFile(userId, {
-            caseId,
-            type: determineEvidenceType(fileData.mimeType),
-            source: 'google_drive',
-            title: file.name,
-            description: 'Auto-collected from Google Drive',
-            fileUrl: fileData.url,
-            fileName: fileData.fileName,
-            fileSize: fileData.size,
-            mimeType: fileData.mimeType,
-            metadata: JSON.stringify({
-              storageKey: fileData.key,
-              driveFileId: file.id,
-              driveAccountId: cred.accountId,
-              folderId,
-              sourceMimeType: fileData.sourceMimeType,
-              autoCollected: true,
-              collectedAt: new Date().toISOString(),
-              modifiedTime: fileData.modifiedTime,
-            }),
-            contentHash: fileData.sha256,
-            relevant: true,
+          const fileData = await downloadAndUploadGoogleDriveFile(
+            file.id, caseId, userId, cred.accountId, { budget, signal: budget.signal },
+          );
+          const sourceRevision = fileData.providerRevision ?? listedRevision;
+          if (sourceRevision && priorVersions.some((version) => version.sourceRevision === sourceRevision)) {
+            await storageDelete(fileData.key).catch(() => undefined);
+            budget.recordSkip('google_drive', 'duplicate');
+            continue;
+          }
+          await budget.run(async () => {
+            let evidenceId: string;
+            const previousVersionIds = priorVersions.map((version) => version.id);
+            const revisionNumber = priorVersions.reduce(
+              (highest, version) => Math.max(highest, version.revisionNumber),
+              0,
+            ) + 1;
+            try {
+              evidenceId = await createEvidenceFile(userId, {
+              caseId,
+              type: determineEvidenceType(fileData.mimeType),
+              source: 'google_drive',
+              title: file.name,
+              description: 'Auto-collected from Google Drive',
+              fileUrl: fileData.url,
+              fileName: fileData.fileName,
+              fileSize: fileData.size,
+              mimeType: fileData.mimeType,
+              metadata: JSON.stringify({
+                storageKey: fileData.key,
+                driveFileId: file.id,
+                driveAccountId: cred.accountId,
+                sourceIdentity,
+                sourceRevision,
+                revisionNumber,
+                isCurrent: true,
+                previousVersionIds,
+                folderId,
+                sourceMimeType: fileData.sourceMimeType,
+                providerVersion: fileData.providerVersion,
+                md5Checksum: fileData.md5Checksum,
+                keywordPullJobId: collectionRunId,
+                matchedKeywords: fileMatchedKeywords,
+                matchReason: fileMatchReason,
+                autoCollected: true,
+                collectedAt: new Date().toISOString(),
+                modifiedTime: fileData.modifiedTime,
+              }),
+              contentHash: fileData.sha256,
+              relevant: true,
+              });
+            } catch (error) {
+              await storageDelete(fileData.key).catch(() => undefined);
+              throw error;
+            }
+            fileWords = await analyzeImportedEvidence(
+              evidenceId, userId, fileData.mimeType, file.name, errors,
+              autoAnalyzeImports, budget, 'google_drive',
+            );
+            tracker?.revision({
+              evidenceId,
+              source: 'google_drive',
+              title: file.name,
+              sourceIdentity,
+              contentRevision: sourceRevision,
+              revisionNumber,
+              matchedKeywords: fileMatchedKeywords,
+              matchReason: fileMatchReason,
+            });
+            storedByIdentity.set(sourceIdentity, [...priorVersions, {
+              id: evidenceId,
+              sourceRevision,
+              revisionNumber,
+            }]);
+            downloaded++;
           });
-          fileWords = await analyzeImportedEvidence(evidenceId, userId, fileData.mimeType, file.name, errors, autoAnalyzeImports);
-          await db.insert(googleDriveFiles).values({
-            id: uuidv4(),
-            userId,
-            caseId,
-            accountId: cred.accountId,
-            googleFileId: file.id,
-            fileName: fileData.fileName,
-            mimeType: fileData.mimeType,
-            fileSize: fileData.size,
-            s3Key: fileData.key,
-            s3Url: fileData.url,
-            googleWebViewLink: file.webViewLink || null,
-            googleModifiedTime: fileData.modifiedTime,
-            evidenceType: determineEvidenceType(fileData.mimeType),
-            isIncluded: 'Yes',
-            metadata: JSON.stringify({ sourceMimeType: fileData.sourceMimeType }),
-          });
-          downloaded++;
         } catch (err) {
           errors.push(`Drive file "${file.name}" failed: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
@@ -1139,7 +1186,7 @@ async function scanLocalDirectory(
   keywords: string[],
   matchMode: 'all' | 'any',
   errors: string[],
-  maxFiles = 500,
+  maxFiles = EVIDENCE_INGESTION_LIMITS.maxJobItems,
   maxDepth = 6,
 ): Promise<{ absPath: string; name: string }[]> {
   const matches: { absPath: string; name: string }[] = [];
@@ -1227,6 +1274,9 @@ async function pullFromLocalFolders(
   dateEnd?: Date,
   onProgress?: PullProgressReporter,
   autoAnalyzeImports?: boolean,
+  budget: EvidenceIngestionBudget = new EvidenceIngestionBudget(),
+  collectionRunId?: string,
+  tracker?: KeywordPullTracker,
 ): Promise<{ files: number }> {
   const db = await getDb();
   if (!db) return { files: 0 };
@@ -1270,63 +1320,102 @@ async function pullFromLocalFolders(
     });
 
     for (const file of found) {
+      if (budget.signal?.aborted) break;
+      if (!budget.hasCapacity()) {
+        budget.recordCapacityLimit('local');
+        break;
+      }
+      const fileMatchedKeywords = matchingKeywords(file.name, keywords);
+      const fileMatchReason = 'Local filename matched the persisted pull keywords.';
+      tracker?.observe(fileMatchedKeywords, fileMatchReason);
       let fileWords = 0;
       try {
         const stat = await fs.stat(file.absPath);
         if (dateStart && stat.mtime < dateStart) continue;
         if (dateEnd && stat.mtime > dateEnd) continue;
         if (stat.size > MAX_EVIDENCE_FILE_BYTES) {
+          budget.recordSkip('local', 'file_too_large');
           throw new Error('Local evidence file exceeds the 7 MB evidence limit');
         }
-        const buf = await withByteReadAdmission(() => collectBoundedBytes(createReadStream(file.absPath), {
-          maxBytes: MAX_EVIDENCE_FILE_BYTES,
-          label: 'Local evidence file',
-          limitMessage: 'Local evidence file exceeds the 7 MB evidence limit',
-        }));
+        const reservation = await budget.reserve('local', stat.size);
+        if (!reservation) continue;
         // A source path can change; preserve each distinct byte version instead
         // of treating the filename as permanent proof that the file is imported.
         const key = pathKey(file.absPath);
         const versions = storedLocalVersions.get(key) || [];
-        const contentHash = hashBuffer(buf);
-        if (versions.some((version) => version.hash === contentHash)) continue;
         const ext = path.extname(file.name).toLowerCase();
         const mimeType = guessMimeFromExt(ext);
         const storageKey = `evidence/${caseId}/local/${uuidv4()}-${file.name}`;
-        const storedFile = await storagePut(storageKey, buf, mimeType);
-
-        let evidenceId: string;
+        const storedFileRef: { value: Awaited<ReturnType<typeof storagePutStream>> | null } = { value: null };
         try {
-          evidenceId = await createEvidenceFile(userId, {
-            caseId,
-            type: determineEvidenceType(mimeType),
-            source: 'local',
-            title: file.name,
-            description: `Auto-collected from local folder ${resolvedFolderPath}`,
-            fileUrl: storedFile.url,
-            fileName: file.name,
-            fileSize: String(buf.length),
-            mimeType,
-            metadata: JSON.stringify({
-              storageKey: storedFile.key,
-              absPath: file.absPath,
-              sourceFolder: resolvedFolderPath,
-              autoCollected: true,
-              collectedAt: new Date().toISOString(),
-              modifiedTime: stat.mtime.toISOString(),
-              previousVersionIds: versions.map((version) => version.id),
-            }),
-            contentHash: storedFile.sha256,
-            relevant: true,
+          await reservation.run(async () => {
+            const storedFile = await withByteReadAdmission(() => storagePutStream(
+              storageKey,
+              createReadStream(file.absPath),
+              mimeType,
+              { maxBytes: reservation.declaredBytes, expectedBytes: stat.size, signal: budget.signal },
+            ));
+            storedFileRef.value = storedFile;
+            if (versions.some((version) => version.hash === storedFile!.sha256)) {
+              await storageDelete(storedFile.key);
+              storedFileRef.value = null;
+              reservation.skip('duplicate');
+              return;
+            }
+            const evidenceId = await createEvidenceFile(userId, {
+              caseId,
+              type: determineEvidenceType(mimeType),
+              source: 'local',
+              title: file.name,
+              description: `Auto-collected from local folder ${path.basename(resolvedFolderPath) || "selected folder"}`,
+              fileUrl: storedFile.url,
+              fileName: file.name,
+              fileSize: storedFile.bytes,
+              mimeType,
+              metadata: JSON.stringify({
+                storageKey: storedFile.key,
+                absPath: file.absPath,
+                sourceFolder: resolvedFolderPath,
+                sourceFolderLabel: path.basename(resolvedFolderPath) || "selected folder",
+                autoCollected: true,
+                collectedAt: new Date().toISOString(),
+                modifiedTime: stat.mtime.toISOString(),
+                previousVersionIds: versions.map((version) => version.id),
+                sourceIdentity: JSON.stringify(['local', key]),
+                sourceRevision: storedFile.sha256,
+                revisionNumber: versions.length + 1,
+                keywordPullJobId: collectionRunId,
+                matchedKeywords: fileMatchedKeywords,
+                matchReason: fileMatchReason,
+              }),
+              contentHash: storedFile.sha256,
+              relevant: true,
+            });
+            fileWords = await analyzeImportedEvidence(
+              evidenceId, userId, mimeType, file.name, errors,
+              autoAnalyzeImports, budget, 'local',
+            );
+            tracker?.revision({
+              evidenceId,
+              source: 'local',
+              title: file.name,
+              sourceIdentity: JSON.stringify(['local', key]),
+              contentRevision: storedFile.sha256,
+              revisionNumber: versions.length + 1,
+              matchedKeywords: fileMatchedKeywords,
+              matchReason: fileMatchReason,
+            });
+            reservation.complete(storedFile.bytes);
+            versions.push({ id: evidenceId, hash: storedFile.sha256 });
+            storedLocalVersions.set(key, versions);
           });
+          if (storedFileRef.value) ingested++;
         } catch (error) {
-          try { await storageDelete(storedFile.key); }
+          reservation.skip(error instanceof EvidenceIngestionLimitError ? error.code : 'store_failed');
+          try { if (storedFileRef.value) await storageDelete(storedFileRef.value.key); }
           catch { errors.push(`Storage cleanup failed for local import "${file.name}"`); }
           throw error;
         }
-        fileWords = await analyzeImportedEvidence(evidenceId, userId, mimeType, file.name, errors, autoAnalyzeImports);
-        versions.push({ id: evidenceId, hash: contentHash });
-        storedLocalVersions.set(key, versions);
-        ingested++;
       } catch (err) {
         errors.push(`Local file "${file.absPath}" failed: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
@@ -1388,7 +1477,7 @@ async function getConfiguredLocalFolders(caseId: string): Promise<string[]> {
  * in a single call. This is the entry point used by the case-view "Pull
  * evidence by keyword" panel.
  */
-export async function pullEvidenceByKeywords(params: {
+export interface KeywordPullParams {
   caseId: string;
   userId: string;
   keywords: string[];
@@ -1406,9 +1495,21 @@ export async function pullEvidenceByKeywords(params: {
   includeDrive?: boolean;
   includeLocal?: boolean;
   onProgress?: PullProgressReporter;
-}): Promise<PullByKeywordsResult> {
+  signal?: AbortSignal;
+  ingestionBudget?: EvidenceIngestionBudget;
+  collectionRunId?: string;
+}
+
+async function performEvidenceByKeywords(
+  params: KeywordPullParams & { collectionRunId: string },
+): Promise<PullByKeywordsResult> {
+  const startedAt = new Date();
   const matchMode = params.matchMode || 'any';
-  const errors: string[] = [];
+  const gmailErrors: string[] = [];
+  const driveErrors: string[] = [];
+  const localErrors: string[] = [];
+  const tracker = new KeywordPullTracker();
+  const ingestionBudget = params.ingestionBudget ?? new EvidenceIngestionBudget(params.signal);
 
   if (!params.keywords || params.keywords.length === 0) {
     throw new Error('At least one keyword is required');
@@ -1459,11 +1560,12 @@ export async function pullEvidenceByKeywords(params: {
     for (const source of sources) {
       try {
         const result = await pullFromDrive(params.caseId, params.userId, params.keywords, matchMode,
-          source.folderIds, errors, source.accountId, params.driveExactFileName,
-          params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports);
+          source.folderIds, driveErrors, source.accountId, params.driveExactFileName,
+          params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports, ingestionBudget,
+          params.collectionRunId, tracker);
         files += result.files;
       } catch (error) {
-        errors.push(`Drive account ${source.accountId || 'default'} failed: ${error instanceof Error ? error.message : String(error)}`);
+        driveErrors.push(`Drive account ${source.accountId || 'default'} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     return { files };
@@ -1475,41 +1577,106 @@ export async function pullEvidenceByKeywords(params: {
   }
 
   const [gmail, drive, local] = await Promise.all([
-    (params.includeGmail === false ? Promise.resolve({ messages: 0, attachments: 0 }) : pullFromGmail(params.caseId, params.userId, params.keywords, matchMode, errors, params.dateStart, params.dateEnd, params.includeGmailAttachments !== false, gmailAccountIds, params.onProgress, autoAnalyzeImports)).catch((err) => {
-      errors.push(`Gmail pull failed: ${err instanceof Error ? err.message : String(err)}`);
+    (params.includeGmail === false ? Promise.resolve({ messages: 0, attachments: 0 }) : pullFromGmail(params.caseId, params.userId, params.keywords, matchMode, gmailErrors, params.dateStart, params.dateEnd, params.includeGmailAttachments !== false, gmailAccountIds, params.onProgress, autoAnalyzeImports, ingestionBudget, params.collectionRunId, tracker)).catch((err) => {
+      gmailErrors.push(`Gmail pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { messages: 0, attachments: 0 };
     }),
     (params.includeDrive === false ? Promise.resolve({ files: 0 }) : collectDriveSources()).catch((err) => {
-      errors.push(`Drive pull failed: ${err instanceof Error ? err.message : String(err)}`);
+      driveErrors.push(`Drive pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { files: 0 };
     }),
-    (params.includeLocal === false ? Promise.resolve({ files: 0 }) : pullFromLocalFolders(params.caseId, params.userId, params.keywords, matchMode, localFolderPaths, errors, params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports)).catch((err) => {
-      errors.push(`Local pull failed: ${err instanceof Error ? err.message : String(err)}`);
+    (params.includeLocal === false ? Promise.resolve({ files: 0 }) : pullFromLocalFolders(params.caseId, params.userId, params.keywords, matchMode, localFolderPaths, localErrors, params.dateStart, params.dateEnd, params.onProgress, autoAnalyzeImports, ingestionBudget, params.collectionRunId, tracker)).catch((err) => {
+      localErrors.push(`Local pull failed: ${err instanceof Error ? err.message : String(err)}`);
       return { files: 0 };
     }),
   ]);
-
-  // Log this run.
-  try {
-    await db.insert(autoCollectionLogs).values({
-      id: uuidv4(),
-      caseId: params.caseId,
-      settingsId: settings?.id || null,
-      userId: params.userId,
-      runStartedAt: new Date(),
-      runCompletedAt: new Date(),
-      status: errors.length === 0 ? 'completed' : 'completed_with_errors',
-      emailsFound: String(gmail.messages),
-      emailsProcessed: String(gmail.messages),
-      filesFound: String(drive.files + local.files + gmail.attachments),
-      filesDownloaded: String(drive.files + local.files + gmail.attachments),
-      errorCount: String(errors.length),
-      errorMessage: errors.slice(0, 3).join('; ') || null,
-      executionTimeSeconds: '0',
-    });
-  } catch (err) {
-    console.warn('[AutoCollection] Failed to log one-shot run:', err);
+  const ingestion = ingestionBudget.summary();
+  const errors = [...gmailErrors, ...driveErrors, ...localErrors];
+  for (const reason of ingestion.reasons) {
+    if (reason.code !== 'duplicate') {
+      errors.push(`Partial ${reason.source} ingestion: ${reason.code} (${reason.count})`);
+    }
   }
+
+  const revisions = tracker.revisions;
+
+  const requestedSources = requestedPullSources(params);
+  const storedBySource: Record<KeywordPullSource, number> = {
+    gmail: gmail.messages + gmail.attachments,
+    google_drive: drive.files,
+    local: local.files,
+  };
+  const errorsBySource: Record<KeywordPullSource, string[]> = {
+    gmail: gmailErrors,
+    google_drive: driveErrors,
+    local: localErrors,
+  };
+  const limitedCodes = new Set([
+    'concurrency_limit',
+    'file_empty',
+    'file_too_large',
+    'job_byte_limit',
+    'job_item_limit',
+    'analysis_limit',
+    'storage_headroom',
+  ]);
+  const sourceSummaries: KeywordPullSourceSummary[] = requestedSources.map((source) => {
+    const reasons = ingestion.reasons.filter((reason) => ingestionSourceGroup(reason.source) === source);
+    const skippedItems = reasons.reduce((sum, reason) => sum + reason.count, 0);
+    const sourceErrors = [
+      ...errorsBySource[source],
+      ...reasons.filter((reason) => reason.code !== 'duplicate')
+        .map((reason) => `${reason.source}: ${reason.code} (${reason.count})`),
+    ];
+    const limited = reasons.some((reason) => limitedCodes.has(reason.code));
+    const cancelled = ingestion.outcome === 'cancelled';
+    const storedItems = storedBySource[source];
+    const status: KeywordPullSourceSummary['status'] = cancelled ? 'cancelled'
+      : limited ? 'limited'
+        : sourceErrors.length > 0 ? storedItems > 0 ? 'partial' : 'failed'
+          : 'completed';
+    return {
+      source,
+      status,
+      processedItems: storedItems + skippedItems,
+      storedItems,
+      skippedItems,
+      matchedKeywords: uniqueStrings(revisions
+        .filter((revision) => revision.source === (source === 'gmail' ? 'gmail' : source))
+        .flatMap((revision) => revision.matchedKeywords)),
+      errors: uniqueStrings(sourceErrors),
+    };
+  });
+  const completedSources = sourceSummaries
+    .filter((source) => source.status === 'completed')
+    .map((source) => source.source);
+  const storedItems = gmail.messages + gmail.attachments + drive.files + local.files;
+  const hasLimits = ingestion.reasons.some((reason) => limitedCodes.has(reason.code));
+  const hasSourceErrors = sourceSummaries.some((source) => source.status === 'failed' || source.status === 'partial');
+  const completeness: KeywordPullCompleteness = ingestion.outcome === 'cancelled' ? 'cancelled'
+    : hasLimits ? 'limited'
+      : hasSourceErrors ? storedItems > 0 || completedSources.length > 0 ? 'partial' : 'failed'
+        : storedItems === 0 ? 'complete_zero' : 'complete';
+  const completedAt = new Date();
+  const monitoring: KeywordPullMonitoring = {
+    schemaVersion: 1,
+    requestedKeywords: uniqueStrings(params.keywords),
+    matchedKeywords: uniqueStrings([...tracker.matchedKeywords]),
+    matchMode,
+    requestedSources,
+    completedSources,
+    startedAt: startedAt.toISOString(),
+    completedAt: completedAt.toISOString(),
+    durationMs: Math.max(1, completedAt.getTime() - startedAt.getTime()),
+    completeness,
+    processedItems: ingestion.processedItems + ingestion.skippedItems,
+    storedItems,
+    skippedItems: ingestion.skippedItems,
+    processedBytes: ingestion.processedBytes,
+    matchReasons: uniqueStrings([...tracker.matchReasons]),
+    sources: sourceSummaries,
+    revisions,
+  };
 
   return {
     gmailMessages: gmail.messages,
@@ -1517,11 +1684,136 @@ export async function pullEvidenceByKeywords(params: {
     driveFiles: drive.files,
     localFiles: local.files,
     errors,
+    outcome: ingestion.outcome,
+    ingestion,
+    monitoring,
   };
 }
 
-type KeywordPullJobParams = Omit<Parameters<typeof pullEvidenceByKeywords>[0], 'onProgress'>;
+function persistedJobStatus(completeness: KeywordPullCompleteness): 'completed' | 'completed_with_errors' | 'cancelled' | 'failed' {
+  if (completeness === 'cancelled') return 'cancelled';
+  if (completeness === 'failed' || completeness === 'interrupted') return 'failed';
+  if (completeness === 'partial' || completeness === 'limited') return 'completed_with_errors';
+  return 'completed';
+}
+
+function persistedJobMessage(completeness: KeywordPullCompleteness): string {
+  switch (completeness) {
+    case 'complete': return 'Pull complete';
+    case 'complete_zero': return 'Pull complete - no new evidence revisions';
+    case 'partial': return 'Pull completed with source warnings';
+    case 'limited': return 'Pull completed with bounded partial results';
+    case 'cancelled': return 'Pull cancelled with bounded partial results';
+    case 'interrupted': return 'Pull interrupted before completion';
+    case 'failed': return 'Pull failed';
+    case 'queued': return 'Waiting to start';
+    case 'running': return 'Checking connected evidence sources';
+  }
+}
+
+function failedKeywordPullMonitoring(
+  params: KeywordPullParams,
+  startedAt: Date,
+  completedAt: Date,
+  completeness: 'failed' | 'interrupted' | 'cancelled',
+  error: string | null,
+): KeywordPullMonitoring {
+  const monitoring = initialKeywordPullMonitoring(params, 'running', startedAt);
+  return {
+    ...monitoring,
+    completedAt: completedAt.toISOString(),
+    durationMs: Math.max(1, completedAt.getTime() - startedAt.getTime()),
+    completeness,
+    sources: monitoring.sources.map((source) => ({
+      ...source,
+      status: completeness === 'cancelled' ? 'cancelled' : 'failed',
+      errors: error ? [error] : [],
+    })),
+  };
+}
+
+/**
+ * Execute a keyword pull and make its terminal state durable even for direct
+ * and scheduled callers. Background jobs provide their own ID so progress and
+ * terminal monitoring resolve to the same row.
+ */
+export async function pullEvidenceByKeywords(params: KeywordPullParams): Promise<PullByKeywordsResult> {
+  if (!params.keywords?.length) throw new Error('At least one keyword is required');
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+
+  const ownsJob = !params.collectionRunId;
+  const jobId = params.collectionRunId || uuidv4();
+  const startedAt = new Date();
+  if (ownsJob) {
+    const monitoring = initialKeywordPullMonitoring(params, 'running', startedAt);
+    await db.insert(keywordPullJobs).values({
+      id: jobId,
+      caseId: params.caseId,
+      userId: params.userId,
+      status: 'running',
+      phase: 'discovering',
+      message: persistedJobMessage('running'),
+      processedWords: 0,
+      totalWords: 0,
+      processedItems: 0,
+      totalItems: 0,
+      result: JSON.stringify({ monitoring }),
+      createdAt: startedAt,
+      startedAt,
+      updatedAt: startedAt,
+    });
+  }
+
+  try {
+    const result = await performEvidenceByKeywords({ ...params, collectionRunId: jobId });
+    if (ownsJob) {
+      const completedAt = result.monitoring.completedAt
+        ? new Date(result.monitoring.completedAt)
+        : new Date();
+      await db.update(keywordPullJobs).set({
+        status: persistedJobStatus(result.monitoring.completeness),
+        phase: 'finalizing',
+        message: persistedJobMessage(result.monitoring.completeness),
+        processedItems: result.monitoring.processedItems,
+        totalItems: result.monitoring.processedItems,
+        estimatedSecondsRemaining: 0,
+        result: JSON.stringify(result),
+        error: result.monitoring.completeness === 'failed' ? result.errors[0] || 'Pull failed' : null,
+        completedAt,
+        updatedAt: completedAt,
+      }).where(and(eq(keywordPullJobs.id, jobId), eq(keywordPullJobs.userId, params.userId)));
+    }
+    return result;
+  } catch (error) {
+    if (ownsJob) {
+      const completedAt = new Date();
+      const message = error instanceof Error ? error.message : String(error);
+      const monitoring = failedKeywordPullMonitoring(params, startedAt, completedAt, 'failed', message);
+      await db.update(keywordPullJobs).set({
+        status: 'failed',
+        phase: 'finalizing',
+        message: persistedJobMessage('failed'),
+        result: JSON.stringify({
+          gmailMessages: 0,
+          gmailAttachments: 0,
+          driveFiles: 0,
+          localFiles: 0,
+          errors: [message],
+          monitoring,
+        }),
+        error: message,
+        completedAt,
+        updatedAt: completedAt,
+      }).where(and(eq(keywordPullJobs.id, jobId), eq(keywordPullJobs.userId, params.userId)));
+    }
+    throw error;
+  }
+}
+
+type KeywordPullJobParams = Omit<KeywordPullParams, 'onProgress' | 'signal' | 'ingestionBudget' | 'collectionRunId'>;
 const runningKeywordPullJobIds = new Set<string>();
+const runningKeywordPullJobControllers = new Map<string, AbortController>();
 
 export async function startKeywordPullJob(params: KeywordPullJobParams) {
   const db = await getDb();
@@ -1536,12 +1828,22 @@ export async function startKeywordPullJob(params: KeywordPullJobParams) {
   const active = recent.find((job) => job.status === 'queued' || job.status === 'running');
   if (active && runningKeywordPullJobIds.has(active.id)) return active;
   if (active) {
+    const completedAt = new Date();
+    const startedAt = active.startedAt || active.createdAt;
+    const monitoring = failedKeywordPullMonitoring(
+      params,
+      startedAt,
+      completedAt,
+      'interrupted',
+      'The application stopped while this pull was active. Start it again to retry safely.',
+    );
     await db.update(keywordPullJobs).set({
       status: 'failed',
       message: 'Pull interrupted before completion',
       error: 'The application stopped while this pull was active. Start it again to retry safely.',
-      completedAt: new Date(),
-      updatedAt: new Date(),
+      result: JSON.stringify({ monitoring }),
+      completedAt,
+      updatedAt: completedAt,
     }).where(eq(keywordPullJobs.id, active.id));
   }
 
@@ -1558,23 +1860,31 @@ export async function startKeywordPullJob(params: KeywordPullJobParams) {
     totalWords: 0,
     processedItems: 0,
     totalItems: 0,
+    result: JSON.stringify({ monitoring: initialKeywordPullMonitoring(params) }),
     createdAt: now,
     updatedAt: now,
   });
 
   runningKeywordPullJobIds.add(id);
+  const controller = new AbortController();
+  runningKeywordPullJobControllers.set(id, controller);
   setImmediate(() => {
-    void executeKeywordPullJob(id, params);
+    void executeKeywordPullJob(id, params, controller);
   });
 
   const [job] = await db.select().from(keywordPullJobs).where(eq(keywordPullJobs.id, id)).limit(1);
   return job;
 }
 
-async function executeKeywordPullJob(id: string, params: KeywordPullJobParams): Promise<void> {
+async function executeKeywordPullJob(
+  id: string,
+  params: KeywordPullJobParams,
+  controller: AbortController,
+): Promise<void> {
   const db = await getDb();
   if (!db) {
     runningKeywordPullJobIds.delete(id);
+    runningKeywordPullJobControllers.delete(id);
     return;
   }
   const startedAt = new Date();
@@ -1614,6 +1924,7 @@ async function executeKeywordPullJob(id: string, params: KeywordPullJobParams): 
     phase: state.phase,
     message: state.message,
     startedAt,
+    result: JSON.stringify({ monitoring: initialKeywordPullMonitoring(params, 'running', startedAt) }),
     updatedAt: startedAt,
   }).where(eq(keywordPullJobs.id, id));
 
@@ -1628,18 +1939,26 @@ async function executeKeywordPullJob(id: string, params: KeywordPullJobParams): 
   };
 
   try {
-    const result = await pullEvidenceByKeywords({ ...params, onProgress });
+    const result = await pullEvidenceByKeywords({
+      ...params,
+      onProgress,
+      signal: controller.signal,
+      collectionRunId: id,
+    });
     onProgress({ phase: 'finalizing', message: 'Updating the case evidence index' });
     await writeChain;
     const completedAt = new Date();
+    const completeness = controller.signal.aborted ? 'cancelled' : result.monitoring.completeness;
     await db.update(keywordPullJobs).set({
-      status: result.errors.length > 0 ? 'completed_with_errors' : 'completed',
+      status: persistedJobStatus(completeness),
       phase: 'finalizing',
-      message: result.errors.length > 0 ? 'Pull completed with source warnings' : 'Pull complete',
-      processedWords: Math.max(state.processedWords, state.totalWords),
+      message: persistedJobMessage(completeness),
+      processedWords: completeness === 'cancelled' ? state.processedWords : Math.max(state.processedWords, state.totalWords),
       totalWords: Math.max(state.processedWords, state.totalWords),
-      processedItems: Math.max(state.processedItems, state.totalItems),
-      totalItems: Math.max(state.processedItems, state.totalItems),
+      processedItems: completeness === 'cancelled'
+        ? state.processedItems
+        : Math.max(state.processedItems, state.totalItems, result.monitoring.processedItems),
+      totalItems: Math.max(state.processedItems, state.totalItems, result.monitoring.processedItems),
       estimatedSecondsRemaining: 0,
       result: JSON.stringify(result),
       completedAt,
@@ -1649,18 +1968,64 @@ async function executeKeywordPullJob(id: string, params: KeywordPullJobParams): 
   } catch (error) {
     await writeChain;
     const completedAt = new Date();
+    const errorMessage = controller.signal.aborted ? null : error instanceof Error ? error.message : String(error);
+    const completeness = controller.signal.aborted ? 'cancelled' : 'failed';
+    const monitoring = failedKeywordPullMonitoring(params, startedAt, completedAt, completeness, errorMessage);
     await db.update(keywordPullJobs).set({
-      status: 'failed',
-      message: 'Pull failed',
-      error: error instanceof Error ? error.message : String(error),
+      status: persistedJobStatus(completeness),
+      phase: 'finalizing',
+      message: persistedJobMessage(completeness),
+      error: errorMessage,
       estimatedSecondsRemaining: null,
+      result: JSON.stringify({
+        gmailMessages: 0,
+        gmailAttachments: 0,
+        driveFiles: 0,
+        localFiles: 0,
+        errors: errorMessage ? [errorMessage] : [],
+        monitoring,
+      }),
       completedAt,
       updatedAt: completedAt,
     }).where(eq(keywordPullJobs.id, id));
     emitRealtimeDataChange(params.userId, { scope: 'evidence', caseId: params.caseId });
   } finally {
     runningKeywordPullJobIds.delete(id);
+    runningKeywordPullJobControllers.delete(id);
   }
+}
+
+export async function cancelKeywordPullJob(id: string, userId: string) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  const [job] = await db.select().from(keywordPullJobs)
+    .where(and(eq(keywordPullJobs.id, id), eq(keywordPullJobs.userId, userId)))
+    .limit(1);
+  if (!job) return null;
+  if (!['queued', 'running'].includes(job.status)) return job;
+
+  runningKeywordPullJobControllers.get(id)?.abort();
+  const completedAt = new Date();
+  const base = monitoringForJob(job);
+  const monitoring: KeywordPullMonitoring = {
+    ...base,
+    completeness: 'cancelled',
+    completedAt: completedAt.toISOString(),
+    durationMs: Math.max(1, completedAt.getTime() - (job.startedAt || job.createdAt).getTime()),
+    sources: base.sources.map((source) => ({ ...source, status: 'cancelled' })),
+  };
+  await db.update(keywordPullJobs).set({
+    status: 'cancelled',
+    message: 'Pull cancelled with bounded partial results',
+    estimatedSecondsRemaining: 0,
+    result: JSON.stringify({ ...jsonObject(job.result), monitoring }),
+    completedAt,
+    updatedAt: completedAt,
+  }).where(and(eq(keywordPullJobs.id, id), eq(keywordPullJobs.userId, userId)));
+  const [cancelled] = await db.select().from(keywordPullJobs)
+    .where(and(eq(keywordPullJobs.id, id), eq(keywordPullJobs.userId, userId)))
+    .limit(1);
+  return cancelled ?? null;
 }
 
 export async function getKeywordPullJob(id: string, userId: string) {
@@ -1686,24 +2051,195 @@ export async function getActiveKeywordPullJob(caseId: string, userId: string) {
   const active = rows.find((job) => job.status === 'queued' || job.status === 'running');
   if (!active) return null;
   if (runningKeywordPullJobIds.has(active.id)) return active;
+  return interruptKeywordPullJob(active);
+}
 
+type KeywordPullJobRow = typeof keywordPullJobs.$inferSelect;
+
+function jsonObject(value: string | null): Record<string, any> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function dateIso(value: Date | null | undefined): string | null {
+  return value instanceof Date && Number.isFinite(value.getTime()) ? value.toISOString() : null;
+}
+
+function legacyMonitoringForJob(job: KeywordPullJobRow): KeywordPullMonitoring {
+  const result = jsonObject(job.result);
+  const ingestion = result.ingestion && typeof result.ingestion === 'object' ? result.ingestion : {};
+  const storedBySource: Record<KeywordPullSource, number> = {
+    gmail: Number(result.gmailMessages || 0) + Number(result.gmailAttachments || 0),
+    google_drive: Number(result.driveFiles || 0),
+    local: Number(result.localFiles || 0),
+  };
+  const requestedSources = KEYWORD_PULL_SOURCES.filter((source) => source === 'gmail'
+    ? 'gmailMessages' in result || 'gmailAttachments' in result
+    : source === 'google_drive' ? 'driveFiles' in result : 'localFiles' in result);
+  const normalizedSources = requestedSources.length > 0 ? requestedSources : [...KEYWORD_PULL_SOURCES];
+  const storedItems = Object.values(storedBySource).reduce((sum, count) => sum + count, 0);
+  const reasons = Array.isArray(ingestion.reasons) ? ingestion.reasons : [];
+  const skippedItems = Number(ingestion.skippedItems || 0);
+  const interrupted = job.message === 'Pull interrupted before completion'
+    || String(job.error || '').includes('stopped while this pull was active');
+  const completeness: KeywordPullCompleteness = job.status === 'queued' ? 'queued'
+    : job.status === 'running' ? 'running'
+      : job.status === 'cancelled' ? 'cancelled'
+        : job.status === 'failed' ? interrupted ? 'interrupted' : 'failed'
+          : job.status === 'completed_with_errors'
+            ? reasons.some((reason: any) => reason?.code && reason.code !== 'duplicate') ? 'limited' : 'partial'
+            : storedItems === 0 ? 'complete_zero' : 'complete';
+  const startedAt = job.startedAt || job.createdAt;
+  const completedAt = job.completedAt;
+  return {
+    schemaVersion: 1,
+    requestedKeywords: [],
+    matchedKeywords: [],
+    matchMode: 'any',
+    requestedSources: normalizedSources,
+    completedSources: ['complete', 'complete_zero'].includes(completeness) ? normalizedSources : [],
+    startedAt: dateIso(startedAt),
+    completedAt: dateIso(completedAt),
+    durationMs: startedAt && completedAt
+      ? Math.max(1, completedAt.getTime() - startedAt.getTime())
+      : null,
+    completeness,
+    processedItems: Number(ingestion.processedItems || storedItems) + skippedItems,
+    storedItems,
+    skippedItems,
+    processedBytes: Number(ingestion.processedBytes || 0),
+    matchReasons: [],
+    sources: normalizedSources.map((source) => ({
+      source,
+      status: completeness === 'queued' || completeness === 'running' ? completeness
+        : completeness === 'cancelled' ? 'cancelled'
+          : completeness === 'failed' || completeness === 'interrupted' ? 'failed'
+            : completeness === 'limited' ? 'limited'
+              : completeness === 'partial' ? 'partial' : 'completed',
+      processedItems: storedBySource[source],
+      storedItems: storedBySource[source],
+      skippedItems: 0,
+      matchedKeywords: [],
+      errors: job.error ? [job.error] : [],
+    })),
+    revisions: [],
+  };
+}
+
+function monitoringForJob(job: KeywordPullJobRow): KeywordPullMonitoring {
+  const persisted = jsonObject(job.result).monitoring;
+  const monitoring: KeywordPullMonitoring = persisted?.schemaVersion === 1
+    && Array.isArray(persisted.requestedSources)
+    && Array.isArray(persisted.sources)
+    ? persisted as KeywordPullMonitoring
+    : legacyMonitoringForJob(job);
+  const interrupted = job.message === 'Pull interrupted before completion'
+    || String(job.error || '').includes('stopped while this pull was active');
+  const override: KeywordPullCompleteness | null = job.status === 'queued' ? 'queued'
+    : job.status === 'running' ? 'running'
+      : job.status === 'cancelled' ? 'cancelled'
+        : job.status === 'failed' ? interrupted ? 'interrupted' : 'failed'
+          : null;
+  if (!override || monitoring.completeness === override) return monitoring;
+  return {
+    ...monitoring,
+    completeness: override,
+    completedAt: dateIso(job.completedAt) ?? monitoring.completedAt,
+    durationMs: job.startedAt && job.completedAt
+      ? Math.max(1, job.completedAt.getTime() - job.startedAt.getTime())
+      : monitoring.durationMs,
+    sources: monitoring.sources.map((source) => ({
+      ...source,
+      status: override === 'queued' || override === 'running' ? override
+        : override === 'cancelled' ? 'cancelled' : 'failed',
+      errors: job.error ? uniqueStrings([...source.errors, job.error]) : source.errors,
+    })),
+  };
+}
+
+async function interruptKeywordPullJob(job: KeywordPullJobRow): Promise<KeywordPullJobRow> {
+  const db = await getDb();
+  if (!db) return job;
   const completedAt = new Date();
-  const interrupted = {
-    ...active,
+  const base = monitoringForJob(job);
+  const error = 'The application stopped while this pull was active. Start it again to retry safely.';
+  const monitoring: KeywordPullMonitoring = {
+    ...base,
+    completeness: 'interrupted',
+    completedAt: completedAt.toISOString(),
+    durationMs: Math.max(1, completedAt.getTime() - (job.startedAt || job.createdAt).getTime()),
+    sources: base.sources.map((source) => ({ ...source, status: 'failed', errors: uniqueStrings([...source.errors, error]) })),
+  };
+  const result = { ...jsonObject(job.result), monitoring };
+  await db.update(keywordPullJobs).set({
     status: 'failed',
-    message: 'Pull interrupted before completion',
-    error: 'The application stopped while this pull was active. Start it again to retry safely.',
+    phase: 'finalizing',
+    message: persistedJobMessage('interrupted'),
+    error,
+    result: JSON.stringify(result),
+    completedAt,
+    updatedAt: completedAt,
+  }).where(and(eq(keywordPullJobs.id, job.id), eq(keywordPullJobs.userId, job.userId)));
+  return {
+    ...job,
+    status: 'failed',
+    phase: 'finalizing',
+    message: persistedJobMessage('interrupted'),
+    error,
+    result: JSON.stringify(result),
     completedAt,
     updatedAt: completedAt,
   };
-  await db.update(keywordPullJobs).set({
-    status: interrupted.status,
-    message: interrupted.message,
-    error: interrupted.error,
-    completedAt,
-    updatedAt: completedAt,
-  }).where(eq(keywordPullJobs.id, active.id));
-  return interrupted;
+}
+
+export async function getKeywordPullMonitoring(caseId: string, userId: string, limit = 20) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  const rows = await db.select().from(keywordPullJobs)
+    .where(and(eq(keywordPullJobs.caseId, caseId), eq(keywordPullJobs.userId, userId)))
+    .orderBy(desc(keywordPullJobs.createdAt))
+    .limit(Math.max(1, Math.min(50, limit)));
+  const reconciled: KeywordPullJobRow[] = [];
+  for (const row of rows) {
+    reconciled.push(
+      (row.status === 'queued' || row.status === 'running') && !runningKeywordPullJobIds.has(row.id)
+        ? await interruptKeywordPullJob(row)
+        : row,
+    );
+  }
+  const jobs = reconciled.map((job) => ({
+    id: job.id,
+    caseId: job.caseId,
+    status: job.status,
+    phase: job.phase,
+    message: job.message,
+    error: job.error,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+    monitoring: monitoringForJob(job),
+  }));
+  const summary = jobs.reduce((totals, job) => {
+    totals.processedItems += job.monitoring.processedItems;
+    totals.storedItems += job.monitoring.storedItems;
+    totals.skippedItems += job.monitoring.skippedItems;
+    totals.processedBytes += job.monitoring.processedBytes;
+    totals.states[job.monitoring.completeness] = (totals.states[job.monitoring.completeness] || 0) + 1;
+    return totals;
+  }, {
+    totalRuns: jobs.length,
+    processedItems: 0,
+    storedItems: 0,
+    skippedItems: 0,
+    processedBytes: 0,
+    states: {} as Partial<Record<KeywordPullCompleteness, number>>,
+  });
+  return { summary, jobs };
 }
 
 export async function runAutoCollection(caseId: string): Promise<{
@@ -1746,9 +2282,9 @@ export async function runAutoCollection(caseId: string): Promise<{
   const db = await getDb();
   await db.update(autoCollectionSettings).set({
     lastRunAt: new Date(),
-    totalItemsCollected: String(result.gmailMessages + files),
-    totalEmailsCollected: String(result.gmailMessages),
-    totalFilesCollected: String(files),
+    totalItemsCollected: result.gmailMessages + files,
+    totalEmailsCollected: result.gmailMessages,
+    totalFilesCollected: files,
   }).where(eq(autoCollectionSettings.caseId, caseId));
   emitRealtimeDataChange(settings.userId, { scope: 'evidence', caseId });
   return {
@@ -1782,10 +2318,15 @@ export async function setLocalFolderPaths(caseId: string, userId: string, paths:
   meta.localFolderPaths = Array.from(new Set(validatedPaths));
 
   if (existing) {
+    if (existing.userId !== userId) throw new Error('Auto-collection settings owner mismatch');
+    const hasKeywords = configuredAutoCollectionKeywords(existing.keywords).length > 0;
     await db
       .update(autoCollectionSettings)
-      .set({ metadata: JSON.stringify(meta) })
-      .where(eq(autoCollectionSettings.caseId, caseId));
+      .set({
+        metadata: JSON.stringify(meta),
+        ...(hasKeywords ? {} : { isEnabled: false, status: 'configured' }),
+      })
+      .where(and(eq(autoCollectionSettings.caseId, caseId), eq(autoCollectionSettings.userId, userId)));
   } else {
     await db.insert(autoCollectionSettings).values({
       id: uuidv4(),
@@ -1796,8 +2337,8 @@ export async function setLocalFolderPaths(caseId: string, userId: string, paths:
       emailAccountIds: JSON.stringify([]),
       autoDownloadAttachments: true,
       autoDownloadGoogleDriveFiles: true,
-      isEnabled: true,
-      status: 'active',
+      isEnabled: false,
+      status: 'configured',
       metadata: JSON.stringify(meta),
     });
   }

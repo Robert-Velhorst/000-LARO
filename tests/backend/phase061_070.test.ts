@@ -6,7 +6,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { bootTestApp, sqliteAvailable, type TestApp } from '../helpers/app';
 import { buildUser, buildLawyer, buildCase, buildEvidence } from '../factories';
 import { encryptToken } from '../../server/emailOAuth';
-import { saveEmailAccount } from '../../server/oauth2';
+import { storeProviderConnection } from '../../server/providerConnections';
 
 const suite = sqliteAvailable ? describe : describe.skip;
 
@@ -23,6 +23,21 @@ suite('Phases 061–070', () => {
   });
   afterAll(() => app?.cleanup());
   afterEach(() => vi.unstubAllGlobals());
+
+  async function disconnectReviewedGoogle(
+    accountId: string,
+    initiatedFrom: 'shared_google_grant' | 'gmail' | 'google_drive',
+  ) {
+    const caller = app.makeCaller(U);
+    const impact = await caller.providerConnections.disconnectImpact({ accountId });
+    const result = await caller.providerConnections.disconnect({
+      accountId,
+      impactRevision: impact.impactRevision,
+      acknowledgeSharedGoogleGrant: true,
+      initiatedFrom,
+    });
+    return { impact, result };
+  }
 
   it('Phase 061 — invariants pass on a clean DB', async () => {
     const res = await app.makeCaller(ADMIN).admin.invariants();
@@ -64,8 +79,42 @@ suite('Phases 061–070', () => {
       { id: 'SOURCE_LOCAL_U61', userId: U.id, sourceType: 'LocalFolder', status: 'connected' },
       { id: 'SOURCE_GMAIL_ADMIN61', userId: ADMIN.id, sourceType: 'Gmail', status: 'connected' },
     ] as any);
+    await app.db.insert(app.schema.autoCollectionSettings).values({
+      id: 'GOOGLE_SETTINGS_U61', caseId: null, userId: U.id,
+      emailAccountIds: JSON.stringify(['GOOGLE_U61']),
+      metadata: JSON.stringify({ googleDriveSources: [{ accountId: 'GOOGLE_U61', folderIds: ['drive-folder'] }] }),
+      autoDownloadAttachments: true, autoDownloadGoogleDriveFiles: true, isEnabled: true,
+    } as any);
 
-    await app.makeCaller(U).gmailEnhanced.disconnect();
+    const { impact, result } = await disconnectReviewedGoogle('GOOGLE_U61', 'gmail');
+
+    expect(impact).toMatchObject({
+      contractVersion: 'google-disconnect-impact-v1',
+      account: { id: 'GOOGLE_U61', email: U.email },
+      credential: {
+        provider: 'google', kind: 'shared_oauth_grant', stored: true, willRevoke: true,
+        localConnectionWillRemove: true,
+      },
+      remainingGoogleAccountsAfter: 0,
+      collectedDocumentsWillRemain: true,
+    });
+    expect(impact.capabilities.map((capability) => capability.id)).toEqual(['gmail', 'google_drive']);
+    expect(impact.scheduledCollections).toEqual([{
+      settingsId: 'GOOGLE_SETTINGS_U61', caseId: null, caseLabel: 'Not assigned to a case', enabled: true,
+      capabilities: ['gmail', 'google_drive'],
+    }]);
+    expect(impact.localSourceRecords).toEqual(expect.arrayContaining([
+      { sourceType: 'Gmail', count: 1, willRemove: true },
+      { sourceType: 'GoogleDrive', count: 1, willRemove: true },
+    ]));
+    expect(result).toMatchObject({
+      removedCapabilities: ['gmail', 'google_drive'],
+      scheduledCollectionsUpdated: 1,
+      localSourceRecordsRemoved: 2,
+      localSourceRecordsRetained: 0,
+      remainingGoogleAccounts: 0,
+      collectedDocumentsRetained: true,
+    });
 
     expect(revoke).toHaveBeenCalledTimes(1);
     const revokeBody = revoke.mock.calls[0][1]?.body as URLSearchParams;
@@ -90,6 +139,12 @@ suite('Phases 061–070', () => {
     expect(ownLocalSources).toHaveLength(1);
     expect(otherAccounts).toHaveLength(1);
     expect(otherSources).toHaveLength(1);
+    const [settings] = await app.db.select().from(app.schema.autoCollectionSettings)
+      .where(eq(app.schema.autoCollectionSettings.id, 'GOOGLE_SETTINGS_U61'));
+    expect(JSON.parse(settings.emailAccountIds)).toEqual([]);
+    expect(JSON.parse(settings.metadata).googleDriveSources).toEqual([]);
+    expect(settings.autoDownloadAttachments).toBe(false);
+    expect(settings.autoDownloadGoogleDriveFiles).toBe(false);
 
     const [audit] = await app.db.select().from(app.schema.auditLogs)
       .where(and(
@@ -99,14 +154,19 @@ suite('Phases 061–070', () => {
     expect(audit).toBeTruthy();
     expect(JSON.parse(audit.details)).toMatchObject({
       provider: 'google',
-      accountCount: 1,
-      revocationOutcomes: ['revoked'],
+      revocationOutcome: 'revoked',
       localCredentialsRemoved: true,
-      localSourcesRemoved: true,
+      affectedCapabilities: ['gmail', 'google_drive'],
+      initiatedFrom: 'gmail',
+      scheduledCollectionsUpdated: 1,
+      localSourceRecordsRemoved: 2,
+      remainingGoogleAccounts: 0,
+      collectedDocumentsRetained: true,
     });
     expect(audit.details).not.toContain('refresh-u');
 
-    await app.makeCaller(U).gmailEnhanced.disconnect();
+    await expect(app.makeCaller(U).providerConnections.disconnectImpact({ accountId: 'GOOGLE_U61' }))
+      .rejects.toMatchObject({ code: 'NOT_FOUND' });
     const revocationAudits = await app.db.select().from(app.schema.auditLogs)
       .where(and(
         eq(app.schema.auditLogs.userId, U.id),
@@ -115,9 +175,74 @@ suite('Phases 061–070', () => {
     expect(revocationAudits).toHaveLength(1);
   });
 
+  it('uses the same shared-grant consequence for Drive initiation and preserves another Google account', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+    await app.db.insert(app.schema.emailAccounts).values([
+      {
+        id: 'GOOGLE_DRIVE_INITIATED', userId: U.id, provider: 'gmail', email: 'drive-initiated@example.com',
+        accessToken: encryptToken('drive-access'), refreshToken: encryptToken('drive-refresh'), status: 'connected',
+      },
+      {
+        id: 'GOOGLE_REMAINING', userId: U.id, provider: 'gmail', email: 'remaining@example.com',
+        accessToken: encryptToken('remaining-access'), refreshToken: encryptToken('remaining-refresh'), status: 'connected',
+      },
+    ] as any);
+    await app.db.insert(app.schema.evidenceSources).values({
+      id: 'SOURCE_SHARED_MULTI_U61', userId: U.id, sourceType: 'GoogleDrive', status: 'connected',
+    } as any);
+    await app.db.insert(app.schema.autoCollectionSettings).values({
+      id: 'GOOGLE_SETTINGS_MULTI_U61', caseId: null, userId: U.id,
+      emailAccountIds: JSON.stringify(['GOOGLE_DRIVE_INITIATED', 'GOOGLE_REMAINING']),
+      metadata: JSON.stringify({ googleDriveSources: [
+        { accountId: 'GOOGLE_DRIVE_INITIATED', folderIds: ['folder-one'] },
+        { accountId: 'GOOGLE_REMAINING', folderIds: ['folder-two'] },
+      ] }),
+      autoDownloadAttachments: true, autoDownloadGoogleDriveFiles: true, isEnabled: true,
+    } as any);
+    await app.db.insert(app.schema.autoCollectionSettings).values({
+      id: 'GOOGLE_SETTINGS_LEGACY_MULTI_U61', caseId: null, userId: U.id,
+      emailAccountIds: JSON.stringify(['GOOGLE_DRIVE_INITIATED']),
+      metadata: JSON.stringify({ googleDriveAccountId: 'GOOGLE_REMAINING' }),
+      googleDriveFolderIds: JSON.stringify(['remaining-legacy-folder']),
+      autoDownloadAttachments: true, autoDownloadGoogleDriveFiles: true, isEnabled: true,
+    } as any);
+
+    const { impact, result } = await disconnectReviewedGoogle('GOOGLE_DRIVE_INITIATED', 'google_drive');
+    expect(impact.remainingGoogleAccountsAfter).toBe(1);
+    expect(impact.localSourceRecords).toContainEqual({ sourceType: 'GoogleDrive', count: 1, willRemove: false });
+    expect(impact.scheduledCollections).toContainEqual(expect.objectContaining({
+      settingsId: 'GOOGLE_SETTINGS_LEGACY_MULTI_U61', capabilities: ['gmail'],
+    }));
+    expect(result).toMatchObject({
+      removedCapabilities: ['gmail', 'google_drive'],
+      scheduledCollectionsUpdated: 2,
+      localSourceRecordsRemoved: 0,
+      localSourceRecordsRetained: 1,
+      remainingGoogleAccounts: 1,
+    });
+
+    const [settings] = await app.db.select().from(app.schema.autoCollectionSettings)
+      .where(eq(app.schema.autoCollectionSettings.id, 'GOOGLE_SETTINGS_MULTI_U61'));
+    expect(JSON.parse(settings.emailAccountIds)).toEqual(['GOOGLE_REMAINING']);
+    expect(JSON.parse(settings.metadata).googleDriveSources).toEqual([
+      { accountId: 'GOOGLE_REMAINING', folderIds: ['folder-two'] },
+    ]);
+    expect(settings.autoDownloadAttachments).toBe(true);
+    expect(settings.autoDownloadGoogleDriveFiles).toBe(true);
+    const [legacySettings] = await app.db.select().from(app.schema.autoCollectionSettings)
+      .where(eq(app.schema.autoCollectionSettings.id, 'GOOGLE_SETTINGS_LEGACY_MULTI_U61'));
+    expect(JSON.parse(legacySettings.emailAccountIds)).toEqual([]);
+    expect(JSON.parse(legacySettings.metadata).googleDriveAccountId).toBe('GOOGLE_REMAINING');
+    expect(JSON.parse(legacySettings.googleDriveFolderIds)).toEqual(['remaining-legacy-folder']);
+    expect(legacySettings.autoDownloadAttachments).toBe(false);
+    expect(legacySettings.autoDownloadGoogleDriveFiles).toBe(true);
+    expect(await app.db.select().from(app.schema.evidenceSources)
+      .where(eq(app.schema.evidenceSources.id, 'SOURCE_SHARED_MULTI_U61'))).toHaveLength(1);
+  });
+
   it('rejects new Outlook OAuth connections while its collector is unavailable', async () => {
     await expect(
-      app.makeCaller(U).emailAccounts.getAuthUrl({ provider: 'outlook' } as never)
+      app.makeCaller(U).providerConnections.begin({ provider: 'outlook' })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
@@ -130,17 +255,41 @@ suite('Phases 061–070', () => {
     await app.db.insert(app.schema.evidenceSources).values({
       id: 'SOURCE_GMAIL_U61_RETRY', userId: U.id, sourceType: 'Gmail', status: 'connected',
     } as any);
+    await app.db.insert(app.schema.autoCollectionSettings).values({
+      id: 'GOOGLE_SETTINGS_RETRY_U61', caseId: null, userId: U.id,
+      emailAccountIds: JSON.stringify(['GOOGLE_U61_RETRY']),
+      metadata: JSON.stringify({ googleDriveSources: [{ accountId: 'GOOGLE_U61_RETRY', folderIds: ['retry-folder'] }] }),
+      autoDownloadAttachments: true, autoDownloadGoogleDriveFiles: true, isEnabled: true,
+    } as any);
 
-    await expect(app.makeCaller(U).gmailEnhanced.disconnect()).rejects.toMatchObject({
+    const impact = await app.makeCaller(U).providerConnections.disconnectImpact({ accountId: 'GOOGLE_U61_RETRY' });
+    await expect(app.makeCaller(U).providerConnections.disconnect({
+      accountId: 'GOOGLE_U61_RETRY',
+      impactRevision: impact.impactRevision,
+      acknowledgeSharedGoogleGrant: true,
+      initiatedFrom: 'shared_google_grant',
+    })).rejects.toMatchObject({
       code: 'PRECONDITION_FAILED',
+      message: expect.stringContaining('were retained'),
     });
 
     const accounts = await app.db.select().from(app.schema.emailAccounts)
-      .where(and(eq(app.schema.emailAccounts.userId, U.id), eq(app.schema.emailAccounts.provider, 'gmail')));
+      .where(and(
+        eq(app.schema.emailAccounts.userId, U.id),
+        eq(app.schema.emailAccounts.id, 'GOOGLE_U61_RETRY'),
+      ));
     const sources = await app.db.select().from(app.schema.evidenceSources)
       .where(and(eq(app.schema.evidenceSources.userId, U.id), eq(app.schema.evidenceSources.sourceType, 'Gmail')));
     expect(accounts).toHaveLength(1);
     expect(sources).toHaveLength(1);
+    const [settings] = await app.db.select().from(app.schema.autoCollectionSettings)
+      .where(eq(app.schema.autoCollectionSettings.id, 'GOOGLE_SETTINGS_RETRY_U61'));
+    expect(JSON.parse(settings.emailAccountIds)).toEqual(['GOOGLE_U61_RETRY']);
+    expect(JSON.parse(settings.metadata).googleDriveSources).toEqual([
+      { accountId: 'GOOGLE_U61_RETRY', folderIds: ['retry-folder'] },
+    ]);
+    expect(settings.autoDownloadAttachments).toBe(true);
+    expect(settings.autoDownloadGoogleDriveFiles).toBe(true);
 
     const [audit] = await app.db.select().from(app.schema.auditLogs)
       .where(and(
@@ -155,6 +304,43 @@ suite('Phases 061–070', () => {
     expect(audit.details).not.toContain('refresh-retry');
   });
 
+  it('rejects a stale shared-disconnect review before contacting Google', async () => {
+    const revoke = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', revoke);
+    await app.db.insert(app.schema.emailAccounts).values({
+      id: 'GOOGLE_U61_STALE_REVIEW', userId: U.id, provider: 'gmail', email: 'stale-review@example.com',
+      accessToken: encryptToken('stale-access'), refreshToken: encryptToken('stale-refresh'), status: 'connected',
+    } as any);
+    await app.db.insert(app.schema.autoCollectionSettings).values({
+      id: 'GOOGLE_SETTINGS_STALE_U61', caseId: null, userId: U.id,
+      emailAccountIds: JSON.stringify(['GOOGLE_U61_STALE_REVIEW']),
+      metadata: JSON.stringify({ googleDriveSources: [{ accountId: 'GOOGLE_U61_STALE_REVIEW', folderIds: ['before-review'] }] }),
+      autoDownloadAttachments: true, autoDownloadGoogleDriveFiles: true, isEnabled: true,
+    } as any);
+
+    const caller = app.makeCaller(U);
+    const impact = await caller.providerConnections.disconnectImpact({ accountId: 'GOOGLE_U61_STALE_REVIEW' });
+    await app.db.update(app.schema.autoCollectionSettings).set({
+      metadata: JSON.stringify({ googleDriveSources: [{ accountId: 'GOOGLE_U61_STALE_REVIEW', folderIds: ['changed-after-review'] }] }),
+    }).where(eq(app.schema.autoCollectionSettings.id, 'GOOGLE_SETTINGS_STALE_U61'));
+
+    await expect(caller.providerConnections.disconnect({
+      accountId: 'GOOGLE_U61_STALE_REVIEW',
+      impactRevision: impact.impactRevision,
+      acknowledgeSharedGoogleGrant: true,
+      initiatedFrom: 'shared_google_grant',
+    })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+      message: expect.stringContaining('Review the disconnect impact again'),
+    });
+    expect(revoke).not.toHaveBeenCalled();
+    expect(await app.db.select().from(app.schema.emailAccounts)
+      .where(eq(app.schema.emailAccounts.id, 'GOOGLE_U61_STALE_REVIEW'))).toHaveLength(1);
+    const [settings] = await app.db.select().from(app.schema.autoCollectionSettings)
+      .where(eq(app.schema.autoCollectionSettings.id, 'GOOGLE_SETTINGS_STALE_U61'));
+    expect(JSON.parse(settings.metadata).googleDriveSources[0].folderIds).toEqual(['changed-after-review']);
+  });
+
   it('removes a Google connection when the upstream token is already invalid', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 400 }));
     await app.db.insert(app.schema.emailAccounts).values({
@@ -162,7 +348,7 @@ suite('Phases 061–070', () => {
       accessToken: encryptToken('already-invalid'), status: 'connected',
     } as any);
 
-    await app.makeCaller(U).emailAccounts.revoke({ accountId: 'GOOGLE_U61_INVALID' });
+    await disconnectReviewedGoogle('GOOGLE_U61_INVALID', 'shared_google_grant');
 
     const account = await app.db.select().from(app.schema.emailAccounts)
       .where(eq(app.schema.emailAccounts.id, 'GOOGLE_U61_INVALID'));
@@ -177,7 +363,7 @@ suite('Phases 061–070', () => {
   });
 
   it('records a Google connection without tokens or account PII in audit details', async () => {
-    const accountId = await saveEmailAccount(
+    const accountId = await storeProviderConnection(
       U.id,
       'gmail',
       {

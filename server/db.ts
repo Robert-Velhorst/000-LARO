@@ -3,18 +3,33 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
-import * as schema from "./schema";
 import { InsertUser, users, lawyers, cases, outreachStatus, emailActivity, systemConfig, evidence } from "./schema";
-import { getTableConfig } from "drizzle-orm/sqlite-core";
 import { ENV } from './_core/env';
 import { createCaseId } from './ids';
-import { ensureRelationshipIntegrityTriggers } from './relationshipIntegrity';
+import { normalizeAccountEmail } from './emailIdentity';
+import { relationshipIntegrityReport } from './relationshipIntegrity';
 import { assertDatabaseRuntimeIsSupported } from './persistence/hostedPersistenceGuard';
-
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import { normalizeLiteralSearchText } from './literalSearch';
+import {
+  PRIVACY_CONSENT_PREFERENCE_KEY,
+  parsePrivacyPreferences,
+  serializePrivacyPreferences,
+} from './privacyPreferenceValue';
+import { runSqliteMigrations } from './sqliteMigrations';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 let _sqlite: InstanceType<typeof Database> | null = null;
+
+/**
+ * Return the already-open application database without creating one.
+ *
+ * Low-level provider utilities use this to emit best-effort telemetry while
+ * remaining usable in isolated transport tests that deliberately do not boot
+ * the application database.
+ */
+export function getInitializedDb(): ReturnType<typeof drizzle> | null {
+  return _db;
+}
 
 // Determine DB path (using .laro.sqlite in current dir for now, 
 // will be refined in Electron to use app.getPath('userData'))
@@ -43,6 +58,37 @@ function applyConnectionPragmas(sqlite: InstanceType<typeof Database>) {
   }
 }
 
+function registerConnectionFunctions(sqlite: InstanceType<typeof Database>) {
+  sqlite.function("laro_search_normalize", { deterministic: true }, (value: unknown) =>
+    normalizeLiteralSearchText(value)
+  );
+}
+
+function normalizeLegacyPrivacyPreferences(sqlite: InstanceType<typeof Database>) {
+  try {
+    const rows = sqlite.prepare(
+      'SELECT id, value FROM user_preferences WHERE key = ?',
+    ).all(PRIVACY_CONSENT_PREFERENCE_KEY) as Array<{ id: string; value: string | null }>;
+    const update = sqlite.prepare('UPDATE user_preferences SET value = ?, updatedAt = ? WHERE id = ?');
+    const now = Math.floor(Date.now() / 1_000);
+    const normalize = sqlite.transaction(() => {
+      let changed = 0;
+      for (const row of rows) {
+        const canonicalValue = serializePrivacyPreferences(parsePrivacyPreferences(row.value));
+        if (row.value === canonicalValue) continue;
+        changed += update.run(canonicalValue, now, row.id).changes;
+      }
+      return changed;
+    });
+    const changed = normalize();
+    if (changed > 0) {
+      console.log(`[Database] Removed unsupported fields from ${changed} privacy preference row(s).`);
+    }
+  } catch (error) {
+    console.warn('[Database] Could not normalize privacy preference rows:', error);
+  }
+}
+
 /**
  * Phase 005 — data integrity via indexes and a unique constraint on user email.
  *
@@ -56,15 +102,17 @@ function applyConnectionPragmas(sqlite: InstanceType<typeof Database>) {
  * crashing boot (the duplicates must then be reconciled — see Phase 054).
  */
 function ensureIndexes(sqlite: InstanceType<typeof Database>) {
-  // Unique email — enforce one account per address. Signup already checks for
-  // an existing email, so this closes the race/duplicate gap at the DB level.
+  // Canonical email identity — migration 0020 quarantines pre-existing
+  // normalized collisions before this expression index is installed.
   try {
-    sqlite.exec(
-      `CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(email) WHERE email IS NOT NULL;`
-    );
+    sqlite.exec(`
+      DROP INDEX IF EXISTS users_email_unique;
+      CREATE UNIQUE INDEX IF NOT EXISTS users_email_canonical_unique
+        ON users(lower(trim(email))) WHERE email IS NOT NULL;
+    `);
   } catch (e) {
     console.warn(
-      "[Database] Could not create unique index users_email_unique (likely pre-existing duplicate emails; reconcile then retry):",
+      "[Database] Could not create canonical user email index (review account_email_conflicts):",
       e
     );
   }
@@ -175,8 +223,8 @@ function ensureIndexes(sqlite: InstanceType<typeof Database>) {
     console.warn("[Database] Could not reconcile or index keyed user preferences:", e);
   }
 
-  // Hot-path indexes for the highest-traffic lookups (outreach, evidence, email,
-  // messaging, lawyer rating). All idempotent.
+  // Hot-path indexes for the highest-traffic lookups (outreach, evidence,
+  // email, and messaging). All idempotent.
   const indexStatements = [
     // Phase 051: back the cases.list filters/sort (status, urgency, updatedAt).
     `CREATE INDEX IF NOT EXISTS cases_userId_status_idx ON cases(userId, status);`,
@@ -198,10 +246,11 @@ function ensureIndexes(sqlite: InstanceType<typeof Database>) {
     `CREATE INDEX IF NOT EXISTS outreach_status_status_idx ON outreach_status(status);`,
     `CREATE INDEX IF NOT EXISTS email_messages_accountId_idx ON email_messages(accountId);`,
     `CREATE INDEX IF NOT EXISTS email_activity_caseId_idx ON email_activity(caseId);`,
-    `CREATE INDEX IF NOT EXISTS lawyer_interactions_lawyerId_idx ON lawyer_interactions(lawyerId);`,
     `CREATE INDEX IF NOT EXISTS evidence_items_userId_idx ON evidence_items(userId);`,
     `CREATE INDEX IF NOT EXISTS unified_messages_userId_idx ON unified_messages(userId);`,
     `CREATE INDEX IF NOT EXISTS notifications_userId_idx ON notifications(userId);`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS notifications_user_dedup_unique ON notifications(userId, dedupKey);`,
+    `CREATE INDEX IF NOT EXISTS notifications_user_created_idx ON notifications(userId, createdAt);`,
     `CREATE INDEX IF NOT EXISTS audit_logs_userId_idx ON audit_logs(userId);`,
     `CREATE INDEX IF NOT EXISTS audit_logs_createdAt_idx ON audit_logs(createdAt);`,
   ];
@@ -220,24 +269,6 @@ function ensureIndexes(sqlite: InstanceType<typeof Database>) {
   console.log("[Database] Ensured integrity indexes (Phase 005).");
 }
 
-function ensureSupportTicketsTable(sqlite: InstanceType<typeof Database>) {
-  try {
-    sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS support_tickets (
-        id TEXT PRIMARY KEY NOT NULL,
-        userId TEXT,
-        category TEXT NOT NULL,
-        subject TEXT NOT NULL,
-        message TEXT NOT NULL,
-        status TEXT DEFAULT 'open',
-        createdAt INTEGER NOT NULL
-      );
-    `);
-  } catch (e) {
-    console.warn("[Database] Could not ensure support_tickets table:", e);
-  }
-}
-
 export function ensureStorageDeletionQueueTable(sqlite: InstanceType<typeof Database>) {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS storage_deletion_queue (
@@ -254,170 +285,6 @@ export function ensureStorageDeletionQueueTable(sqlite: InstanceType<typeof Data
     CREATE INDEX IF NOT EXISTS storage_deletion_queue_nextAttemptAt_idx
       ON storage_deletion_queue(nextAttemptAt);
   `);
-}
-
-function ensureAllTablesColumns(sqlite: InstanceType<typeof Database>) {
-  for (const key of Object.keys(schema)) {
-    const table = (schema as any)[key];
-    try {
-      // Use Drizzle's getTableConfig to reflect the schema
-      const config = getTableConfig(table);
-      if (!config || !config.name || !config.columns) continue;
-
-      const dbColumns = sqlite.prepare(`PRAGMA table_info("${config.name}")`).all() as Array<{ name: string }>;
-      if (dbColumns.length === 0) continue; // Table not created yet, migration will handle it
-
-      const existing = new Set(dbColumns.map((c) => c.name));
-
-      for (const col of config.columns) {
-        if (!existing.has(col.name)) {
-          // Default to TEXT for missing columns to satisfy the migration SELECTs
-          sqlite.exec(`ALTER TABLE "${config.name}" ADD COLUMN "${col.name}" TEXT;`);
-          console.log(`[Database] Added missing column ${config.name}.${col.name} before migration.`);
-        }
-      }
-    } catch (e) {
-      // Ignore exports that aren't tables
-    }
-  }
-}
-
-/**
- * Idempotent migration replay: reads each .sql migration file in the drizzle
- * folder, splits on `--> statement-breakpoint`, and runs every statement
- * individually — swallowing "already exists" / "duplicate column" type errors.
- *
- * This is the safety net for production: drizzle's migrator relies on the
- * `__drizzle_migrations` bookkeeping table, which can disagree with the actual
- * DB state in a portable Electron build (e.g. a stale userData DB created by
- * `db:push` or a previous partial run). Replaying SQL idempotently guarantees
- * that every table in the schema exists regardless of bookkeeping state.
- */
-function replayMigrationsIdempotent(
-  sqlite: InstanceType<typeof Database>,
-  migrationsFolder: string
-) {
-  const isIgnorable = (msg: string) => {
-    const m = msg.toLowerCase();
-    return (
-      m.includes("already exists") ||
-      m.includes("duplicate column name") ||
-      m.includes("no such column") || // for ALTER TABLE on already-migrated schema
-      m.includes("no such table") // for DROP TABLE on already-cleaned schema
-    );
-  };
-
-  let sqlFiles: string[];
-  try {
-    sqlFiles = fs
-      .readdirSync(migrationsFolder)
-      .filter((f) => f.endsWith(".sql"))
-      .sort();
-  } catch (e) {
-    console.warn("[Database] Could not enumerate migration folder:", e);
-    return;
-  }
-
-  for (const file of sqlFiles) {
-    const fullPath = path.join(migrationsFolder, file);
-    let content: string;
-    try {
-      content = fs.readFileSync(fullPath, "utf8");
-    } catch (e) {
-      console.warn(`[Database] Could not read migration ${file}:`, e);
-      continue;
-    }
-
-    const statements = content
-      .split("--> statement-breakpoint")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-
-    let applied = 0;
-    let skipped = 0;
-    for (const stmt of statements) {
-      try {
-        sqlite.exec(stmt);
-        applied++;
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (isIgnorable(msg)) {
-          skipped++;
-          continue;
-        }
-        console.warn(
-          `[Database] Idempotent replay: statement in ${file} failed (continuing):`,
-          msg
-        );
-      }
-    }
-    console.log(
-      `[Database] Replayed ${file}: ${applied} applied, ${skipped} skipped (already present).`
-    );
-  }
-}
-
-function tableExists(sqlite: InstanceType<typeof Database>, name: string): boolean {
-  try {
-    const row = sqlite
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?")
-      .get(name);
-    return !!row;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Mark every migration in the folder as applied in drizzle's bookkeeping
- * table, so subsequent boots take the happy path (drizzle's migrate() becomes
- * a no-op instead of trying to re-create tables we've already created via
- * recovery replay).
- *
- * Drizzle's bookkeeping table is `__drizzle_migrations` with columns
- * (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at NUMERIC). The hash
- * is the SHA-256 of the migration SQL content.
- */
-function stampMigrationsAsApplied(
-  sqlite: InstanceType<typeof Database>,
-  migrationsFolder: string
-) {
-  try {
-    sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS __drizzle_migrations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        hash TEXT NOT NULL,
-        created_at NUMERIC
-      );
-    `);
-
-    const journalPath = path.join(migrationsFolder, "meta", "_journal.json");
-    const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
-      entries: Array<{ idx: number; tag: string; when: number }>;
-    };
-
-    const crypto = require("crypto") as typeof import("crypto");
-    const existing = sqlite.prepare("SELECT hash FROM __drizzle_migrations").all() as Array<{
-      hash: string;
-    }>;
-    const known = new Set(existing.map((r) => r.hash));
-
-    const insert = sqlite.prepare(
-      "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)"
-    );
-
-    for (const entry of journal.entries) {
-      const sqlPath = path.join(migrationsFolder, `${entry.tag}.sql`);
-      if (!fs.existsSync(sqlPath)) continue;
-      const content = fs.readFileSync(sqlPath, "utf8");
-      const hash = crypto.createHash("sha256").update(content).digest("hex");
-      if (known.has(hash)) continue;
-      insert.run(hash, entry.when);
-      console.log(`[Database] Stamped migration ${entry.tag} as applied.`);
-    }
-  } catch (e) {
-    console.warn("[Database] Could not stamp migrations as applied:", e);
-  }
 }
 
 function findMigrationsFolder(): string {
@@ -456,95 +323,41 @@ export async function getDb() {
       const sqlite = new Database(dbPath);
       _sqlite = sqlite;
       _db = drizzle(sqlite);
+      registerConnectionFunctions(sqlite);
       applyConnectionPragmas(sqlite); // Phase 005: WAL, foreign_keys, busy_timeout
       console.log("[Database] SQLite initialized at:", dbPath);
 
       const foundFolder = findMigrationsFolder();
 
       if (foundFolder) {
-        // Try drizzle's bookkeeping-based migrator first (the happy path on a
-        // clean install). Failures here are not fatal because we have a
-        // recovery replay below.
-        let migrateSucceeded = false;
-        try {
-          migrate(_db, { migrationsFolder: foundFolder });
-          migrateSucceeded = true;
-          console.log("[Database] drizzle migrate() succeeded.");
-        } catch (migrationError: unknown) {
-          const msg =
-            migrationError instanceof Error ? migrationError.message : String(migrationError);
-          console.warn(
-            "[Database] drizzle migrate() failed; will check schema state and recover if needed:",
-            msg
-          );
-        }
-
-        // Destructive evidence operations require this queue. Repair it before
-        // migration recovery can stamp journal entries on an installed DB.
-        ensureStorageDeletionQueueTable(sqlite);
-
-        // This additive migration must exist even when an older journal fails
-        // before reaching it; never stamp an inbox migration without its table.
-        const inboxMigration = path.join(foundFolder, "0013_document_inbox.sql");
-        if (!tableExists(sqlite, "document_inbox")) {
-          sqlite.exec(fs.readFileSync(inboxMigration, "utf8"));
-        }
-        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0015_document_sources.sql"), "utf8"));
-        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0017_case_action_proposals.sql"), "utf8"));
-        sqlite.exec(fs.readFileSync(path.join(foundFolder, "0018_case_action_evidence.sql"), "utf8"));
-        const inboxColumns = new Set((sqlite.prepare('PRAGMA table_info("document_inbox")').all() as Array<{ name: string }>).map((column) => column.name));
-        if (!inboxColumns.has("sourceType")) sqlite.exec("ALTER TABLE document_inbox ADD COLUMN sourceType text NOT NULL DEFAULT 'manual'");
-        if (!inboxColumns.has("provenance")) sqlite.exec("ALTER TABLE document_inbox ADD COLUMN provenance text");
-        // Source domains remain separate when recovering an older journal.
-        sqlite.exec('DROP INDEX IF EXISTS document_inbox_owner_source_hash_idx; CREATE UNIQUE INDEX IF NOT EXISTS document_inbox_owner_source_identity_idx ON document_inbox(userId, sourceType, sourcePath, contentHash)');
-
-        // Recovery: if any expected core table is missing after migrate(), the
-        // bookkeeping is out of sync with reality (stale userData DB, partial
-        // prior run, db:push without migration entries, etc.). Replay the SQL
-        // files only in that case. We skip replay on a healthy DB because
-        // migration 0001 includes destructive table-rebuilds (DROP TABLE) that
-        // would be unsafe to re-run on live data.
-        const coreTables = ["users", "lawyers", "cases"];
-        const missing = coreTables.filter((t) => !tableExists(sqlite, t));
-        if (missing.length > 0) {
-          console.warn(
-            `[Database] Core tables missing after migrate(): ${missing.join(", ")}. Running recovery replay.`
-          );
-          replayMigrationsIdempotent(sqlite, foundFolder);
-
-          // Drizzle bookkeeping is now out of sync (we ran SQL it doesn't know
-          // about). Mark all migrations as applied so subsequent boots use the
-          // happy path.
-          stampMigrationsAsApplied(sqlite, foundFolder);
-        } else if (!migrateSucceeded) {
-          // migrate() failed but tables exist — likely a benign "already
-          // exists" on a re-run. Still stamp bookkeeping so next boot is clean.
-          stampMigrationsAsApplied(sqlite, foundFolder);
+        const migrationResult = await runSqliteMigrations({
+          sqlite,
+          drizzleDb: _db,
+          migrationsFolder: foundFolder,
+          databasePath: dbPath,
+        });
+        console.log(
+          `[Database] Versioned migrations ready (${migrationResult.migrationsApplied} applied, schema ${migrationResult.schemaSignature.slice(0, 12)}).`,
+        );
+        if (migrationResult.backupPath) {
+          console.log(`[Database] Verified pre-migration backup: ${migrationResult.backupPath}`);
         }
       } else {
-        console.warn(
-          "[Database] No migrations folder found — DB will not be initialized. Auth and other features will fail until this is resolved."
-        );
+        throw new Error("No versioned SQLite migrations folder was found; refusing to start.");
       }
-
-      // Legacy databases may predate this table, but creating it before the
-      // migrator makes a fresh 0001 migration fail with "table already exists".
-      ensureSupportTicketsTable(sqlite);
-
-      // Run column alignment AFTER migrations to backfill any columns that the
-      // schema declares but the on-disk DB is missing (e.g. schema.ts was
-      // updated without generating a new migration).
-      ensureAllTablesColumns(sqlite);
 
       // Phase 005: create integrity indexes + unique email constraint AFTER the
       // tables exist. Idempotent, so safe on every boot.
       ensureIndexes(sqlite);
+      normalizeLegacyPrivacyPreferences(sqlite);
 
-      // Enforce relationships in legacy tables without rebuilding installed
-      // databases. Existing inconsistencies remain visible to reconciliation;
-      // new orphaned writes and parent deletes are guarded at database level.
-      const relationshipTriggerCount = ensureRelationshipIntegrityTriggers(sqlite);
-      console.log(`[Database] Ensured ${relationshipTriggerCount} relationship-integrity triggers.`);
+      const relationships = relationshipIntegrityReport(sqlite);
+      if (!relationships.ok) {
+        throw new Error(
+          `Native relationship verification failed (${relationships.missing.length} missing, ${relationships.violations.length} violation(s)).`,
+        );
+      }
+      console.log(`[Database] Verified ${relationships.installed} native foreign-key relationships.`);
 
     } catch (error) {
       console.error("[Database] Failed to connect to SQLite or run migrations:", error);
@@ -588,7 +401,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     const values: InsertUser = {
       id: user.id,
       name: user.name ?? null,
-      email: user.email ?? null,
+      email: user.email ? normalizeAccountEmail(user.email) : null,
       loginMethod: user.loginMethod ?? null,
       lastSignedIn: user.lastSignedIn ?? new Date(),
       role: user.role ?? (user.id === ENV.ownerId ? 'admin' : 'user'),
@@ -903,8 +716,8 @@ export async function calculateResponseRate(lawyerId: string): Promise<number> {
   const lawyer = await db.select().from(lawyers).where(eq(lawyers.id, lawyerId)).limit(1);
   if (!lawyer.length) return 0;
   
-  const totalOutreaches = parseInt(lawyer[0].totalOutreaches || "0");
-  const totalResponses = parseInt(lawyer[0].totalResponses || "0");
+  const totalOutreaches = lawyer[0].totalOutreaches ?? 0;
+  const totalResponses = lawyer[0].totalResponses ?? 0;
   
   if (totalOutreaches === 0) return -1; // -1 indicates new lawyer (no history)
   
@@ -930,9 +743,8 @@ export async function calculateAverageResponseTime(lawyerId: string): Promise<nu
   
   if (outreaches.length === 0) return null;
   
-  const totalHours = outreaches.reduce((sum, o) => {
-    return sum + parseInt(o.responseTimeHours || "0");
-  }, 0);
+  const totalHours = outreaches.reduce((sum, outreach) =>
+    sum + (outreach.responseTimeHours ?? 0), 0);
   
   return totalHours / outreaches.length;
 }
@@ -948,8 +760,8 @@ export async function calculateAcceptanceRate(lawyerId: string): Promise<number>
   const lawyer = await db.select().from(lawyers).where(eq(lawyers.id, lawyerId)).limit(1);
   if (!lawyer.length) return 0;
   
-  const totalResponses = parseInt(lawyer[0].totalResponses || "0");
-  const totalAcceptances = parseInt(lawyer[0].totalAcceptances || "0");
+  const totalResponses = lawyer[0].totalResponses ?? 0;
+  const totalAcceptances = lawyer[0].totalAcceptances ?? 0;
   
   if (totalResponses === 0) return 0;
   
@@ -985,10 +797,10 @@ export async function updateLawyerStatistics(lawyerId: string): Promise<void> {
   // Update lawyer record
   await db.update(lawyers)
     .set({
-      totalOutreaches: totalOutreaches.length.toString(),
-      totalResponses: responses.length.toString(),
-      totalAcceptances: acceptances.length.toString(),
-      averageResponseTimeHours: avgResponseTime?.toString() || null,
+      totalOutreaches: totalOutreaches.length,
+      totalResponses: responses.length,
+      totalAcceptances: acceptances.length,
+      averageResponseTimeHours: avgResponseTime,
       updatedAt: new Date(),
     })
     .where(eq(lawyers.id, lawyerId));
@@ -1005,8 +817,8 @@ export async function checkPermanentFilter(lawyerId: string): Promise<boolean> {
   const lawyer = await db.select().from(lawyers).where(eq(lawyers.id, lawyerId)).limit(1);
   if (!lawyer.length) return false;
   
-  const totalOutreaches = parseInt(lawyer[0].totalOutreaches || "0");
-  const totalResponses = parseInt(lawyer[0].totalResponses || "0");
+  const totalOutreaches = lawyer[0].totalOutreaches ?? 0;
+  const totalResponses = lawyer[0].totalResponses ?? 0;
   
   // If 3+ contacts with 0 responses, permanently filter
   if (totalOutreaches >= 3 && totalResponses === 0) {
@@ -1036,7 +848,7 @@ export function calculateNewMatchScore(lawyer: any, distanceKm: number): number 
   let score = 0;
   
   // 1. Case-load Score (50 points max)
-  const caseLoad = parseInt(lawyer.caseLoad || "999");
+  const caseLoad = typeof lawyer.caseLoad === "number" ? lawyer.caseLoad : 999;
   if (caseLoad <= 10) score += 50;
   else if (caseLoad <= 20) score += 30;
   else if (caseLoad <= 30) score += 10;
@@ -1053,7 +865,9 @@ export function calculateNewMatchScore(lawyer: any, distanceKm: number): number 
   // else 0 points
   
   // 3. Average Response Time Score (30 points max)
-  const avgResponseTime = parseFloat(lawyer.averageResponseTimeHours || "999");
+  const avgResponseTime = typeof lawyer.averageResponseTimeHours === "number"
+    ? lawyer.averageResponseTimeHours
+    : 999;
   if (avgResponseTime <= 48) score += 30;
   else if (avgResponseTime <= 168) score += 20; // 7 days
   else if (avgResponseTime <= 336) score += 10; // 14 days
@@ -1073,7 +887,7 @@ export function calculateNewMatchScore(lawyer: any, distanceKm: number): number 
   // else 0 points
   
   // 6. Years Practicing Score (10 points max)
-  const yearsExp = parseInt(lawyer.experienceYears || "0");
+  const yearsExp = typeof lawyer.experienceYears === "number" ? lawyer.experienceYears : 0;
   if (yearsExp >= 10) score += 10;
   else if (yearsExp >= 5) score += 5;
   else if (yearsExp >= 2) score += 2;
@@ -1086,8 +900,8 @@ export function calculateNewMatchScore(lawyer: any, distanceKm: number): number 
  * Synchronous helper to calculate response rate from lawyer object
  */
 function calculateResponseRateSync(lawyer: any): number {
-  const totalOutreaches = parseInt(lawyer.totalOutreaches || "0");
-  const totalResponses = parseInt(lawyer.totalResponses || "0");
+  const totalOutreaches = typeof lawyer.totalOutreaches === "number" ? lawyer.totalOutreaches : 0;
+  const totalResponses = typeof lawyer.totalResponses === "number" ? lawyer.totalResponses : 0;
   
   if (totalOutreaches === 0) return -1; // New lawyer
   
@@ -1098,8 +912,8 @@ function calculateResponseRateSync(lawyer: any): number {
  * Synchronous helper to calculate acceptance rate from lawyer object
  */
 function calculateAcceptanceRateSync(lawyer: any): number {
-  const totalResponses = parseInt(lawyer.totalResponses || "0");
-  const totalAcceptances = parseInt(lawyer.totalAcceptances || "0");
+  const totalResponses = typeof lawyer.totalResponses === "number" ? lawyer.totalResponses : 0;
+  const totalAcceptances = typeof lawyer.totalAcceptances === "number" ? lawyer.totalAcceptances : 0;
   
   if (totalResponses === 0) return 0;
   
@@ -1136,4 +950,3 @@ export function passesMandatoryFilters(lawyer: any): boolean {
   
   return true;
 }
-

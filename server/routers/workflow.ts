@@ -1,87 +1,23 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { nanoid } from "nanoid";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { assertCaseOwnership } from "../_core/authz";
+import { assertCaseAccess, assertCaseCapability, assertCaseOwnership } from "../_core/authz";
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
-import { createAuditLog, AUDIT_ACTIONS, writeAuditLogOrThrow } from "../audit";
+import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "../audit";
 import { createNotification } from "../notifications";
-import { getFlag } from "../featureFlags";
+import { isOutreachSendingEnabled } from "../featureFlags";
 import { assertNotEmergencyStopped } from "../systemState";
 import { assertOutreachTransition } from "../stateMachines";
-import { cases as casesTable, outreachStatus, lawyers } from '../schema';
-import { eq, and, inArray, isNull } from "drizzle-orm";
-import { findCaseLawyersWithOfficialDirectory } from "../matching";
-import { getWorkflowPreferences } from "../workflowPreferences";
+import { caseShares, cases as casesTable, outreachStatus, lawyers } from '../schema';
+import { eq, and, inArray, isNull, or, sql } from "drizzle-orm";
 import { approveOutreachMessage, buildOutreachMessage, readApprovedOutreachMessage, readOutreachMetadata } from "../outreachApproval";
-import { compareAndSetCaseStatusInTransaction } from "../caseTransitions";
+import { initiateCaseOutreach, prepareOutreachDraftRows } from "../outreachInitiation";
 
 // Phase 026 — outreach review/approval states.
 const OUTREACH_PENDING = "PendingApproval";
 const OUTREACH_APPROVED = "Approved";
 const OUTREACH_REJECTED = "Rejected";
-
-async function discoverOutreachDraftRows(caseId: string, maxResults: number, userId: string) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-
-  let matches: Array<{ id: string; name: string }>;
-  let directoryStatus = "not_applicable";
-  try {
-    const result = await findCaseLawyersWithOfficialDirectory(caseId, { maxResults, sortBy: "score" });
-    matches = result.lawyers;
-    directoryStatus = result.directory.status;
-  } catch (error) {
-    return {
-      matches: [],
-      directoryStatus,
-      approvalMode: (await getWorkflowPreferences(userId)).messageApprovalMode,
-      reason: error instanceof Error ? error.message : "No matches",
-    };
-  }
-
-  const preferences = await getWorkflowPreferences(userId);
-  return {
-    matches,
-    directoryStatus,
-    approvalMode: preferences.messageApprovalMode,
-    reason: matches.length === 0 ? "No matching lawyers are available for an outreach draft." : undefined,
-  };
-}
-
-function insertOutreachDraftRows(db: any, caseId: string, matches: Array<{ id: string; name: string }>): number {
-  let created = 0;
-  for (const match of matches) {
-    const result = db.insert(outreachStatus).values({
-      id: nanoid(),
-      caseId,
-      lawyerId: match.id,
-      status: OUTREACH_PENDING,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    } as any).onConflictDoNothing().run();
-    if (Number(result?.changes ?? 0) === 1) created += 1;
-  }
-  return created;
-}
-
-async function prepareOutreachDraftRows(caseId: string, maxResults: number, userId: string) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const plan = await discoverOutreachDraftRows(caseId, maxResults, userId);
-  const created = plan.matches.length > 0
-    ? db.transaction((tx: any) => insertOutreachDraftRows(tx, caseId, plan.matches))
-    : 0;
-  return {
-    created,
-    candidates: plan.matches.length,
-    directoryStatus: plan.directoryStatus,
-    approvalMode: plan.approvalMode,
-    automaticallyApproved: 0,
-    reason: plan.reason,
-  };
-}
 
 export const workflowRouter = router({
   /**
@@ -90,14 +26,13 @@ export const workflowRouter = router({
    * Phases 008/017/018/019:
    *  - protected + case-ownership (008),
    *  - idempotent: existing drafts are not duplicated, and an already-Outreach
-   *    case reports `alreadyInitiated` while still filling any missing drafts (017),
+   *    case reports `alreadyInitiated` without resetting its reviewed drafts (017),
    *  - rate-limited per user (018),
    *  - audited (019).
    *
-   * NOTE: this only advances the case status. It does NOT contact any lawyer —
-   * the outreach draft, human-approval gate, and real send are Phase 026 and are
-   * intentionally not wired here (safety boundary: no third party is contacted
-   * without approval).
+   * This atomically creates PendingApproval drafts and advances the case. It
+   * does NOT contact any lawyer: approval and sending remain separate explicit
+   * actions, so no third party is contacted without review.
    */
   initiateOutreach: protectedProcedure
     .input(z.object({ caseId: z.string(), maxResults: z.number().int().min(1).max(25).optional().default(5) }))
@@ -106,67 +41,11 @@ export const workflowRouter = router({
       await assertNotEmergencyStopped();
       enforceRateLimit(ctx, "outreach", RATE_LIMITS.caseCreate);
 
-      const db = await getDb();
-      if (!db) throw new Error("Database not available");
-
-      const plan = await discoverOutreachDraftRows(input.caseId, input.maxResults, ctx.user.id);
-      const [snapshot] = await db
-        .select({ ownerId: casesTable.userId, status: casesTable.status })
-        .from(casesTable)
-        .where(eq(casesTable.id, input.caseId))
-        .limit(1);
-      if (!snapshot) throw new Error("Case not found");
-      const alreadyInitiated = snapshot.status === "Outreach";
-
-      if (plan.matches.length === 0) {
-        await createAuditLog({
-          userId: ctx.user.id,
-          action: AUDIT_ACTIONS.OUTREACH_INITIATED,
-          entityType: "case",
-          entityId: input.caseId,
-          details: { from: snapshot.status, to: snapshot.status, draftsPrepared: 0, statusChanged: false, reason: plan.reason },
-        });
-        return {
-          success: false,
-          alreadyInitiated,
-          statusChanged: false,
-          created: 0,
-          candidates: 0,
-          directoryStatus: plan.directoryStatus,
-          approvalMode: plan.approvalMode,
-          automaticallyApproved: 0,
-          reason: plan.reason,
-        } as const;
-      }
-
-      let created = 0;
-      db.transaction((tx: any) => {
-        compareAndSetCaseStatusInTransaction(tx, {
-          caseId: input.caseId,
-          ownerId: snapshot.ownerId,
-          expectedStatus: snapshot.status,
-          nextStatus: "Outreach",
-          audit: {
-            userId: ctx.user.id,
-            action: AUDIT_ACTIONS.OUTREACH_INITIATED,
-            entityType: "case",
-            entityId: input.caseId,
-            details: { from: snapshot.status, to: "Outreach", draftsPrepared: plan.matches.length, approvalMode: plan.approvalMode },
-          },
-        });
-        created = insertOutreachDraftRows(tx, input.caseId, plan.matches);
+      return initiateCaseOutreach({
+        caseId: input.caseId,
+        userId: ctx.user.id,
+        maxResults: input.maxResults,
       });
-
-      return {
-        success: true,
-        alreadyInitiated,
-        statusChanged: !alreadyInitiated,
-        created,
-        candidates: plan.matches.length,
-        directoryStatus: plan.directoryStatus,
-        approvalMode: plan.approvalMode,
-        automaticallyApproved: 0,
-      } as const;
     }),
 
   /**
@@ -186,15 +65,6 @@ export const workflowRouter = router({
       await assertNotEmergencyStopped(); // Phase 104 — operator kill switch
       enforceRateLimit(ctx, "outreach-prepare", RATE_LIMITS.aiAnalysis);
       const drafts = await prepareOutreachDraftRows(input.caseId, input.maxResults, ctx.user.id);
-
-      await createAuditLog({
-        userId: ctx.user.id,
-        action: AUDIT_ACTIONS.OUTREACH_INITIATED,
-        entityType: "case",
-        entityId: input.caseId,
-        details: { draftsPrepared: drafts.candidates, approvalMode: drafts.approvalMode },
-      });
-
       return { success: true, ...drafts };
     }),
 
@@ -212,7 +82,19 @@ export const workflowRouter = router({
       const ownCases = await db
         .select({ id: casesTable.id, clientName: casesTable.clientName })
         .from(casesTable)
-        .where(eq(casesTable.userId, ctx.user.id));
+        .where(or(
+          eq(casesTable.userId, ctx.user.id),
+          sql`${casesTable.id} IN (
+            SELECT ${caseShares.caseId}
+            FROM ${caseShares}
+            WHERE ${caseShares.memberId} = ${ctx.user.id}
+              AND ${caseShares.status} = 'accepted'
+              AND EXISTS (
+                SELECT 1 FROM json_each(${caseShares.capabilities})
+                WHERE value = 'outreach.approve'
+              )
+          )`,
+        ));
       const allowed = new Set(ownCases.map((c) => c.id));
       const caseIds = input?.caseId
         ? (allowed.has(input.caseId) ? [input.caseId] : [])
@@ -261,7 +143,7 @@ export const workflowRouter = router({
       db.transaction((tx: any) => {
         for (const draft of prepared) applyDraftStatusInTransaction(tx, ctx.user.id, draft);
       });
-      for (const draft of prepared) await notifyDraftStatus(ctx.user.id, draft.newStatus);
+      for (const draft of prepared) await notifyDraftStatus(ctx.user.id, draft);
       return { success: true as const, approved: prepared.length, sent: false as const };
     }),
 
@@ -329,10 +211,10 @@ export const workflowRouter = router({
           .limit(1)
       )[0];
       if (!row || !row.caseId) throw new Error("Outreach draft not found");
-      await assertCaseOwnership(row.caseId, ctx.user.id);
+      await assertCaseAccess(row.caseId, ctx.user.id);
 
       const caseRow = (await db.select().from(casesTable).where(eq(casesTable.id, row.caseId)).limit(1))[0];
-      const sendEnabled = await getFlag("outreach.send.enabled");
+      const sendEnabled = await isOutreachSendingEnabled();
       const approvedMessage = readApprovedOutreachMessage(row.metadata, row.id, row.caseId);
       const message = approvedMessage ?? buildOutreachMessage({
         outreachId: row.id,
@@ -363,6 +245,8 @@ export const workflowRouter = router({
 
 interface PreparedDraftStatus {
   outreachId: string;
+  caseId: string;
+  lawyerId: string | null;
   previousStatus: string | null;
   newStatus: string;
   metadata: string | null;
@@ -383,7 +267,7 @@ async function prepareDraftStatus(
   )[0];
   if (!row || !row.caseId) throw new Error("Outreach draft not found");
 
-  await assertCaseOwnership(row.caseId, userId);
+  await assertCaseCapability(row.caseId, userId, "outreach.approve");
   assertOutreachTransition(row.status ?? null, newStatus);
   const updatedAt = new Date();
   let metadata = row.metadata;
@@ -417,6 +301,8 @@ async function prepareDraftStatus(
 
   return {
     outreachId,
+    caseId: row.caseId,
+    lawyerId: row.lawyerId ?? null,
     previousStatus: row.status ?? null,
     newStatus,
     metadata,
@@ -447,14 +333,19 @@ function applyDraftStatusInTransaction(tx: any, userId: string, draft: PreparedD
   });
 }
 
-async function notifyDraftStatus(userId: string, newStatus: string) {
+async function notifyDraftStatus(userId: string, draft: PreparedDraftStatus) {
   await createNotification({
     userId,
-    title: newStatus === OUTREACH_APPROVED ? "Outreach draft approved" : "Outreach draft rejected",
+    kind: "case_status_change",
+    title: draft.newStatus === OUTREACH_APPROVED ? "Outreach draft approved" : "Outreach draft rejected",
     body:
-      newStatus === OUTREACH_APPROVED
+      draft.newStatus === OUTREACH_APPROVED
         ? "The draft is marked ready to send. No message has been sent yet."
         : "The draft was rejected and will not be sent.",
+    caseId: draft.caseId,
+    lawyerId: draft.lawyerId ?? undefined,
+    metadata: { outreachId: draft.outreachId, status: draft.newStatus },
+    dedupKey: `outreach-draft-status:${draft.outreachId}:${draft.newStatus}`,
   });
 }
 
@@ -465,11 +356,11 @@ async function setDraftStatus(userId: string, outreachId: string, newStatus: str
   db.transaction((tx: any) => {
     applyDraftStatusInTransaction(tx, userId, prepared);
   });
-  await notifyDraftStatus(userId, newStatus);
+  await notifyDraftStatus(userId, prepared);
 
   // Approving marks the draft ready-to-send; actual transmission is a later
   // phase and additionally gated by the `outreach.send.enabled` feature flag
   // (default OFF). No lawyer is contacted here regardless.
-  const sendEnabled = await getFlag("outreach.send.enabled");
+  const sendEnabled = await isOutreachSendingEnabled();
   return { success: true, status: newStatus, sent: false as const, sendEnabled };
 }

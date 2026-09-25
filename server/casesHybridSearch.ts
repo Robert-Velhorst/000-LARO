@@ -1,9 +1,11 @@
-import { and, eq, like, or } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import { getDb } from "./db";
 import { cases } from "./schema";
-import { invokeLLM, isLLMProviderConfigured, isLocalLLMProvider } from "./llm";
+import { invokeLLM, isLLMProviderConfigured } from "./llm";
 import { globalSearch } from "./globalSearch";
-import { getWorkflowPreferences } from "./workflowPreferences";
+import { documentContentAuthorizationToken, getWorkflowPreferences } from "./workflowPreferences";
+import { isLLMUsageLimitError } from "./llmUsageBudget";
+import { literalSearchCondition, normalizeLiteralSearchText } from "./literalSearch";
 
 const STOP = new Set([
   "the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "my", "is", "are", "was", "were",
@@ -26,7 +28,8 @@ async function expandCaseSearchTerms(query: string, userId: string): Promise<str
 
   const preferences = await getWorkflowPreferences(userId);
   const provider = preferences.analysisProvider === "local" ? null : preferences.analysisProvider;
-  const hasLlm = Boolean(provider && (isLocalLLMProvider(provider) || preferences.shareRawDocumentContent) && isLLMProviderConfigured(provider));
+  const authorizationToken = provider ? documentContentAuthorizationToken(preferences, provider, userId) : null;
+  const hasLlm = Boolean(provider && authorizationToken && isLLMProviderConfigured(provider));
 
   if (!hasLlm) {
     return tokenizeHeuristic(trimmed);
@@ -35,6 +38,12 @@ async function expandCaseSearchTerms(query: string, userId: string): Promise<str
   try {
     const res = await invokeLLM({
       provider: provider!,
+      beforeDispatch: async () => {
+        const currentPreferences = await getWorkflowPreferences(userId);
+        return Boolean(provider && authorizationToken &&
+          documentContentAuthorizationToken(currentPreferences, provider, userId) === authorizationToken);
+      },
+      budget: { ownerId: userId, operation: "hybrid_search" },
       messages: [
         {
           role: "system",
@@ -59,7 +68,8 @@ async function expandCaseSearchTerms(query: string, userId: string): Promise<str
     if (Array.isArray(parsed?.terms) && parsed.terms.length) {
       return [...new Set([trimmed, ...parsed.terms.map((t) => String(t).trim()).filter(Boolean)])].slice(0, 16);
     }
-  } catch {
+  } catch (error) {
+    if (isLLMUsageLimitError(error)) throw error;
     /* heuristic fallback */
   }
   return tokenizeHeuristic(trimmed);
@@ -76,16 +86,13 @@ export async function hybridCaseSearch(query: string, userId: string): Promise<s
   const db = await getDb();
   if (db) {
     const termConditions = terms
-      .map((term) => term.replace(/[%_]/g, "").trim())
-      .filter((term) => term.length >= 2)
-      .map((term) => {
-        const pattern = `%${term}%`;
-        return or(
-          like(cases.clientName, pattern),
-          like(cases.caseType, pattern),
-          like(cases.caseSummary, pattern),
-        );
-      });
+      .map(normalizeLiteralSearchText)
+      .filter(Boolean)
+      .map((term) => or(
+        literalSearchCondition(cases.clientName, term),
+        literalSearchCondition(cases.caseType, term),
+        literalSearchCondition(cases.caseSummary, term),
+      ));
     if (termConditions.length) {
       try {
         const rows = await db

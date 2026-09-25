@@ -89,8 +89,9 @@ npm run dist:win   # Windows portable build via electron-builder
 ## 🔒 Security & Connectivity (current state, honestly)
 
 - **Auth**: email/password (bcrypt) + JWT session cookie for the tRPC API.
-- **OAuth 2.0**: Google (Gmail/Drive) and Microsoft (Outlook) via authorization-code
-  flow; Trello token flow. Slack and the "enhanced" connectors are currently dummies.
+- **OAuth 2.0**: Google (Gmail/Drive) and Microsoft (Outlook) authorization-code
+  primitives. Trello and Telegram connector stacks are retired and have no
+  mounted credential or import surface; Slack remains unavailable.
 - **Local persistence**: SQLite in `userData`. (No MySQL instance exists.)
 - **Known security gaps** (tracked, not yet fixed — see `docs/phase-audit.md` §4/§7):
   default `JWT_SECRET`/`COOKIE_SECRET`, a `local-default` bearer backdoor, IDOR on

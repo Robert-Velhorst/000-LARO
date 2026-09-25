@@ -2,10 +2,10 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { router, protectedProcedure } from "../_core/trpc";
 import { getDb } from "../db";
-import { assertCaseOwnership } from "../_core/authz";
+import { assertCaseAccess, assertCaseOwnership } from "../_core/authz";
 import { enforceRateLimit, RATE_LIMITS } from "../rateLimit";
 import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "../audit";
-import { cases as casesTable, outreachStatus, lawyers, evidence, systemConfig } from '../schema';
+import { caseShares, cases as casesTable, outreachStatus, lawyers, evidence, systemConfig } from '../schema';
 import { eq, desc, asc, and, or, inArray, gte, sql, type SQL } from "drizzle-orm";
 import { sanitizeLegalAreas } from "../legalAreasValidator";
 import { classifyLegalAreas } from "../classification";
@@ -17,6 +17,9 @@ import { collectManagedStorageKeys } from "../managedStorage";
 import { enqueueStorageDeletions, processQueuedStorageDeletions } from "../storageDeletionQueue";
 import { emitRealtimeDataChange } from "../realtime";
 import { encodeCsvRows } from "../../shared/csv";
+import { inspectCaseZipCompleteness, projectEvidenceForExport } from "../evidenceExport";
+import { getCaseAuthorization } from "../teams";
+import { literalSearchCondition } from "../literalSearch";
 
 export const casesRouter = router({
   // Phase 022 — search, filters, sorting, pagination. All server-side and
@@ -29,7 +32,7 @@ export const casesRouter = router({
       status: z.string().optional(),
       statusGroup: z.enum(["open", "in_progress", "waiting_for_lawyer", "closed"]).optional(),
       urgency: z.enum(["Low", "Medium", "High"]).optional(),
-      search: z.string().optional(),
+      search: z.string().max(500).optional(),
       matchingIds: z.array(z.string()).max(500).optional(),
       legalArea: z.string().max(200).optional(),
       createdWithin: z.enum(["today", "week", "month", "year"]).optional(),
@@ -45,7 +48,15 @@ export const casesRouter = router({
       const limit = input?.limit || 10;
       const offset = (page - 1) * limit;
 
-      const conditions: SQL[] = [eq(casesTable.userId, userId)];
+      const conditions: SQL[] = [or(
+        eq(casesTable.userId, userId),
+        sql`${casesTable.id} IN (
+          SELECT ${caseShares.caseId}
+          FROM ${caseShares}
+          WHERE ${caseShares.memberId} = ${userId}
+            AND ${caseShares.status} = 'accepted'
+        )`,
+      )!];
       if (input?.status) conditions.push(eq(casesTable.status, input.status));
       if (input?.statusGroup) {
         const groups = {
@@ -58,8 +69,11 @@ export const casesRouter = router({
       }
       if (input?.urgency) conditions.push(eq(casesTable.urgency, input.urgency));
       if (input?.search?.trim()) {
-        const q = `%${input.search.trim().toLowerCase()}%`;
-        const keyword = sql`(lower(${casesTable.clientName}) LIKE ${q} OR lower(${casesTable.caseSummary}) LIKE ${q} OR lower(${casesTable.caseType}) LIKE ${q})`;
+        const keyword = or(
+          literalSearchCondition(casesTable.clientName, input.search),
+          literalSearchCondition(casesTable.caseSummary, input.search),
+          literalSearchCondition(casesTable.caseType, input.search),
+        )!;
         // The owner condition still applies to every expanded result before pagination.
         conditions.push(input.matchingIds?.length ? or(keyword, inArray(casesTable.id, input.matchingIds))! : keyword);
       }
@@ -72,8 +86,11 @@ export const casesRouter = router({
           "real-estate": ["real estate", "property", "huur", "tenancy", "huurrecht", "landlord"],
         };
         conditions.push(or(...(aliases[area] || [area]).map(term => {
-          const pattern = `%${term}%`;
-          return sql`(lower(${casesTable.caseType}) LIKE ${pattern} OR lower(${casesTable.caseSummary}) LIKE ${pattern} OR lower(${casesTable.legalAreas}) LIKE ${pattern})`;
+          return or(
+            literalSearchCondition(casesTable.caseType, term),
+            literalSearchCondition(casesTable.caseSummary, term),
+            literalSearchCondition(casesTable.legalAreas, term),
+          )!;
         }))!);
       }
       if (input?.createdWithin) {
@@ -121,7 +138,13 @@ export const casesRouter = router({
     .query(async ({ input: caseId, ctx }) => {
       const db = await getDb();
       if (!db) return null;
-      const result = await db.select().from(casesTable).where(and(eq(casesTable.id, caseId), eq(casesTable.userId, ctx.user.id))).limit(1);
+      try {
+        await assertCaseAccess(caseId, ctx.user.id);
+      } catch (error) {
+        if (error instanceof TRPCError && error.code === "FORBIDDEN") return null;
+        throw error;
+      }
+      const result = await db.select().from(casesTable).where(eq(casesTable.id, caseId)).limit(1);
       if (!result.length) return null;
       return result[0];
     }),
@@ -168,8 +191,12 @@ export const casesRouter = router({
 
       await createNotification({ // Phase 027
         userId,
+        kind: "case_status_change",
         title: `Case created for ${input.clientName}`,
         body: `Classified as: ${classification.areas.join(", ")}. Review matched lawyers next.`,
+        caseId,
+        metadata: { status: "Matching", legalAreas: classification.areas },
+        dedupKey: `case-created:${caseId}`,
       });
       emitRealtimeDataChange(userId, { scope: "case", caseId });
 
@@ -182,7 +209,7 @@ export const casesRouter = router({
   export: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id);
+      await assertCaseAccess(input.caseId, ctx.user.id);
       const db = await getDb();
       if (!db) throw new Error("Database not available");
 
@@ -196,7 +223,7 @@ export const casesRouter = router({
         format: "laro-case-export/v1",
         exportedAt: new Date().toISOString(),
         case: caseRows[0] ?? null,
-        evidence: evidenceRows,
+        evidence: evidenceRows.map(projectEvidenceForExport),
         outreach: outreachRows,
       };
     }),
@@ -206,13 +233,25 @@ export const casesRouter = router({
     .input(z.object({ caseId: z.string() }))
     .mutation(async ({ input, ctx }) => {
       enforceRateLimit(ctx, "evidence-export", RATE_LIMITS.evidenceExport);
-      await assertCaseOwnership(input.caseId, ctx.user.id);
+      await assertCaseAccess(input.caseId, ctx.user.id);
+      const authorization = await getCaseAuthorization(input.caseId, ctx.user.id);
+      const readiness = await inspectCaseZipCompleteness(authorization!.ownerId, input.caseId);
+      if (readiness.completeness === "failed") {
+        const details = readiness.omissions
+          .map((omission) => `${omission.evidenceId} (${omission.expectedFilename}): ${omission.reason}`)
+          .join("; ");
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Evidence package is incomplete: ${details}`,
+        });
+      }
       const { issueCaseZipDownloadTicket } = await import("../evidenceExport");
-      const ticket = issueCaseZipDownloadTicket(ctx.user.id, input.caseId);
+      const ticket = issueCaseZipDownloadTicket(ctx.user.id, input.caseId, authorization!.ownerId);
       return {
         format: "laro-case-zip/v2",
         filename: `case-${input.caseId}-evidence.zip`,
         url: `/api/case-export/${ticket}.zip`,
+        completeness: "complete" as const,
       };
     }),
 
@@ -444,7 +483,7 @@ export const casesRouter = router({
   outreachProgress: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id); // Phase 008
+      await assertCaseAccess(input.caseId, ctx.user.id); // owner or accepted case share
       const db = await getDb();
       if (!db) return { legalAreas: [], overallStats: {} };
 
@@ -476,8 +515,8 @@ export const casesRouter = router({
       );
       const totalResponses = responded.length;
       const times = rows
-        .map((r) => parseFloat(r.responseTimeHours || ""))
-        .filter((n) => !Number.isNaN(n));
+        .map((row) => row.responseTimeHours)
+        .filter((value): value is number => value !== null);
       const avgHours = times.length > 0 ? Math.round(times.reduce((a, b) => a + b, 0) / times.length) : null;
 
       return {
@@ -499,7 +538,7 @@ export const casesRouter = router({
   getOutreachByCaseId: protectedProcedure
     .input(z.string())
     .query(async ({ input: caseId, ctx }) => {
-      await assertCaseOwnership(caseId, ctx.user.id); // Phase 008
+      await assertCaseAccess(caseId, ctx.user.id); // owner or accepted case share
       const db = await getDb();
       if (!db) return [];
 
@@ -528,7 +567,7 @@ export const casesRouter = router({
   progress: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id); // Phase 008
+      await assertCaseAccess(input.caseId, ctx.user.id); // owner or accepted case share
       const empty = {
         caseId: input.caseId,
         caseTitle: "",

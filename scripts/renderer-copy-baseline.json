@@ -1,0 +1,198 @@
+{
+  "src/renderer/App.tsx": {
+    "count": 6,
+    "digest": "286a7a0ac51a6a677b839abc6785938fa31faf845848cfb7b3397f3301c717e7"
+  },
+  "src/renderer/DashboardApp.tsx": {
+    "count": 2,
+    "digest": "3edc817b04d9eb0cb37ad15f10cf63d6218078f957dc641c2ecccfbd2a0f5e6a"
+  },
+  "src/renderer/components/ActionExecutionEvidence.tsx": {
+    "count": 37,
+    "digest": "807c96c26b2c5b74c9d9460c0e775f9d5c1aaadec4fc4d3d0d74351b44373387"
+  },
+  "src/renderer/components/Admin.tsx": {
+    "count": 45,
+    "digest": "7daa241664fb848b70dc156163395d1e03e0ba564873fe58bf89fe1917b413cc"
+  },
+  "src/renderer/components/AuthPage.tsx": {
+    "count": 14,
+    "digest": "08057fcc1bc57f27980469cde3ed6ae0205f861eaaeaa03a31e5cd5139371c43"
+  },
+  "src/renderer/components/AutomatedDocumentAnalysis.tsx": {
+    "count": 52,
+    "digest": "9735648d2db0357df9aba60c7f24d830e6490cc42e02e0060449591d1f38a59a"
+  },
+  "src/renderer/components/BulkCaseImport.tsx": {
+    "count": 24,
+    "digest": "2f53a533a13817d31f14dd3737a5e429a53a73cfca0615a44a232dd7fce3e30a"
+  },
+  "src/renderer/components/BulkEvidenceUpload.tsx": {
+    "count": 13,
+    "digest": "69600e57f26aef22c46ba6dd770a5e21b201d7e6e97f33a5f54f4fd4d8800ef5"
+  },
+  "src/renderer/components/CaseActionManager.tsx": {
+    "count": 31,
+    "digest": "07a990c8faddb6f42a12dbe4192a5b78fcf32151bc0222fd6746308d52a40676"
+  },
+  "src/renderer/components/CaseCreationWizard.tsx": {
+    "count": 20,
+    "digest": "b72b3c8dc67963908a9a2b55451141236d16244cfc7f413ebd60cf819bec999a"
+  },
+  "src/renderer/components/CaseStatusWorkflow.tsx": {
+    "count": 4,
+    "digest": "dd7de7a1847900394221c22357e2046135cfaff14b0d457a8ec60d5c066fffdd"
+  },
+  "src/renderer/components/CaseTimeline.tsx": {
+    "count": 22,
+    "digest": "6478cd93415b20e588e365d04ad889ec085d38da8a8314ec700f086fa1fea4cf"
+  },
+  "src/renderer/components/ChatWidget.tsx": {
+    "count": 32,
+    "digest": "c9a51d11b9698c431ee9e86b9060abc02d1b1364a5ba28a598019a8ea64caa52"
+  },
+  "src/renderer/components/CollectionMonitoringDashboard.tsx": {
+    "count": 25,
+    "digest": "b8f5d204be49ecd710a33a3897b2179c7404e73a5232214bd301e06ec6ee0948"
+  },
+  "src/renderer/components/CommunicationHub.tsx": {
+    "count": 37,
+    "digest": "11223a806294ea9826ec4dd072b20bf221b2400f6985ff43d6f85ca902ddad12"
+  },
+  "src/renderer/components/ConnectionStatus.tsx": {
+    "count": 6,
+    "digest": "b0d7cf284d9133d1f2e613952d50e8756f0d71c90f88d3367db009e043bd8ae7"
+  },
+  "src/renderer/components/EnhancedEvidenceUpload.tsx": {
+    "count": 23,
+    "digest": "c0150e34c7cb7720d03155c8cfb01ee19d33cc603e74519ad93ef3aebfa93350"
+  },
+  "src/renderer/components/Evidence.tsx": {
+    "count": 52,
+    "digest": "933e9f629aaa3a1d64451669a86750131fb36bb55561388a0c6b6990b9ead217"
+  },
+  "src/renderer/components/EvidenceCollection.tsx": {
+    "count": 9,
+    "digest": "a910308b19100cef0b56b3b2de16ad3d84de445874a557166f0689563136d38f"
+  },
+  "src/renderer/components/EvidenceConnectionsCard.tsx": {
+    "count": 41,
+    "digest": "32950f6e554cb743dcc7a777f05b90792a946c9092769b70e598fdcf58d6be7f"
+  },
+  "src/renderer/components/EvidenceExportUI.tsx": {
+    "count": 13,
+    "digest": "c503b68f0b117cbf2bedb0e4d72480b585dbf4bac0b8ce4ce7ec40bb854cda93"
+  },
+  "src/renderer/components/EvidenceSummaryDashboard.tsx": {
+    "count": 32,
+    "digest": "adfaef88298b35bcc5ac737d6e84bf6d96ccc8d650c56191b27fa43253e94700"
+  },
+  "src/renderer/components/EvidenceTimelineView.tsx": {
+    "count": 24,
+    "digest": "180054259e305d390b1cd0b938ce7adb00598f601779586855db75a62af2916d"
+  },
+  "src/renderer/components/GlobalSearch.tsx": {
+    "count": 33,
+    "digest": "fee1d635c4d514809b92518d3ce8d79c4955763f60a1a2bb526342bd4b3e30ba"
+  },
+  "src/renderer/components/GoogleDriveSourceSelector.tsx": {
+    "count": 21,
+    "digest": "e52e90ad1f852be70334666c982efb77ff05f54237447eff50dcc2cadaa01d82"
+  },
+  "src/renderer/components/Help.tsx": {
+    "count": 21,
+    "digest": "a71f67cb76f43b98cde825e802065c70b75565760b39ec5b89de29afef8cdf14"
+  },
+  "src/renderer/components/Home.tsx": {
+    "count": 44,
+    "digest": "3d7c2b7ab6be393232b0c3d4f5ce9160bdecf12bb84bec04ea8742a026b9494c"
+  },
+  "src/renderer/components/InboxAssignmentControls.tsx": {
+    "count": 22,
+    "digest": "0cdf807c6e1f5f0ee1d10414a0cca2790850eaccada8111a03407c3c231e29ef"
+  },
+  "src/renderer/components/LawyerComparison.tsx": {
+    "count": 20,
+    "digest": "4d02d6b307e3ed4475ec1f3afa907f2653d69726004666c42b3febb894969ade"
+  },
+  "src/renderer/components/LawyerProfile.tsx": {
+    "count": 20,
+    "digest": "36467097386e4037a50677857e4927a7fedae54c2470ebd90057560613cecd27"
+  },
+  "src/renderer/components/Lawyers.tsx": {
+    "count": 22,
+    "digest": "9a5856058805d55d9eef2da072802a3476f068689fd6282c2a3dceecd4245340"
+  },
+  "src/renderer/components/LegalAreasSelect.tsx": {
+    "count": 4,
+    "digest": "6d5af0f20b623995b4cc861dbd721ecdd83f5493679e3651b41d83312a5f70a7"
+  },
+  "src/renderer/components/LegalDocumentGenerator.tsx": {
+    "count": 45,
+    "digest": "3972e6e8f968cef11742df323f4a715825182f1ec93b6b5e2c768292199a6a46"
+  },
+  "src/renderer/components/Messages.tsx": {
+    "count": 2,
+    "digest": "6614ce274f40d634e06fe71fe1259f331be41ce9986208faefbe13c0cc40b1ec"
+  },
+  "src/renderer/components/NotificationCenter.tsx": {
+    "count": 9,
+    "digest": "6e646735fbd76f457e4dc204c8b640b681cd4d0bf9bb2b2c79f4f88e9b40c19a"
+  },
+  "src/renderer/components/OutreachAnalytics.tsx": {
+    "count": 38,
+    "digest": "04d8a86be1f3e4a958ce450c4ff489ee58bd4f3b1224c4d1a922cadbbc9e2e90"
+  },
+  "src/renderer/components/OutreachAnalyticsView.tsx": {
+    "count": 25,
+    "digest": "b807620252e039444629c8ae6e1fecec5c358bbe18357c497a4b2e85e64ec1f8"
+  },
+  "src/renderer/components/OutreachProgressBar.tsx": {
+    "count": 9,
+    "digest": "77815db7147e4ec984fc1cc67d70f151378b1171eaf6b5bc1c373ce77c59ba10"
+  },
+  "src/renderer/components/OutreachTargetWorkspace.tsx": {
+    "count": 35,
+    "digest": "9b0f87dbaeb052ed415154a4a69879a7a8babc001871f63c70136fdc43af902d"
+  },
+  "src/renderer/components/Privacy.tsx": {
+    "count": 52,
+    "digest": "6e90dcdd643b4085065cea6af791d5d484435058423e0dcdae7715f8fbdf895f"
+  },
+  "src/renderer/components/ProgressTrackingDashboard.tsx": {
+    "count": 14,
+    "digest": "7b0410f98c260effec51255cf10726cbca09bbf117feaa1f6621496efb0a1a1e"
+  },
+  "src/renderer/components/RelevanceScoringDashboard.tsx": {
+    "count": 28,
+    "digest": "23194a406d01a13daf117ba4e8017a964d8d3083b9730b09e2c2399327f1b553"
+  },
+  "src/renderer/components/SearchResultSelection.tsx": {
+    "count": 20,
+    "digest": "a508195ca536d5f4695417b906fe453f90fbcf2ede41733d1c31b638c1306b92"
+  },
+  "src/renderer/components/SuggestedActions.tsx": {
+    "count": 32,
+    "digest": "911dd39d55a9dd9091e0b8f03e7ba8452ef6a9e1fa8d3fb89bbd33885751af92"
+  },
+  "src/renderer/components/TimelineEvents.tsx": {
+    "count": 29,
+    "digest": "688e358cc711758536614ebac0c430f38ca311fff94bcba1a4a2cef3ac3bdfe1"
+  },
+  "src/renderer/components/TimelineView.tsx": {
+    "count": 1,
+    "digest": "97e8c480248be6bd448eee10824d4d5ca06e77d07c4c8331b005f997da33d458"
+  },
+  "src/renderer/components/WorkspaceIdentity.tsx": {
+    "count": 6,
+    "digest": "f1b6cc916287564af1e4b1b497cd50285e393d1766f61d4f461945cfff7db958"
+  },
+  "src/renderer/components/WorkspaceUi.tsx": {
+    "count": 18,
+    "digest": "69873a1980b48cf342808a9f142cffa562d3bc5b2430a9da744d2b0589ac4be4"
+  },
+  "src/renderer/contexts/WebSocketContext.tsx": {
+    "count": 8,
+    "digest": "ff91dab98851dbd21d49e86700e8f829e855cce7be2b2a80e582346ad58d1329"
+  }
+}

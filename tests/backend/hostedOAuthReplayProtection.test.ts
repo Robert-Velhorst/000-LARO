@@ -14,28 +14,59 @@ describe('hosted OAuth replay protection', () => {
     process.env.GOOGLE_CLIENT_ID = 'test-client-id';
     process.env.LARO_HOSTED_ENCRYPTION_KEY = 'a'.repeat(64);
 
-    const states = new Set<string>();
+    const states = new Map<string, string>();
     vi.doMock('../../server/hostedRedis', () => ({
       getHostedRedisOAuthStateClient: async () => ({
-        set: async (key: string) => {
+        set: async (key: string, value: string) => {
           if (states.has(key)) return null;
-          states.add(key);
+          states.set(key, value);
           return 'OK';
         },
-        eval: async (_script: string, options: { keys: string[] }) => {
+        eval: async (script: string, options: { keys: string[]; arguments: string[] }) => {
           const [key] = options.keys;
-          if (!states.has(key)) return 0;
+          const raw = states.get(key);
+          if (!raw) return '';
+          const flow = JSON.parse(raw);
+          if (script.includes("flow.status ~= 'pending'")) {
+            const [startTicketHash, bindingHash, provider, flowId, now, sessionHash, loopbackRequest] = options.arguments;
+            if (flow.status !== 'pending' || flow.startTicketHash !== startTicketHash ||
+                flow.provider !== provider || flow.flowId !== flowId || flow.expiresAt <= Number(now) ||
+                (flow.initiatingSessionHash !== sessionHash && !(flow.allowLoopbackHandoff && loopbackRequest === 'true'))) return '';
+            const started = JSON.stringify({ ...flow, status: 'started', bindingHash });
+            states.set(key, started);
+            return started;
+          }
+          const [bindingHash, provider, flowId, now] = options.arguments;
+          if (flow.status !== 'started' || flow.bindingHash !== bindingHash ||
+              flow.provider !== provider || flow.flowId !== flowId || flow.expiresAt <= Number(now)) return '';
           states.delete(key);
-          return 1;
+          return raw;
         },
       }),
     }));
 
-    const { beginOAuthFlowAsync, consumeOAuthStateAsync, OAuthStateError } = await import('../../server/oauth2');
-    const url = new URL(await beginOAuthFlowAsync('gmail', 'public-user'));
-    const state = url.searchParams.get('state');
+    const {
+      activateOAuthStateAsync,
+      beginOAuthFlowAsync,
+      consumeOAuthStateAsync,
+      OAuthStateError,
+    } = await import('../../server/oauth2');
+    const startUrl = new URL(await beginOAuthFlowAsync('gmail', 'public-user', 'initiating-session-cookie'));
+    const state = startUrl.searchParams.get('state');
+    const ticket = startUrl.searchParams.get('ticket');
+    expect(startUrl.pathname).toBe('/api/oauth/gmail/start');
+    const rejectedBinding = 'r'.repeat(43);
+    await expect(activateOAuthStateAsync(
+      state!, 'gmail', ticket!, rejectedBinding, 'different-session-cookie', false,
+    )).rejects.toBeInstanceOf(OAuthStateError);
+    const bindingCookieValue = 'b'.repeat(43);
+    const authorizationUrl = await activateOAuthStateAsync(
+      state!, 'gmail', ticket!, bindingCookieValue, 'initiating-session-cookie', false,
+    );
+    expect(new URL(authorizationUrl).hostname).toBe('accounts.google.com');
 
-    await expect(consumeOAuthStateAsync(state!, 'gmail')).resolves.toMatchObject({ userId: 'public-user' });
-    await expect(consumeOAuthStateAsync(state!, 'gmail')).rejects.toBeInstanceOf(OAuthStateError);
+    await expect(consumeOAuthStateAsync(state!, 'gmail', 'x'.repeat(43))).rejects.toBeInstanceOf(OAuthStateError);
+    await expect(consumeOAuthStateAsync(state!, 'gmail', bindingCookieValue)).resolves.toMatchObject({ userId: 'public-user' });
+    await expect(consumeOAuthStateAsync(state!, 'gmail', bindingCookieValue)).rejects.toBeInstanceOf(OAuthStateError);
   });
 });

@@ -4,7 +4,7 @@ import {
   expectedDocuments,
   suspiciousPatterns,
   legalInferences,
-  caseStrengthAnalysis,
+  evidenceCoverageAnalysis,
   communications,
   timeline,
   cases,
@@ -12,8 +12,21 @@ import {
   evidenceFiles,
   emailAccounts,
 } from "./schema";
-import { eq, asc } from "drizzle-orm";
+import { eq, asc, desc } from "drizzle-orm";
 import { nanoid } from "nanoid";
+import {
+  buildGapAnalysisInputSnapshot,
+  buildEvidenceCoverage,
+  EVIDENCE_COVERAGE_CONTRACT_VERSION,
+  type EvidenceCoverageAnalysis,
+} from "./evidenceCoverage";
+
+export class GapAnalysisInputsChangedError extends Error {
+  constructor() {
+    super("The case inputs changed while the coverage review was running. Re-run the review.");
+    this.name = "GapAnalysisInputsChangedError";
+  }
+}
 
 interface TimelineEvent {
   id: string;
@@ -31,17 +44,7 @@ export interface GapAnalysisResult {
   expectedDocs: ExpectedDocument[];
   patterns: SuspiciousPattern[];
   inferences: LegalInference[];
-  caseStrength: {
-    overallScore: number;
-    directEvidenceScore: number;
-    circumstantialEvidenceScore: number;
-    legalBasisScore: number;
-    gapAnalysisImpact: number;
-    strengths: string[];
-    weaknesses: string[];
-    recommendations: string[];
-    narrative: string;
-  };
+  coverage: EvidenceCoverageAnalysis;
 }
 
 interface CommunicationGap {
@@ -114,42 +117,100 @@ export class GapDetectionService {
     const caseData = await db.select().from(cases).where(eq(cases.id, caseId)).limit(1);
     if (caseData.length === 0) throw new Error("Case not found");
     const caseInfo = caseData[0];
-
-    // Build timeline from multiple sources
-    const timelineEvents = await this.buildTimeline(caseId);
-
-    // Detect communication gaps
-    const gaps = await this.detectCommunicationGaps(caseId, timelineEvents);
-
-    // Identify expected documents based on case type
-    const expectedDocs = await this.identifyExpectedDocuments(caseId, caseInfo, timelineEvents);
-
-    // Detect suspicious patterns
-    const patterns = await this.detectSuspiciousPatterns(caseId, timelineEvents, gaps, expectedDocs);
-
-    // Generate legal inferences
-    const inferences = await this.generateLegalInferences(caseId, gaps, expectedDocs, patterns);
-
-    // Calculate case strength
-    const caseStrength = await this.calculateCaseStrength(
-      caseId,
-      timelineEvents,
-      gaps,
-      expectedDocs,
-      patterns,
-      inferences
-    );
-
-    // Save all results to database
-    await this.saveResults(caseId, gaps, expectedDocs, patterns, inferences, caseStrength);
-
-    return {
-      gaps,
-      expectedDocs,
-      patterns,
-      inferences,
-      caseStrength,
+    const inputSnapshot = await buildGapAnalysisInputSnapshot(caseId);
+    const runId = nanoid();
+    const [previousRun] = await db.select({ createdAt: evidenceCoverageAnalysis.createdAt })
+      .from(evidenceCoverageAnalysis)
+      .where(eq(evidenceCoverageAnalysis.caseId, caseId))
+      .orderBy(desc(evidenceCoverageAnalysis.createdAt), desc(evidenceCoverageAnalysis.id))
+      .limit(1);
+    const startedAt = new Date(Math.max(
+      Date.now(),
+      // SQLite's timestamp mode stores whole seconds. Advance by a full second
+      // so rapid consecutive runs still have an unambiguous newest row.
+      previousRun?.createdAt instanceof Date ? previousRun.createdAt.getTime() + 1_000 : 0,
+    ));
+    const runningRecord = {
+      contractVersion: EVIDENCE_COVERAGE_CONTRACT_VERSION,
+      contractStatus: "current" as const,
+      analysisStatus: "running" as const,
+      inputContractVersion: inputSnapshot.contractVersion,
+      caseRevision: inputSnapshot.caseRevision,
+      sourceRevision: inputSnapshot.sourceRevision,
+      inputRevision: inputSnapshot.inputRevision,
+      inputs: inputSnapshot.inputs,
+      startedAt: startedAt.toISOString(),
     };
+    await db.insert(evidenceCoverageAnalysis).values({
+      id: runId,
+      caseId,
+      data: JSON.stringify(runningRecord),
+      createdAt: startedAt,
+    });
+
+    try {
+      // Build timeline from multiple sources
+      const timelineEvents = await this.buildTimeline(caseId);
+
+      // Detect communication gaps
+      const gaps = await this.detectCommunicationGaps(caseId, timelineEvents);
+
+      // Identify expected documents based on case type
+      const expectedDocs = await this.identifyExpectedDocuments(caseId, caseInfo, timelineEvents);
+
+      // Detect suspicious patterns
+      const patterns = await this.detectSuspiciousPatterns(caseId, timelineEvents, gaps, expectedDocs);
+
+      // Generate legal inferences
+      const inferences = await this.generateLegalInferences(caseId, gaps, expectedDocs, patterns);
+
+      // Inventory exact source revisions and availability without turning counts
+      // into a legal-merit, claim-support, or outcome score.
+      const coverage = await buildEvidenceCoverage(caseId, {
+        gaps: gaps.map(({ id, context, precedingEvents }) => ({ id, context, precedingEvents })),
+        expectedDocuments: expectedDocs.map(({ id, documentType, status, reason }) => ({
+          id,
+          documentType,
+          status,
+          reason,
+        })),
+      });
+      if (coverage.inputRevision !== inputSnapshot.inputRevision) {
+        await db.update(evidenceCoverageAnalysis).set({
+          data: JSON.stringify({
+            ...runningRecord,
+            analysisStatus: "stale",
+            staleReason: "inputs_changed_during_review",
+            completedAt: new Date().toISOString(),
+          }),
+        }).where(eq(evidenceCoverageAnalysis.id, runId));
+        throw new GapAnalysisInputsChangedError();
+      }
+
+      // Save all results to database
+      await this.saveResults(caseId, runId, gaps, expectedDocs, patterns, inferences, coverage);
+
+      return {
+        gaps,
+        expectedDocs,
+        patterns,
+        inferences,
+        coverage,
+      };
+    } catch (error) {
+      if (!(error instanceof GapAnalysisInputsChangedError)) {
+        await db.update(evidenceCoverageAnalysis).set({
+          data: JSON.stringify({
+            ...runningRecord,
+            analysisStatus: "failed",
+            failureCode: "analysis_failed",
+            failureMessage: "The coverage review failed before a current result was saved.",
+            completedAt: new Date().toISOString(),
+          }),
+        }).where(eq(evidenceCoverageAnalysis.id, runId));
+      }
+      throw error;
+    }
   }
 
   /**
@@ -483,7 +544,7 @@ export class GapDetectionService {
         ]),
         legalSignificance:
           "Review the missing context and verify whether records exist elsewhere; this pattern does not establish motive or wrongdoing.",
-        confidence: "70",
+        confidence: "rule_match",
         detectedAt: new Date(),
       });
     }
@@ -497,7 +558,7 @@ export class GapDetectionService {
         description: `${missing.length} potentially relevant record(s) were not found in LARO`,
         evidenceIds: JSON.stringify(missing.map((document) => document.id)),
         legalSignificance: "Verify whether each record should exist, whether it is stored elsewhere, and whether its absence matters legally.",
-        confidence: "80",
+        confidence: "rule_match",
         detectedAt: new Date(),
       });
     }
@@ -585,132 +646,16 @@ export class GapDetectionService {
   }
 
   /**
-   * Calculate overall case strength based on evidence and gaps
-   */
-  private async calculateCaseStrength(
-    caseId: string,
-    timelineEvents: TimelineEvent[],
-    gaps: CommunicationGap[],
-    expectedDocs: ExpectedDocument[],
-    patterns: SuspiciousPattern[],
-    inferences: LegalInference[]
-  ): Promise<any> {
-    // Direct evidence score (based on documented events)
-    const documentedEvents = timelineEvents.filter((e) => e.hasDocumentation);
-    const directEvidenceScore = Math.min(100, (documentedEvents.length / 10) * 100);
-
-    // Deterministic review questions cannot establish legal merit. This score is
-    // intentionally zero until a source-verified legal analysis is available.
-    const legalBasisScore = 0;
-
-    // Gaps only reduce completeness. They never increase legal merit or confidence.
-    const gapAnalysisImpact = Math.min(100,
-      gaps.filter((g) => g.significance === "critical").length * 20 +
-      gaps.filter((g) => g.significance === "important").length * 10 +
-      expectedDocs.filter((d) => d.status === "missing").length * 15 +
-      patterns.length * 10);
-    const contextCoverageScore = timelineEvents.length > 0
-      ? Math.max(0, 100 - gapAnalysisImpact)
-      : 0;
-    const overallScore = Math.min(100,
-      directEvidenceScore * 0.7 + contextCoverageScore * 0.3);
-
-    const strengths: string[] = [];
-    const weaknesses: string[] = [];
-    const recommendations: string[] = [];
-
-    if (directEvidenceScore > 70) {
-      strengths.push("Strong direct evidence from documented communications");
-    } else {
-      weaknesses.push("Limited direct evidence");
-      recommendations.push("Collect more documented evidence (emails, contracts, etc.)");
-    }
-
-    if (gapAnalysisImpact > 40) {
-      weaknesses.push("Material gaps remain in the evidence available to LARO");
-      recommendations.push("Verify whether the expected records exist elsewhere and document each search step");
-    }
-
-    if (gaps.some((g) => g.significance === "critical" && parseInt(g.durationDays || "0") > 30)) {
-      weaknesses.push("A prolonged period has no recorded response or follow-up context");
-      recommendations.push("Verify delivery and response expectations before drawing any conclusion from the silence");
-    }
-
-    const narrative = this.generateNarrative(
-      timelineEvents,
-      gaps,
-      patterns,
-      inferences,
-      overallScore
-    );
-
-    return {
-      overallScore: Math.round(overallScore),
-      directEvidenceScore: Math.round(directEvidenceScore),
-      // Kept for API/database compatibility; this now represents context coverage.
-      circumstantialEvidenceScore: Math.round(contextCoverageScore),
-      legalBasisScore: Math.round(legalBasisScore),
-      gapAnalysisImpact: Math.round(gapAnalysisImpact),
-      strengths,
-      weaknesses,
-      recommendations,
-      narrative,
-    };
-  }
-
-  /**
-   * Generate narrative explanation of case strength
-   */
-  private generateNarrative(
-    timelineEvents: TimelineEvent[],
-    gaps: CommunicationGap[],
-    patterns: SuspiciousPattern[],
-    inferences: LegalInference[],
-    overallScore: number
-  ): string {
-    const parts: string[] = [];
-
-    parts.push(
-      `The available evidence has a completeness score of ${Math.round(overallScore)}%. This is not a prediction of legal merit or outcome.`
-    );
-
-    if (timelineEvents.filter((e) => e.hasDocumentation).length > 5) {
-      parts.push(
-        `You have ${timelineEvents.filter((e) => e.hasDocumentation).length} documented events supporting your claims.`
-      );
-    }
-
-    if (gaps.length > 0) {
-      parts.push(
-        `We identified ${gaps.length} communication gaps, including ${gaps.filter((g) => g.significance === "critical").length} high-priority gap(s) that require source verification.`
-      );
-    }
-
-    if (patterns.some((p) => p.patternType === "documented_to_verbal_shift")) {
-      parts.push(
-        "The available record changes from documented to undocumented communication. LARO cannot determine why; check for records held elsewhere."
-      );
-    }
-
-    if (inferences.some((i) => i.category === "records_gap")) {
-      parts.push(
-        "Potentially relevant records were not found in LARO. Their existence, custody, applicability, and legal significance remain unverified."
-      );
-    }
-
-    return parts.join(" ");
-  }
-
-  /**
    * Save all analysis results to database
    */
   private async saveResults(
     caseId: string,
+    runId: string,
     gaps: CommunicationGap[],
     expectedDocs: ExpectedDocument[],
     patterns: SuspiciousPattern[],
     inferences: LegalInference[],
-    caseStrength: any
+    coverage: EvidenceCoverageAnalysis
   ): Promise<void> {
     const db = await getDb();
     if (!db) return;
@@ -720,110 +665,96 @@ export class GapDetectionService {
       tx.delete(expectedDocuments).where(eq(expectedDocuments.caseId, caseId)).run();
       tx.delete(suspiciousPatterns).where(eq(suspiciousPatterns.caseId, caseId)).run();
       tx.delete(legalInferences).where(eq(legalInferences.caseId, caseId)).run();
-      tx.delete(caseStrengthAnalysis).where(eq(caseStrengthAnalysis.caseId, caseId)).run();
 
-    // Save gaps into generic `data` column schema
-    if (gaps.length > 0) {
-      tx.insert(communicationGaps).values(
-        gaps.map((g) => ({
-          id: g.id,
-          caseId: g.caseId,
-          data: JSON.stringify({
-            gapType: g.gapType,
-            startDate: g.startDate,
-            endDate: g.endDate,
-            durationDays: g.durationDays,
-            context: g.context,
-            significance: g.significance,
-            precedingEvents: g.precedingEvents,
-            legalImplications: g.legalImplications,
-            updatedAt: g.updatedAt,
-          }),
-          createdAt: g.createdAt,
-        }))
-      ).run();
-    }
+      // Save gaps into generic `data` column schema
+      if (gaps.length > 0) {
+        tx.insert(communicationGaps).values(
+          gaps.map((g) => ({
+            id: g.id,
+            caseId: g.caseId,
+            data: JSON.stringify({
+              gapType: g.gapType,
+              startDate: g.startDate,
+              endDate: g.endDate,
+              durationDays: g.durationDays,
+              context: g.context,
+              significance: g.significance,
+              precedingEvents: g.precedingEvents,
+              legalImplications: g.legalImplications,
+              updatedAt: g.updatedAt,
+            }),
+            createdAt: g.createdAt,
+          }))
+        ).run();
+      }
 
-    // Save expected documents into generic `data` column schema
-    if (expectedDocs.length > 0) {
-      tx.insert(expectedDocuments).values(
-        expectedDocs.map((d) => ({
-          id: d.id,
-          caseId: d.caseId,
-          data: JSON.stringify({
-            gapId: d.gapId,
-            documentType: d.documentType,
-            reason: d.reason,
-            legalRequirement: d.legalRequirement,
-            legalBasis: d.legalBasis,
-            deadline: d.deadline,
-            status: d.status,
-            receivedAt: d.receivedAt,
-            notes: d.notes,
-            updatedAt: d.updatedAt,
-          }),
-          createdAt: d.createdAt,
-        }))
-      ).run();
-    }
+      // Save expected documents into generic `data` column schema
+      if (expectedDocs.length > 0) {
+        tx.insert(expectedDocuments).values(
+          expectedDocs.map((d) => ({
+            id: d.id,
+            caseId: d.caseId,
+            data: JSON.stringify({
+              gapId: d.gapId,
+              documentType: d.documentType,
+              reason: d.reason,
+              legalRequirement: d.legalRequirement,
+              legalBasis: d.legalBasis,
+              deadline: d.deadline,
+              status: d.status,
+              receivedAt: d.receivedAt,
+              notes: d.notes,
+              updatedAt: d.updatedAt,
+            }),
+            createdAt: d.createdAt,
+          }))
+        ).run();
+      }
 
-    // Save patterns into generic `data` column schema
-    if (patterns.length > 0) {
-      tx.insert(suspiciousPatterns).values(
-        patterns.map((p) => ({
-          id: p.id,
-          caseId: p.caseId,
-          data: JSON.stringify({
-            patternType: p.patternType,
-            description: p.description,
-            evidenceIds: p.evidenceIds,
-            legalSignificance: p.legalSignificance,
-            confidence: p.confidence,
-            detectedAt: p.detectedAt,
-          }),
-          createdAt: p.detectedAt,
-        }))
-      ).run();
-    }
+      // Save patterns into generic `data` column schema
+      if (patterns.length > 0) {
+        tx.insert(suspiciousPatterns).values(
+          patterns.map((p) => ({
+            id: p.id,
+            caseId: p.caseId,
+            data: JSON.stringify({
+              patternType: p.patternType,
+              description: p.description,
+              evidenceIds: p.evidenceIds,
+              legalSignificance: p.legalSignificance,
+              confidence: p.confidence,
+              detectedAt: p.detectedAt,
+            }),
+            createdAt: p.detectedAt,
+          }))
+        ).run();
+      }
 
-    // Save inferences into generic `data` column schema
-    if (inferences.length > 0) {
-      tx.insert(legalInferences).values(
-        inferences.map((i) => ({
-          id: i.id,
-          caseId: i.caseId,
-          data: JSON.stringify({
-            inference: i.inference,
-            legalPrinciple: i.legalPrinciple,
-            supportingEvidence: i.supportingEvidence,
-            caselaw: i.caselaw,
-            strength: i.strength,
-            category: i.category,
-            generatedAt: i.generatedAt,
-          }),
-          createdAt: i.generatedAt,
-        }))
-      ).run();
-    }
+      // Save inferences into generic `data` column schema
+      if (inferences.length > 0) {
+        tx.insert(legalInferences).values(
+          inferences.map((i) => ({
+            id: i.id,
+            caseId: i.caseId,
+            data: JSON.stringify({
+              inference: i.inference,
+              legalPrinciple: i.legalPrinciple,
+              supportingEvidence: i.supportingEvidence,
+              caselaw: i.caselaw,
+              strength: i.strength,
+              category: i.category,
+              generatedAt: i.generatedAt,
+            }),
+            createdAt: i.generatedAt,
+          }))
+        ).run();
+      }
 
-    // Save case strength analysis — store as numbers not strings
-    tx.insert(caseStrengthAnalysis).values({
-      id: nanoid(),
-      caseId,
-      data: JSON.stringify({
-        overallScore: Number(caseStrength.overallScore),
-        directEvidenceScore: Number(caseStrength.directEvidenceScore),
-        circumstantialEvidenceScore: Number(caseStrength.circumstantialEvidenceScore),
-        legalBasisScore: Number(caseStrength.legalBasisScore),
-        gapAnalysisImpact: Number(caseStrength.gapAnalysisImpact),
-        strengths: caseStrength.strengths,
-        weaknesses: caseStrength.weaknesses,
-        recommendations: caseStrength.recommendations,
-        analysisNarrative: caseStrength.narrative,
-        generatedAt: new Date(),
-      }),
-      createdAt: new Date(),
-    }).run();
+      // The installed table keeps its historical physical name, but every new row
+      // is an explicit, versioned evidence-coverage snapshot with no score fields.
+      tx.update(evidenceCoverageAnalysis).set({
+        data: JSON.stringify(coverage),
+      }).where(eq(evidenceCoverageAnalysis.id, runId)).run();
     });
   }
 

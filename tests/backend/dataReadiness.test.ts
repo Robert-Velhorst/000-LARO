@@ -27,24 +27,29 @@ suite("production data readiness", () => {
     expect(report.invariants.every((item) => item.ok)).toBe(true);
   });
 
-  it("fails closed when a required relationship guard is missing", async () => {
+  it("fails closed when native relationship data is invalid", async () => {
     const sqlite = (app.db as any).$client ?? (app.db as any).session?.client;
-    const { ensureRelationshipIntegrityTriggers, requiredRelationshipTriggerNames } = await import(
-      "../../server/relationshipIntegrity"
-    );
-    const trigger = requiredRelationshipTriggerNames(sqlite)[0];
-    sqlite.exec(`DROP TRIGGER "${trigger}"`);
+    sqlite.pragma("foreign_keys = OFF");
+    try {
+      sqlite.prepare(
+        "INSERT INTO email_messages (id, accountId, subject) VALUES (?, ?, ?)",
+      ).run("READINESS_ORPHAN", "MISSING_ACCOUNT", "orphan");
+    } finally {
+      sqlite.pragma("foreign_keys = ON");
+    }
 
-    const report = await assessDataReadiness();
-    expect(report.ok).toBe(false);
-    expect(report.invariants).toContainEqual(expect.objectContaining({
-      name: "database relationship guards installed",
-      severity: "error",
-      ok: false,
-      count: 1,
-    }));
-
-    ensureRelationshipIntegrityTriggers(sqlite);
+    try {
+      const report = await assessDataReadiness();
+      expect(report.ok).toBe(false);
+      expect(report.invariants).toContainEqual(expect.objectContaining({
+        name: "database native relationships valid",
+        severity: "error",
+        ok: false,
+        count: 1,
+      }));
+    } finally {
+      sqlite.prepare("DELETE FROM email_messages WHERE id = ?").run("READINESS_ORPHAN");
+    }
   });
 
   it("fails when a known non-production account marker remains", async () => {
@@ -65,10 +70,15 @@ suite("production data readiness", () => {
   it("fails closed on malformed operational counters without exposing values", async () => {
     const sqlite = (app.db as any).$client ?? (app.db as any).session?.client;
     try {
-      sqlite.prepare(`
-        INSERT INTO lawyers (id, name, totalOutreaches, totalResponses, totalAcceptances)
-        VALUES (?, ?, ?, ?, ?)
-      `).run("numeric-invalid-lawyer", "Numeric integrity test", "12x", "2", "1");
+      sqlite.pragma("ignore_check_constraints = ON");
+      try {
+        sqlite.prepare(`
+          INSERT INTO lawyers (id, name, totalOutreaches, totalResponses, totalAcceptances)
+          VALUES (?, ?, ?, ?, ?)
+        `).run("numeric-invalid-lawyer", "Numeric integrity test", "12x", 2, 1);
+      } finally {
+        sqlite.pragma("ignore_check_constraints = OFF");
+      }
 
       const report = await assessDataReadiness();
       const field = report.numericIntegrity.fields.find(
@@ -83,13 +93,13 @@ suite("production data readiness", () => {
     }
   });
 
-  it("accepts numeric strings but rejects impossible counter relationships", async () => {
+  it("accepts valid numeric storage but rejects impossible counter relationships", async () => {
     const sqlite = (app.db as any).$client ?? (app.db as any).session?.client;
     try {
       sqlite.prepare(`
         INSERT INTO lawyers (id, name, totalOutreaches, totalResponses, totalAcceptances)
         VALUES (?, ?, ?, ?, ?)
-      `).run("numeric-inconsistent-lawyer", "Numeric consistency test", " 1 ", "2", "0");
+      `).run("numeric-inconsistent-lawyer", "Numeric consistency test", 1, 2, 0);
 
       const report = await assessDataReadiness();
       const responseConstraint = report.numericIntegrity.constraints.find(

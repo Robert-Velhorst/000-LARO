@@ -15,8 +15,8 @@ describe('production renderer usability regressions', () => {
     expect(workspace).toContain('className="workspace-heading"');
     expect(workspace).toContain('flex min-w-0 flex-wrap items-center gap-2');
     expect(styles).toContain('.workspace-heading');
-    expect(cases).toContain('Dossier openen');
-    expect(cases).toContain('Nieuw dossier');
+    expect(cases).toContain('t("case.list.open")');
+    expect(cases).toContain('t("case.list.new")');
     expect(cases).not.toContain('<div className="p-6 space-y-6">');
   });
 
@@ -59,10 +59,16 @@ describe('production renderer usability regressions', () => {
     expect(translations).toContain('"nav.expandSidebar"');
     expect(translations).toContain('"nav.collapseSidebar"');
     expect(translations).toContain('"nav.accountMenu"');
-    expect(filters).toContain('aria-label="Filter by legal area"');
-    expect(filters).toContain('"Search lawyers" : "Search cases"');
-    expect(privacy).toContain('aria-label="Allow marketing communication"');
+    expect(translations).toContain('"nav.privacy"');
+    expect(layout).toContain('navigate("/privacy")');
+    expect(filters).toContain('aria-label={t("search.filter.legalArea")}');
+    expect(filters).toContain('aria-label={t(searchLabelKey)}');
+    expect(filters.match(/<SelectItem value="year">/g)).toHaveLength(1);
+    expect(translations).toContain('"search.filter.legalArea"');
+    expect(translations).toContain('"search.placeholder.lawyers"');
     expect(privacy).toContain('aria-label="Allow usage analytics"');
+    expect(privacy).not.toContain('Allow marketing communication');
+    expect(privacy).toContain('Security and resource integrity');
     expect(notes).toContain('className="sr-only">{nl ? "Notities zoeken" : "Search case notes"}');
     expect(notes).toContain('aria-label="Case note message"');
     expect(notes).not.toContain('from "date-fns"');

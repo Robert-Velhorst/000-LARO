@@ -31,15 +31,16 @@ for (const envPath of possibleEnvPaths) {
 import express from 'express';
 import { createServer } from 'http';
 import { createExpressMiddleware } from '@trpc/server/adapters/express';
-import cookieParser from 'cookie-parser';
 import { corsMiddleware, csrfGuard } from './_core/csrf';
+import { cookieMiddleware } from './cookieMiddleware';
 
 import { appRouter } from './routers';
 import { createContext } from './context';
 import { compressionMiddleware } from './compression';
-import { getJobStatus, initCronScheduler, stopCronScheduler } from './cronScheduler';
+import { initCronScheduler, stopCronScheduler } from './cronScheduler';
 import oauth2CallbacksRouter from './oauth2Callbacks';
 import haiIntegrationRoutes from './haiIntegrationRoutes';
+import healthRoutes from './healthRoutes';
 import { closeDatabaseForMaintenance, getDb } from './db';
 import { assertSecurityConfig, ENV } from './_core/env';
 import { closeSharedHttpServer, listenHttpServer } from './listen';
@@ -47,14 +48,20 @@ import { APP_VERSION } from './_core/version';
 import { EvidenceAccessError, readSignedEvidenceDownload } from './evidenceAccess';
 import { sanitizeFilename } from './storage';
 import { closeRealtimeServer, initializeRealtimeServer } from './realtime';
-import { getScheduledBackupHealth } from './scheduledBackup';
-import { getOperationalMetrics, operationalMetricsMiddleware } from './operationalMetrics';
+import { operationalMetricsMiddleware } from './operationalMetrics';
 import {
   normalizePublicPathPrefix,
   publicPathPrefixMiddleware,
 } from './publicPathPrefix';
 import { consumeCaseZipDownloadTicket, createCaseZipStream } from './evidenceExport';
 import { AUDIT_ACTIONS, createAuditLog } from './audit';
+import { scannerUploadRouter } from './scannerUpload';
+import { securityHeaders } from './securityHeaders';
+import {
+  consumeLegalDraftDownloadTicket,
+  LegalDraftPreconditionError,
+  recordReviewedLegalDraftDownload,
+} from './legalDraftSnapshots';
 
 // ─── Environment ──────────────────────────────────────────────────────────────
 
@@ -80,120 +87,24 @@ app.use(corsMiddleware);
 app.use(csrfGuard);
 
 // ─── Security headers (Phase 029) ───────────────────────────────────────────
-// Applied to every response. No external dependency (helmet) is required.
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('X-XSS-Protection', '0'); // rely on CSP, not the legacy auditor
-  // The renderer must retain its Google OAuth popup; API resources stay isolated.
-  res.setHeader('Cross-Origin-Opener-Policy', req.path.startsWith('/api/') ? 'same-origin' : 'same-origin-allow-popups');
-  res.setHeader(
-    'Permissions-Policy',
-    'geolocation=(), microphone=(), camera=(), payment=()'
-  );
-  // Content Security Policy. The renderer is a bundled SPA served from the same
-  // origin; connect-src allows the local API. 'unsafe-inline' is kept for styles
-  // only (Tailwind/Radix inject style tags). Tighten further in Phase 041.
-  res.setHeader(
-    'Content-Security-Policy',
-    [
-      "default-src 'self'",
-      "img-src 'self' data: https:",
-      "style-src 'self' 'unsafe-inline'",
-      "script-src 'self'",
-      "connect-src 'self' http://localhost:3000 ws://localhost:3000",
-      "frame-ancestors 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-    ].join('; ')
-  );
-  // HSTS only over real HTTPS in production (never on plain localhost).
-  if (ENV.isProd && (req.secure || req.headers['x-forwarded-proto'] === 'https')) {
-    res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
-  }
-  next();
-});
+// Applied to every response. The renderer retains its Google OAuth popup while
+// API resources remain isolated; HSTS is emitted only for production HTTPS.
+app.use(securityHeaders);
 
-app.use(cookieParser());
+app.use(cookieMiddleware);
+// Scanner evidence uses a dedicated bounded binary route. Mount it before the
+// JSON parsers so valid 7 MB files are never Base64-expanded or tRPC-batched.
+app.use(scannerUploadRouter);
 app.use(express.json({ limit: ENV.API_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: ENV.API_BODY_LIMIT }));
 app.use(compressionMiddleware);
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 
-// Phase 035 — observability: liveness (process up), readiness (DB reachable),
-// and a health summary. Liveness must never touch the DB; readiness does.
-app.get('/api/live', (_req, res) => {
-  res.status(200).json({ status: 'alive' });
-});
-
-app.get('/api/ready', async (_req, res) => {
-  let dbReady = false;
-  try {
-    const db = await getDb();
-    dbReady = !!db;
-  } catch {
-    dbReady = false;
-  }
-  res.status(dbReady ? 200 : 503).json({
-    status: dbReady ? 'ready' : 'not-ready',
-    dbReady,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-app.get('/api/health', async (_req, res) => {
-  let dbReady = false;
-  try {
-    dbReady = !!(await getDb());
-  } catch {
-    dbReady = false;
-  }
-  let backup;
-  try {
-    backup = getScheduledBackupHealth();
-  } catch (error) {
-    backup = {
-      configured: true,
-      status: 'failed',
-      destinationKind: null,
-      latestValidAt: null,
-      ageHours: null,
-      maxAgeHours: null,
-      retentionCount: null,
-      retentionDays: null,
-    };
-  }
-  const warnings = [
-    ...(!backup.configured ? ['Automatic recovery backups are not configured.'] : []),
-    ...(backup.status === 'stale' ? ['The latest verified recovery backup is stale.'] : []),
-    ...(backup.status === 'failed' ? ['The automatic recovery backup job needs attention.'] : []),
-    ...(backup.destinationKind === 'local' ? ['Recovery backups are stored locally and are not off-device.'] : []),
-  ];
-  const workers = getJobStatus().map((worker) => {
-    const failing = !!worker.lastErrorAt && (!worker.lastSuccessAt || worker.lastErrorAt > worker.lastSuccessAt);
-    return {
-      name: worker.name,
-      enabled: worker.enabled,
-      status: !worker.enabled ? 'disabled' : failing ? 'failed' : worker.lastSuccessAt ? 'healthy' : 'pending',
-      runs: worker.runs,
-      failures: worker.failures,
-      lastSuccessAt: worker.lastSuccessAt ? new Date(worker.lastSuccessAt).toISOString() : null,
-      lastErrorAt: worker.lastErrorAt ? new Date(worker.lastErrorAt).toISOString() : null,
-    };
-  });
-  res.status(dbReady ? 200 : 503).json({
-    status: dbReady ? 'healthy' : 'degraded',
-    dbReady,
-    backup,
-    warnings,
-    operations: getOperationalMetrics(),
-    workers,
-    version: APP_VERSION,
-    timestamp: new Date().toISOString(),
-  });
-});
+// Phase 035 / S1-25 — the public probes expose only their documented minimum.
+// Detailed backup, worker, failure and traffic state lives behind the canonical
+// operator capability in healthRoutes and the tRPC diagnostics service.
+app.use(healthRoutes);
 
 app.get('/api/evidence-content/:id', async (req, res) => {
   try {
@@ -232,8 +143,8 @@ app.get('/api/case-export/:ticket.zip', async (req, res) => {
       res.status(401).json({ error: 'Authentication required' });
       return;
     }
-    const caseId = consumeCaseZipDownloadTicket(req.params.ticket, ctx.user.id);
-    source = await createCaseZipStream(ctx.user.id, caseId, { signal: abortController.signal });
+    const ticket = consumeCaseZipDownloadTicket(req.params.ticket, ctx.user.id);
+    source = await createCaseZipStream(ticket.ownerId, ticket.caseId, { signal: abortController.signal });
     const fileName = encodeURIComponent(sanitizeFilename(source.filename));
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Content-Type', 'application/zip');
@@ -249,8 +160,14 @@ app.get('/api/case-export/:ticket.zip', async (req, res) => {
       userId: ctx.user.id,
       action: AUDIT_ACTIONS.EVIDENCE_EXPORTED,
       entityType: 'case',
-      entityId: caseId,
-      details: { format: 'zip', bytes: result.bytes, sourceFileCount: result.sourceFileCount },
+      entityId: ticket.caseId,
+      details: {
+        format: 'zip',
+        bytes: result.bytes,
+        sourceFileCount: result.sourceFileCount,
+        completeness: result.completeness,
+        omissionCount: result.omissionCount,
+      },
     });
   } catch (error) {
     source?.stream.destroy();
@@ -261,6 +178,33 @@ app.get('/api/case-export/:ticket.zip', async (req, res) => {
     const message = error instanceof Error ? error.message : 'Evidence export failed';
     const status = /invalid or expired/i.test(message) ? 403 : /not found/i.test(message) ? 404 : /queue is full/i.test(message) ? 429 : 500;
     res.status(status).json({ error: status === 500 ? 'Evidence export failed' : message });
+  }
+});
+
+app.get('/api/legal-draft/:ticket.txt', async (req, res) => {
+  try {
+    const ctx = await createContext({ req, res });
+    if (!ctx.user || ctx.authScope !== 'session') {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+    const draftId = consumeLegalDraftDownloadTicket(req.params.ticket, ctx.user.id);
+    const source = await recordReviewedLegalDraftDownload(ctx.user.id, draftId);
+    const fileName = encodeURIComponent(sanitizeFilename(source.filename));
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Length', String(source.bytes.length));
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
+    res.status(200).send(source.bytes);
+  } catch (error) {
+    const status = error instanceof LegalDraftPreconditionError ? 403 : 500;
+    res.status(status).json({
+      error: status === 500
+        ? 'Legal draft could not be downloaded'
+        : (error as LegalDraftPreconditionError).message,
+    });
   }
 });
 

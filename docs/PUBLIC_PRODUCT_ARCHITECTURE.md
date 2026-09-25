@@ -92,7 +92,7 @@ public providers because they have source-linked and delivery acceptance
 evidence. Their OAuth callbacks must use the permanent public HTTPS origin,
 not ngrok.
 
-Microsoft, Slack, Trello, Calendar, Contacts, and any other integration remain
+Microsoft, Slack, Trello, Telegram, Calendar, Contacts, and any other integration remain
 visible only as unavailable until all of the following are implemented:
 
 1. encrypted durable token storage;

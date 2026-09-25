@@ -90,6 +90,14 @@ export async function assessRuntimeReadiness(options = {}) {
   check('API-only mode', env.SERVER_ONLY === 'true', `SERVER_ONLY=${env.SERVER_ONLY || '<unset>'}`);
   check('JWT secret', strongSecret(env.JWT_SECRET), strongSecret(env.JWT_SECRET) ? 'configured' : 'missing or weak');
   check('cookie secret', strongSecret(env.COOKIE_SECRET), strongSecret(env.COOKIE_SECRET) ? 'configured' : 'missing or weak');
+  if (present(env.LARO_BACKUP_DIRECTORY)) {
+    const recoveryConfigured = strongSecret(env.LARO_RECOVERY_KEY) || present(env.LARO_RECOVERY_KEY_FILE);
+    check(
+      'separate backup recovery credential',
+      recoveryConfigured,
+      recoveryConfigured ? 'configured' : 'missing while scheduled backups are enabled',
+    );
+  }
   const required = requiredProviders(env);
   if (required.has('google')) {
     const configured = present(env.GOOGLE_CLIENT_ID) && present(env.GOOGLE_CLIENT_SECRET);

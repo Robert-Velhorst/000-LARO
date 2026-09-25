@@ -15,7 +15,17 @@ export type ScanStatus =
   | 'error'
   | 'cancelled';
 
-export type UploadStatus = 'pending' | 'excluded' | 'uploading' | 'done' | 'completed' | 'failed';
+export type UploadStatus =
+  | 'pending'
+  | 'review_required'
+  | 'excluded'
+  | 'uploading'
+  | 'retryable'
+  | 'terminal'
+  | 'cancelled'
+  | 'done'
+  | 'completed'
+  | 'failed';
 
 export interface AgentConfig {
   apiUrl: string;
@@ -83,11 +93,16 @@ export const IPC = {
   SCAN_PAUSE:      'scan:pause',
   SCAN_RESUME:     'scan:resume',
   SCAN_PROGRESS:   'scan:progress',
+  SCAN_PROGRESS_GET: 'scan:progress:get',
   SCAN_FILES_GET:  'scan:files:get',
   SCAN_FILES_SELECT: 'scan:files:select',
+  SCAN_SESSION_CHANGED: 'scan:session:changed',
+  SCAN_HISTORY_EXPORT: 'scan:history:export',
+  SCAN_HISTORY_ERASE: 'scan:history:erase',
   UPLOAD_START:    'upload:start',
   UPLOAD_PAUSE:    'upload:pause',
   UPLOAD_RESUME:   'upload:resume',
+  UPLOAD_STOP:     'upload:stop',
   UPLOAD_PROGRESS: 'upload:progress',
   EVIDENCE_UPDATED: 'evidence:updated',
   OPEN_EXTERNAL:   'open:external',
@@ -115,7 +130,18 @@ export interface FileItem {
   modifiedAt: Date;
   uploadStatus: UploadStatus;
   uploadProgress: number;
-  errorMessage?: string;
+  errorMessage?: string | null;
+  /** Snapshot recorded when the file was discovered. */
+  contentHash?: string;
+  sourceIdentity?: string;
+  sourceRealPath?: string;
+  /** Immutable snapshot explicitly accepted by the user. */
+  approvedContentHash?: string;
+  approvedIdentity?: string;
+  approvedRealPath?: string;
+  approvedAt?: Date;
+  /** Evidence row created from the approved bytes, when upload succeeds. */
+  evidenceId?: string;
 }
 
 export interface ScanProgress {
@@ -125,8 +151,11 @@ export interface ScanProgress {
   scannedFiles: number;
   uploadedFiles: number;
   failedFiles: number;
+  skippedFiles?: number;
   totalSize: number;
   uploadedSize: number;
+  skippedSize?: number;
+  limitReason?: string | null;
   currentFile: string | null;
-  errorMessage?: string;
+  errorMessage?: string | null;
 }

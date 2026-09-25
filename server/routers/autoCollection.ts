@@ -5,20 +5,24 @@ import {
   getAutoCollectionSettings,
   upsertAutoCollectionSettings,
   runAutoCollection,
-  getAutoCollectionLogs,
-  getKeywordMatches,
+  getKeywordPullMonitoring,
   pullEvidenceByKeywords,
   setLocalFolderPaths,
   getLocalFolderPaths,
+  isRunnableAutoCollectionSetting,
   startKeywordPullJob,
   getKeywordPullJob,
   getActiveKeywordPullJob,
+  cancelKeywordPullJob,
 } from "../autoCollectionService";
 import { assertCaseOwnership } from "../_core/authz";
 import { getDb } from "../db";
 import { emailAccounts } from "../schema";
 import { and, eq } from "drizzle-orm";
 import { googleDriveSourcesSchema } from "../../shared/googleDriveSources";
+import { listGoogleDriveFolders } from "../googleDriveService";
+
+const driveId = z.string().trim().min(1).max(256);
 
 const keywordPullInput = z.object({
   caseId: z.string(),
@@ -30,9 +34,32 @@ const keywordPullInput = z.object({
   localFolderPaths: z.array(z.string()).optional(),
   dateStart: z.coerce.date().optional(),
   dateEnd: z.coerce.date().optional(),
+  includeGmail: z.boolean().optional(),
+  includeGmailAttachments: z.boolean().optional(),
+  includeDrive: z.boolean().optional(),
+  includeLocal: z.boolean().optional(),
 });
 
 export const autoCollectionRouter = router({
+  listDriveFolders: protectedProcedure
+    .input(z.object({
+      parentId: driveId.optional(),
+      accountId: driveId,
+    }))
+    .query(async ({ input, ctx }) => {
+      try {
+        return {
+          folders: await listGoogleDriveFolders(ctx.user.id, input.parentId, input.accountId),
+        };
+      } catch (error) {
+        if (error instanceof TRPCError) throw error;
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Google Drive folders could not be loaded.",
+        });
+      }
+    }),
+
   getSettings: protectedProcedure
     .input(z.object({ caseId: z.string() }))
     .query(async ({ input, ctx }) => {
@@ -45,7 +72,7 @@ export const autoCollectionRouter = router({
     .input(
       z.object({
         caseId: z.string(),
-        keywords: z.array(z.string()),
+        keywords: z.array(z.string().trim().min(1)).min(1),
         keywordMatchMode: z.enum(["all", "any"]),
         dateRangeStart: z.date().optional(),
         dateRangeEnd: z.date().optional(),
@@ -99,7 +126,7 @@ export const autoCollectionRouter = router({
       await assertCaseOwnership(input.caseId, ctx.user.id);
       try {
         const result = await runAutoCollection(input.caseId);
-        return { success: true, result };
+        return { success: result.errors.length === 0, result };
       } catch (error) {
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
@@ -108,20 +135,14 @@ export const autoCollectionRouter = router({
       }
     }),
 
-  getLogs: protectedProcedure
-    .input(z.object({ caseId: z.string(), limit: z.number().optional().default(10) }))
+  monitoring: protectedProcedure
+    .input(z.object({
+      caseId: z.string(),
+      limit: z.number().int().min(1).max(50).optional().default(20),
+    }))
     .query(async ({ input, ctx }) => {
       await assertCaseOwnership(input.caseId, ctx.user.id);
-      const logs = await getAutoCollectionLogs(input.caseId, input.limit);
-      return { logs };
-    }),
-
-  getKeywordMatches: protectedProcedure
-    .input(z.object({ caseId: z.string() }))
-    .query(async ({ input, ctx }) => {
-      await assertCaseOwnership(input.caseId, ctx.user.id);
-      const matches = await getKeywordMatches(input.caseId);
-      return { matches };
+      return getKeywordPullMonitoring(input.caseId, ctx.user.id, input.limit);
     }),
 
   /**
@@ -145,8 +166,16 @@ export const autoCollectionRouter = router({
           localFolderPaths: input.localFolderPaths,
           dateStart: input.dateStart,
           dateEnd: input.dateEnd,
+          includeGmail: input.includeGmail,
+          includeGmailAttachments: input.includeGmailAttachments,
+          includeDrive: input.includeDrive,
+          includeLocal: input.includeLocal,
         });
-        return { success: true, result };
+        return {
+          success: result.errors.length === 0 && result.outcome === "completed",
+          outcome: result.outcome,
+          result,
+        };
       } catch (error) {
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
@@ -174,6 +203,12 @@ export const autoCollectionRouter = router({
       return getActiveKeywordPullJob(input.caseId, ctx.user.id);
     }),
 
+  cancelPullJob: protectedProcedure
+    .input(z.object({ jobId: z.string().uuid() }))
+    .mutation(async ({ input, ctx }) => ({
+      success: Boolean(await cancelKeywordPullJob(input.jobId, ctx.user.id)),
+    })),
+
   /**
    * Persist local-folder paths to auto-scan during keyword pulls.
    */
@@ -190,6 +225,7 @@ export const autoCollectionRouter = router({
     .query(async ({ input, ctx }) => {
       await assertCaseOwnership(input.caseId, ctx.user.id);
       const paths = await getLocalFolderPaths(input.caseId);
-      return { paths };
+      const settings = await getAutoCollectionSettings(input.caseId);
+      return { paths, scheduleActive: Boolean(settings && isRunnableAutoCollectionSetting(settings)) };
     }),
 });

@@ -54,15 +54,27 @@ suite("gap analysis evidence safety", () => {
     ]));
     expect(first.inferences.every((inference: any) => inference.strength === "review_required")).toBe(true);
     expect(first.inferences.every((inference: any) => JSON.parse(inference.caselaw).length === 0)).toBe(true);
-    expect(first.caseStrength.legalBasisScore).toBe(0);
+    expect(first.coverage).toMatchObject({
+      contractVersion: "evidence-coverage-v1",
+      contractStatus: "current",
+      legalBasis: { status: "unknown", reviewedSourceIds: [] },
+    });
+    expect(first.coverage).not.toHaveProperty("overallScore");
+    expect(first.coverage).not.toHaveProperty("legalBasisScore");
     expect(serialized).not.toMatch(/ECLI:|spoliation|demonstrates bad faith|consciousness of wrongdoing/i);
     expect(serialized).toContain("does not establish motive");
 
     const second = await caller.gapAnalysis.analyze({ caseId: "CASE_GAP_SAFETY" });
+    expect(second.coverage.sourceRevision).toBe(first.coverage.sourceRevision);
+    expect(second.coverage.snapshotRevision).toBe(first.coverage.snapshotRevision);
     expect(second.patterns.map((pattern: any) => pattern.patternType)).toEqual(
       first.patterns.map((pattern: any) => pattern.patternType),
     );
-    await expect(caller.gapAnalysis.getCaseStrength({ caseId: "CASE_GAP_SAFETY" }))
-      .resolves.toMatchObject({ legalBasisScore: 0 });
+    await expect(caller.gapAnalysis.getCoverage({ caseId: "CASE_GAP_SAFETY" }))
+      .resolves.toMatchObject({
+        contractVersion: "evidence-coverage-v1",
+        contractStatus: "current",
+        legalBasis: { status: "unknown" },
+      });
   });
 });

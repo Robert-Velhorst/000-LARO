@@ -18,7 +18,6 @@ import {
   documentAnalyses,
   emailAccounts,
   evidence,
-  googleDriveFiles,
   users,
 } from "./schema";
 import { hashBuffer, storageDelete, storageRead } from "./storage";
@@ -126,7 +125,6 @@ async function cleanupTransientDriveAcceptance(
     }
     tx.delete(autoCollectionLogs).where(eq(autoCollectionLogs.caseId, caseId)).run();
     tx.delete(documentAnalyses).where(eq(documentAnalyses.caseId, caseId)).run();
-    tx.delete(googleDriveFiles).where(eq(googleDriveFiles.caseId, caseId)).run();
     tx.delete(evidence).where(eq(evidence.caseId, caseId)).run();
     tx.delete(cases).where(eq(cases.id, caseId)).run();
   });
@@ -228,21 +226,16 @@ export async function runLiveGoogleDriveEvidenceAcceptance(
   const storageKey = managedStorageKeyFromMetadata(item.metadata);
   const sourceId = sourceMetadata.driveFileId;
   const expectedHash = sourceMetadata.contentHash;
-  if (!storageKey || typeof sourceId !== "string" || typeof expectedHash !== "string") {
-    throw new Error("Imported Drive evidence is missing source provenance or its content hash");
-  }
-
-  const driveRows = await db.select().from(googleDriveFiles).where(and(
-    eq(googleDriveFiles.caseId, caseId),
-    eq(googleDriveFiles.userId, options.userId),
-  ));
+  const sourceIdentity = sourceMetadata.sourceIdentity;
+  const sourceRevision = sourceMetadata.sourceRevision;
   if (
-    driveRows.length !== 1 ||
-    driveRows[0].accountId !== options.googleAccountId ||
-    driveRows[0].googleFileId !== sourceId ||
-    driveRows[0].s3Key !== storageKey
+    !storageKey ||
+    typeof sourceId !== "string" ||
+    typeof expectedHash !== "string" ||
+    typeof sourceIdentity !== "string" ||
+    typeof sourceRevision !== "string"
   ) {
-    throw new Error("Imported Drive evidence is missing its provider provenance row");
+    throw new Error("Imported Drive evidence is missing source provenance or its content hash");
   }
 
   const storedBytes = await storageRead(storageKey);

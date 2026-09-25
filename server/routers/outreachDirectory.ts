@@ -11,6 +11,7 @@ import {
   listOutreachTargets,
   matchApprovedTargetsForCase,
   reviewOutreachTarget,
+  reviewOutreachTargetsForDiscovery,
   reviewOutreachTargetsBatch,
   updateCaseTargetMatchStatus,
 } from "../outreachDirectory";
@@ -47,30 +48,34 @@ export const outreachDirectoryRouter = router({
       });
       const report = await discoverOutreachTargetsForCase({ userId: ctx.user.id, ...input });
       const preferences = await getWorkflowPreferences(ctx.user.id);
-      let autoReviewed = 0;
-      let automaticMatches = 0;
+      let autoReviewedTargetIds: string[] = [];
+      let automaticMatchedTargetIds: string[] = [];
+      let skippedTargets = [...report.skippedTargets];
+      let leftPendingTargetIds = [...report.leftPendingTargetIds];
       if (preferences.outreachReviewMode === "automatic") {
-        const pending = await listOutreachTargets({
+        const review = await reviewOutreachTargetsForDiscovery({
           userId: ctx.user.id,
+          caseId: input.caseId,
+          runId: report.runId,
           targetType: input.targetType,
-          status: "pending",
-          limit: 200,
+          ids: [...report.createdTargetIds, ...report.refreshedTargetIds],
         });
-        for (const target of pending) {
-          await reviewOutreachTarget({
+        autoReviewedTargetIds = review.reviewedTargetIds;
+        skippedTargets = [...skippedTargets, ...review.skippedTargets];
+        const reviewedIds = new Set(review.reviewedTargetIds);
+        leftPendingTargetIds = leftPendingTargetIds.filter((id) => !reviewedIds.has(id));
+        if (review.approvedTargetIds.length > 0) {
+          const matches = await matchApprovedTargetsForCase({
             userId: ctx.user.id,
-            id: target.id,
+            caseId: input.caseId,
             targetType: input.targetType,
-            status: "approved",
-            reviewNotes: "Automatically approved by the owner's workflow setting.",
+            targetIds: review.approvedTargetIds,
           });
-          autoReviewed += 1;
-        }
-        if (autoReviewed > 0) {
-          const matches = await matchApprovedTargetsForCase({ userId: ctx.user.id, caseId: input.caseId, targetType: input.targetType });
-          automaticMatches = matches.length;
+          automaticMatchedTargetIds = matches.map((match) => match.targetId);
         }
       }
+      const autoReviewed = autoReviewedTargetIds.length;
+      const automaticMatches = automaticMatchedTargetIds.length;
       await createAuditLog({
         userId: ctx.user.id,
         action: "outreach.directory_discovered",
@@ -82,11 +87,29 @@ export const outreachDirectoryRouter = router({
           newCandidates: report.newCandidates,
           rawCaseTextShared: report.rawCaseTextShared,
           reviewMode: preferences.outreachReviewMode,
+          discoveryRunId: report.runId,
+          candidateTargetIds: report.candidateTargetIds,
+          createdTargetIds: report.createdTargetIds,
+          refreshedTargetIds: report.refreshedTargetIds,
+          autoReviewedTargetIds,
+          automaticMatchedTargetIds,
+          skippedTargets,
+          leftPendingTargetIds,
+          partialReasons: report.partialReasons,
           autoReviewed,
           automaticMatches,
         },
       });
-      return { ...report, reviewMode: preferences.outreachReviewMode, autoReviewed, automaticMatches };
+      return {
+        ...report,
+        reviewMode: preferences.outreachReviewMode,
+        skippedTargets,
+        leftPendingTargetIds,
+        autoReviewed,
+        autoReviewedTargetIds,
+        automaticMatches,
+        automaticMatchedTargetIds,
+      };
     }),
 
   createManual: protectedProcedure
@@ -127,6 +150,7 @@ export const outreachDirectoryRouter = router({
         targetType: input.targetType,
         status: input.status,
         reviewNotes: input.reviewNotes,
+        caseId: input.caseId,
       });
       const matches = input.status === "approved" && input.caseId
         ? await matchApprovedTargetsForCase({
@@ -135,13 +159,6 @@ export const outreachDirectoryRouter = router({
           targetType: reviewed.targetType,
         })
         : null;
-      await createAuditLog({
-        userId: ctx.user.id,
-        action: "outreach.directory_reviewed",
-        entityType: "outreach_target",
-        entityId: input.id,
-        details: { status: input.status, targetType: reviewed.targetType, caseId: input.caseId || null },
-      });
       return { success: true as const, matches };
     }),
 
@@ -161,17 +178,11 @@ export const outreachDirectoryRouter = router({
         targetType: input.targetType,
         status: input.status,
         reviewNotes: `Reviewed in an owner-approved batch of ${input.ids.length}.`,
+        caseId: input.caseId,
       });
       const matches = input.status === "approved" && input.caseId
         ? await matchApprovedTargetsForCase({ userId: ctx.user.id, caseId: input.caseId, targetType: input.targetType })
         : null;
-      await createAuditLog({
-        userId: ctx.user.id,
-        action: "outreach.directory_batch_reviewed",
-        entityType: "outreach_target",
-        entityId: input.ids[0],
-        details: { ids: input.ids, count: input.ids.length, status: input.status, targetType: input.targetType, caseId: input.caseId || null },
-      });
       return { success: true as const, reviewed: reviewed.reviewed, matches };
     }),
 
@@ -184,13 +195,6 @@ export const outreachDirectoryRouter = router({
     .mutation(async ({ input, ctx }) => {
       await assertCaseOwnership(input.caseId, ctx.user.id);
       const matches = await matchApprovedTargetsForCase({ userId: ctx.user.id, ...input });
-      await createAuditLog({
-        userId: ctx.user.id,
-        action: "outreach.targets_matched",
-        entityType: "case",
-        entityId: input.caseId,
-        details: { targetType: input.targetType, count: matches.length },
-      });
       return matches;
     }),
 
@@ -204,14 +208,6 @@ export const outreachDirectoryRouter = router({
   updateMatchStatus: protectedProcedure
     .input(z.object({ id: z.string().min(1), status: matchStatusSchema }))
     .mutation(async ({ input, ctx }) => {
-      const result = await updateCaseTargetMatchStatus({ userId: ctx.user.id, ...input });
-      await createAuditLog({
-        userId: ctx.user.id,
-        action: "outreach.target_match_status_changed",
-        entityType: "outreach_target_match",
-        entityId: input.id,
-        details: { status: input.status },
-      });
-      return result;
+      return updateCaseTargetMatchStatus({ userId: ctx.user.id, ...input });
     }),
 });

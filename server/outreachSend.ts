@@ -18,7 +18,6 @@
  */
 import { getDb } from "./db";
 import {
-  auditLogs,
   outreachStatus,
   cases as casesTable,
   lawyers as lawyersTable,
@@ -27,11 +26,11 @@ import {
 import { and, eq, inArray, isNull, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { TRPCError } from "@trpc/server";
-import { getFlag } from "./featureFlags";
+import { isOutreachSendingEnabled } from "./featureFlags";
 import { assertNotEmergencyStopped } from "./systemState";
 import { assertOutreachTransition } from "./stateMachines";
-import { createAuditLog, AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
-import { assertCaseOwnership } from "./_core/authz";
+import { AUDIT_ACTIONS, writeAuditLogOrThrow } from "./audit";
+import { assertCaseCapability, assertCaseOwnership } from "./_core/authz";
 import { createNotification } from "./notifications";
 import { readApprovedOutreachMessage, readOutreachMetadata } from "./outreachApproval";
 import { compareAndSetCaseStatusInTransaction } from "./caseTransitions";
@@ -259,32 +258,30 @@ export async function resolveUncertainOutreachDispatch(options: {
       if (Number(statusMutation.changes || 0) !== 1) {
         throw new Error("Outreach status changed before recovery was finalized");
       }
-      tx.insert(auditLogs).values({
-        id: nanoid(),
+      writeAuditLogOrThrow(tx, {
         userId: options.operatorUserId,
         action: AUDIT_ACTIONS.OUTREACH_STATUS_CHANGED,
         entityType: "outreach",
         entityId: options.outreachId,
-        details: JSON.stringify({ from: "Dispatching", to: recoveredStatus, provider: "operator-verified", recovery: true }),
-        createdAt: resolvedAt,
-      }).run();
+        details: { from: "Dispatching", to: recoveredStatus, provider: "operator-verified", recovery: true },
+        idempotencyKey: `outreach-recovery-status:${options.outreachId}:${guardState}:${options.outcome}`,
+      });
     }
 
-    tx.insert(auditLogs).values({
-      id: nanoid(),
+    writeAuditLogOrThrow(tx, {
       userId: options.operatorUserId,
       action: AUDIT_ACTIONS.OUTREACH_DISPATCH_RESOLVED,
       entityType: "outreach",
       entityId: options.outreachId,
-      details: JSON.stringify({
+      details: {
         outcome: options.outcome,
         providerVerified: true,
         providerReference: options.providerReference?.trim() || null,
         note: options.note.trim(),
         previousDispatchState: guardState,
-      }),
-      createdAt: resolvedAt,
-    }).run();
+      },
+      idempotencyKey: `outreach-dispatch-resolved:${options.outreachId}:${guardState}:${options.outcome}`,
+    });
   });
 
   return {
@@ -309,7 +306,7 @@ export async function sendApprovedOutreach(
   await assertNotEmergencyStopped();
 
   // Gate 2 — feature flag (default OFF). Without it, nothing is ever sent.
-  const enabled = await getFlag("outreach.send.enabled");
+  const enabled = await isOutreachSendingEnabled();
   if (!enabled) {
     const { TRPCError } = await import("@trpc/server");
     throw new TRPCError({ code: "FORBIDDEN", message: "Sending is disabled (outreach.send.enabled=false). No message was sent." });
@@ -325,7 +322,7 @@ export async function sendApprovedOutreach(
   }
 
   // Gate 3 — ownership.
-  await assertCaseOwnership(row.caseId, userId);
+  await assertCaseCapability(row.caseId, userId, "outreach.send");
 
   // Gate 4 — idempotency: already sent? Return without re-sending.
   const guardKey = `${SENT_GUARD_PREFIX}${outreachId}`;
@@ -426,15 +423,14 @@ export async function sendApprovedOutreach(
         throw new Error("Outreach dispatch status changed before finalization");
       }
 
-      tx.insert(auditLogs).values({
-        id: nanoid(),
+      writeAuditLogOrThrow(tx, {
         userId,
         action: AUDIT_ACTIONS.OUTREACH_STATUS_CHANGED,
         entityType: "outreach",
         entityId: outreachId,
-        details: JSON.stringify({ from: "Dispatching", to: "Sent", provider: result.provider }),
-        createdAt: sentAt,
-      }).run();
+        details: { from: "Dispatching", to: "Sent", provider: result.provider },
+        idempotencyKey: `outreach-sent:${outreachId}:${dispatchState}`,
+      });
     });
   } catch (error) {
     markDispatchUncertain(db, guardKey, dispatchState);
@@ -473,7 +469,7 @@ export async function recordOutreachResponse(
   const respondedAt = new Date();
   const sentAt = row.lastContact ?? row.initialContact ?? row.updatedAt ?? row.createdAt;
   const responseTimeHours = sentAt
-    ? Math.max(0, (respondedAt.getTime() - sentAt.getTime()) / 3_600_000).toFixed(2)
+    ? Math.max(0, (respondedAt.getTime() - sentAt.getTime()) / 3_600_000)
     : null;
 
   const [caseSnapshot] = response === "Interested"
@@ -525,8 +521,13 @@ export async function recordOutreachResponse(
   });
   await createNotification({
     userId,
+    kind: "lawyer_response",
     title: response === "Interested" ? "Lawyer is interested" : response === "Declined" ? "Lawyer declined" : "No lawyer response",
     body: notes?.trim() || `Outreach status changed to ${response}.`,
+    caseId: row.caseId!,
+    lawyerId: row.lawyerId!,
+    metadata: { outreachId, response },
+    dedupKey: `outreach-response:${outreachId}:${response}`,
   });
 
   return { outreachId, status: response, caseId: row.caseId };

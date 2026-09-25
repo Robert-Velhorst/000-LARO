@@ -1,6 +1,14 @@
-# Deployment & Local Development (Phases 031–035)
+# Deployment & Local Development
 
-Date: 2026-07-06 · Branch `Phase-Imp`
+Updated: 2026-09-23 · Candidate branch `milestone3/remediate-roadmap`
+
+The final account/lifecycle release matrix for implementation commit `ec94985`
+is recorded in
+[`FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md`](FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md).
+It proves the repository-controlled build, recovery, fresh-database, browser,
+container, vulnerability-scan, and Windows packaging boundaries. It is not a
+claim that this commit is pushed, merged, published, deployed, or accepted on a
+real Hetzner/Windows target.
 
 ## Local dev — one command (Phase 031)
 
@@ -14,11 +22,16 @@ npm run dev:server # standalone server on http://localhost:3000
 npm run doctor     # environment self-diagnostic (Phase 034)
 ```
 
-## Docker — server backend (Phase 032)
+## Docker — standalone server (Phase 032)
 
-The `Dockerfile` builds and runs the **API server** (Express + tRPC + SQLite),
-i.e. the same backend the desktop app embeds. It does **not** ship the Electron
-desktop UI. SQLite and local evidence persist to the `/data` volume.
+The `Dockerfile` builds and runs the standalone Express/tRPC/SQLite server, i.e.
+the same backend the desktop app embeds. The ordinary `docker-compose.yml`
+configuration is API-only. The shared Hetzner configuration sets
+`LARO_SERVE_WEB=true`, so the same image also serves the React browser interface;
+it never ships the Electron desktop shell. SQLite and local evidence persist to
+the `/data` volume. Follow
+[`HETZNER_DEPLOYMENT.md`](HETZNER_DEPLOYMENT.md) for the shared browser/desktop
+path.
 
 ```bash
 docker compose up --build          # http://localhost:3000
@@ -32,10 +45,20 @@ ngrok deployment has been verified, restart it through
 configuration and enforces the persisted public route. Direct Compose starts
 then fail closed if required Google or outbound-mail credentials are absent.
 
-- Healthcheck: the container polls `/api/health`.
+- Healthcheck: the container polls `/api/ready`.
 - Runtime readiness: `npm run readiness:runtime` verifies production secrets,
   SQLite integrity and migrations, evidence-volume read/write, API health and
   version, and fail-closed HAI authentication without shipping development tools.
+- The final production image is distroless and has no shell or npm. Execute its
+  shipped operational scripts with `/nodejs/bin/node`; npm commands remain for
+  the source checkout and build stage only.
+- The security workflow builds this actual runtime image, emits a CycloneDX
+  SBOM, and rejects every HIGH or CRITICAL Trivy finding. The recorded #201
+  reproduction built `laro-server:final-account-ec94985` as image
+  `sha256:9049b144a83899b841ee731e997e996337d98436d0f39ede7f714d6b7022f99f`
+  with zero findings at that threshold. This is a local image, not a registry or
+  server deployment; each pushed commit must repeat the scan because
+  vulnerability data and base images change.
 - Configure via `.env` (see `.env.example`). In production the server refuses to
   start without strong `JWT_SECRET`/`COOKIE_SECRET` (Phase 006).
 
@@ -47,9 +70,12 @@ then fail closed if required Google or outbound-mail credentials are absent.
 | `GET /api/ready` | Readiness — DB reachable (503 if not) | Yes |
 | `GET /api/health` | Summary: status, dbReady, version, timestamp | Yes |
 
-tRPC also exposes `health.check` (public) and `health.readiness` (protected, with
-scheduled-job status), and `admin.diagnostics`/`admin.tableCounts` for operators
-(Phase 036).
+These public responses intentionally contain no backup state, worker names or
+history, request/error/latency metrics, configuration warnings, or detailed
+failures. `GET /api/operator/diagnostics`, `health.readiness`, and
+`admin.diagnostics` expose the same canonical detailed snapshot only to a
+session with the `operator` or `admin` role. `admin.tableCounts` remains
+administrator-only. tRPC `health.check` is a public basic check (Phase 036).
 
 ## Doctor (Phase 034)
 
@@ -201,6 +227,12 @@ requires STARTTLS with TLS 1.2 or newer.
 ## Notes
 
 - The desktop app is packaged separately with `npm run dist:*` (electron-builder).
+- The #201 Linux cross-build produced
+  `release/1.3.0/LARO Desktop 1.3.0.exe` with SHA-256
+  `a51bb2755a978113d145335df03ba7e6ad0fab8b4acf099d042bd3ea0de294e2` and
+  passed packaged-native PE/x64 checks for the app, SQLite, and Canvas. This
+  structural result does not replace a native Windows launch and scanned-PDF
+  OCR acceptance run.
 - Branch and manual Windows builds are unsigned internal artifacts. Store
   certification and paid signing are not active deployment requirements. Tagged
   releases can remain unsigned after the external acceptance gates are approved;

@@ -6,22 +6,6 @@ export const PROVIDER_LIMITS = {
     maxImportFiles: 14,
     maxExactNameMatches: 100,
   },
-  trello: {
-    maxJsonBytes: 2 * 1024 * 1024,
-    maxMemberJsonBytes: 256 * 1024,
-    maxBoards: 100,
-    maxListsPerBoard: 250,
-    maxCardsPerList: 500,
-    maxCommentsPerCard: 500,
-    maxAttachmentsPerCard: 100,
-    maxSyncBoards: 25,
-    maxSyncLists: 250,
-    maxSyncCards: 1_000,
-    maxSyncComments: 5_000,
-    maxSyncAttachments: 14,
-    maxSyncRequests: 300,
-    maxSyncJsonBytes: 32 * 1024 * 1024,
-  },
 } as const;
 
 export class ProviderBatchLimitError extends Error {
@@ -60,13 +44,4 @@ export class ProviderBatchBudget<K extends string> {
   used(kind: K): number {
     return this.consumed.get(kind) || 0;
   }
-}
-
-export function assertProviderArrayLimit<T>(
-  value: unknown,
-  limit: number,
-  label: string,
-): asserts value is T[] {
-  if (!Array.isArray(value)) throw new Error(`${label} response was not an array`);
-  if (value.length > limit) throw new ProviderBatchLimitError(`${label} limit exceeded`);
 }

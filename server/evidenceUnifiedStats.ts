@@ -14,7 +14,7 @@ export async function getUnifiedEvidenceStats(db: AnyDb, userId: string) {
   const [legacy] = await db
     .select({
       totalFiles: sql<number>`count(*)`,
-      totalSize: sql<string>`coalesce(sum(cast(${evidence.fileSize} as integer)), 0)`,
+      totalSize: sql<number>`coalesce(sum(${evidence.fileSize}), 0)`,
     })
     .from(evidence)
     .where(eq(evidence.userId, userId));
@@ -22,7 +22,7 @@ export async function getUnifiedEvidenceStats(db: AnyDb, userId: string) {
   const [scanned] = await db
     .select({
       totalFiles: sql<number>`count(*)`,
-      totalSize: sql<string>`coalesce(sum(cast(${evidenceFiles.fileSize} as integer)), 0)`,
+      totalSize: sql<number>`coalesce(sum(${evidenceFiles.fileSize}), 0)`,
     })
     .from(evidenceFiles)
     .where(eq(evidenceFiles.userId, userId));
@@ -34,7 +34,7 @@ export async function getUnifiedEvidenceStats(db: AnyDb, userId: string) {
 
   return {
     totalFiles: manualLegacy + manualScanned,
-    totalSize: String(sizeLegacy + sizeScanned),
+    totalSize: sizeLegacy + sizeScanned,
     manualUploads: manualLegacy,
     agentUploads: manualScanned,
   };
@@ -110,7 +110,7 @@ export async function getUnifiedStorageByCase(db: AnyDb, userId: string, limit =
   const legacy = await db
     .select({
       caseId: evidence.caseId,
-      totalSize: sql<number>`sum(cast(${evidence.fileSize} as integer))`,
+      totalSize: sql<number>`sum(${evidence.fileSize})`,
     })
     .from(evidence)
     .where(eq(evidence.userId, userId))
@@ -119,7 +119,7 @@ export async function getUnifiedStorageByCase(db: AnyDb, userId: string, limit =
   const scanned = await db
     .select({
       caseId: evidenceFiles.caseId,
-      totalSize: sql<number>`sum(cast(${evidenceFiles.fileSize} as integer))`,
+      totalSize: sql<number>`sum(${evidenceFiles.fileSize})`,
     })
     .from(evidenceFiles)
     .where(eq(evidenceFiles.userId, userId))

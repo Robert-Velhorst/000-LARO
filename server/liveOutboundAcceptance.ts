@@ -3,9 +3,8 @@ import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { AUDIT_ACTIONS } from "./audit";
 import { getDb } from "./db";
-import { decryptToken } from "./emailOAuth";
-import { getFlag, setFlag } from "./featureFlags";
-import { listGoogleDriveFolders } from "./googleDriveService";
+import { isOutreachSendingEnabled, setFlag } from "./featureFlags";
+import { getProviderAccessToken } from "./providerConnections";
 import {
   sendApprovedOutreach,
   type ApprovedOutreachMessageOverride,
@@ -117,16 +116,7 @@ function validateOptions(options: AcceptanceOptions): void {
 }
 
 async function getFreshGoogleAccessToken(userId: string, accountId: string): Promise<string> {
-  // The Drive client refreshes and persists an expired shared Google OAuth grant.
-  await listGoogleDriveFolders(userId, undefined, accountId);
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const [account] = await db.select({ accessToken: emailAccounts.accessToken })
-    .from(emailAccounts)
-    .where(and(eq(emailAccounts.id, accountId), eq(emailAccounts.userId, userId)))
-    .limit(1);
-  if (!account?.accessToken) throw new Error("Selected Google account has no access token");
-  return decryptToken(account.accessToken);
+  return getProviderAccessToken({ userId, accountId, provider: "gmail" });
 }
 
 async function countGmailInboxMessages(
@@ -353,8 +343,8 @@ export async function runLiveOutboundAcceptance(
 
   try {
     await setFlag("outreach.send.enabled", true);
-    if (!(await getFlag("outreach.send.enabled"))) {
-      throw new Error("outreach.send.enabled is overridden off; no message was sent");
+    if (!(await isOutreachSendingEnabled())) {
+      throw new Error("outreach.send.enabled remained off; no message was sent");
     }
 
     const first = await dependencies.sendApproved(options.userId, ids.outreachId, acceptanceMessage);

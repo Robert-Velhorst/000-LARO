@@ -2,24 +2,20 @@ import { z } from "zod";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { lawyers as lawyersTable } from '../schema';
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, or, sql } from "drizzle-orm";
+import { createLawyerId, isGeneratedIdCollision } from "../ids";
+import { assertCaseAccess } from "../_core/authz";
+import { getLawyerComparison } from "../lawyerComparison";
+import { literalSearchCondition } from "../literalSearch";
 
 const experienceFilter = z.enum(["0-5", "6-10", "11-20", "20+"]);
 const acceptingFilter = z.enum(["Yes", "Limited", "No", "Unknown"]);
 
-function likePattern(value: string): string {
-  return `%${value.trim().toLowerCase().replace(/[\\%_]/g, "\\$&")}%`;
-}
-
 function experienceCondition(filter: z.infer<typeof experienceFilter>) {
-  const numericYears = sql`CAST(TRIM(${lawyersTable.experienceYears}) AS INTEGER)`;
-  const isNumeric = sql`TRIM(COALESCE(${lawyersTable.experienceYears}, '')) <> ''
-    AND TRIM(${lawyersTable.experienceYears}) NOT GLOB '*[^0-9]*'`;
-
-  if (filter === "0-5") return sql`(${isNumeric}) AND ${numericYears} BETWEEN 0 AND 5`;
-  if (filter === "6-10") return sql`(${isNumeric}) AND ${numericYears} BETWEEN 6 AND 10`;
-  if (filter === "11-20") return sql`(${isNumeric}) AND ${numericYears} BETWEEN 11 AND 20`;
-  return sql`(${isNumeric}) AND ${numericYears} > 20`;
+  if (filter === "0-5") return sql`${lawyersTable.experienceYears} BETWEEN 0 AND 5`;
+  if (filter === "6-10") return sql`${lawyersTable.experienceYears} BETWEEN 6 AND 10`;
+  if (filter === "11-20") return sql`${lawyersTable.experienceYears} BETWEEN 11 AND 20`;
+  return sql`${lawyersTable.experienceYears} > 20`;
 }
 
 const officialProfileCondition = sql`TRIM(COALESCE(${lawyersTable.officialProfileUrl}, '')) <> ''`;
@@ -49,29 +45,27 @@ export const lawyersRouter = router({
 
       const conditions: any[] = [];
       if (input?.query) {
-        const pattern = likePattern(input.query);
-        conditions.push(sql`(
-          LOWER(COALESCE(${lawyersTable.name}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.firm}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.firmName}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.email}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.phone}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.website}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.address}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.city}, '')) LIKE ${pattern} ESCAPE '\\'
-          OR LOWER(COALESCE(${lawyersTable.legalAreas}, '')) LIKE ${pattern} ESCAPE '\\'
-        )`);
+        conditions.push(or(
+          literalSearchCondition(lawyersTable.name, input.query),
+          literalSearchCondition(lawyersTable.firm, input.query),
+          literalSearchCondition(lawyersTable.firmName, input.query),
+          literalSearchCondition(lawyersTable.email, input.query),
+          literalSearchCondition(lawyersTable.phone, input.query),
+          literalSearchCondition(lawyersTable.website, input.query),
+          literalSearchCondition(lawyersTable.address, input.query),
+          literalSearchCondition(lawyersTable.city, input.query),
+          literalSearchCondition(lawyersTable.legalAreas, input.query),
+        ));
       }
       if (input?.legalArea) {
-        const pattern = likePattern(input.legalArea);
         conditions.push(sql`(
           (JSON_VALID(${lawyersTable.legalAreas}) AND EXISTS (
             SELECT 1
             FROM JSON_EACH(${lawyersTable.legalAreas}) AS area
-            WHERE LOWER(CAST(area.value AS TEXT)) LIKE ${pattern} ESCAPE '\\'
+            WHERE ${literalSearchCondition(sql`CAST(area.value AS TEXT)`, input.legalArea)}
           ))
           OR (NOT JSON_VALID(${lawyersTable.legalAreas})
-            AND LOWER(COALESCE(${lawyersTable.legalAreas}, '')) LIKE ${pattern} ESCAPE '\\')
+            AND ${literalSearchCondition(lawyersTable.legalAreas, input.legalArea)})
         )`);
       }
       if (input?.experience) conditions.push(experienceCondition(input.experience));
@@ -124,6 +118,17 @@ export const lawyersRouter = router({
       return result.length > 0 ? result[0] : null;
     }),
 
+  compare: protectedProcedure
+    .input(z.object({
+      lawyerIds: z.array(z.string().trim().min(1).max(256)).min(2).max(3)
+        .refine((ids) => new Set(ids).size === ids.length, "Choose different lawyers to compare"),
+      caseId: z.string().trim().min(1).max(256).optional(),
+    }))
+    .query(async ({ input, ctx }) => {
+      if (input.caseId) await assertCaseAccess(input.caseId, ctx.user.id);
+      return getLawyerComparison(input);
+    }),
+
   create: adminProcedure
     .input(z.object({
       name: z.string(),
@@ -136,18 +141,28 @@ export const lawyersRouter = router({
     .mutation(async ({ input }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      const id = `LAW${Date.now().toString().slice(-6)}`;
-      await db.insert(lawyersTable).values({
-        id,
-        name: input.name,
-        email: input.email || null,
-        phone: input.phone || null,
-        firm: input.firm || null,
-        city: input.city || null,
-        legalAreas: JSON.stringify(input.legalAreas || []),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      } as any);
+      let id = "";
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const candidate = createLawyerId();
+        try {
+          await db.insert(lawyersTable).values({
+            id: candidate,
+            name: input.name,
+            email: input.email || null,
+            phone: input.phone || null,
+            firm: input.firm || null,
+            city: input.city || null,
+            legalAreas: JSON.stringify(input.legalAreas || []),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          } as any);
+          id = candidate;
+          break;
+        } catch (error) {
+          if (!isGeneratedIdCollision(error, "lawyers") || attempt === 2) throw error;
+        }
+      }
+      if (!id) throw new Error("Lawyer record could not be created");
       return { id, success: true };
     }),
 

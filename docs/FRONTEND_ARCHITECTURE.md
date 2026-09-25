@@ -1,6 +1,6 @@
 # Frontend Architecture
 
-Current as of 2026-08-14.
+Current as of 2026-09-20.
 
 ## Shipped surfaces
 
@@ -41,9 +41,49 @@ reports and email-automation routes are not mounted in the production router.
 The Outreach tabs use progressive disclosure: Overview shows current results,
 Lawyers embeds the official NOvA-backed directory, and Media/Organizations expose
 case selection, bounded discovery, manual source import, review, matching, and
-shortlist controls. Mutations invalidate the relevant queries so users do not
+shortlist controls. Discovery feedback names automatic-review and pending
+counts and explains provider/result bounds when a run is partial. Mutations
+invalidate the relevant queries so users do not
 need to reload the page. The workspace is verified without horizontal overflow
 at 390x844 and 1280x800.
+
+The Evidence Connections view presents each Google account as one shared OAuth
+grant with Gmail and Drive capabilities. Disconnect expands an owner-scoped
+impact review before enabling confirmation; it names affected schedule entries
+with owner-visible case labels, explains source-record retention or removal, and
+states that collected documents and other accounts remain. Cancellation sends no
+mutation, and a failed or stale confirmation keeps the review open for retry.
+
+Auto-Collection Settings mounts `GoogleDriveSourceSelector` for read-only
+account/folder selection. It can navigate folders and select My Drive, but it
+does not preview files or trigger a second direct-import workflow. Saving or
+running collection sends the selection through the canonical bounded keyword
+collector, and partial or failed runs render warning/error feedback rather than
+a false success state.
+
+The case Evidence coverage view renders derived gaps only when the saved review
+matches the current case/input revision. Stale, running, failed, unavailable,
+and retired states have distinct recovery cards, and no non-current state exposes
+old gaps, patterns, inferences, or generated-document actions as current.
+
+The Legal documents tab first captures a complete reviewed recipient. The UI
+labels owner-provided and evidence-linked provenance, clears confirmation after
+any edit, and disables generation until the saved revision matches the form.
+Generation opens a preview of a server-persisted snapshot with its version and
+SHA-256. A second explicit confirmation locks that exact snapshot; download then
+uses a one-use server URL. Version history labels stale inputs as historical and
+never reconstructs a file with `Blob` or mutable renderer state.
+
+The global search dialog consumes the server's category-completeness contract.
+It renders a complete no-result message only when every requested category
+completed; partial and failed responses keep successful results visible and show
+a retryable incomplete-state notice at desktop and mobile widths.
+
+The notification popover renders the persisted kind rather than a fabricated
+system type. `View` is shown only for an owner-validated destination registered
+in `shared/notifications.ts`; deleted or cross-owner context is labelled
+unavailable and cannot navigate. Desktop/mobile browser coverage also checks
+the named dialog, typed icon semantics, HTTP status, console, and network state.
 
 ## Scanner boundary
 

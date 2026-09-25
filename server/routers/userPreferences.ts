@@ -4,8 +4,14 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { createAuditLog } from "../audit";
 import { getDb } from "../db";
 import { userPreferences } from "../schema";
-import { getWorkflowPreferences, updateWorkflowPreferences } from "../workflowPreferences";
-import { LLM_PROVIDERS } from "../llm";
+import {
+  getWorkflowPreferences,
+  grantExternalDocumentSharingConsent,
+  revokeExternalDocumentSharingConsent,
+  updateWorkflowPreferences,
+} from "../workflowPreferences";
+import { EXTERNAL_LLM_PROVIDERS, LLM_PROVIDERS } from "../llm";
+import { EXTERNAL_DOCUMENT_SHARING_SCOPE } from "../../shared/workflowConsent";
 
 function parseJson<T>(raw: string | null | undefined, fallback: T): T {
   if (!raw) return fallback;
@@ -43,7 +49,6 @@ export const userPreferencesRouter = router({
         analysisProvider: z.enum(["local", ...LLM_PROVIDERS]).optional(),
         autoAnalyzeImports: z.boolean().optional(),
         autoOrganizeDocuments: z.boolean().optional(),
-        shareRawDocumentContent: z.boolean().optional(),
         outreachReviewMode: z.enum(["each", "batch", "automatic"]).optional(),
         messageApprovalMode: z.enum(["each", "batch", "automatic"]).optional(),
       }).refine((value) => Object.keys(value).length > 0, { message: "At least one workflow preference is required" }),
@@ -59,4 +64,18 @@ export const userPreferencesRouter = router({
       });
       return preferences;
     }),
+
+  grantExternalDocumentSharing: protectedProcedure
+    .input(z.object({
+      provider: z.enum(EXTERNAL_LLM_PROVIDERS),
+      scope: z.literal(EXTERNAL_DOCUMENT_SHARING_SCOPE),
+      automaticImports: z.boolean(),
+      acknowledgeFullDocumentContent: z.literal(true),
+      acknowledgeAutomaticImports: z.literal(true),
+    }).strict())
+    .mutation(({ ctx, input }) => grantExternalDocumentSharingConsent(ctx.user.id, input.provider, input.automaticImports)),
+
+  revokeExternalDocumentSharing: protectedProcedure
+    .input(z.object({ consentId: z.string().min(1).max(100) }).strict())
+    .mutation(({ ctx, input }) => revokeExternalDocumentSharingConsent(ctx.user.id, input.consentId)),
 });

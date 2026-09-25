@@ -1,6 +1,6 @@
 # Technical Debt Register
 
-Updated: 2026-08-14
+Updated: 2026-09-25
 
 | # | Debt | Impact | Status / next step |
 | --- | --- | --- | --- |
@@ -13,11 +13,11 @@ Updated: 2026-08-14
 | D7 | Current runtime lockfile has no known advisory | - | Re-audit each release |
 | D8 | Duplicate `shared/` and `src/shared/` contracts | - | Resolved; `shared/` is canonical |
 | D9 | Historical excluded tests and audit snapshots remain for traceability | Low | Keep clearly dated; remove only through reviewed archive work |
-| D10 | Historical tables use database triggers rather than native foreign-key clauses to avoid destructive installed-data rebuilds | Low | Startup enforces insert/update/delete relationships; readiness verifies every guard and reconciliation covers historical drift; replace with native FKs only through a backup-tested migration |
+| D10 | Historical tables used generated relationship triggers instead of native foreign keys | - | Resolved with the backup-verified `0031` compatibility migration, schema-derived native keys, reviewed delete policies, orphan preflight, and post-migration `foreign_key_check` |
 | D11 | Top-level proprietary license | - | Resolved |
 | D12 | CSV and ZIP evidence export include a case-scoped index, redacted metadata, analyses, and available source files; PDF remains unavailable | Low | Keep capability labels honest |
-| D13 | Historical subscription, usage-limit, and monetary usage columns remain in installed schemas | Low | Keep for compatibility; new telemetry writes quantity counts only and leaves monetary fields null |
-| D14 | Persisted NL/EN runtime and operational-surface translation | - | Resolved with typed catalog, language controls, locale formatting, and browser persistence coverage; source/provider/user content intentionally retains its original language |
+| D13 | Historical subscription, usage-limit, and monetary usage columns remained in installed schemas | - | Resolved by backup-tested migration `0033`: non-empty legacy values are retained in the read-only `legacy_billing_archive`; active schema contains quantity/provenance telemetry only |
+| D14 | Persisted NL/EN runtime exists, but legacy renderer surfaces still contain uncatalogued user-facing copy | Medium | In progress: settings, auto-collection, the mounted case workspace, document reconstruction, document-source jobs, evidence coverage, case-scoped public research, the document inbox, the case list, and shared search filters are catalog-driven and browser-tested; the stabilization gate blocks drift against an explicit 1,142-candidate/49-file baseline until staged migration reaches zero or values are reviewed as non-translatable |
 | D15 | Desktop scanner previously accepted false connection success and fabricated uploads | - | Resolved with session auth, folder consent, review selection and real evidence storage |
 | D16 | Supported Electron/Chromium route accessibility and responsive coverage | - | Resolved with a CI Playwright/axe matrix across all 15 static routes at desktop and mobile sizes; non-target browsers and formal WCAG certification remain outside the packaged-app claim |
 | D17 | Evidence, case, and account deletion could leave managed objects after metadata deletion | - | Resolved; managed storage keys are deleted first and failures abort deletion |
@@ -27,13 +27,20 @@ Updated: 2026-08-14
 | D21 | Multiple desktop processes could share one SQLite profile and run duplicate background jobs | - | Resolved with an Electron single-instance lock, tested restore/show/focus handoff, and a packaged two-launch profile probe in the Windows release workflow |
 | D22 | Electron sessions had no explicit browser-permission policy | - | Resolved with deny-by-default check/request handlers installed before any window and covered by behavioral/security tests |
 | D23 | Desktop could continue with temporary encryption keys when install-secret persistence failed | - | Resolved with atomic first-run creation, strict existing-file validation, explicit environment override, fail-closed startup before SQLite opens, and packaged restart/hash verification in the Windows workflow |
-| D24 | Database-only backups could validate successfully without preserving or checking the key required to decrypt provider tokens | - | Resolved with manifest-bound backup sets, bundled desktop keys, external-secret compatibility checks, rollback-safe paired restore, explicit legacy override, and a blocking paired recovery drill |
-| D25 | Electron backup sets did not preserve locally managed legal evidence bytes | - | Resolved with versioned local-file inventories, managed-key coverage, stable-source rescans, S3 inventory binding, rollback-safe storage restore, and a blocking database/key/evidence drill |
+| D24 | Database-only backups could validate successfully without preserving or checking the key required to decrypt provider tokens | - | Resolved with a version-4 AES-GCM envelope, an independently escrowed recovery key, authenticated private inventory, rollback-safe restore, explicit retirement of plaintext sets, and a blocking copied-backup drill |
+| D25 | Electron backup sets did not preserve locally managed legal evidence bytes | - | Resolved with encrypted local/S3 byte inventories, managed-key coverage, stable-source rescans, rollback-safe storage restore, and a blocking database/key/evidence drill |
 | D26 | Flask ledger, auth, token-vault, and upload recovery is still separate from the Electron backup CLI | - | Resolved with a manifest-bound four-member recovery set, external-secret compatibility checks, upload-reference coverage, path rebasing, rollback-safe restore, and a blocking destructive drill |
 | D27 | Electron and Flask previously remained concurrent application runtimes with independent databases and authentication/session models | - | Resolved by making Electron authoritative and adding an offline owner-bound migration that operationally maps supported records, archives every owner-scoped source row with hashes/redaction, copies verified evidence, rejects changed reruns, and never migrates sessions or vault credentials |
-| D28 | Strict historical counters remain text-backed for installed-schema compatibility | Low | Production readiness now blocks malformed, unsafe, and impossible counter data using aggregate-only checks; convert columns only through a backup-tested migration |
+| D28 | Strict historical counters remained text-backed for installed-schema compatibility | - | Resolved with backup-verified migration `0032`, explicit malformed-value preflight, 27 native numeric fields, named type/range checks, and numeric read/write paths |
+| D29 | Gap review derived completeness and case-strength percentages from record counts | - | Resolved with a versioned evidence-coverage inventory, exact source/analysis revisions, explicit unknowns and limitations, legacy-row retirement migrations, and backend/browser regression coverage |
+| D30 | Automatic outreach discovery approved an arbitrary owner-wide pending slice | - | Resolved with run IDs, stable candidate-ID dispositions, exact-ID transactional review/matching, manual and historical preservation, and explicit partial-bound reporting |
+| D31 | Separate Gmail and Drive disconnect language concealed revocation of their shared Google grant | - | Resolved with one versioned impact review, explicit shared-capability confirmation, stale-review rejection before provider contact, full-state retry on provider failure, transactional schedule/source cleanup, and browser/backend regressions |
+| D32 | Public-record searches were not case-owned and provider failures could resemble zero-result history | - | Resolved with pre-fetch ownership checks, metadata-only mandatory receipts, explicit completeness states, null failure counts, and backend/browser regressions across KvK, Rechtspraak, and KOOP |
+| D33 | Gap-analysis results could outlive the evidence, source analysis, case, or timeline revision that produced them | - | Resolved with exact input manifests and revision checks, explicit fresh/stale/running/failed/unavailable states, hidden non-current derived output, recomputation gates, and backend/browser regressions |
+| D34 | Maintained text searches interpreted punctuation and category failure inconsistently | - | Resolved with the documented `literal-search-v1` normalization/escaping contract, per-category completeness, malformed-row isolation, truthful renderer states, and backend/browser regressions |
+| D35 | Notification writes discarded type/context and could mark reminder deduplication complete after a failed insert | - | Resolved with typed owner-validated records, registered destinations, explicit durable outcomes, one atomic row-level deduplication authority, stale-reference suppression, and backend/browser regressions |
+| D36 | A second Drive router exposed preview/direct-import/sync logic, repeated deduplication and analysis, and wrote a parallel provider table | - | Resolved by retaining only read-only folder selection plus canonical auto-collection; canonical evidence now owns account-bound source identity, provider revision, version history, hashes, bounded outcomes, and retry-safe failure behavior |
+| D37 | Legal drafts were transient renderer blobs with placeholder recipients and no reproducible source/review version | - | Resolved with reviewed recipient revisions, immutable exact-byte snapshots, source/analysis provenance, stale-review rejection, owner-only historical downloads, mandatory content-free audit, and erasure coverage |
 
-D10 is operationally contained without rewriting installed databases. A native
-foreign-key conversion remains migration work, not a release blocker while the
-guard and reconciliation gates stay green. D16 remains incremental quality
-work. Provider rollout must retain credential, consent, approval and audit gates.
+D16 remains incremental quality work. Provider rollout must retain credential,
+consent, approval and audit gates.

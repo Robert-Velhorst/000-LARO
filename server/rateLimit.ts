@@ -7,6 +7,7 @@ import type { RateLimitConsumeInput, RateLimitConsumeResult } from './rateLimitS
 import { createRedisRateLimitStore } from './rateLimitStore';
 import { getHostedRedisScriptClient } from './hostedRedis';
 import { ENV } from './_core/env';
+import { resolveClientIp } from './clientIp';
 
 /**
  * Simple in-memory rate limiter
@@ -125,6 +126,12 @@ export const RATE_LIMITS = {
     maxRequests: 10,
     windowMs: 5 * 60 * 1000,
     message: "Too many evidence export requests. Please use an existing link or wait briefly.",
+  },
+
+  transactionalEmailTest: {
+    maxRequests: 3,
+    windowMs: 60 * 60 * 1000,
+    message: "Transactional email tests are limited to three per hour.",
   },
 
   bulkImport: {
@@ -256,18 +263,5 @@ export function getRateLimitIdentifier(ctx: { user?: { id: string }; req: any })
     return `user:${ctx.user.id}`;
   }
   
-  // Fallback to IP address for unauthenticated requests
-  const forwarded = ctx.req.headers['x-forwarded-for'];
-  const forwardedChain = (Array.isArray(forwarded) ? forwarded : [forwarded])
-    .filter((value): value is string => typeof value === 'string')
-    .flatMap((value) => value.split(','))
-    .map((value) => value.trim())
-    .filter(Boolean);
-  // The nearest trusted reverse proxy appends the immediate peer at the right
-  // edge. Prefer that value so a client-supplied leftmost entry cannot rotate
-  // rate-limit identities while traffic is routed through ngrok.
-  const ip = forwardedChain.at(-1) || ctx.req.socket.remoteAddress;
-  
-  return `ip:${ip || 'unknown'}`;
+  return `ip:${resolveClientIp(ctx.req)}`;
 }
-

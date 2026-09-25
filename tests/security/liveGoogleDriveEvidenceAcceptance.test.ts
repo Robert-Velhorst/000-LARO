@@ -86,12 +86,17 @@ suite("live Google Drive evidence acceptance", () => {
           description: "Controlled Drive acceptance source",
           fileUrl: stored.url,
           fileName: "representative.txt",
-          fileSize: String(body.length),
+          fileSize: body.length,
           mimeType: "text/plain",
           metadata: JSON.stringify({
             storageKey: stored.key,
             driveFileId: "drive-file-acceptance-001",
             driveAccountId: accountId,
+            sourceIdentity: JSON.stringify(["google_drive", accountId, "drive-file-acceptance-001"]),
+            sourceRevision: "drive-version:1",
+            revisionNumber: 1,
+            isCurrent: true,
+            previousVersionIds: [],
             folderId: "root",
             sourceMimeType: "text/plain",
             autoCollected: true,
@@ -99,29 +104,14 @@ suite("live Google Drive evidence acceptance", () => {
           contentHash: stored.sha256,
           relevant: true,
         });
-        await app.db.insert(app.schema.googleDriveFiles).values({
-          id: "GOOGLE_DRIVE_ACCEPTANCE_ROW",
-          userId,
-          caseId: params.caseId,
-          accountId,
-          googleFileId: "drive-file-acceptance-001",
-          fileName: "representative.txt",
-          mimeType: "text/plain",
-          fileSize: String(body.length),
-          s3Key: stored.key,
-          s3Url: stored.url,
-          evidenceType: "document",
-          isIncluded: "Yes",
-          createdAt: new Date(),
-        });
         await app.db.insert(app.schema.autoCollectionLogs).values({
           id: "GOOGLE_DRIVE_ACCEPTANCE_PULL_LOG",
           caseId: params.caseId,
           userId,
           status: "completed",
-          filesFound: "1",
-          filesDownloaded: "1",
-          errorCount: "0",
+          filesFound: 1,
+          filesDownloaded: 1,
+          errorCount: 0,
           createdAt: new Date(),
         });
         await analyzeStoredEvidence({ userId, evidenceId, deepAnalysis: false, force: true });
@@ -162,7 +152,6 @@ suite("live Google Drive evidence acceptance", () => {
     expect(await app.db.select().from(app.schema.cases)).toHaveLength(0);
     expect(await app.db.select().from(app.schema.evidence)).toHaveLength(0);
     expect(await app.db.select().from(app.schema.documentAnalyses)).toHaveLength(0);
-    expect(await app.db.select().from(app.schema.googleDriveFiles)).toHaveLength(0);
     expect(await app.db.select().from(app.schema.autoCollectionLogs)).toHaveLength(0);
     await expect(storageRead(sourceStorageKey)).rejects.toThrow("not found");
 

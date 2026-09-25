@@ -11,12 +11,12 @@
  *  - hashBuffer() provides a sha256 content hash for evidence provenance.
  *  - Local reads/writes are confined to the base directory (defence in depth).
  */
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import path from 'path';
 import fs from 'fs';
-import { Readable, Transform } from 'stream';
+import { PassThrough, Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
 import { collectBoundedBytes } from './boundedBytes';
 
@@ -102,8 +102,115 @@ export async function storagePut(
   // Real local fallback — actually persist the bytes.
   const full = resolveLocalPath(safeKey);
   fs.mkdirSync(path.dirname(full), { recursive: true });
+  // Intentional evidence persistence: the key is confined above and callers
+  // enforce upload size, content type, ownership, and provenance boundaries.
+  // codeql[js/http-to-file-access]
   fs.writeFileSync(full, bodyBuffer);
   return { key: safeKey, url: `file://${full}`, sha256 };
+}
+
+export interface StorageStreamPutOptions {
+  maxBytes: number;
+  expectedBytes?: number;
+  signal?: AbortSignal;
+}
+
+function readableByteSource(source: unknown): Readable {
+  if (source instanceof Readable) return source;
+  if (Buffer.isBuffer(source) || source instanceof Uint8Array || source instanceof ArrayBuffer || typeof source === 'string') {
+    const value = source instanceof ArrayBuffer ? Buffer.from(source) : source;
+    return Readable.from([value]);
+  }
+  const iterable = source as AsyncIterable<unknown> | null;
+  if (iterable && typeof iterable[Symbol.asyncIterator] === 'function') {
+    return Readable.from(iterable);
+  }
+  throw new Error('Storage byte source is not a readable stream');
+}
+
+/**
+ * Persist a bounded stream without first materializing the complete object in
+ * process memory. Local writes use an atomic temporary file; S3 consumes the
+ * same bounded/hash-counting pipeline directly.
+ */
+export async function storagePutStream(
+  key: string,
+  source: unknown,
+  contentType: string,
+  options: StorageStreamPutOptions,
+): Promise<{ key: string; url: string; sha256: string; bytes: number }> {
+  const safeKey = sanitizeStorageKey(key);
+  if (!safeKey) throw new Error('Storage key must contain at least one valid path segment');
+  if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 1) {
+    throw new Error('Storage stream maxBytes must be a positive safe integer');
+  }
+  if (options.expectedBytes !== undefined && (
+    !Number.isSafeInteger(options.expectedBytes) ||
+    options.expectedBytes < 1 ||
+    options.expectedBytes > options.maxBytes
+  )) {
+    throw new Error('Storage stream expectedBytes must fit within maxBytes');
+  }
+  if (options.signal?.aborted) throw new Error('Storage write was cancelled');
+
+  const input = readableByteSource(source);
+  const hash = createHash('sha256');
+  let bytes = 0;
+  const meter = new Transform({
+    transform(chunk: Buffer | Uint8Array | string, encoding, callback) {
+      const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as any, encoding as BufferEncoding);
+      bytes += value.length;
+      if (bytes > options.maxBytes) {
+        callback(new Error(`Storage object exceeds the ${options.maxBytes} byte write limit`));
+        return;
+      }
+      hash.update(value);
+      callback(null, value);
+    },
+  });
+
+  const assertComplete = () => {
+    if (bytes < 1) throw new Error('Storage object is empty');
+    if (options.expectedBytes !== undefined && bytes !== options.expectedBytes) {
+      throw new Error('Storage object size changed after metadata preflight');
+    }
+  };
+
+  if (isS3Configured()) {
+    const uploadBody = new PassThrough();
+    try {
+      const pumping = pipeline(input, meter, uploadBody, { signal: options.signal });
+      const uploading = s3.send(new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: safeKey,
+        Body: uploadBody,
+        ContentType: contentType,
+        ...(options.expectedBytes !== undefined ? { ContentLength: options.expectedBytes } : {}),
+      }), { abortSignal: options.signal });
+      await Promise.all([pumping, uploading]);
+      assertComplete();
+      return { key: safeKey, url: `https://${BUCKET}.s3.amazonaws.com/${safeKey}`, sha256: hash.digest('hex'), bytes };
+    } catch (error) {
+      input.destroy();
+      uploadBody.destroy();
+      await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: safeKey })).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  const full = resolveLocalPath(safeKey);
+  const temporary = `${full}.upload-${randomUUID()}`;
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  try {
+    await pipeline(input, meter, fs.createWriteStream(temporary, { flags: 'wx' }), { signal: options.signal });
+    assertComplete();
+    await fs.promises.rename(temporary, full);
+    return { key: safeKey, url: `file://${full}`, sha256: hash.digest('hex'), bytes };
+  } catch (error) {
+    input.destroy();
+    await fs.promises.unlink(temporary).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function storageGet(key: string): Promise<string> {
@@ -214,6 +321,34 @@ export async function storageOpenReadStream(
   });
   const completion = pipeline(source, limiter, { signal: options.signal });
   return { stream: limiter, declaredBytes, completion };
+}
+
+/** Metadata-only availability check used before issuing a download ticket. */
+export async function storageInspect(
+  key: string,
+  options: { maxBytes: number; signal?: AbortSignal },
+): Promise<{ bytes: number | null }> {
+  if (options.signal?.aborted) throw new Error("Storage inspection was cancelled");
+  const safeKey = sanitizeStorageKey(key);
+  if (!safeKey) throw new Error('Storage key must contain at least one valid path segment');
+  if (isS3Configured()) {
+    const response = await s3.send(
+      new HeadObjectCommand({ Bucket: BUCKET, Key: safeKey }),
+      { abortSignal: options.signal },
+    );
+    const bytes = typeof response.ContentLength === 'number' ? response.ContentLength : null;
+    if (bytes !== null && bytes > options.maxBytes) {
+      throw new Error(`Storage object exceeds the ${options.maxBytes} byte read limit`);
+    }
+    return { bytes };
+  }
+  const full = resolveLocalPath(safeKey);
+  if (!fs.existsSync(full)) throw new Error(`Local storage object not found: ${safeKey}`);
+  const bytes = fs.statSync(full).size;
+  if (bytes > options.maxBytes) {
+    throw new Error(`Storage object exceeds the ${options.maxBytes} byte read limit`);
+  }
+  return { bytes };
 }
 
 export async function storageDelete(key: string): Promise<void> {

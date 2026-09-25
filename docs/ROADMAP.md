@@ -1,10 +1,46 @@
 # Roadmap and External Gates
 
-Current as of 2026-08-14.
+Current as of 2026-09-24.
+
+## Final Account and Lifecycle Candidate
+
+Implementation commit `ec94985e9d78fc95ad14e89473f79dec287b1825`
+passes the complete repository-controlled verification required by issue #201.
+The exact commands, integrated behavior, failure reconciliation,
+maintained-source audit, SBOM/container identity, and Windows artifact checksum
+are in
+[`FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md`](FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md).
+The fourth- and third-round records remain historical evidence in
+[`FOURTH_ROUND_VERIFICATION.md`](FOURTH_ROUND_VERIFICATION.md) and
+[`THIRD_ROUND_VERIFICATION.md`](THIRD_ROUND_VERIFICATION.md).
+
+The next delivery gates are deliberately separate:
+
+1. Push the candidate and obtain the protected GitHub CI, CodeQL, and Windows
+   results.
+2. Review and merge the candidate before closing #194-#199, #139, and #201; an
+   open issue is not treated as closed merely because its local code is present.
+3. Run the portable artifact on native Windows and confirm startup plus a
+   scanned-PDF OCR path.
+4. Deploy only after the owner supplies the current Hetzner, DNS, TLS,
+   persistence, secret, backup, and existing-data migration inputs; then repeat
+   browser and desktop acceptance against that public target.
+5. Retest every enabled provider with the target accounts, migrate the owner's
+   actual workspace through the documented recovery path, and retain rollback
+   evidence until owner acceptance.
 
 ## Completed Production Path
 
 - Local-first Electron runtime with generated per-install secrets.
+- Account-bound desktop scanner rows, paths, preferences, workers, export, and
+  erasure, including account-switch invalidation and legacy-row quarantine.
+- Default-off usage analytics enforced by the canonical writer, fresh one-use
+  account-erasure proof with fail-safe provider revocation, and explicit
+  owner-checked assistant case context.
+- Canonical Home workflow metrics and restart-safe collection monitoring backed
+  by persisted keyword-pull jobs rather than parallel legacy state.
+- Removal of callable Trello and Telegram credential/connector stacks while
+  retaining display-only history labels.
 - Authenticated case, evidence, document intelligence, source-linked timeline,
   official NOvA matching, controlled outreach, responses, analytics, export,
   scanner, audit, retention, backup, and recovery workflows.
@@ -31,6 +67,9 @@ Current as of 2026-08-14.
   motion.
 - Removal of excluded legacy test files with broken imports or disconnected
   assertions; release coverage now lives only in explicitly maintained suites.
+- Backup-tested migration `0033` removes obsolete payment, Stripe, subscription,
+  grace-period, quota, and monetary usage fields from the active model while
+  preserving non-empty legacy values in a trigger-protected read-only archive.
 
 ## External Acceptance
 
@@ -50,16 +89,17 @@ must not be represented as operational.
 
 ## Engineering Follow-Up
 
-1. Expand declared foreign keys after installed-data reconciliation; the
-   production data-readiness gate now detects violations before migration.
-2. Complete renderer NL/EN string migration.
+1. Complete the external candidate gates listed above.
+2. Complete renderer NL/EN string migration. Auto-collection settings, the
+   mounted case workspace, document reconstruction, document-source jobs,
+   evidence coverage, case-scoped public research, the document inbox, the case
+   list, and shared search filters are catalog-driven and browser-tested; the
+   blocking copy audit currently acknowledges 1,142 legacy candidates across 49
+   files.
 3. Add platform-normalized pixel baselines for high-risk interaction states and
    extend focus-order coverage into complex route-specific case and evidence
    editors; shared-shell keyboard behavior is now blocking.
-4. Normalize historical text-backed numeric fields through a reviewed,
-   backup-tested migration; the production readiness gate now detects malformed,
-   unsafe, or internally inconsistent count data before conversion.
-5. Continue dependency review while preserving the enforced renderer bundle budgets.
+4. Continue dependency review while preserving the enforced renderer bundle budgets.
 
 These items improve maintainability and coverage; they do not replace the
 target-account acceptance required for any enabled external provider.

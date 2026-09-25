@@ -7,11 +7,71 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
 ## Unreleased
 
 ### Changed
+- Replaced transient client-side legal-draft downloads and unchecked recipient
+  fallbacks with reviewed recipient revisions and immutable server snapshots.
+  Every version records exact bytes and SHA-256 plus case, evidence/source,
+  analysis, owner-input, and recipient revisions; changed inputs require a new
+  review while earlier reviewed versions remain explicitly historical.
+- Retired the second Google Drive browse/preview/direct-import/sync router and
+  its parallel tracking writes. Folder selection now uses the maintained
+  auto-collection API; canonical evidence owns Drive provenance, SHA-256,
+  account-plus-file identity, provider revisions, unchanged skips, changed
+  versions, bounded partial outcomes, and retry-safe failures.
+- Replaced title-only notification writes and split reminder guards with typed,
+  owner-validated notification records. Kinds, context, metadata, registered
+  destinations, and deduplication keys now persist together; writers report
+  created/already-exists/failure explicitly, failed reminders remain retryable,
+  and stale or cross-owner destinations are non-actionable in the renderer.
+- Unified global, case, evidence, timeline, lawyer, suggestion, hybrid, and
+  saved-search execution under `literal-search-v1`. LIKE/regex metacharacters
+  are now literal, Unicode/case normalization is consistent, malformed rows are
+  isolated, and APIs/renderers distinguish complete, partial, failed, and
+  unavailable search scopes instead of reporting a false empty result.
+- Bound every evidence-coverage review to an exact case and input revision,
+  including evidence IDs/content hashes, source-analysis revisions,
+  communications, and timeline events. Input changes now make saved results
+  stale; stale, running, failed, unavailable, and retired reviews hide derived
+  gaps and require a successful recomputation before downstream document use.
+- Made KvK, Rechtspraak, and KOOP public-source research case-owned and
+  failure-aware. Every attempt now stores a durable metadata-only receipt with
+  the normalized query, retrieval time, result count, and completeness, while
+  the UI distinguishes complete, genuine empty, partial, unavailable, and
+  failed responses without turning provider failures or partial zeroes into
+  absence or good-standing claims.
+- Represented Gmail and Google Drive as capabilities of one Google account
+  grant. Disconnect now requires a versioned impact review naming the account,
+  both capabilities, affected scheduled collection, and local source-record
+  disposition; stale reviews stop before provider contact, provider failures
+  retain the complete local state, and confirmed cleanup updates only the
+  reviewed account selections while preserving other Google accounts and
+  collected documents.
+- Scoped automatic media/organization shortlist review to the stable target IDs
+  returned by the active case discovery run. Reports now enumerate created,
+  refreshed, reviewed, skipped, and pending targets, preserve manual and
+  unrelated historical records, and expose provider/result bounds as partial
+  outcomes instead of silently truncating approval.
+- Replaced plaintext recovery directories with a version-4 AES-256-GCM envelope
+  protected by an independently escrowed recovery key. Validation now rejects
+  copied or tampered payloads, wrong keys, and retired version-1 through
+  version-3 plaintext sets before restore.
+- Upgraded better-sqlite3 to its N-API release with bundled Windows, macOS, and
+  Linux binaries. Cross-platform packaging now preserves the target binary
+  instead of compiling or accidentally shipping the host platform module.
+- Reconciled third-round browser verification with the safe client-error
+  envelope and mapped missing/reconnect-required Google source accounts to an
+  actionable `google_access` recovery message instead of an unknown failure.
+- Removed the inert `analytics.enabled` and `demo.mode` flags and their stored
+  rows. `DEMO_MODE` is now the sole, production-disabled demo decision, while
+  the remaining outreach-send flag has a checked owner/consumer/test registry.
+- Replaced the disconnected local-storage onboarding prototype and boolean-only
+  backend flag with one mounted, owner-scoped desktop/browser setup flow. Real
+  case, evidence, and outreach records now drive completion; resume, skip,
+  reset, account switching, and legacy-state migration are covered end to end.
 - Replaced API-only evidence `file://` links with short-lived signed HTTP links
   that enforce authenticated issuance, expiry, signature validation, and
   content-hash integrity without exposing container paths. Desktop-local links
   remain bound to the local server, while API links use the configured gateway.
-- Made every Google Drive browse, preview, search, import, keyword-pull, and
+- Made every maintained Google Drive source-selection, keyword-pull, and
   provider-acceptance operation account-specific. Multi-account owners must
   select the Drive account instead of silently using the first stored token.
 - Updated the Socket.IO parser lock to 4.2.7 to resolve its zero-attachment
@@ -25,6 +85,17 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   credential and refreshing status immediately.
 
 ### Added
+- Added one exact-commit fourth-round verification record that integrates cloud
+  consent, reviewed HAI scope, minimal public diagnostics, evidence-coverage
+  language, run-scoped discovery, shared Google revocation, failure-aware public
+  research/search, freshness invalidation, durable notifications, canonical
+  Drive ingestion, and reviewed legal-draft versions across the full gate,
+  stable-Chrome suite, fresh database, recovery, Python, dependency, Docker/SBOM,
+  and Windows packaging boundaries.
+- Added a short-lived, one-use legal-draft download route that rechecks session
+  ownership and byte integrity, writes a mandatory content-free audit event,
+  and serves only the exact persisted reviewed snapshot. Owner export and case/
+  account erasure include recipient and draft version history.
 - Added a resumable live Google evidence acceptance command. It reuses the
   owner-only outbound test message, proves real Gmail persistence, deterministic
   content analysis, signed source retrieval, hash equality, and source-open
@@ -111,6 +182,11 @@ versioning; dates are ISO. Version is sourced from `package.json` and surfaced b
   compact source controls that open the owning document.
 
 ### Fixed
+- Replaced count-derived evidence completeness and case-strength percentages
+  with a versioned coverage inventory that discloses exact inputs and revisions,
+  source availability, review state, duplicates, contradiction flags, unknowns,
+  and limitations. Existing score rows are retired by SQLite and hosted
+  PostgreSQL migrations instead of being reinterpreted.
 - Made approved outreach delivery reserve its idempotency guard atomically,
   commit the sent state and audit row together, reject concurrent sends before
   provider invocation, and fail closed on ambiguous provider exceptions.

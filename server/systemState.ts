@@ -11,6 +11,7 @@
 import { getDb } from "./db";
 import { systemConfig } from "./schema";
 import { eq } from "drizzle-orm";
+import { writeAuditLogOrThrow } from "./audit";
 
 const EMERGENCY_STOP_KEY = "system:emergency_stop";
 
@@ -69,8 +70,29 @@ export function isEmergencyStopped(): Promise<boolean> {
 }
 
 /** Engage / release the emergency stop. */
-export function setEmergencyStop(engaged: boolean): Promise<void> {
-  return setSystemSwitch(EMERGENCY_STOP_KEY, engaged);
+export async function setEmergencyStop(engaged: boolean, actorUserId: string): Promise<{ changed: boolean }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.transaction((tx) => {
+    const current = tx.select().from(systemConfig).where(eq(systemConfig.configKey, EMERGENCY_STOP_KEY)).get();
+    const previous = current?.configValue === "true";
+    if (previous === engaged) return { changed: false };
+    const changedAt = new Date();
+    tx.insert(systemConfig)
+      .values({ configKey: EMERGENCY_STOP_KEY, configValue: String(engaged), updatedAt: changedAt } as any)
+      .onConflictDoUpdate({
+        target: systemConfig.configKey,
+        set: { configValue: String(engaged), updatedAt: changedAt } as any,
+      }).run();
+    writeAuditLogOrThrow(tx, {
+      userId: actorUserId,
+      action: engaged ? "emergency_stop.engaged" : "emergency_stop.released",
+      entityType: "system",
+      entityId: "emergency_stop",
+      details: { from: previous, to: engaged },
+    });
+    return { changed: true };
+  });
 }
 
 /**

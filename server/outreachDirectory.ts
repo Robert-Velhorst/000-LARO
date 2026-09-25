@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { readBoundedResponseText, withBoundedHttpResponse } from "./boundedHttpResponse";
 import { getDb } from "./db";
+import { writeAuditLogOrThrow } from "./audit";
 import {
   caseOutreachTargetMatches,
   cases,
@@ -19,6 +20,7 @@ const DISCOVERY_TIMEOUT_MS = 12_000;
 const DISCOVERY_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_DISCOVERY_QUERIES = 6;
 const MAX_DISCOVERY_RESULTS = 60;
+const MAX_PROVIDER_RESULTS_PER_QUERY = MAX_DISCOVERY_RESULTS + 1;
 
 const LEGAL_AREA_NL: Record<string, string> = {
   "Corporate Law": "ondernemingsrecht",
@@ -75,6 +77,7 @@ export interface OutreachDiscoveryCandidate {
 }
 
 export interface OutreachDiscoveryReport {
+  runId: string;
   provider: typeof PUBLIC_DISCOVERY_PROVIDER;
   targetType: OutreachTargetType;
   rawCaseTextShared: false;
@@ -82,10 +85,43 @@ export interface OutreachDiscoveryReport {
   completedQueries: number;
   failedQueries: number;
   discoveredCandidates: number;
+  observedCandidates: number;
   newCandidates: number;
   existingCandidates: number;
+  candidateLimit: number;
+  supportedCandidateBound: typeof MAX_DISCOVERY_RESULTS;
+  candidateLimitReached: boolean;
+  providerResultTruncated: boolean;
+  truncatedQueries: number;
+  omittedCandidateCountAtLeast: number;
+  candidateTargetIds: string[];
+  createdTargetIds: string[];
+  refreshedTargetIds: string[];
+  skippedTargets: OutreachDiscoverySkippedTarget[];
+  leftPendingTargetIds: string[];
+  partialReasons: string[];
   errors: string[];
   status: "complete" | "partial" | "unavailable";
+}
+
+export type OutreachDiscoverySkipReason =
+  | "manual_record_preserved"
+  | "already_approved"
+  | "previously_rejected"
+  | "status_not_reviewable"
+  | "target_not_found";
+
+export interface OutreachDiscoverySkippedTarget {
+  id: string;
+  status: string;
+  reason: OutreachDiscoverySkipReason;
+}
+
+interface PersistedDiscoveryTarget {
+  id: string;
+  status: string;
+  disposition: "created" | "refreshed" | "skipped";
+  skipReason?: "manual_record_preserved";
 }
 
 function parseStringArray(value: string | null | undefined): string[] {
@@ -119,7 +155,8 @@ function tokenize(value: string): string[] {
 function normalizePublicUrl(rawUrl: string): string | null {
   try {
     let url = new URL(rawUrl, PUBLIC_DISCOVERY_URL);
-    if (url.hostname.endsWith("duckduckgo.com")) {
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === "duckduckgo.com" || hostname.endsWith(".duckduckgo.com")) {
       const redirect = url.searchParams.get("uddg");
       if (redirect) url = new URL(decodeURIComponent(redirect));
     }
@@ -157,16 +194,20 @@ function parseSearchResults(
   pillar: string,
   retrievedAt: Date,
   limit: number,
-): OutreachDiscoveryCandidate[] {
+): { candidates: OutreachDiscoveryCandidate[]; truncated: boolean } {
   const $ = load(html || "");
   const candidates: OutreachDiscoveryCandidate[] = [];
   const seen = new Set<string>();
+  let truncated = false;
   $("a.result__a, a[data-testid='result-title-a']").each((_, node) => {
-    if (candidates.length >= limit) return false;
     const link = $(node);
     const url = normalizePublicUrl(String(link.attr("href") || ""));
     const name = link.text().replace(/\s+/g, " ").trim();
     if (!url || !name || seen.has(url)) return;
+    if (candidates.length >= limit) {
+      truncated = true;
+      return false;
+    }
     seen.add(url);
     const container = link.closest(".result, article");
     const description = container.find(".result__snippet, [data-result='snippet'], [data-testid='result-snippet']")
@@ -189,7 +230,7 @@ function parseSearchResults(
       confidence: "discovery_candidate",
     });
   });
-  return candidates;
+  return { candidates, truncated };
 }
 
 async function fetchPublicSearch(query: string): Promise<string> {
@@ -254,11 +295,10 @@ function buildQueryPlan(
 async function persistCandidates(
   userId: string,
   candidates: OutreachDiscoveryCandidate[],
-): Promise<{ created: number; existing: number }> {
+): Promise<PersistedDiscoveryTarget[]> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  let created = 0;
-  let existing = 0;
+  const outcomes: PersistedDiscoveryTarget[] = [];
   const candidateUrls = unique(candidates.map((candidate) => candidate.url));
   const storedTargets = candidateUrls.length === 0
     ? []
@@ -268,6 +308,9 @@ async function persistCandidates(
       url: outreachDirectoryTargets.url,
       topics: outreachDirectoryTargets.topics,
       legalAreas: outreachDirectoryTargets.legalAreas,
+      status: outreachDirectoryTargets.status,
+      confidence: outreachDirectoryTargets.confidence,
+      sourceLabel: outreachDirectoryTargets.sourceLabel,
     })
       .from(outreachDirectoryTargets)
       .where(and(
@@ -282,7 +325,15 @@ async function persistCandidates(
     const stored = storedByTarget.get(targetKey);
     const now = new Date();
     if (stored) {
-      existing += 1;
+      if (stored.confidence === "manual_candidate" || stored.sourceLabel === "Manual public source") {
+        outcomes.push({
+          id: stored.id,
+          status: stored.status,
+          disposition: "skipped",
+          skipReason: "manual_record_preserved",
+        });
+        continue;
+      }
       await db.update(outreachDirectoryTargets).set({
         name: candidate.name,
         subtype: candidate.subtype,
@@ -294,6 +345,7 @@ async function persistCandidates(
         sourceRetrievedAt: candidate.sourceRetrievedAt,
         updatedAt: now,
       }).where(eq(outreachDirectoryTargets.id, stored.id));
+      outcomes.push({ id: stored.id, status: stored.status, disposition: "refreshed" });
       continue;
     }
     const id = `TARGET-${nanoid(16)}`;
@@ -325,10 +377,13 @@ async function persistCandidates(
       url: candidate.url,
       topics: JSON.stringify(candidate.topics),
       legalAreas: JSON.stringify(candidate.legalAreas),
+      status: "pending",
+      confidence: candidate.confidence,
+      sourceLabel: candidate.sourceLabel,
     });
-    created += 1;
+    outcomes.push({ id, status: "pending", disposition: "created" });
   }
-  return { created, existing };
+  return outcomes;
 }
 
 export async function discoverOutreachTargetsForCase(options: {
@@ -357,6 +412,7 @@ export async function discoverOutreachTargetsForCase(options: {
     throw new Error("Classify the case with a supported legal area before public discovery");
   }
   const retrievedAt = new Date();
+  const runId = `DISCOVERY-${nanoid(16)}`;
   const settled = await Promise.allSettled(plan.map(async (item) => ({
     item,
     html: await fetchPublicSearch(item.query),
@@ -364,21 +420,23 @@ export async function discoverOutreachTargetsForCase(options: {
   const errors: string[] = [];
   const byUrl = new Map<string, OutreachDiscoveryCandidate>();
   let completedQueries = 0;
+  let truncatedQueries = 0;
   for (const [index, result] of settled.entries()) {
     if (result.status === "rejected") {
       errors.push(`${plan[index].pillar}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
       continue;
     }
     completedQueries += 1;
-    const candidates = parseSearchResults(
+    const parsed = parseSearchResults(
       result.value.html,
       options.targetType,
       result.value.item.legalArea,
       result.value.item.pillar,
       retrievedAt,
-      Math.max(5, Math.ceil(maxResults / plan.length)),
+      MAX_PROVIDER_RESULTS_PER_QUERY,
     );
-    for (const candidate of candidates) {
+    if (parsed.truncated) truncatedQueries += 1;
+    for (const candidate of parsed.candidates) {
       const existing = byUrl.get(candidate.url);
       if (!existing) {
         byUrl.set(candidate.url, candidate);
@@ -388,9 +446,40 @@ export async function discoverOutreachTargetsForCase(options: {
       }
     }
   }
+  const observedCandidates = byUrl.size;
   const candidates = [...byUrl.values()].slice(0, maxResults);
   const persisted = await persistCandidates(options.userId, candidates);
+  const createdTargetIds = persisted
+    .filter((target) => target.disposition === "created")
+    .map((target) => target.id);
+  const refreshedTargetIds = persisted
+    .filter((target) => target.disposition === "refreshed")
+    .map((target) => target.id);
+  const skippedTargets: OutreachDiscoverySkippedTarget[] = persisted
+    .filter((target) => target.disposition === "skipped")
+    .map((target) => ({
+      id: target.id,
+      status: target.status,
+      reason: target.skipReason || "status_not_reviewable",
+    }));
+  const providerResultTruncated = truncatedQueries > 0;
+  const candidateLimitReached = providerResultTruncated || observedCandidates > candidates.length;
+  const omittedCandidateCountAtLeast = Math.max(0, observedCandidates - candidates.length) + truncatedQueries;
+  const partialReasons = [
+    ...(providerResultTruncated
+      ? [`${truncatedQueries} provider response(s) exceeded the ${MAX_DISCOVERY_RESULTS}-candidate supported bound; additional results were not processed.`]
+      : []),
+    ...(observedCandidates > candidates.length
+      ? [`Discovery observed ${observedCandidates} unique candidates and persisted the first ${candidates.length} within the requested ${maxResults}-candidate limit.`]
+      : []),
+  ];
+  const status = completedQueries === 0
+    ? "unavailable" as const
+    : errors.length > 0 || partialReasons.length > 0
+      ? "partial" as const
+      : "complete" as const;
   return {
+    runId,
     provider: PUBLIC_DISCOVERY_PROVIDER,
     targetType: options.targetType,
     rawCaseTextShared: false,
@@ -398,10 +487,25 @@ export async function discoverOutreachTargetsForCase(options: {
     completedQueries,
     failedQueries: errors.length,
     discoveredCandidates: candidates.length,
-    newCandidates: persisted.created,
-    existingCandidates: persisted.existing,
+    observedCandidates,
+    newCandidates: createdTargetIds.length,
+    existingCandidates: persisted.length - createdTargetIds.length,
+    candidateLimit: maxResults,
+    supportedCandidateBound: MAX_DISCOVERY_RESULTS,
+    candidateLimitReached,
+    providerResultTruncated,
+    truncatedQueries,
+    omittedCandidateCountAtLeast,
+    candidateTargetIds: persisted.map((target) => target.id),
+    createdTargetIds,
+    refreshedTargetIds,
+    skippedTargets,
+    leftPendingTargetIds: persisted
+      .filter((target) => target.status === "pending")
+      .map((target) => target.id),
+    partialReasons,
     errors,
-    status: completedQueries === 0 ? "unavailable" : errors.length > 0 ? "partial" : "complete",
+    status,
   };
 }
 
@@ -483,34 +587,146 @@ export async function listOutreachTargets(options: {
   return rows.map(serializeTarget);
 }
 
+export async function reviewOutreachTargetsForDiscovery(options: {
+  userId: string;
+  caseId: string;
+  runId: string;
+  targetType: OutreachTargetType;
+  ids: string[];
+}): Promise<{
+  reviewedTargetIds: string[];
+  approvedTargetIds: string[];
+  skippedTargets: OutreachDiscoverySkippedTarget[];
+}> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const ids = [...new Set(options.ids)];
+  if (ids.length !== options.ids.length) throw new Error("Duplicate discovery target IDs are not allowed");
+  if (ids.length > MAX_DISCOVERY_RESULTS) {
+    throw new Error(`A discovery run cannot review more than ${MAX_DISCOVERY_RESULTS} targets`);
+  }
+  if (ids.length === 0) {
+    return { reviewedTargetIds: [], approvedTargetIds: [], skippedTargets: [] };
+  }
+
+  return db.transaction((tx) => {
+    const rows = tx.select({
+      id: outreachDirectoryTargets.id,
+      status: outreachDirectoryTargets.status,
+      confidence: outreachDirectoryTargets.confidence,
+      sourceLabel: outreachDirectoryTargets.sourceLabel,
+    }).from(outreachDirectoryTargets).where(and(
+      eq(outreachDirectoryTargets.userId, options.userId),
+      eq(outreachDirectoryTargets.targetType, options.targetType),
+      inArray(outreachDirectoryTargets.id, ids),
+    )).all();
+    const rowsById = new Map(rows.map((row) => [row.id, row]));
+    const reviewedTargetIds: string[] = [];
+    const approvedTargetIds: string[] = [];
+    const skippedTargets: OutreachDiscoverySkippedTarget[] = [];
+    const now = new Date();
+
+    for (const id of ids) {
+      const row = rowsById.get(id);
+      if (!row) {
+        skippedTargets.push({ id, status: "missing", reason: "target_not_found" });
+        continue;
+      }
+      if (row.confidence === "manual_candidate" || row.sourceLabel === "Manual public source") {
+        skippedTargets.push({ id, status: row.status, reason: "manual_record_preserved" });
+        continue;
+      }
+      if (row.status === "approved") {
+        approvedTargetIds.push(id);
+        skippedTargets.push({ id, status: row.status, reason: "already_approved" });
+        continue;
+      }
+      if (row.status === "rejected") {
+        skippedTargets.push({ id, status: row.status, reason: "previously_rejected" });
+        continue;
+      }
+      if (row.status !== "pending") {
+        skippedTargets.push({ id, status: row.status, reason: "status_not_reviewable" });
+        continue;
+      }
+
+      tx.update(outreachDirectoryTargets).set({
+        status: "approved",
+        reviewNotes: `Automatically approved from discovery run ${options.runId}.`,
+        reviewedAt: now,
+        updatedAt: now,
+      }).where(and(
+        eq(outreachDirectoryTargets.id, id),
+        eq(outreachDirectoryTargets.userId, options.userId),
+        eq(outreachDirectoryTargets.targetType, options.targetType),
+        eq(outreachDirectoryTargets.status, "pending"),
+      )).run();
+      reviewedTargetIds.push(id);
+      approvedTargetIds.push(id);
+      writeAuditLogOrThrow(tx, {
+        userId: options.userId,
+        action: "outreach.directory_reviewed",
+        entityType: "outreach_target",
+        entityId: id,
+        details: {
+          from: "pending",
+          to: "approved",
+          targetType: options.targetType,
+          caseId: options.caseId,
+          discoveryRunId: options.runId,
+          automatic: true,
+        },
+      });
+    }
+
+    return { reviewedTargetIds, approvedTargetIds, skippedTargets };
+  });
+}
+
 export async function reviewOutreachTarget(options: {
   userId: string;
   id: string;
   targetType: OutreachTargetType;
   status: OutreachTargetReviewStatus;
   reviewNotes?: string;
+  caseId?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const now = new Date();
-  const result = await db.update(outreachDirectoryTargets).set({
-    status: options.status,
-    reviewNotes: options.reviewNotes?.trim() || null,
-    reviewedAt: now,
-    updatedAt: now,
-  }).where(and(
-    eq(outreachDirectoryTargets.id, options.id),
-    eq(outreachDirectoryTargets.userId, options.userId),
-    eq(outreachDirectoryTargets.targetType, options.targetType),
-  ));
-  if (!result.changes) throw new Error("Outreach target not found");
-  if (options.status !== "approved") {
-    await db.delete(caseOutreachTargetMatches).where(and(
-      eq(caseOutreachTargetMatches.userId, options.userId),
-      eq(caseOutreachTargetMatches.targetId, options.id),
-    ));
-  }
-  return { success: true as const, targetType: options.targetType };
+  return db.transaction((tx) => {
+    const current = tx.select({ status: outreachDirectoryTargets.status }).from(outreachDirectoryTargets)
+      .where(and(
+        eq(outreachDirectoryTargets.id, options.id),
+        eq(outreachDirectoryTargets.userId, options.userId),
+        eq(outreachDirectoryTargets.targetType, options.targetType),
+      )).get();
+    if (!current) throw new Error("Outreach target not found");
+    const now = new Date();
+    tx.update(outreachDirectoryTargets).set({
+      status: options.status,
+      reviewNotes: options.reviewNotes?.trim() || null,
+      reviewedAt: now,
+      updatedAt: now,
+    }).where(and(
+      eq(outreachDirectoryTargets.id, options.id),
+      eq(outreachDirectoryTargets.userId, options.userId),
+      eq(outreachDirectoryTargets.targetType, options.targetType),
+    )).run();
+    if (options.status !== "approved") {
+      tx.delete(caseOutreachTargetMatches).where(and(
+        eq(caseOutreachTargetMatches.userId, options.userId),
+        eq(caseOutreachTargetMatches.targetId, options.id),
+      )).run();
+    }
+    writeAuditLogOrThrow(tx, {
+      userId: options.userId,
+      action: "outreach.directory_reviewed",
+      entityType: "outreach_target",
+      entityId: options.id,
+      details: { from: current.status, to: options.status, targetType: options.targetType, caseId: options.caseId || null },
+    });
+    return { success: true as const, targetType: options.targetType };
+  });
 }
 
 export async function reviewOutreachTargetsBatch(options: {
@@ -519,6 +735,7 @@ export async function reviewOutreachTargetsBatch(options: {
   targetType: OutreachTargetType;
   status: "approved" | "rejected";
   reviewNotes: string;
+  caseId?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -551,6 +768,13 @@ export async function reviewOutreachTargetsBatch(options: {
         inArray(caseOutreachTargetMatches.targetId, ids),
       )).run();
     }
+    writeAuditLogOrThrow(tx, {
+      userId: options.userId,
+      action: "outreach.directory_batch_reviewed",
+      entityType: "outreach_target",
+      entityId: ids[0],
+      details: { ids, count: ids.length, status: options.status, targetType: options.targetType, caseId: options.caseId || null },
+    });
     return { success: true as const, reviewed: ids.length };
   });
 }
@@ -596,6 +820,7 @@ export async function matchApprovedTargetsForCase(options: {
   caseId: string;
   targetType: OutreachTargetType;
   limit?: number;
+  targetIds?: string[];
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -605,61 +830,83 @@ export async function matchApprovedTargetsForCase(options: {
   )).limit(1);
   const caseData = caseRows[0];
   if (!caseData) throw new Error("Case not found");
-  const targets = await db.select().from(outreachDirectoryTargets).where(and(
+  const scopedTargetIds = options.targetIds ? unique(options.targetIds) : null;
+  if (scopedTargetIds && scopedTargetIds.length === 0) return [];
+  const targetConditions = [
     eq(outreachDirectoryTargets.userId, options.userId),
     eq(outreachDirectoryTargets.targetType, options.targetType),
     eq(outreachDirectoryTargets.status, "approved"),
-  ));
+  ];
+  if (scopedTargetIds) targetConditions.push(inArray(outreachDirectoryTargets.id, scopedTargetIds));
+  const targets = await db.select().from(outreachDirectoryTargets).where(and(...targetConditions));
+  const matchLimit = Math.max(
+    1,
+    Math.min(100, options.limit || scopedTargetIds?.length || 30),
+  );
   const ranked = targets.flatMap((target) => {
     const scored = scoreTarget(target, caseData);
     return scored ? [{ target, ...scored }] : [];
-  }).sort((a, b) => b.score - a.score).slice(0, Math.max(1, Math.min(100, options.limit || 30)));
+  }).sort((a, b) => b.score - a.score).slice(0, matchLimit);
   const now = new Date();
-  for (const item of ranked) {
-    await db.insert(caseOutreachTargetMatches).values({
-      id: `MATCH-${nanoid(16)}`,
-      userId: options.userId,
-      caseId: options.caseId,
-      targetId: item.target.id,
-      targetType: options.targetType,
-      matchScore: item.score,
-      scoreBreakdown: JSON.stringify(item.breakdown),
-      matchReasons: JSON.stringify(item.reasons),
-      status: "suggested",
-      createdAt: now,
-      updatedAt: now,
-    }).onConflictDoUpdate({
-      target: [caseOutreachTargetMatches.caseId, caseOutreachTargetMatches.targetId],
-      set: {
+  db.transaction((tx) => {
+    for (const item of ranked) {
+      tx.insert(caseOutreachTargetMatches).values({
+        id: `MATCH-${nanoid(16)}`,
+        userId: options.userId,
+        caseId: options.caseId,
+        targetId: item.target.id,
+        targetType: options.targetType,
         matchScore: item.score,
         scoreBreakdown: JSON.stringify(item.breakdown),
         matchReasons: JSON.stringify(item.reasons),
+        status: "suggested",
+        createdAt: now,
         updatedAt: now,
-      },
+      }).onConflictDoUpdate({
+        target: [caseOutreachTargetMatches.caseId, caseOutreachTargetMatches.targetId],
+        set: {
+          matchScore: item.score,
+          scoreBreakdown: JSON.stringify(item.breakdown),
+          matchReasons: JSON.stringify(item.reasons),
+          updatedAt: now,
+        },
+      }).run();
+    }
+    writeAuditLogOrThrow(tx, {
+      userId: options.userId,
+      action: "outreach.targets_matched",
+      entityType: "case",
+      entityId: options.caseId,
+      details: { targetType: options.targetType, count: ranked.length, targetIds: ranked.map((item) => item.target.id) },
     });
-  }
-  return getCaseTargetMatches(options);
+  });
+  return getCaseTargetMatches({ ...options, targetIds: scopedTargetIds || undefined });
 }
 
 export async function getCaseTargetMatches(options: {
   userId: string;
   caseId: string;
   targetType: OutreachTargetType;
+  targetIds?: string[];
 }) {
   const db = await getDb();
   if (!db) return [];
+  const scopedTargetIds = options.targetIds ? unique(options.targetIds) : null;
+  if (scopedTargetIds && scopedTargetIds.length === 0) return [];
+  const conditions = [
+    eq(caseOutreachTargetMatches.userId, options.userId),
+    eq(caseOutreachTargetMatches.caseId, options.caseId),
+    eq(caseOutreachTargetMatches.targetType, options.targetType),
+    eq(outreachDirectoryTargets.targetType, options.targetType),
+    eq(outreachDirectoryTargets.status, "approved"),
+  ];
+  if (scopedTargetIds) conditions.push(inArray(caseOutreachTargetMatches.targetId, scopedTargetIds));
   const rows = await db.select({
     match: caseOutreachTargetMatches,
     target: outreachDirectoryTargets,
   }).from(caseOutreachTargetMatches)
     .innerJoin(outreachDirectoryTargets, eq(caseOutreachTargetMatches.targetId, outreachDirectoryTargets.id))
-    .where(and(
-      eq(caseOutreachTargetMatches.userId, options.userId),
-      eq(caseOutreachTargetMatches.caseId, options.caseId),
-      eq(caseOutreachTargetMatches.targetType, options.targetType),
-      eq(outreachDirectoryTargets.targetType, options.targetType),
-      eq(outreachDirectoryTargets.status, "approved"),
-    ))
+    .where(and(...conditions))
     .orderBy(desc(caseOutreachTargetMatches.matchScore));
   return rows.map(({ match, target }) => ({
     ...match,
@@ -676,15 +923,30 @@ export async function updateCaseTargetMatchStatus(options: {
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.update(caseOutreachTargetMatches).set({
-    status: options.status,
-    updatedAt: new Date(),
-  }).where(and(
-    eq(caseOutreachTargetMatches.id, options.id),
-    eq(caseOutreachTargetMatches.userId, options.userId),
-  ));
-  if (!result.changes) throw new Error("Case target match not found");
-  return { success: true as const };
+  return db.transaction((tx) => {
+    const current = tx.select({ status: caseOutreachTargetMatches.status })
+      .from(caseOutreachTargetMatches).where(and(
+        eq(caseOutreachTargetMatches.id, options.id),
+        eq(caseOutreachTargetMatches.userId, options.userId),
+      )).get();
+    if (!current) throw new Error("Case target match not found");
+    if (current.status === options.status) return { success: true as const };
+    tx.update(caseOutreachTargetMatches).set({
+      status: options.status,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(caseOutreachTargetMatches.id, options.id),
+      eq(caseOutreachTargetMatches.userId, options.userId),
+    )).run();
+    writeAuditLogOrThrow(tx, {
+      userId: options.userId,
+      action: "outreach.target_match_status_changed",
+      entityType: "outreach_target_match",
+      entityId: options.id,
+      details: { from: current.status, to: options.status },
+    });
+    return { success: true as const };
+  });
 }
 
 export async function getOutreachDirectorySummary(userId: string) {

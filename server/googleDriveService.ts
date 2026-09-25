@@ -1,13 +1,16 @@
 import { google } from 'googleapis';
 import { getDb } from './db';
-import { emailAccounts, googleDriveFiles } from './schema';
-import { eq, and } from 'drizzle-orm';
-import { storagePut } from './storage';
+import { eq } from 'drizzle-orm';
+import { storagePutStream } from './storage';
 import { v4 as uuidv4 } from 'uuid';
-import { decryptToken, encryptToken, refreshGmailToken } from './emailOAuth';
+import { getProviderAccessToken } from './providerConnections';
 import { MAX_EVIDENCE_FILE_BYTES } from '../shared/evidenceFiles';
-import { collectBoundedBytes, withByteReadAdmission } from './boundedBytes';
+import { withByteReadAdmission } from './boundedBytes';
 import { PROVIDER_LIMITS, ProviderBatchBudget } from './providerLimits';
+import {
+  EvidenceIngestionBudget,
+  EvidenceIngestionLimitError,
+} from './evidenceIngestionBudget';
 
 /**
  * Google Drive Service
@@ -18,50 +21,11 @@ import { PROVIDER_LIMITS, ProviderBatchBudget } from './providerLimits';
  * Get an authenticated Drive client for a user
  */
 async function getDriveClient(userId: string, accountId?: string) {
-  const db = await getDb();
-  if (!db) throw new Error('Database not available');
-
-  const accounts = await db
-    .select()
-    .from(emailAccounts)
-    .where(and(
-      eq(emailAccounts.userId, userId),
-      eq(emailAccounts.provider, 'gmail'),
-      ...(accountId ? [eq(emailAccounts.id, accountId)] : []),
-    ))
-    .limit(2);
-
-  if (accounts.length === 0) {
-    throw new Error(accountId ? 'Selected Google account is not connected.' : 'No Google account is connected.');
-  }
-  if (!accountId && accounts.length > 1) {
-    throw new Error('Multiple Google accounts are connected. Select the Drive account to use.');
-  }
-
-  const emailAccount = accounts[0];
-  if (emailAccount.status !== 'connected' || !emailAccount.accessToken) {
-    throw new Error('Selected Google account is not connected.');
-  }
-  let accessToken = decryptToken(emailAccount.accessToken!);
-
-  // Refresh token if expired
-  const now = new Date();
-  if (emailAccount.tokenExpiry && new Date(emailAccount.tokenExpiry) <= now) {
-    if (!emailAccount.refreshToken) {
-      throw new Error('Selected Google account requires reconnection.');
-    }
-    const refreshToken = decryptToken(emailAccount.refreshToken!);
-    const newTokens = await refreshGmailToken(refreshToken);
-    
-    accessToken = newTokens.accessToken;
-    
-    await db.update(emailAccounts)
-      .set({
-        accessToken: encryptToken(accessToken),
-        tokenExpiry: new Date(newTokens.expiryDate),
-      })
-      .where(eq(emailAccounts.id, emailAccount.id));
-  }
+  const accessToken = await getProviderAccessToken({
+    userId,
+    accountId,
+    provider: 'gmail',
+  });
 
   const auth = new google.auth.OAuth2();
   auth.setCredentials({ access_token: accessToken });
@@ -69,34 +33,53 @@ async function getDriveClient(userId: string, accountId?: string) {
   return google.drive({ version: 'v3', auth });
 }
 
-/**
- * Get file metadata from a Google Drive folder
- * Note: This implementation assumes it can find the userId from the context
- * mapping if not provided, but for background jobs, we might need to adjust.
- * For now, we'll try to find the user associated with the folder if possible,
- * or use a fallback mechanism.
- */
-export async function getGoogleDriveFileMetadata(folderId: string, userId: string, accountId?: string) {
-  if (!userId) throw new Error('Google Drive metadata lookup requires an explicit user');
-  const drive = await getDriveClient(userId, accountId);
-  
-  const response = await drive.files.list({
-    q: `'${escapeDriveQueryLiteral(folderId)}' in parents and trashed = false`,
-    fields: 'files(id, name, mimeType, size, webViewLink, modifiedTime)',
-    pageSize: 100,
-  });
+export interface GoogleDriveFileListing {
+  id: string;
+  name: string;
+  mimeType?: string | null;
+  size?: string | null;
+  webViewLink?: string | null;
+  modifiedTime?: string | null;
+  version?: string | null;
+  md5Checksum?: string | null;
+}
 
-  return response.data.files || [];
+export function googleDriveProviderRevision(file: {
+  version?: string | null;
+  md5Checksum?: string | null;
+  modifiedTime?: string | Date | null;
+}): string | null {
+  if (file.version) return `drive-version:${file.version}`;
+  if (file.md5Checksum) return `drive-md5:${file.md5Checksum}`;
+  if (!file.modifiedTime) return null;
+  const modified = file.modifiedTime instanceof Date
+    ? file.modifiedTime
+    : new Date(file.modifiedTime);
+  return Number.isNaN(modified.getTime()) ? null : `drive-modified:${modified.toISOString()}`;
 }
 
 /**
  * Download a file from Google Drive and upload it to local/S3 storage
  */
-export function downloadAndUploadGoogleDriveFile(fileId: string, caseId: string, userId?: string, accountId?: string) {
-  return withByteReadAdmission(() => downloadAndUploadGoogleDriveFileAdmitted(fileId, caseId, userId, accountId));
+export function downloadAndUploadGoogleDriveFile(
+  fileId: string,
+  caseId: string,
+  userId?: string,
+  accountId?: string,
+  options: { budget?: EvidenceIngestionBudget; signal?: AbortSignal } = {},
+) {
+  const budget = options.budget ?? new EvidenceIngestionBudget(options.signal);
+  return downloadAndUploadGoogleDriveFileAdmitted(fileId, caseId, userId, accountId, budget, options.signal);
 }
 
-async function downloadAndUploadGoogleDriveFileAdmitted(fileId: string, caseId: string, userId?: string, accountId?: string) {
+async function downloadAndUploadGoogleDriveFileAdmitted(
+  fileId: string,
+  caseId: string,
+  userId: string | undefined,
+  accountId: string | undefined,
+  budget: EvidenceIngestionBudget,
+  signal?: AbortSignal,
+) {
   const db = await getDb();
   if (!db) throw new Error('Database not available');
 
@@ -114,55 +97,87 @@ async function downloadAndUploadGoogleDriveFileAdmitted(fileId: string, caseId: 
   // 1. Get metadata to know the filename
   const fileMetadata = await drive.files.get({
     fileId,
-    fields: 'name, mimeType, size, modifiedTime',
-  });
+    fields: 'name, mimeType, size, modifiedTime, version, md5Checksum',
+  }, signal ? { signal } : undefined);
 
   let fileName = fileMetadata.data.name || 'document';
   const sourceMimeType = fileMetadata.data.mimeType || 'application/octet-stream';
   let mimeType = sourceMimeType;
   const fileSize = fileMetadata.data.size;
   const modifiedTime = fileMetadata.data.modifiedTime;
+  const providerVersion = fileMetadata.data.version || null;
+  const md5Checksum = fileMetadata.data.md5Checksum || null;
   const declaredSize = Number(fileSize);
   if (Number.isFinite(declaredSize) && declaredSize > MAX_EVIDENCE_FILE_BYTES) {
+    budget.recordSkip('google_drive', 'file_too_large');
     throw new Error('Google Drive file exceeds the 7 MB evidence limit');
   }
 
   // Google-native documents have no media body. Export them to PDF so the
   // same source-grounded text extraction pipeline can analyze them.
   const googleNative = sourceMimeType.startsWith('application/vnd.google-apps.');
-  const response = googleNative
-    ? await drive.files.export(
-        { fileId, mimeType: 'application/pdf' },
-        { responseType: 'stream' }
-      )
-    : await drive.files.get(
-        { fileId, alt: 'media' },
-        { responseType: 'stream' }
-      );
   if (googleNative) {
     mimeType = 'application/pdf';
     if (!fileName.toLowerCase().endsWith('.pdf')) fileName += '.pdf';
   }
+  const preflightBytes = !googleNative && Number.isSafeInteger(declaredSize) && declaredSize > 0
+    ? declaredSize
+    : null;
+  const reservation = await budget.reserve('google_drive', preflightBytes);
+  if (!reservation) {
+    throw new EvidenceIngestionLimitError(
+      'google_drive',
+      Number.isFinite(declaredSize) && declaredSize > MAX_EVIDENCE_FILE_BYTES ? 'file_too_large' : 'job_byte_limit',
+      Number.isFinite(declaredSize) && declaredSize > MAX_EVIDENCE_FILE_BYTES
+        ? 'Google Drive file exceeds the 7 MB evidence limit'
+        : 'Google Drive ingestion reached its item, byte, or storage-headroom limit',
+    );
+  }
 
-  const buffer = await collectBoundedBytes(response.data, {
-    maxBytes: MAX_EVIDENCE_FILE_BYTES,
-    label: 'Google Drive file',
-    limitMessage: 'Google Drive file exceeds the 7 MB evidence limit',
-  });
-
-  // 3. Upload to our storage
   const storagePath = `evidence/${caseId}/gdrive/${uuidv4()}-${fileName}`;
-  const { key, url, sha256 } = await storagePut(storagePath, buffer, mimeType);
+  let completed = false;
+  let stored: Awaited<ReturnType<typeof storagePutStream>>;
+  try {
+    stored = await reservation.run(() => withByteReadAdmission(async () => {
+      budget.throwIfCancelled('google_drive');
+      const response = googleNative
+        ? await drive.files.export(
+            { fileId, mimeType: 'application/pdf' },
+            { responseType: 'stream', signal }
+          )
+        : await drive.files.get(
+            { fileId, alt: 'media' },
+            { responseType: 'stream', signal }
+          );
+      return storagePutStream(storagePath, response.data, mimeType, {
+        maxBytes: reservation.declaredBytes,
+        ...(preflightBytes !== null ? { expectedBytes: preflightBytes } : {}),
+        signal,
+      });
+    }));
+    reservation.complete(stored.bytes);
+    completed = true;
+  } catch (error) {
+    if (!completed) reservation.skip(error instanceof EvidenceIngestionLimitError ? error.code : 'store_failed');
+    throw error;
+  }
 
   return { 
-    key, 
-    url, 
-    sha256,
+    key: stored.key,
+    url: stored.url,
+    sha256: stored.sha256,
     fileName, 
     mimeType, 
     sourceMimeType,
-    size: fileSize || buffer.length.toString(),
+    size: stored.bytes,
     modifiedTime: modifiedTime ? new Date(modifiedTime) : new Date(),
+    providerVersion,
+    md5Checksum,
+    providerRevision: googleDriveProviderRevision({
+      version: providerVersion,
+      md5Checksum,
+      modifiedTime,
+    }),
   };
 }
 
@@ -199,9 +214,9 @@ export async function getAllFilesInFolder(
   folderId: string, 
   recursive: boolean = false,
   accountId?: string,
-): Promise<Array<{ id: string; name: string; mimeType?: string | null; size?: string | null; webViewLink?: string | null }>> {
+): Promise<GoogleDriveFileListing[]> {
   const drive = await getDriveClient(userId, accountId);
-  const allFiles: Array<{ id: string; name: string; mimeType?: string | null; size?: string | null; webViewLink?: string | null; modifiedTime?: string | null }> = [];
+  const allFiles: GoogleDriveFileListing[] = [];
   const budget = new ProviderBatchBudget({
     pages: PROVIDER_LIMITS.googleDrive.maxListPages,
     folders: PROVIDER_LIMITS.googleDrive.maxFoldersScanned,
@@ -218,7 +233,7 @@ export async function getAllFilesInFolder(
       budget.consume('pages', 1, 'Google Drive page limit exceeded');
       const response = await drive.files.list({
         q: `'${escapeDriveQueryLiteral(currentFolderId)}' in parents and trashed = false`,
-        fields: 'nextPageToken, files(id, name, mimeType, size, webViewLink, modifiedTime)',
+        fields: 'nextPageToken, files(id, name, mimeType, size, webViewLink, modifiedTime, version, md5Checksum)',
         pageToken,
         pageSize: 100,
       });
@@ -252,11 +267,11 @@ export async function findGoogleDriveFilesByExactName(
   userId: string,
   exactFileName: string,
   accountId?: string,
-): Promise<Array<{ id: string; name: string; mimeType?: string | null; size?: string | null; webViewLink?: string | null; modifiedTime?: string | null }>> {
+): Promise<GoogleDriveFileListing[]> {
   const name = exactFileName.trim();
   if (!name) return [];
   const drive = await getDriveClient(userId, accountId);
-  const files: Array<{ id: string; name: string; mimeType?: string | null; size?: string | null; webViewLink?: string | null; modifiedTime?: string | null }> = [];
+  const files: GoogleDriveFileListing[] = [];
   const budget = new ProviderBatchBudget({
     pages: PROVIDER_LIMITS.googleDrive.maxListPages,
     files: PROVIDER_LIMITS.googleDrive.maxExactNameMatches,
@@ -266,7 +281,7 @@ export async function findGoogleDriveFilesByExactName(
     budget.consume('pages', 1, 'Google Drive exact-name page limit exceeded');
     const response = await drive.files.list({
       q: `name = '${escapeDriveQueryLiteral(name)}' and trashed = false and mimeType != 'application/vnd.google-apps.folder'`,
-      fields: 'nextPageToken, files(id, name, mimeType, size, webViewLink, modifiedTime)',
+      fields: 'nextPageToken, files(id, name, mimeType, size, webViewLink, modifiedTime, version, md5Checksum)',
       pageToken,
       pageSize: 100,
     });
@@ -276,31 +291,4 @@ export async function findGoogleDriveFilesByExactName(
     pageToken = response.data.nextPageToken || undefined;
   } while (pageToken);
   return files.filter((file) => file.name?.trim().toLowerCase() === name.toLowerCase());
-}
-
-/**
- * Search files in Google Drive by query
- */
-export async function searchGoogleDriveFiles(
-  userId: string, 
-  query: string,
-  inFolder?: string,
-  accountId?: string,
-) {
-  const drive = await getDriveClient(userId, accountId);
-  
-  let searchQuery = `name contains '${escapeDriveQueryLiteral(query)}' and trashed = false and mimeType != 'application/vnd.google-apps.folder'`;
-  
-  if (inFolder) {
-    searchQuery += ` and '${escapeDriveQueryLiteral(inFolder)}' in parents`;
-  }
-
-  const response = await drive.files.list({
-    q: searchQuery,
-    fields: 'files(id, name, mimeType, size, webViewLink, modifiedTime)',
-    orderBy: 'modifiedTime desc',
-    pageSize: 100,
-  });
-
-  return response.data.files || [];
 }

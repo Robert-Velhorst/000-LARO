@@ -1,0 +1,35 @@
+name: Roadmap work item
+description: Create an evidence-backed LARO remediation or delivery item.
+title: "[S?-??] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use one issue for one verifiable outcome. Link existing work instead of creating a parallel implementation.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the observable defect, risk, or missing outcome and cite the affected product path.
+      placeholder: What currently happens, where, and why is it a problem?
+    validations:
+      required: true
+  - type: textarea
+    id: fix
+    attributes:
+      label: Fix
+      description: Describe the intended canonical implementation and any migration or compatibility boundary.
+      placeholder: What should change, and which existing implementation will be reused or replaced?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: Provide concrete, independently verifiable checklist items.
+      value: |
+        - [ ] The live product path demonstrates the intended behavior
+        - [ ] Automated regression coverage fails without the fix
+        - [ ] Relevant validation commands and external acceptance are recorded
+    validations:
+      required: true

@@ -1,69 +1,49 @@
-/**
- * Phase 008 — authorization and resource ownership (anti-regression guard).
- *
- * A full behavioural test needs a live SQLite harness (added in Phase 040). In
- * the meantime this guardrail asserts, against the actual source, that the
- * previously IDOR-vulnerable routers have been hardened and cannot silently
- * regress:
- *   - no router falls back to the shared "demo-user-123" identity;
- *   - case-scoped routers call the ownership guard;
- *   - the ownership guard itself exists and throws FORBIDDEN.
- */
-import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { bootTestApp, sqliteAvailable, type TestApp } from '../helpers/app';
+import { buildCase, buildUser } from '../factories';
 
-const ROOT = join(__dirname, '..', '..');
-const read = (rel: string) => readFileSync(join(ROOT, rel), 'utf8');
+const suite = sqliteAvailable ? describe : describe.skip;
 
-const HARDENED_ROUTERS = [
-  'server/routers/evidenceFiles.ts',
-  'server/routers/evidenceAnalytics.ts',
-  'server/routers/evidenceTimeline.ts',
-  'server/routers/userPreferences.ts',
-  'server/routers/support.ts',
-  'server/routers/outreach.ts',
-  'server/routers/gapAnalysis.ts',
-  'server/routers/cases.ts',
-];
+suite('authorization through live tRPC procedures', () => {
+  let app: TestApp;
+  const owner = buildUser({ id: 'AUTHZ_OWNER', email: 'authz-owner@example.com' });
+  const intruder = buildUser({ id: 'AUTHZ_INTRUDER', email: 'authz-intruder@example.com' });
+  const caseRow = buildCase({ id: 'AUTHZ_CASE', userId: owner.id });
 
-const CASE_SCOPED_ROUTERS = [
-  'server/routers/outreach.ts',
-  'server/routers/gapAnalysis.ts',
-  'server/routers/cases.ts',
-];
-
-describe('Phase 008 — no shared demo identity remains', () => {
-  for (const f of HARDENED_ROUTERS) {
-    it(`${f} contains no "demo-user-123" fallback`, () => {
-      expect(read(f)).not.toContain('demo-user-123');
-    });
-  }
-});
-
-describe('Phase 008 — case-scoped routers enforce ownership', () => {
-  for (const f of CASE_SCOPED_ROUTERS) {
-    it(`${f} calls assertCaseOwnership`, () => {
-      expect(read(f)).toContain('assertCaseOwnership');
-    });
-  }
-
-  it('the ownership guard exists and throws FORBIDDEN', () => {
-    const src = read('server/_core/authz.ts');
-    expect(src).toContain('export async function assertCaseOwnership');
-    expect(src).toContain('FORBIDDEN');
+  beforeAll(async () => {
+    app = await bootTestApp();
+    await app.db.insert(app.schema.users).values([owner, intruder]);
+    await app.db.insert(app.schema.cases).values(caseRow);
   });
-});
 
-describe('Phase 007 — no well-known bearer accepted in production', () => {
-  it('removes local bypass and renderer-accessible bearer credentials', () => {
-    const src = read('server/context.ts');
-    const trpc = read('server/_core/trpc.ts');
-    expect(src).not.toContain('LOCAL_AGENT_TOKEN');
-    expect(src).not.toContain('local-default');
-    expect(src).not.toContain('authHeader');
-    expect(src).not.toContain('Bearer ');
-    expect(src).toContain('isDesktopScannerRequest');
-    expect(trpc).not.toContain('evidence-scanner');
+  afterAll(() => app?.cleanup());
+
+  it('rejects anonymous callers at the real protected-procedure boundary', async () => {
+    const anonymous = app.makeCaller(null);
+    await expect(anonymous.cases.list({})).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await expect(anonymous.evidenceFiles.byCase({ caseId: caseRow.id }))
+      .rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+
+  it('allows the owner while keeping case existence private from another user', async () => {
+    await expect(app.makeCaller(owner).cases.byId(caseRow.id))
+      .resolves.toMatchObject({ id: caseRow.id, userId: owner.id });
+    await expect(app.makeCaller(intruder).cases.byId(caseRow.id)).resolves.toBeNull();
+  });
+
+  it('blocks cross-owner reads, exports, analysis, and writes through their live routers', async () => {
+    const caller = app.makeCaller(intruder);
+    const forbidden = { code: 'FORBIDDEN' };
+
+    await expect(caller.cases.export({ caseId: caseRow.id })).rejects.toMatchObject(forbidden);
+    await expect(caller.outreach.byCaseId(caseRow.id)).rejects.toMatchObject(forbidden);
+    await expect(caller.gapAnalysis.getGaps({ caseId: caseRow.id })).rejects.toMatchObject(forbidden);
+    await expect(caller.evidenceFiles.create({
+      caseId: caseRow.id,
+      title: 'Cross-owner write',
+      type: 'document',
+      fileName: 'forbidden.txt',
+      mimeType: 'text/plain',
+    })).rejects.toMatchObject(forbidden);
   });
 });

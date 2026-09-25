@@ -61,7 +61,7 @@ suite('Phases 051–060 — services', () => {
         id: 'LWDIR1',
         name: 'Ada Directory',
         legalAreas: JSON.stringify(['Port Audit Employment']),
-        experienceYears: '12',
+        experienceYears: 12,
         currentlyAccepting: 'Yes',
         officialProfileUrl: 'https://zoekeenadvocaat.advocatenorde.nl/advocaten/ada',
       }),
@@ -69,7 +69,7 @@ suite('Phases 051–060 — services', () => {
         id: 'LWDIR2',
         name: 'Bram Directory',
         legalAreas: JSON.stringify(['Port Audit Employment']),
-        experienceYears: '3',
+        experienceYears: 3,
         currentlyAccepting: 'Limited',
         officialProfileUrl: null,
       }),
@@ -77,7 +77,7 @@ suite('Phases 051–060 — services', () => {
         id: 'LWDIR3',
         name: 'Cato Directory',
         legalAreas: JSON.stringify(['Port Audit Employment']),
-        experienceYears: '25',
+        experienceYears: 25,
         currentlyAccepting: 'No',
         officialProfileUrl: 'https://zoekeenadvocaat.advocatenorde.nl/advocaten/cato',
       }),
@@ -85,7 +85,7 @@ suite('Phases 051–060 — services', () => {
         id: 'LWDIR4',
         name: 'Percent % Specialist',
         legalAreas: 'Tax Law',
-        experienceYears: 'unknown',
+        experienceYears: null,
       }),
     ] as any);
 
@@ -133,10 +133,10 @@ suite('Phases 051–060 — services', () => {
   });
 
   it('Phase 058 — feature flags default correctly and can be toggled', async () => {
-    const { getFlag, setFlag } = await import('../../server/featureFlags');
-    expect(await getFlag('outreach.send.enabled')).toBe(false); // default OFF
+    const { isOutreachSendingEnabled, setFlag } = await import('../../server/featureFlags');
+    expect(await isOutreachSendingEnabled()).toBe(false); // default OFF
     await setFlag('outreach.send.enabled', true);
-    expect(await getFlag('outreach.send.enabled')).toBe(true);
+    expect(await isOutreachSendingEnabled()).toBe(true);
     await setFlag('outreach.send.enabled', false);
   });
 
@@ -156,12 +156,12 @@ suite('Phases 051–060 — services', () => {
     await app.db.insert(app.schema.outreachStatus).values([
       {
         id: 'ANALYTICS_OUTREACH_OWN', caseId: 'PGC0', lawyerId: 'LWYR_5X', status: 'Interested',
-        responseReceived: 'Yes', responseTimeHours: '3.5', initialContact: new Date('2026-08-10T10:00:00Z'),
+        responseReceived: 'Yes', responseTimeHours: 3.5, initialContact: new Date('2026-08-10T10:00:00Z'),
         createdAt: new Date('2026-08-10T10:00:00Z'), updatedAt: new Date('2026-08-10T13:30:00Z'),
       },
       {
         id: 'ANALYTICS_OUTREACH_OTHER', caseId: 'ANALYTICS_CASE_OTHER', lawyerId: 'LWYR_5X', status: 'Declined',
-        responseReceived: 'Yes', responseTimeHours: '9', initialContact: new Date('2026-08-11T10:00:00Z'),
+        responseReceived: 'Yes', responseTimeHours: 9, initialContact: new Date('2026-08-11T10:00:00Z'),
         createdAt: new Date('2026-08-11T10:00:00Z'), updatedAt: new Date('2026-08-11T19:00:00Z'),
       },
     ] as any);
@@ -175,12 +175,12 @@ suite('Phases 051–060 — services', () => {
     expect(workload.some((row: any) => row.caseId === 'ANALYTICS_CASE_OTHER')).toBe(false);
   });
 
-  it('Phase 054 — database guards reject new orphans and reconciliation stays clean', async () => {
+  it('Phase 054 — native foreign keys reject new orphans and reconciliation stays clean', async () => {
     const { reconcileReport } = await import('../../server/reconcile');
     await expect(app.db.insert(app.schema.outreachStatus).values({
       id: 'ORPHAN1', caseId: 'NONEXISTENT_CASE', lawyerId: 'LWYR_5X', status: 'PendingApproval',
       createdAt: new Date(), updatedAt: new Date(),
-    } as any)).rejects.toThrow(/relationship violation: outreach_status\.caseId/);
+    } as any)).rejects.toThrow(/FOREIGN KEY constraint failed/i);
     const report = await reconcileReport();
     expect(report.orphanedByCaseId['outreach_status'] ?? 0).toBe(0);
   });

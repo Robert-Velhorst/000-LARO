@@ -69,6 +69,8 @@ loopback-only entry path using your existing account and encryption keys.
 - Searches and ranks lawyers through the official Dutch NOvA public directory.
 - Maintains reviewable directories for media and support organizations.
 - Prepares outreach and tracks responses without silently contacting anyone.
+- Generates review drafts only after the owner confirms a complete recipient;
+  reviewed versions retain exact bytes, hashes, and source/input provenance.
 - Exports evidence and provenance in reviewable packages.
 
 ### What It Does Not Do
@@ -81,7 +83,8 @@ loopback-only entry path using your existing account and encryption keys.
 - It does not provide a trusted, publicly signed Windows installer. The current
   distribution target is an unsigned internal portable build.
 - It does not make every configured connector operational. Microsoft collection
-  and Trello OAuth remain unavailable until their complete flows are accepted.
+  is unavailable, and the disconnected Trello and Telegram connector stacks are
+  not shipped.
 
 ## Product Website Preview
 
@@ -125,7 +128,8 @@ private-source accuracy or production-acceptance claim follows from this preview
 2. **Raw evidence remains part of the record.** Analysis adds a review layer; it
    does not replace or exclude the underlying document.
 3. **Local-first by default.** Core case work and deterministic analysis do not
-   require a paid AI provider. Optional cloud providers are selected explicitly.
+   require a paid AI provider. Selecting an optional cloud provider does not send
+   documents; full-source processing requires a separate reviewed consent.
 4. **Human review before consequence.** Suggestions, timeline corrections,
    shortlists, messages, and exports remain reviewable.
 5. **No implicit external action.** Sending requires ownership, exact-message
@@ -186,7 +190,12 @@ private-source accuracy or production-acceptance claim follows from this preview
 - Owned cases with status, urgency, legal areas, parties, identifiers, claims,
   positions, deadlines, obligations, risks, notes, and audit history.
 - Draft autosave and restore during case intake.
-- Search, filtering, saved searches, notifications, and activity history.
+- Search, filtering, saved searches, and activity history. Notifications retain
+  their typed owner-scoped context, use registered internal destinations, and
+  deduplicate atomically; see the [Notification Contract](docs/NOTIFICATION_CONTRACT.md).
+- Literal-safe global and workspace search with one Unicode/case normalization
+  contract and explicit category completeness; see
+  [Literal Search Contract](docs/SEARCH_CONTRACT.md).
 - Case-scoped checks on documents, analysis, timelines, matching, outreach,
   exports, and destructive actions.
 - Case and account data exports.
@@ -199,8 +208,25 @@ private-source accuracy or production-acceptance claim follows from this preview
 | Desktop folder | Uses the native folder picker, requires a case, presents files for review, and uploads only selected files |
 | Standalone folder | Accepts only paths under operator-configured `LOCAL_SCAN_ROOTS` |
 | Gmail | Uses read-only Google OAuth, imports messages/attachments, retains Gmail identity, and supports bounded filtered pulls |
-| Google Drive | Uses read-only OAuth, supports explicit account/folder selection, and exports Google-native documents to PDF before analysis |
+| Google Drive | Uses read-only OAuth and one bounded auto-collection path; explicit account/folder selection feeds canonical revisioned evidence, and Google-native documents are exported to PDF before analysis |
 | Document inbox | Maintained desktop/API: case-neutral uploads and durable Gmail/Drive/native-folder imports, source analysis, reference-based or configured-model dossier discovery, incremental filing, explained exceptions and original downloads |
+
+The **Gap analysis** view is a versioned evidence-coverage review. It lists the
+exact LARO inputs and revisions, managed-source availability, explicit review
+state, exact duplicates, automated contradiction flags, missing context,
+unknowns, and limitations. These counts and signals do not measure claim
+support, legal merit, liability, or outcome. A legal basis remains **Unknown**
+until a reviewed legal source is explicitly bound to the snapshot. Saved results
+from the retired percentage-scoring contract are marked retired and must be
+re-run; they are never translated into a new score.
+
+Each completed review is also bound to an exact case revision and input manifest,
+including evidence IDs, content hashes where available, source-analysis revisions,
+communications, and timeline events. Adding, deleting, revising, or materially
+correcting one of those inputs makes the saved review stale. LARO then hides its
+derived gaps, patterns, inferences, and document suggestions until a recomputation
+finishes successfully. The view distinguishes fresh, stale, running, failed,
+unavailable, and retired states instead of presenting an old result as current.
 
 #### Autonomous Inbox Boundaries
 
@@ -212,8 +238,10 @@ are recorded in [Autonomous Dossier Discovery](docs/AUTONOMOUS_DOSSIER_REQUIREME
   are processed sequentially with per-file failures, original preservation, progress
   and a stop-after-current-document control. Each supported file is limited to 7 MB.
 - **Settings > Workflow** controls automatic import analysis, automatic
-  dossier discovery, the analysis provider and full-source cloud sharing. Local
-  deterministic analysis does not imply a configured local language model.
+  dossier discovery, the analysis provider and provider-bound full-source consent.
+  New and legacy accounts have no external sharing permission by default. Changing
+  the provider or automatic-import setting revokes consent; local deterministic
+  analysis does not imply a configured local language model.
 - Automatic organization currently recognizes explicit source labels such as
   `zaaknummer`, `dossiernummer`, `kenmerk` and `case reference`, followed by an
   identifier containing letters and numbers (at least six characters). Purely
@@ -240,7 +268,8 @@ are recorded in [Autonomous Dossier Discovery](docs/AUTONOMOUS_DOSSIER_REQUIREME
 - Selected-provider failures, unsupported quotations, incomplete extraction,
   OCR confidence below 80, ambiguous responses and changed settings/context leave
   the original in the inbox. No fallback to another provider occurs. Cloud
-  discovery requires full-source sharing; local Ollama must actually be configured.
+  discovery requires active consent for that exact provider and automatic-import
+  state; local Ollama must actually be configured.
   The deterministic `local` option is not a language model.
 - Discovery admits at most 1,000 owned cases, compared in groups of at most 20
   within a 32,000-character request limit. Every group sees the complete source;
@@ -549,7 +578,12 @@ and relevant lobbies.
 Candidates can be entered manually or found through bounded public searches.
 Discovery sends canonical legal-area queries, never private case prose. New
 candidates start pending, are deduplicated, and require review before case
-matching. Automatic mode may build a shortlist; it never sends a message.
+matching. Automatic mode reviews and matches only stable candidate IDs returned
+by that case's active discovery run; it does not sweep manual, historical, or
+another-case pending records. The run report lists created, refreshed,
+auto-reviewed, skipped, and still-pending target IDs. Provider failures and
+result bounds are visible partial outcomes rather than silent truncation.
+Automatic mode may build a shortlist; it never sends a message.
 
 This is a curated review aid, not a comprehensive or continuously verified
 database of every possible target on the internet.
@@ -668,10 +702,10 @@ with `--local`.
 - Lawyers are global reference data; private matches/outreach are owner-scoped.
 - Media and organization directories are owner-scoped.
 - Persisted OAuth tokens stay server-side, encrypted, and absent from API
-  responses. Trello and Telegram tokens are not persisted and are accepted only
-  in bounded POST bodies for explicit provider operations.
-- SQLite uses WAL, foreign-key enforcement, migrations, a busy timeout, and
-  additional relationship guards for historical tables.
+  responses. Trello and Telegram connector procedures are not mounted and never
+  accept provider tokens.
+- SQLite uses WAL, declared native foreign keys, fail-closed versioned
+  migrations, a busy timeout, and verified pre-migration backups.
 
 ## Installation and Quick Start
 
@@ -737,7 +771,11 @@ secrets, databases, token vaults, or evidence.
 ### Analysis Providers
 
 Local deterministic analysis is the default and needs no API key. The owner can
-select one configured provider in **Settings > Workflow**.
+select one configured provider in **Settings > Workflow**. Selecting or configuring
+an external provider does not authorize document transmission. The owner must review
+the named provider, full-document scope, and current automatic-import implication,
+then grant consent explicitly. Consent records the actor and timestamp, can be
+revoked immediately, and is invalidated by provider or automatic-import changes.
 
 | Provider | Credential | Model override |
 | --- | --- | --- |
@@ -760,11 +798,21 @@ Credentials make a provider available; they do not prove live acceptance.
 | SMTP and SendGrid | Implemented; sending disabled by default |
 | AWS S3 | Optional managed evidence storage |
 | HAI | Owner-bound, revocable, read-only feed |
-| KvK public records | Supported official open-data contract |
-| Telegram | Bounded bot/API and desktop-export import paths are available when configured; bot history is limited by Telegram and target verification is still required |
+| KvK public records | Supported official open-data contract with case-owned research receipts |
+| Rechtspraak published decisions | Supported bounded RSS discovery; coverage is always partial |
+| KOOP legislation | Supported official Basiswettenbestand search with completeness reporting |
+| Telegram | Unsupported; connector routes, bot-token input, webhooks, downloads, and legacy imports are not shipped |
 | Microsoft/OneDrive/Outlook | Reserved configuration; collection unavailable |
-| Trello OAuth | Unavailable until durable token lifecycle is complete |
+| Trello | Unsupported; duplicate connector routes and raw-token operations are not shipped |
 | Google Calendar/Contacts | Not implemented as LARO evidence connectors |
+
+Public-source research is attached to an owned case. Each KvK, Rechtspraak, or
+KOOP attempt stores only its source, normalized query, retrieval time, result
+count, and completeness in durable audit history; provider result content is
+not copied there. The renderer labels complete, genuine-empty, partial,
+unavailable, and failed outcomes separately. A provider failure never appears
+as zero results, and a partial zero never proves that a record, decision, or
+insolvency warning is absent.
 
 ## Google and Outbound Email
 
@@ -783,9 +831,14 @@ Gateway callback:
 https://<gateway-domain>/<prefix>/api/oauth/gmail/callback
 ```
 
-After consent, status updates without page reload. Disconnect revokes the Google
-grant before deleting local encrypted credentials. If revocation fails, the
-credential remains for retry and no false success is recorded.
+After consent, status updates without page reload. Gmail and Drive are shown as
+capabilities of one Google account grant. Disconnect first loads a versioned
+review naming the account, shared credential, both capabilities, affected
+scheduled collection, and local source-record disposition. A changed review is
+rejected before Google is contacted. Disconnect then revokes the shared grant
+before deleting local encrypted credentials and updating the reviewed schedule
+references. If revocation fails, credentials, source records, and collection
+settings remain for retry and no partial success is recorded.
 
 ### Multiple Google Accounts
 
@@ -798,7 +851,9 @@ will succeed; expired or revoked grants may require reconnection.
 
 For each case, **Auto-Collection Settings > Sources** selects the Gmail accounts
 to search and the Drive folders to search under each Google account. **Browse
-Google Drive** lets you switch accounts; adding folders from a second account
+Google Drive** is a source selector, not a direct-import screen: it lets you
+switch accounts and choose monitored folders, while collection still runs
+through the saved keyword workflow. Adding folders from a second account
 retains the first selection. **Select all of My Drive** explicitly selects that
 account's My Drive tree, not every shared drive in a Workspace organization.
 Removing the final selected folder disables Drive collection for that selection;
@@ -808,9 +863,14 @@ Drive selections are stored as `metadata.googleDriveSources`, with an account ID
 and folder IDs per entry. Existing single-account settings remain readable.
 Legacy folders without an account identity must be assigned explicitly before
 saving. Ownership is checked before collection, and imported evidence records
-the account used. A failed Drive account is reported without suppressing later
-selected accounts. Disconnect confirmation names the account and covers both
-its Gmail and Drive grant; other accounts and collected evidence remain intact.
+the account used, provider revision, canonical source identity, prior revision
+IDs, managed storage key, and SHA-256 hash. Unchanged revisions are skipped;
+changed revisions create a new evidence version; a failed replacement preserves
+the prior version. A failed Drive account is reported without suppressing later
+selected accounts. Disconnect confirmation names the account and both Gmail and
+Drive consequences. Only that account is removed from scheduled selections.
+Shared source connection records remain while another Google account exists;
+collected evidence is never deleted by provider disconnect.
 
 Regression checks use disposable databases and controlled Google responses.
 They do not establish live consent, mailbox access, or Drive access for any
@@ -866,9 +926,13 @@ moves.
 
 ```text
 /api/live    process liveness
-/api/ready   database and service readiness
-/api/health  non-sensitive operational summary
+/api/ready   database readiness
+/api/health  minimal public application/database summary
 ```
+
+Backup posture, worker history, request/error/latency metrics, and integration
+configuration are available only to operator/admin sessions through
+`/api/operator/diagnostics` or the matching tRPC diagnostics.
 
 ### Existing ngrok Gateway
 
@@ -899,8 +963,13 @@ Assigned free domains can change. A stable gateway path is recommended.
 
 `/api/integrations/hai/feed` serves the dedicated HAI adapter. Its token is
 owner-bound, `hai:read` only, stored as a digest, shown once, revocable, and
-limited to 365 days. The bounded feed includes case status and selected analysis
-summary fields, but excludes contacts, source bytes/quotes, and provider secrets.
+limited to 365 days. Issuing a token requires a reviewed grant with explicit
+owned cases, exported field categories, and separate choices for future cases
+and analyses. Existing unselected cases stay excluded even when future-case
+access is enabled. Scope edits advance a grant revision and invalidate old feed
+cursors; revocation blocks both the grant and credential. The bounded feed
+excludes contacts, source bytes/quotes, and provider secrets. Migration 0026
+revokes legacy active tokens that have no reviewed grant.
 
 ## Security, Privacy, and Recovery
 
@@ -912,6 +981,9 @@ summary fields, but excludes contacts, source bytes/quotes, and provider secrets
 - Scanner uploads keep session and scanner authority in the Electron main
   process; reusable API credentials are not exposed to renderer JavaScript.
 - Server-owned encrypted provider credentials.
+- External document processing is denied without active owner consent bound to the
+  selected provider and current automatic-import setting. Grant and revocation are
+  mandatory audit events committed atomically with the preference record.
 - Provider connection and local disconnection records commit atomically with
   their required audit evidence. Invalid account identities or empty access
   tokens are rejected before storage, and provider network calls have bounded
@@ -1107,11 +1179,10 @@ External Flask keys stay in independent operator escrow.
 - Public target discovery is bounded, not exhaustive.
 - Dashed map links are suggestions, not factual causation.
 - Optional AI quality varies, but citations remain mandatory.
-- Microsoft, Google Calendar/Contacts, and Trello OAuth are not operational
-  evidence connectors.
+- Microsoft, Google Calendar/Contacts, Trello, and Telegram are not operational
+  evidence connectors; Trello and Telegram have no mounted connector routes.
 - Sending is disabled by default.
 - Flask remains a separate recovery responsibility until migration.
-- Historical tables still use extra relationship guards pending native-FK work.
 - SQLite/local storage target one desktop/API owner process, not active-active
   multi-node service.
 - Windows portable builds are unsigned and intended for internal use.
@@ -1199,6 +1270,7 @@ See [Troubleshooting](docs/TROUBLESHOOTING.md) and in-app Help.
 - [Traceability](docs/TRACEABILITY.md)
 - [Final Verification Report](docs/FINAL_VERIFICATION_REPORT.md)
 - [Acceptance Tests](docs/ACCEPTANCE_TESTS.md)
+- [Reviewed Legal Draft Snapshot Contract](docs/LEGAL_DRAFT_SNAPSHOT_CONTRACT.md)
 - [Manual Verification](docs/MANUAL_VERIFICATION.md)
 - [Definition of Done](docs/DEFINITION_OF_DONE.md)
 - [Changelog](CHANGELOG.md)

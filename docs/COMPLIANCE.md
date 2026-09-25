@@ -45,10 +45,14 @@ lawyer match replaces review by a qualified lawyer.
   enforced in protected server procedures.
 - OAuth tokens use AES-256-GCM storage; reset and bearer credentials are stored
   as hashes where the legacy Flask runtime requires them.
-- Account export and erasure remove owned relational records and managed storage
-  objects; storage deletion failure aborts metadata deletion.
-- Account exports omit credential fields across every owner table; optional
-  privacy preferences persist per account and participate in export and erasure.
+- Account export and erasure cover owned relational records and managed storage.
+  Erasure needs a one-use, session-bound identity proof; provider-revocation
+  failure retains local credentials, while object-cleanup failure leaves a
+  durable retry queue and a pending receipt after account deletion.
+- Account exports omit credential fields across every owner table. The retained
+  optional usage-analytics preference is enforced per account at the canonical
+  writer and participates in export and erasure; unsupported marketing consent
+  is neither collected nor presented.
 - Bounded retention configuration fails startup when unsafe. The observable
   sweep catches up after startup, runs daily, purges eligible audit history, and
   never deletes business evidence.

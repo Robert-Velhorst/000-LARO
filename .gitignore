@@ -24,6 +24,8 @@ release-acceptance.local.json
 db-backups/
 flask-backups/
 .laro-backups/
+laro-recovery.key
+.laro-recovery.key
 *.exe
 *.dmg
 *.AppImage

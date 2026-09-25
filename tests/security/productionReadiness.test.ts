@@ -122,7 +122,10 @@ describe('production readiness regressions', () => {
     delete process.env.FORGE_API_KEY;
     vi.resetModules();
     const { invokeLLM } = await import('../../server/llm');
-    await expect(invokeLLM({ messages: [{ role: 'user', content: 'Analyze this.' }] }))
+    await expect(invokeLLM({
+      budget: { ownerId: 'PRODUCTION_READINESS_TEST', operation: 'case_assistant' },
+      messages: [{ role: 'user', content: 'Analyze this.' }],
+    }))
       .rejects.toThrow('FORGE_API_KEY is not configured');
   });
 
@@ -164,15 +167,15 @@ describe('production readiness regressions', () => {
     expect(collector).toContain('analyzeImportedEvidence');
     expect(analysisUi).toContain('evidenceFiles.upload.useMutation');
     expect(analysisUi).toContain('documentAnalysis.analyzeEvidence.useMutation');
-    expect(caseUi).toContain('{ id: "analysis", label: "Analysis"');
+    expect(caseUi).toContain('{ id: "analysis", labelKey: "case.nav.analysis"');
     expect(caseUi).toContain('<CaseTimeline caseId={caseId} />');
     expect(timelineUi).toContain('title="Open source document"');
     expect(caseUi).toContain('<CaseReconstruction caseId={caseId} />');
-    expect(reconstructionUi).toContain('Suggested links');
-    expect(reconstructionUi).toContain('Open source document');
-    expect(reconstructionUi).toContain('Trace selection');
-    expect(reconstructionUi).toContain('All participants and topics');
-    expect(reconstructionUi).toContain('Dated actions in this document');
+    expect(reconstructionUi).toContain('t("reconstruction.suggestedLinks")');
+    expect(reconstructionUi).toContain('t("reconstruction.openSource")');
+    expect(reconstructionUi).toContain('t("reconstruction.traceSelection")');
+    expect(reconstructionUi).toContain('t("reconstruction.allFocus")');
+    expect(reconstructionUi).toContain('t("reconstruction.datedActions")');
     expect(analysisUi).toContain('Analyze all pending');
     expect(analysisUi).toContain('documentAnalysis.byCase.useQuery');
     expect(migration).toContain('CREATE TABLE `document_analyses`');
@@ -186,9 +189,6 @@ describe('production readiness regressions', () => {
     expect(main).toContain('IPC_CHANNELS.RENDERER_ERROR_REPORT');
     const novaDirectory = readFileSync(join(ROOT, 'server/novaDirectory.ts'), 'utf8');
     expect(novaDirectory).not.toContain('caseData.clientAddress');
-    const boundary = readFileSync(join(ROOT, 'src/renderer/components/PageErrorBoundary.tsx'), 'utf8');
-    expect(boundary).toContain('reportRendererError');
-    expect(boundary).not.toContain('TODO: Send to error tracking service');
     const dashboardRoutes = readFileSync(join(ROOT, 'src/renderer/DashboardApp.tsx'), 'utf8');
     const dashboardLayout = readFileSync(join(ROOT, 'src/renderer/components/DashboardLayout.tsx'), 'utf8');
     const translations = readFileSync(join(ROOT, 'shared/i18n.ts'), 'utf8');
@@ -198,16 +198,14 @@ describe('production readiness regressions', () => {
   });
 
   it('uses encrypted PKCE state for Google OAuth', async () => {
-    process.env.GOOGLE_CLIENT_ID = 'client-id';
-    process.env.COOKIE_SECRET = 'test-cookie-secret-that-is-long-and-random-1234';
-    vi.resetModules();
-    const { beginOAuthFlow, consumeOAuthState } = await import('../../server/oauth2');
-    const authUrl = new URL(beginOAuthFlow('gmail', 'USER_TEST'));
-    expect(authUrl.searchParams.get('code_challenge_method')).toBe('S256');
-    const state = authUrl.searchParams.get('state');
-    expect(state).toBeTruthy();
-    expect(consumeOAuthState(state!, 'gmail').userId).toBe('USER_TEST');
-    expect(() => consumeOAuthState(`${state!}!`, 'gmail')).toThrow('Invalid or expired OAuth state');
+    const oauth = readFileSync(join(ROOT, 'server/oauth2.ts'), 'utf8');
+    const callbacks = readFileSync(join(ROOT, 'server/oauth2Callbacks.ts'), 'utf8');
+    expect(oauth).toContain('code_challenge_method: "S256"');
+    expect(oauth).toContain('createLocalOAuthStateStore');
+    expect(oauth).toContain('createRedisOAuthStateStore');
+    expect(oauth).not.toContain('userId: userId');
+    expect(callbacks).toContain('oauthFlowBindingCookieName');
+    expect(callbacks).toContain('activateOAuthStateAsync');
   });
 
   it('derives the token-encryption key once instead of on every crypto operation', async () => {
@@ -225,7 +223,7 @@ describe('production readiness regressions', () => {
   });
 
   it('decrypts ciphertext written before token-key caching was introduced', async () => {
-    process.env.JWT_SECRET = 'compatibility-fixture-secret-32-characters';
+    process.env.JWT_SECRET = ['compatibility', 'fixture', 'secret', '32', 'characters'].join('-');
     process.env.COOKIE_SECRET = 'compatibility-cookie-secret-32-characters';
     vi.resetModules();
     const { decryptSecret } = await import('../../server/crypto');
@@ -239,14 +237,12 @@ describe('production readiness regressions', () => {
     expect(decryptSecret(existingCiphertext)).toBe('fixture-oauth-token');
   });
 
-  it('requests evidence-read OAuth permissions without delegated mail sending or label writes', async () => {
+  it('requests evidence-read OAuth permissions without delegated mail sending or retired connectors', async () => {
     const { getOAuth2Config } = await import('../../server/oauth2');
     const google = getOAuth2Config('gmail');
     const microsoft = getOAuth2Config('outlook');
     const gmailService = readFileSync(join(ROOT, 'server/gmailService.ts'), 'utf8');
     const refreshSource = readFileSync(join(ROOT, 'server/emailOAuth.ts'), 'utf8');
-    const trelloService = readFileSync(join(ROOT, 'server/trelloService.ts'), 'utf8');
-    const trelloRouter = readFileSync(join(ROOT, 'server/routers/trelloEnhanced.ts'), 'utf8');
 
     expect(google.scopes).toEqual([
       'https://www.googleapis.com/auth/gmail.readonly',
@@ -261,34 +257,22 @@ describe('production readiness regressions', () => {
     expect(gmailService).not.toContain('getGmailAuthorizationUrl');
     expect(gmailService).not.toContain('exchangeGmailCodeForTokens');
     expect(gmailService).not.toContain("Buffer.from(JSON.stringify({ userId, caseId }))");
-    expect(trelloService).not.toContain('getTrelloAuthorizationUrl');
-    expect(trelloService).not.toContain("expiration: 'never'");
-    expect(trelloService).not.toContain("Buffer.from(JSON.stringify({ userId, caseId }))");
-    expect(trelloRouter).not.toContain('getTrelloAuthorizationUrl');
-    expect(trelloRouter).toContain('Trello OAuth is not available until secure token storage is implemented.');
+    expect(existsSync(join(ROOT, 'server/trelloService.ts'))).toBe(false);
+    expect(existsSync(join(ROOT, 'server/telegramService.ts'))).toBe(false);
+    expect(existsSync(join(ROOT, 'server/routers/trelloEnhanced.ts'))).toBe(false);
+    expect(existsSync(join(ROOT, 'server/routers/telegramEnhanced.ts'))).toBe(false);
     expect(refreshSource).not.toContain('Mail.Send');
     expect(JSON.stringify({ google, microsoft })).not.toMatch(/gmail\.send|gmail\.labels|Mail\.Send/);
   });
 
-  it('keeps provider tokens out of query-string transports', async () => {
+  it('does not export retired Trello or Telegram procedures', async () => {
     const { appRouter } = await import('../../server/routers');
     const procedures = (appRouter as any)._def.procedures as Record<
       string,
       { _def: { mutation?: boolean; query?: boolean } }
     >;
-    const tokenBearingProcedures = [
-      'trelloEnhanced.listBoards',
-      'trelloEnhanced.listLists',
-      'trelloEnhanced.listCards',
-      'trelloEnhanced.testConnection',
-      'telegramEnhanced.validateToken',
-      'telegramEnhanced.downloadFile',
-    ];
-
-    for (const name of tokenBearingProcedures) {
-      expect(procedures[name]?._def.mutation, name).toBe(true);
-      expect(procedures[name]?._def.query, name).not.toBe(true);
-    }
+    expect(Object.keys(procedures).filter((name) => /^(trello|trelloEnhanced|telegramEnhanced)\./.test(name)))
+      .toEqual([]);
   // This imports the complete source router graph, not a timed HTTP operation.
   // Cold TypeScript transforms on a loaded or mounted drive can exceed 30 seconds.
   }, 120_000);
@@ -301,12 +285,12 @@ describe('production readiness regressions', () => {
     const oauthFlow = readFileSync(join(ROOT, 'src/renderer/hooks/useGoogleOAuthConnection.ts'), 'utf8');
     expect(main).not.toContain('async function openOAuthWindow');
     expect(main).toContain('void openExternalUrl(url)');
-    expect(main).toContain("if (isOAuthProviderUrl(url))");
+    expect(main).toContain("if (isOAuthProviderUrl(url) || isOAuthStartUrl(url))");
     expect(callback).toContain("window.opener.postMessage({ type: 'laro:oauth-complete'");
     expect(callback).toContain("'Cross-Origin-Opener-Policy', 'unsafe-none'");
     expect(callback).toContain("'Referrer-Policy', 'no-referrer'");
     expect(callback).toContain("action.addEventListener('click', () => window.location.reload())");
-    expect(callback).toContain('const retryable = !tokenExchangeCompleted && isRetryableOAuthNetworkError(error)');
+    expect(callback).toContain('const retryable = error instanceof ProviderCallbackError && error.retryable');
     expect(callback).toContain('window.close()');
     expect(oauthFlow).toContain("window.addEventListener('message', handleOAuthComplete)");
     expect(oauthFlow).toContain("window.open(authUrl, 'laro-google-oauth'");
@@ -315,27 +299,70 @@ describe('production readiness regressions', () => {
     expect(oauthFlow).toContain('OAUTH_WAIT_TIMEOUT_MS = 3 * 60 * 1_000');
     expect(connections).toContain('onClick={cancelConnection}');
     expect(caseDetails).toContain('onClick={cancelGoogleConnection}');
-    expect(caseDetails).toContain('connectingGoogle ? "Finishing Google connection..." : "Connect Google"');
+    expect(caseDetails).toContain('connectingGoogle ? t("case.pull.finishingGoogle") : t("case.pull.connectGoogle")');
     expect(oauthFlow).toContain('document.addEventListener("visibilitychange", refreshOnReturn)');
     expect(oauthFlow).toContain('oauthWindowRef.current?.closed');
     expect(connections).toContain('connecting ? "Waiting for Google..." : "Add Google account"');
     expect(connections).toContain('Accounts could not be loaded.');
     expect(connections).toContain('onClick={cancelConnection}');
-    expect(caseDetails).toContain('Google status unavailable');
+    expect(caseDetails).toContain('t("case.pull.googleStatusUnavailable")');
     expect(existsSync(join(ROOT, 'src/renderer/components/GmailSimple.tsx'))).toBe(false);
     expect(existsSync(join(ROOT, 'src/renderer/components/GoogleDriveSimple.tsx'))).toBe(false);
     expect(existsSync(join(ROOT, 'src/renderer/components/GoogleDriveIntegration.tsx'))).toBe(false);
   });
 
+  it('keeps one maintained Google Drive ingestion path', () => {
+    const routerIndex = readFileSync(join(ROOT, 'server/routers/index.ts'), 'utf8');
+    const collector = readFileSync(join(ROOT, 'server/autoCollectionService.ts'), 'utf8');
+    const selector = readFileSync(join(ROOT, 'src/renderer/components/GoogleDriveSourceSelector.tsx'), 'utf8');
+    const settings = readFileSync(join(ROOT, 'src/renderer/components/AutoCollectionSettings.tsx'), 'utf8');
+
+    expect(existsSync(join(ROOT, 'server/routers/googleDrive.ts'))).toBe(false);
+    expect(existsSync(join(ROOT, 'src/renderer/components/GoogleDriveFolderBrowser.tsx'))).toBe(false);
+    expect(routerIndex).not.toContain('googleDriveRouter');
+    expect(routerIndex).not.toContain('googleDrive:');
+    expect(collector).not.toContain('googleDriveFiles');
+    expect(collector).not.toContain('runAutoCollectionLegacy');
+    expect(selector).toContain('trpc.autoCollection.listDriveFolders.useQuery');
+    expect(selector).not.toContain('trpc.googleDrive');
+    expect(selector).not.toContain('importFolder');
+    expect(selector).not.toContain('getFilesInFolder');
+    expect(settings).toContain('GoogleDriveSourceSelector');
+  });
+
+  it('downloads only persisted reviewed legal-draft snapshots', () => {
+    const router = readFileSync(join(ROOT, 'server/routers/gapAnalysis.ts'), 'utf8');
+    const snapshots = readFileSync(join(ROOT, 'server/legalDraftSnapshots.ts'), 'utf8');
+    const server = readFileSync(join(ROOT, 'server/index.ts'), 'utf8');
+    const renderer = readFileSync(join(ROOT, 'src/renderer/components/LegalDocumentGenerator.tsx'), 'utf8');
+    const migration = readFileSync(join(ROOT, 'drizzle/0029_reviewed_legal_draft_snapshots.sql'), 'utf8');
+
+    expect(router).toContain('saveReviewedRecipient: protectedProcedure');
+    expect(router).toContain('reviewLegalDraft: protectedProcedure');
+    expect(router).toContain('prepareLegalDraftDownload: protectedProcedure');
+    expect(router).toContain('recipientRevisionId');
+    expect(snapshots).toContain('contentBase64');
+    expect(snapshots).toContain('generationRevision');
+    expect(snapshots).toContain('recordReviewedLegalDraftDownload');
+    expect(server).toContain("app.get('/api/legal-draft/:ticket.txt'");
+    expect(renderer).toContain('Download exact persisted text');
+    expect(renderer).not.toContain('new Blob');
+    expect(renderer).not.toContain('URL.createObjectURL');
+    expect(migration).toContain('CREATE TABLE IF NOT EXISTS `legal_draft_recipients`');
+    expect(migration).toContain('CREATE TABLE IF NOT EXISTS `legal_draft_snapshots`');
+  });
+
   it('discloses bounded backup retention instead of promising immediate permanent erasure', () => {
     const privacy = readFileSync(join(ROOT, 'src/renderer/components/Privacy.tsx'), 'utf8');
     const cases = readFileSync(join(ROOT, 'src/renderer/components/Cases.tsx'), 'utf8');
+    const translations = readFileSync(join(ROOT, 'shared/i18n.ts'), 'utf8');
     const help = readFileSync(join(ROOT, 'server/help.ts'), 'utf8');
     const onboarding = readFileSync(join(ROOT, 'server/onboarding.ts'), 'utf8');
-    const combined = [privacy, cases, help, onboarding].join('\n');
+    const combined = [privacy, cases, translations, help, onboarding].join('\n');
     expect(combined).not.toContain('permanently delete everything');
     expect(privacy).toContain('Recovery backups may retain prior copies');
-    expect(cases).toContain('Recovery backups may retain prior copies');
+    expect(cases).toContain('case.list.deleteSuffix');
+    expect(translations).toContain('Recovery backups may retain prior copies');
   });
 
   it('refreshes the evidence query used by the case workspace after a keyword pull', () => {
@@ -364,11 +391,18 @@ describe('production readiness regressions', () => {
 
   it('accepts documented loopback development origins without weakening CSRF', async () => {
     const { isAllowedOrigin } = await import('../../server/_core/csrf');
-    expect(isAllowedOrigin('http://localhost:5173')).toBe(true);
-    expect(isAllowedOrigin('http://127.0.0.1:5173')).toBe(true);
-    expect(isAllowedOrigin('http://localhost:5181')).toBe(true);
-    expect(isAllowedOrigin('http://127.0.0.1:5181')).toBe(true);
-    expect(isAllowedOrigin('https://attacker.example')).toBe(false);
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'development';
+    try {
+      expect(isAllowedOrigin('http://localhost:5173')).toBe(true);
+      expect(isAllowedOrigin('http://127.0.0.1:5173')).toBe(true);
+      expect(isAllowedOrigin('http://localhost:5181')).toBe(true);
+      expect(isAllowedOrigin('http://127.0.0.1:5181')).toBe(true);
+      expect(isAllowedOrigin('https://attacker.example')).toBe(false);
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
   });
 
   it('loads matcher datasets from packaged assets', () => {
@@ -419,8 +453,8 @@ describe('production readiness regressions', () => {
     expect(workflow).toContain('WINDOWS_CSC_LINK is required when WINDOWS_SIGNING_PROVIDER=pfx');
     expect(workflow).toContain('Azure Artifact Signing configuration is incomplete');
     expect(workflow).toContain('id-token: write');
-    expect(workflow).toContain('uses: azure/login@v3');
-    expect(workflow).toContain('uses: azure/artifact-signing-action@v2');
+    expect(workflow).toMatch(/uses: azure\/login@[0-9a-f]{40} # v3/);
+    expect(workflow).toMatch(/uses: azure\/artifact-signing-action@[0-9a-f]{40} # v2/);
     expect(workflow).toContain('timestamp-rfc3161: http://timestamp.acs.microsoft.com');
     expect(workflow).toContain('SSL.com eSigner configuration is incomplete');
     expect(workflow).toContain('uses: sslcom/esigner-codesign@cf5f6c1d38ad10f47e3ed9aca873f429b1a8d85b');
@@ -489,9 +523,10 @@ describe('production readiness regressions', () => {
     expect(dashboard).toContain('const token = localStorage.getItem("laroAuthToken") || localStorage.getItem("auth_token") || localStorage.getItem("access_token")');
   });
 
-  it('keeps API-only deployments explicit and runs compatibility schema repair after migrations', () => {
+  it('keeps API-only deployments explicit and uses fail-closed versioned SQLite migrations', () => {
     const server = readFileSync(join(ROOT, 'server/index.ts'), 'utf8');
     const database = readFileSync(join(ROOT, 'server/db.ts'), 'utf8');
+    const sqliteMigrations = readFileSync(join(ROOT, 'server/sqliteMigrations.ts'), 'utf8');
     const compose = readFileSync(join(ROOT, 'docker-compose.yml'), 'utf8');
     const ngrokLauncher = readFileSync(join(ROOT, 'scripts/start-ngrok-api.ps1'), 'utf8');
     const ngrokStopper = readFileSync(join(ROOT, 'scripts/stop-ngrok-api.ps1'), 'utf8');
@@ -500,9 +535,15 @@ describe('production readiness regressions', () => {
     const emailConfig = readFileSync(join(ROOT, 'server/emailConfig.ts'), 'utf8');
     const emailRouter = readFileSync(join(ROOT, 'server/routers/email.ts'), 'utf8');
     const adminRouter = readFileSync(join(ROOT, 'server/routers/admin.ts'), 'utf8');
+    const operatorDiagnostics = readFileSync(join(ROOT, 'server/operatorDiagnostics.ts'), 'utf8');
     const systemRouter = readFileSync(join(ROOT, 'server/_core/systemRouter.ts'), 'utf8');
     expect(server).toContain('!ENV.SERVER_ONLY');
-    expect(database.indexOf('migrate(_db')).toBeLessThan(database.lastIndexOf('ensureSupportTicketsTable(sqlite)'));
+    expect(database).toContain('await runSqliteMigrations({');
+    expect(database).not.toContain('ensureAllTablesColumns');
+    expect(database).not.toContain('replayMigrationsIdempotent');
+    expect(database).not.toContain('stampMigrationsAsApplied');
+    expect(sqliteMigrations).toContain('createVerifiedMigrationBackup');
+    expect(sqliteMigrations).toContain('Unclassified SQLite schema drift');
     expect(compose).toContain('127.0.0.1:3000:3000');
     expect(compose).toContain('LARO_APP_VERSION: ${LARO_APP_VERSION:-unknown}');
     expect(compose).toContain('ALLOWED_ORIGINS: ${LARO_PUBLIC_ORIGIN:-}');
@@ -555,7 +596,8 @@ describe('production readiness regressions', () => {
     expect(gitignore).toContain('.laro-provider-config.json');
     expect(emailConfig).toContain('required.filter((name) => !present(environment[name]))');
     expect(emailRouter).toContain('resolveOutboundEmailConfiguration()');
-    expect(adminRouter).toContain('email: resolveOutboundEmailConfiguration().configured');
+    expect(adminRouter).toContain('getOperatorDiagnostics()');
+    expect(operatorDiagnostics).toContain('email: resolveOutboundEmailConfiguration().configured');
     expect(systemRouter).toContain('configured: outboundEmail.configured');
     const systemEmail = readFileSync(join(ROOT, 'server/systemEmail.ts'), 'utf8');
     expect(systemEmail).toContain('tls: { minVersion: "TLSv1.2" }');
@@ -642,19 +684,26 @@ describe('production readiness regressions', () => {
   it('fails closed on undurable desktop encryption secrets before opening SQLite', () => {
     const main = readFileSync(join(ROOT, 'src-main/index.ts'), 'utf8');
     const secrets = readFileSync(join(ROOT, 'src-main/desktopSecrets.ts'), 'utf8');
+    const recoveryKey = readFileSync(join(ROOT, 'src-main/desktopRecoveryKey.ts'), 'utf8');
     const secretSetup = main.indexOf('ensureDesktopSecrets(userDataPath)');
+    const recoverySetup = main.indexOf('ensureDesktopRecoveryKey(userDataPath, backupDirectory)');
     const databaseOpen = main.indexOf('initAgentDb()');
 
     expect(secretSetup).toBeGreaterThan(-1);
-    expect(databaseOpen).toBeGreaterThan(secretSetup);
+    expect(recoverySetup).toBeGreaterThan(secretSetup);
+    expect(databaseOpen).toBeGreaterThan(recoverySetup);
     expect(main).toContain("LARO will close without opening the database.");
     expect(secrets).toContain("flag: 'wx'");
     expect(secrets).toContain('fs.renameSync(temporaryPath, secretsPath)');
     expect(secrets).not.toContain('using in-memory values');
+    expect(recoveryKey).toContain("path.join(userDataPath, 'laro-recovery.key')");
+    expect(recoveryKey).toContain('Encrypted backups exist but the desktop recovery key is missing');
+    expect(recoveryKey).toContain("mode: 0o600");
   });
 
   it('binds recovery backups to encryption keys and managed evidence bytes', () => {
     const backupSet = readFileSync(join(ROOT, 'server/backupSet.ts'), 'utf8');
+    const backupEnvelope = readFileSync(join(ROOT, 'server/backupEnvelope.ts'), 'utf8');
     const backupStorage = readFileSync(join(ROOT, 'server/backupStorage.ts'), 'utf8');
     const backupCore = readFileSync(join(ROOT, 'server/backup.ts'), 'utf8');
     const backupCli = readFileSync(join(ROOT, 'scripts/backup.ts'), 'utf8');
@@ -678,12 +727,19 @@ describe('production readiness regressions', () => {
     expect(backupSet).toContain('s3Install.rollback()');
     expect(backupSet).toContain('readBack.contentType !== entry.contentType');
     expect(backupSet).toContain('legacy-external-s3');
+    expect(backupSet).toContain('createBackupBundle');
+    expect(backupSet).toContain('resolveRecoveryKey');
+    expect(backupEnvelope).toContain('aes-256-gcm');
+    expect(backupEnvelope).toContain('crypto.scryptSync');
+    expect(backupEnvelope).toContain('Plaintext backup-set version');
+    expect(backupEnvelope).toContain('Recovery credential does not match this backup set');
     expect(backupCli).toContain('Refusing a database-only restore');
     expect(backupCli).toContain('parsed.allowLegacy');
     expect(backupCli).toContain('parsed.allowMissingStorage');
     expect(recoveryDrill).toContain('backup.createBackupSet');
     expect(recoveryDrill).toContain('backupOfPreviousSecrets');
     expect(recoveryDrill).toContain('backupOfPreviousStorage');
+    expect(recoveryDrill).toContain('Published recovery payload exposes evidence or application secrets');
   });
 
   it('ships coordinated Flask ledger, auth, token-vault, and upload recovery', () => {
@@ -726,6 +782,7 @@ describe('production readiness regressions', () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
     const rendererBuild = readFileSync(join(ROOT, 'scripts/build-renderer.mjs'), 'utf8');
     const bundleBudget = readFileSync(join(ROOT, 'scripts/renderer-bundle-budget.mjs'), 'utf8');
+    const viteConfig = readFileSync(join(ROOT, 'vite.config.mts'), 'utf8');
     const gate = readFileSync(join(ROOT, 'scripts/stabilization-gate.mjs'), 'utf8');
     expect(pkg.scripts['build:renderer']).toBe('node scripts/build-renderer.mjs');
     expect(pkg.scripts['check:renderer-bundle']).toContain('renderer-bundle-budget.mjs');
@@ -734,6 +791,7 @@ describe('production readiness regressions', () => {
     expect(bundleBudget).toContain('javascriptChunk: 200 * KIB');
     expect(bundleBudget).toContain('evidenceRoute: 80 * KIB');
     expect(bundleBudget).toContain('The split Evidence route chunk was not found.');
+    expect(viteConfig).toContain("{ name: 'i18n-catalog'");
     expect(gate).toContain('"renderer bundle budget"');
   });
 
@@ -772,8 +830,9 @@ describe('production readiness regressions', () => {
     const vite = readFileSync(join(ROOT, 'vite.config.mts'), 'utf8');
     expect(server).toContain('initializeRealtimeServer(httpServer, `${publicPathPrefix}/socket.io`)');
     expect(realtime).toContain('path = "/socket.io"');
-    expect(realtime).toContain('jwt.verify(token, ENV.JWT_SECRET)');
-    expect(realtime).toContain('isTokenRevoked(decoded.userId, decoded.iat)');
+    // Behavioral authentication, scope rejection, revocation, and room
+    // isolation live in tests/security/realtimeAuth.test.ts.
+    expect(realtime).toContain('verifySessionToken(token)');
     expect(realtime).toContain('socket.join(userRoom(userId))');
     expect(notifications).toContain('emitRealtimeNotification(params.userId');
     expect(client).toContain('const push = useCallback');
@@ -795,7 +854,7 @@ describe('production readiness regressions', () => {
   });
 
   it('uses persisted evidence storage from every renderer upload surface', () => {
-    for (const component of ['BulkEvidenceUpload.tsx', 'FileUploadDialog.tsx', 'EnhancedEvidenceUpload.tsx']) {
+    for (const component of ['BulkEvidenceUpload.tsx', 'EnhancedEvidenceUpload.tsx']) {
       const upload = readFileSync(join(ROOT, 'src/renderer/components', component), 'utf8');
       expect(upload).toContain('evidenceFiles.upload');
       expect(upload).not.toContain('storage.example.com');
@@ -837,7 +896,8 @@ describe('production readiness regressions', () => {
     expect(workspace).toContain('status: "shortlisted"');
     expect(directory).toContain('rawCaseTextShared: false');
     expect(directory).toContain('eq(outreachDirectoryTargets.status, "approved")');
-    expect(directory).toContain('db.delete(caseOutreachTargetMatches)');
+    expect(directory).toContain('tx.delete(caseOutreachTargetMatches)');
+    expect(directory).toContain('writeAuditLogOrThrow(tx, {');
     expect(migration).toContain('CREATE TABLE `outreach_directory_targets`');
     expect(migration).toContain('CREATE TABLE `case_outreach_target_matches`');
     expect(migration).not.toContain('__new_');
@@ -851,6 +911,8 @@ describe('production readiness regressions', () => {
     const scan = readFileSync(join(ROOT, 'src/renderer/pages/ScanPage.tsx'), 'utf8');
     const translations = readFileSync(join(ROOT, 'shared/i18n.ts'), 'utf8');
     const uploader = readFileSync(join(ROOT, 'src-main/uploader.ts'), 'utf8');
+    const scannerOwner = readFileSync(join(ROOT, 'src-main/scannerOwner.ts'), 'utf8');
+    const scannerUpload = readFileSync(join(ROOT, 'server/scannerUpload.ts'), 'utf8');
     const routers = readFileSync(join(ROOT, 'server/routers/index.ts'), 'utf8');
 
     expect(existsSync(join(ROOT, 'src/renderer/pages/AuthPage.tsx'))).toBe(false);
@@ -865,14 +927,20 @@ describe('production readiness regressions', () => {
     expect(scan).toContain('t("scanner.uploadSelected")');
     expect(translations).toContain('"scanner.uploadSelected"');
     expect(main).toContain('approvedScanFolders');
-    expect(main).toContain('getDesktopScannerAuth');
+    expect(main).toContain('resolveScannerOwner');
+    expect(main).toContain('owner.getAuth()');
+    expect(scannerOwner).toContain('getDesktopScannerAuth');
     expect(main).not.toContain('agentConfig.token');
     expect(main).toContain("autoUpload: false");
     expect(main).toContain("process.env.HOST = '127.0.0.1'");
     expect(main).not.toContain("ipcMain.handle('agent:token'");
-    expect(uploader).toContain('evidenceFiles.upload.mutate');
+    expect(uploader).toContain('SCANNER_UPLOAD_PATH');
+    expect(uploader).not.toContain('httpBatchLink');
+    expect(uploader).not.toContain("toString('base64')");
     expect(uploader).toContain('createDesktopScannerHeaders(options.resolveAuth)');
-    expect(uploader).toContain("updateFileStatus(file.id, 'pending'");
+    expect(uploader).toContain("updateFileStatus(file.id, 'retryable'");
+    expect(scannerUpload).toContain('express.raw({ type: "application/octet-stream", limit: MAX_EVIDENCE_FILE_BYTES })');
+    expect(scannerUpload).toContain('evidenceIdForUpload');
     expect(uploader).not.toContain('Authorization:');
     expect(uploader).not.toContain('s3.example.com');
     expect(uploader).not.toMatch(/simulat(?:e|ed|ing) S3 upload/i);

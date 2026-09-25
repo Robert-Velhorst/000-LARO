@@ -4,12 +4,16 @@
 
 - Liveness: `GET /api/live`
 - Database readiness: `GET /api/ready`
-- Full health: `GET /api/health`
+- Minimal public application health: `GET /api/health`
+- Detailed operator health: authenticated `GET /api/operator/diagnostics`
 - Local diagnostics: `npm run doctor`
-- Admin diagnostics: `admin.diagnostics`, `admin.tableCounts`, `admin.invariants`
+- Operator diagnostics: `admin.diagnostics`, `health.readiness`
+- Administrator diagnostics: `admin.tableCounts`, `admin.invariants`
 
-Background jobs run in the server process. `health.readiness` reports database
-and job state, including the last run, success, and error timestamps.
+Background jobs run in the server process. The operator-only HTTP and tRPC
+diagnostics report backup posture, traffic metrics, integration readiness, and
+job state including last run, success, and error details. Public probes expose
+none of that operational topology.
 
 ## Safety Controls
 
@@ -53,8 +57,8 @@ npm.cmd run acceptance:outbound-live -- `
 
 In the API container, invoke the compiled file at
 `/app/dist/server/server/liveOutboundAcceptance.js` with the same arguments.
-The command refuses a mismatched recipient, an engaged emergency stop, an
-environment override that keeps sending off, or an unconnected account. It
+The command refuses a mismatched recipient, an engaged emergency stop, a
+persisted send flag that cannot be enabled, or an unconnected account. It
 creates and approves deterministic acceptance-only rows, sends one labelled
 message through the guarded outreach path, observes exactly one matching Gmail
 inbox message, retries the send to prove the duplicate guard, then stores a
@@ -139,14 +143,17 @@ read Drive again.
 5. Roll back application and database only when evidence requires it.
 6. Re-run readiness and the critical acceptance flow before reopening.
 
-Use `npm run db:backup` to create the database, manifest, matching desktop
-secret sidecar, and local evidence directory as one recovery set. Keep all
-members together on protected media. For S3, separately verify bucket recovery
-controls. Deleting `<userData>/laro-secrets.json` rotates desktop session and
+Use `npm run db:backup` to create one encrypted database/application-secret/
+evidence payload plus its public envelope manifest. Validate it with the
+separate `LARO_RECOVERY_KEY_FILE` or protected container secret, and escrow that
+credential outside the backup destination. For S3, keep versioning as defense
+in depth. Deleting `<userData>/laro-secrets.json` rotates desktop session and
 encryption keys on the next launch, invalidates existing sessions, and requires
 reconnecting providers whose tokens were encrypted with the previous key. LARO
 preserves and rejects an invalid existing file instead of silently rotating it.
-Provider credentials still require their own rotation or revocation.
+Provider credentials still require their own rotation or revocation. Recovery-
+key rotation is separate: preserve the old key through its backup-retention
+window and restore-test a new-key set before retiring it.
 
 For the Flask command center, stop the server and workers, then run
 `npm run flask:backup -- <directory>` and `npm run flask:validate -- <directory>`.

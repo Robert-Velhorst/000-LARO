@@ -1,6 +1,6 @@
 # External Provider Status
 
-Date: 2026-08-01
+Date: 2026-09-23
 
 | Provider | Purpose | Required configuration | Current status |
 |---|---|---|---|
@@ -10,27 +10,96 @@ Date: 2026-08-01
 | Local Ollama | Flask deep document reading | loopback `LARO_OLLAMA_*` | Optional; citation-gated local analysis |
 | SMTP or SendGrid | Transactional email and approved sending | complete authenticated `SMTP_*`, or `SENDGRID_API_KEY` plus sender | Available when configured; no console success in production |
 | AWS S3 | Evidence object storage | bucket and workload/IAM credentials | Optional; real local-disk fallback |
-| Telegram | Message evidence | `TELEGRAM_BOT_TOKEN` | Available when configured |
-| Trello | Board evidence | API credentials plus secure token persistence | Disabled; secure token persistence is not implemented |
+| Telegram | Message evidence | not applicable | Unsupported; no connector routes, token input, webhook controls, downloads, or import workflow are shipped |
+| Trello | Board evidence | not applicable | Unsupported; no connector routes, token input, or OAuth workflow are shipped |
 | Slack | Message evidence | not applicable | Unavailable |
+| KvK open dataset | Basic Dutch business-register fields | public open-data endpoint | Available; exact-number lookup with field provenance and explicit completeness |
 | Rechtspraak | Recently published court-decision discovery | public RSS search | Available; structured XML parsing, bounded requests, ECLI metadata, and direct source links |
+| KOOP Basiswettenbestand | Consolidated Dutch legislation | public SRU 2.0 search | Available; validity-date search with provider-total completeness checks |
 
 Google requests only Gmail read, Drive read, and account-email identity scopes.
 It does not request Gmail send or label-write access. Outlook OAuth does not
 request `Mail.Send`, and the product keeps Microsoft connection unavailable
 until a real owner-scoped collector and target-account acceptance exist.
 
+Trello and Telegram are deliberately absent from the application router and
+release-acceptance provider set. Historical evidence/source labels remain
+readable and account erasure still removes old owner-scoped rows, but no live
+path can connect, import, sync, download, or accept credentials for either
+provider.
+
 Provider configuration is not connection success. The UI shows Google as
-connected only after persisted account state confirms OAuth completion. A
-disconnect removes the shared Gmail/Drive credential and source connection
-records for that owner only after Google confirms revocation. If Google is
-unreachable or returns a non-terminal failure, LARO retains the encrypted
-credential so the owner can retry instead of silently leaving an active grant.
+connected only after persisted account state confirms OAuth completion. Gmail
+and Drive are capabilities of one account grant, with one disconnect review
+that names the account, shared credential, both capabilities, affected scheduled
+collection, and owner-scoped source-record disposition. A versioned impact
+revision rejects stale confirmation before provider contact. If Google is
+unreachable or returns a non-terminal failure, LARO retains the complete local
+credential, collection, and source state so the owner can retry without a
+partial success.
+
+## OAuth credential lifecycle
+
+`server/providerConnections.ts` is the single owner-scoped lifecycle used by
+the callback, renderer, Gmail collection, Drive collection, live acceptance,
+disconnect, and account erasure. The renderer has one API surface,
+`providerConnections`, with availability, list, begin, disconnect impact, and
+confirmed disconnect.
+Access and refresh tokens are never returned by that router. The former
+`emailAccounts` mutations and the Gmail/Drive enhanced connect/disconnect
+aliases were removed; collection jobs cannot manually refresh a grant.
+
+- Callback state is one-time, PKCE-protected, and bound to the initiating
+  browser session before code exchange. The provider identity is normalized and
+  the encrypted access grant, optional rotated refresh grant, normalized expiry,
+  connection state, and mandatory audit event are committed together.
+- Expiry values are normalized to 60 seconds through 24 hours (one hour when a
+  provider omits or corrupts the value). All collectors request an owner-scoped
+  access token from the lifecycle service. Refreshes for the same account are
+  single-flighted in-process, and an optimistic stored-grant check prevents a
+  stale refresh from overwriting a newer grant.
+- A successful refresh atomically stores the new access token, a rotated refresh
+  token when supplied, the normalized expiry, and a credential-refresh audit.
+  If that local transaction or audit fails after the remote provider responded,
+  the result is `refresh_uncertain`; the caller must reconnect rather than assume
+  the rotated grant was saved.
+- `invalid_grant`, a missing refresh grant, or unreadable stored credentials
+  atomically clears the unusable local tokens and moves the connection to
+  `reconnect_required`. HTTP 408/429/5xx and transport failures are retryable and
+  leave the encrypted connected state unchanged. OAuth-client/configuration
+  rejections also leave the stored grant unchanged for operator repair.
+- User-initiated disconnect revokes the durable Google refresh grant first. A
+  transient revocation failure retains local state for retry; HTTP 400 means the
+  grant is already invalid and is a successful terminal result. Local credential
+  deletion, affected schedule-reference cleanup, final-account source cleanup,
+  and the mandatory audit are one transaction. Other account selections and
+  collected documents remain. Shared Gmail/Drive source state is removed only
+  after the owner's final Google account is disconnected.
+- GDPR erasure enumerates stored external grants while their encrypted
+  credentials are still present. Each supported Google grant uses the same
+  revocation adapter as disconnect before any account or local credential row is
+  deleted. A retryable remote failure returns `revocation_pending` and retains
+  the account and credential for a fresh verified retry; it is not reported as
+  completed erasure. A stored legacy or unsupported grant shape also fails
+  closed instead of silently deleting the only local grant copy. Post-commit
+  managed-object cleanup may remain `storage_cleanup_pending` in the durable
+  erasure receipt without restoring the already deleted account.
+
+KvK, Rechtspraak, and KOOP research requires an owned case. Every attempt stores
+a mandatory metadata-only receipt containing the case, source, normalized query,
+retrieval time, result count, and completeness; provider result content is not
+copied into research history. Complete, genuine-empty, partial, unavailable, and
+failed states remain distinct throughout the provider, API, and renderer layers.
 
 Rechtspraak lookup uses the official HTTPS RSS search for published decisions.
-Returned entries are discovery leads, not a complete litigation-history register.
+Returned entries are discovery leads, not a complete litigation-history register,
+so even a successful zero-result RSS response remains partial and inconclusive.
 LARO keeps the decision date, ECLI, summary, court, and source link together and
 does not treat an empty query or a lexical relevance score as a legal conclusion.
+KvK similarly does not infer good standing from a missing or unsupported
+insolvency-status field. KOOP reports a complete result only when the response
+declares a provider total and every declared row is represented in the bounded
+result; otherwise its successful result is partial.
 
 For the Windows ngrok API deployment, `scripts/configure-live-providers.ps1`
 stores Google and authenticated SMTP secrets with DPAPI `CurrentUser`
@@ -38,3 +107,7 @@ protection in an ignored local file. `scripts/start-ngrok-api.ps1` injects those
 values into Docker at startup without copying them into `.env`. Configuration
 presence is only a prerequisite: it does not satisfy the live acceptance checks
 in `release-acceptance.json`.
+
+The final provider-route and account-erasure lifecycle audit for implementation
+commit `ec94985` is recorded in
+[`FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md`](FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md).

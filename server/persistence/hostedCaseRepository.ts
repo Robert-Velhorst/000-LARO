@@ -1,4 +1,5 @@
 import type { QueryResultRow } from 'pg';
+import { normalizeAccountEmail } from '../emailIdentity';
 
 export type HostedQueryClient = {
   query<Row extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]): Promise<{ rows: Row[] }>;
@@ -120,34 +121,32 @@ export function createHostedCaseRepository(client: HostedQueryClient) {
 export function createHostedUserRepository(client: HostedQueryClient) {
   return {
     async findByEmail(email: string): Promise<HostedUser | null> {
+      const normalizedEmail = normalizeAccountEmail(email);
       const result = await client.query<HostedUser>(`
         SELECT * FROM "users"
-        WHERE lower("email") = lower($1)
+        WHERE lower(btrim("email")) = $1
         LIMIT 1
-      `, [email]);
+      `, [normalizedEmail]);
       return result.rows[0] ?? null;
     },
   };
 }
 
-/** Preserves the existing owner-keyed team membership model in PostgreSQL. */
+/** Per-case accepted collaboration access in PostgreSQL. */
 export function createHostedTeamRepository(client: HostedQueryClient) {
   return {
-    async hasCaseAccess(ownerId: string, userId: string): Promise<boolean> {
+    async hasCaseAccess(caseId: string, ownerId: string, userId: string): Promise<boolean> {
       if (ownerId === userId) return true;
-      const result = await client.query<{ configValue: string | null }>(`
-        SELECT "configValue" FROM "system_config"
-        WHERE "configKey" = $1
+      const result = await client.query<{ id: string }>(`
+        SELECT "id" FROM "case_shares"
+        WHERE "caseId" = $1
+          AND "ownerId" = $2
+          AND "memberId" = $3
+          AND "status" = 'accepted'
+          AND "capabilities" @> '["case.read"]'::jsonb
         LIMIT 1
-      `, [`team:${ownerId}:members`]);
-      const raw = result.rows[0]?.configValue;
-      if (!raw) return false;
-      try {
-        const members = JSON.parse(raw);
-        return Array.isArray(members) && members.includes(userId);
-      } catch {
-        return false;
-      }
+      `, [caseId, ownerId, userId]);
+      return Boolean(result.rows[0]);
     },
   };
 }

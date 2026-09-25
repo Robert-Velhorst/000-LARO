@@ -1,8 +1,13 @@
 import { z } from "zod";
-import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
-import { globalSearch, getSearchSuggestions } from "../globalSearch";
+import { protectedProcedure, router } from "../_core/trpc";
+import {
+  getSearchSuggestionsDetailed,
+  globalSearchDetailed,
+  resolveSearchResult,
+} from "../globalSearch";
 import { checkRateLimit, getRateLimitIdentifier, RATE_LIMITS } from "../rateLimit";
 import { hybridCaseSearch } from "../casesHybridSearch";
+import { SEARCH_RESULT_TYPES } from "../../shared/globalSearch";
 
 export const searchRouter = router({
   /** Natural-language expanded tokens + keyword global search → case IDs */
@@ -26,7 +31,7 @@ export const searchRouter = router({
       const identifier = getRateLimitIdentifier(ctx);
       checkRateLimit(identifier, RATE_LIMITS.general);
 
-      const results = await globalSearch(input.query, {
+      const outcome = await globalSearchDetailed(input.query, {
         types: input.types,
         limit: input.limit,
         userId: ctx.user.id,
@@ -34,9 +39,26 @@ export const searchRouter = router({
 
       return {
         query: input.query,
-        results,
-        total: results.length,
+        normalizedQuery: outcome.normalizedQuery,
+        results: outcome.results,
+        total: outcome.results.length,
+        completeness: outcome.completeness,
       };
+    }),
+
+  resolve: protectedProcedure
+    .input(z.object({
+      type: z.enum(SEARCH_RESULT_TYPES),
+      id: z.string().trim().min(1).max(256),
+    }))
+    .query(async ({ input, ctx }) => {
+      const identifier = getRateLimitIdentifier(ctx);
+      checkRateLimit(identifier, RATE_LIMITS.general);
+
+      // Missing, deleted, and foreign records deliberately share one neutral
+      // response. The destination renders the canonical inaccessible state
+      // without leaking stale metadata or logging an expected client error.
+      return resolveSearchResult(input.type, input.id, ctx.user.id);
     }),
 
   suggestions: protectedProcedure
@@ -50,11 +72,13 @@ export const searchRouter = router({
       const identifier = getRateLimitIdentifier(ctx);
       checkRateLimit(identifier, RATE_LIMITS.general);
 
-      const suggestions = await getSearchSuggestions(input.query, input.limit, ctx.user.id);
+      const outcome = await getSearchSuggestionsDetailed(input.query, input.limit, ctx.user.id);
 
       return {
         query: input.query,
-        suggestions,
+        normalizedQuery: outcome.normalizedQuery,
+        suggestions: outcome.suggestions,
+        completeness: outcome.completeness,
       };
     }),
 });
