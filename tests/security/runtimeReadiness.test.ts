@@ -1,19 +1,20 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { spawn } from 'child_process';
-import { mkdtempSync, readdirSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'fs';
 import { createServer, type Server } from 'http';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
 const ROOT = join(__dirname, '../..');
+const packageVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version as string;
 
-async function startHealthServer(haiStatus: number) {
+async function startHealthServer(haiStatus: number, version: string) {
   const server = createServer((request, response) => {
     const bodies: Record<string, { status: number; body: object }> = {
       '/api/live': { status: 200, body: { status: 'alive' } },
       '/api/ready': { status: 200, body: { status: 'ready', dbReady: true } },
-      '/api/health': { status: 200, body: { status: 'healthy', dbReady: true, version: '1.3.0' } },
+      '/api/health': { status: 200, body: { status: 'healthy', dbReady: true, version } },
       '/api/integrations/hai/health': {
         status: haiStatus,
         body: haiStatus === 401 ? { error: 'A valid LARO HAI bearer token is required' } : { status: 'healthy' },
@@ -48,7 +49,7 @@ function runReadiness(env: NodeJS.ProcessEnv) {
   });
 }
 
-async function fixture(haiStatus = 401) {
+async function fixture(haiStatus = 401, version = packageVersion) {
   const directory = mkdtempSync(join(tmpdir(), 'laro-runtime-readiness-'));
   const databasePath = join(directory, 'laro.sqlite');
   const storagePath = join(directory, 'uploads');
@@ -59,7 +60,7 @@ async function fixture(haiStatus = 401) {
   for (let id = 1; id <= migrationCount; id += 1) insert.run(id);
   database.close();
 
-  const healthServer = await startHealthServer(haiStatus);
+  const healthServer = await startHealthServer(haiStatus, version);
   const env = {
     NODE_ENV: 'production',
     SERVER_ONLY: 'true',
@@ -93,6 +94,17 @@ describe('production runtime readiness', () => {
     expect(result.stdout).toMatch(/\[PASS\] database migrations: \d+\/\d+ applied/);
     expect(result.stdout).toContain('[PASS] HAI authentication boundary: HTTP 401');
     expect(readdirSync(current.env.LOCAL_STORAGE_DIR)).toEqual([]);
+  });
+
+  it('fails when the running service reports a different release version', async () => {
+    const current = await fixture(401, '0.0.0');
+    directories.push(current.directory);
+    servers.push(current.server);
+    const result = await runReadiness(current.env);
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('[FAIL] local health and version: HTTP 200');
+    expect(result.stderr).toContain('Runtime is not ready.');
   });
 
   it('fails when the HAI route stops enforcing bearer authentication', async () => {
