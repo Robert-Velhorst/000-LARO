@@ -95,17 +95,39 @@ for (const scenario of ['clean', 'upgrade']) {
     let launchError;
     child.on('error', error => { launchError = error; });
     const deadline = Date.now() + startupTimeout;
-    let endpointReady = false;
+    let rendererReady = false;
+    const debuggerOrigin = `http://127.0.0.1:${port}`;
+    console.log(`Checking ${scenario} ${sourceMode ? 'source' : 'portable'} launch and renderer readiness`);
     while (Date.now() < deadline) {
       if (launchError) throw launchError;
       try {
-        const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1500) });
-        if (response.ok) { endpointReady = true; break; }
+        // Electron exposes its browser debugger before the first BrowserWindow
+        // is initialized. Attaching Playwright in that interval can stall its
+        // target initialization on Windows. Observe the real renderer and
+        // backend first; this does not relaunch the app or skip UI assertions.
+        const response = await fetch(`${debuggerOrigin}/json/list`, { signal: AbortSignal.timeout(1500) });
+        if (response.ok) {
+          const targets = await response.json();
+          const renderer = targets.find(target => {
+            // A URL can be advertised while its initial empty document still
+            // exists. The application title confirms that index.html committed.
+            if (target.type !== 'page' || target.title !== 'LARO | Legal Evidence Workspace') return false;
+            try {
+              const url = new URL(target.url);
+              return url.protocol === 'http:' && url.hostname === '127.0.0.1';
+            } catch { return false; }
+          });
+          if (renderer) {
+            const readiness = await fetch(new URL('/api/ready', renderer.url), { signal: AbortSignal.timeout(1500) });
+            if (readiness.ok) { rendererReady = true; break; }
+          }
+        }
       } catch { /* The portable launcher must finish extracting first. */ }
       await pause(250);
     }
-    assert.ok(endpointReady, 'Desktop did not expose its test-only renderer debugger');
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: startupTimeout });
+    assert.ok(rendererReady, 'Desktop did not expose a local renderer with a ready backend');
+    console.log(`PASS ${scenario} desktop renderer target and backend readiness before browser attachment`);
+    browser = await chromium.connectOverCDP(debuggerOrigin, { timeout: startupTimeout });
     const context = browser.contexts()[0];
     page = context.pages()[0] || await context.waitForEvent('page', { timeout: startupTimeout });
     page.on('pageerror', error => result.pageErrors.push(error.message));
