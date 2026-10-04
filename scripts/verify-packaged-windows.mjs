@@ -139,7 +139,15 @@ try {
 
   await rpc('userPreferences.updateWorkflow', { autoAnalyzeImports: false }, true);
   await page.goto(origin + '/evidence');
-  await page.getByLabel('Upload documents', { exact: true }).setInputFiles({ name: 'windows-inbox.txt', mimeType: 'text/plain', buffer: content });
+  const inboxRegion = page.getByRole('region', { name: 'Document inbox', exact: true });
+  // The visible button is disabled until import preferences are loaded. Going
+  // straight to its hidden input bypasses that readiness guard and can discard
+  // an early selection. Exercise the same enabled-button path as a real user.
+  const [fileChooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    inboxRegion.getByRole('button', { name: 'Documents', exact: true }).click(),
+  ]);
+  await fileChooser.setFiles({ name: 'windows-inbox.txt', mimeType: 'text/plain', buffer: content });
   await page.getByRole('heading', { name: 'windows-inbox.txt', exact: true }).waitFor();
   await page.screenshot({ path: path.join(output, 'windows-inbox.png') });
   const inbox = await rpc('documentInbox.list', { view: 'all', offset: 0, limit: 20 });

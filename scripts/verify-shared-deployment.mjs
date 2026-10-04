@@ -249,7 +249,14 @@ try {
 
   await rpc(page, 'userPreferences.updateWorkflow', { autoAnalyzeImports: false }, true);
   await page.goto(origin + '/evidence');
-  await page.getByLabel('Upload documents', { exact: true }).setInputFiles({
+  // Honor the visible control's preferences-readiness guard before selecting
+  // files, matching the real browser workflow instead of bypassing its button.
+  const inboxRegion = page.getByRole('region', { name: 'Document inbox', exact: true });
+  const [fileChooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    inboxRegion.getByRole('button', { name: 'Documents', exact: true }).click(),
+  ]);
+  await fileChooser.setFiles({
     name: 'inbox-browser-upload.txt', mimeType: 'text/plain', buffer: content,
   });
   await page.getByRole('heading', { name: 'inbox-browser-upload.txt', exact: true }).waitFor();
