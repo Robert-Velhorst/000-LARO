@@ -100,11 +100,11 @@ export default function Cases() {
           <Briefcase className="mt-1 hidden h-5 w-5 shrink-0 text-muted-foreground sm:block" />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="min-w-0 text-base font-semibold"><button type="button" onClick={() => setSelectedCaseId(item.id)} className="break-words text-left hover:text-primary">{item.clientName || item.caseType || item.id}</button></h2>
+              <h2 className="min-w-0 text-base font-semibold"><button type="button" onClick={() => setSelectedCaseId(item.id)} className="wrap-break-word text-left hover:text-primary">{item.clientName || item.caseType || item.id}</button></h2>
               <Badge variant="outline">{t(`case.status.${item.status}` as Parameters<typeof t>[0]) === `case.status.${item.status}` ? item.status : t(`case.status.${item.status}` as Parameters<typeof t>[0])}</Badge>
               {item.urgency === "High" && <Badge variant="outline" className="border-red-400/40 text-red-300">{t("case.list.highPriority")}</Badge>}
             </div>
-            <p className="mt-1 line-clamp-2 break-words text-sm leading-6 text-muted-foreground">{item.caseSummary}</p>
+            <p className="mt-1 line-clamp-2 wrap-break-word text-sm leading-6 text-muted-foreground">{item.caseSummary}</p>
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
               <span>{item.caseType}</span><span>{item.updatedAt ? formatDate(item.updatedAt) : ""}</span>
               <Button variant="ghost" size="sm" onClick={() => setSelectedCaseId(item.id)}>{t("case.list.open")}<ArrowRight className="h-4 w-4" /></Button>

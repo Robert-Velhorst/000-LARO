@@ -172,7 +172,7 @@ export default function OutreachAnalyticsView({ caseId }: OutreachAnalyticsViewP
                         outreach.status === "Interested" ? "default" :
                         outreach.status === "Declined" ? "destructive" :
                         outreach.status === "Contacted" ? "secondary" :
-                        "outline"
+                        "outline-solid"
                       }>
                         {outreach.status}
                       </Badge>

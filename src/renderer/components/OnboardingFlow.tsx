@@ -215,7 +215,7 @@ export default function OnboardingFlow() {
                   aria-current={selected ? "step" : undefined}
                   onClick={() => void persistStep(step.key)}
                   disabled={busy}
-                  className={`flex min-h-16 w-full items-start gap-2 rounded-md border p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${selected ? "border-primary bg-primary/5" : "border-border hover:bg-muted"}`}
+                  className={`flex min-h-16 w-full items-start gap-2 rounded-md border p-3 text-left focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${selected ? "border-primary bg-primary/5" : "border-border hover:bg-muted"}`}
                 >
                   {step.complete
                     ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />

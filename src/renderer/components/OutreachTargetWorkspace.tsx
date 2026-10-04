@@ -276,7 +276,7 @@ export default function OutreachTargetWorkspace({ targetType }: { targetType: Ta
                         <Button size="sm" variant="outline" onClick={() => statusMutation.mutate({ id: match.id, status: "dismissed" })} disabled={statusMutation.isPending}>
                           <X className="mr-1 h-4 w-4" />Dismiss
                         </Button>
-                        <Button size="sm" variant={match.status === "shortlisted" ? "default" : "outline"} onClick={() => statusMutation.mutate({ id: match.id, status: "shortlisted" })} disabled={statusMutation.isPending}>
+                        <Button size="sm" variant={match.status === "shortlisted" ? "default" : "outline-solid"} onClick={() => statusMutation.mutate({ id: match.id, status: "shortlisted" })} disabled={statusMutation.isPending}>
                           <Star className="mr-1 h-4 w-4" />Shortlist
                         </Button>
                       </div>

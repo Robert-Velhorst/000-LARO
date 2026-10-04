@@ -142,14 +142,14 @@ export default function Admin() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="font-medium">Outreach emergency stop</span>
-                  <Badge variant={emergencyStop.data?.engaged ? "destructive" : "outline"}>
+                  <Badge variant={emergencyStop.data?.engaged ? "destructive" : "outline-solid"}>
                     {emergencyStop.data?.engaged ? "Engaged" : "Released"}
                   </Badge>
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">Controls every outbound outreach delivery.</p>
               </div>
               <Button
-                variant={emergencyStop.data?.engaged ? "outline" : "destructive"}
+                variant={emergencyStop.data?.engaged ? "outline-solid" : "destructive"}
                 disabled={emergencyStop.isLoading || emergencyMutation.isPending}
                 onClick={() => emergencyMutation.mutate({ engaged: !emergencyStop.data?.engaged })}
               >
@@ -161,7 +161,7 @@ export default function Admin() {
             <div className="min-h-24 rounded-md border p-4">
               <div className="mb-3 flex items-center justify-between">
                 <span className="font-medium">Provider configuration</span>
-                <Badge variant={diagnostics.data?.db.ready ? "outline" : "destructive"}>
+                <Badge variant={diagnostics.data?.db.ready ? "outline-solid" : "destructive"}>
                   Database {diagnostics.data?.db.ready ? "ready" : "unavailable"}
                 </Badge>
               </div>
@@ -180,7 +180,7 @@ export default function Admin() {
           <div className="flex items-center gap-2">
             <AlertTriangle className="h-4 w-4" />
             <h2 className="text-base font-semibold">Delivery exceptions</h2>
-            <Badge variant={(uncertainDispatches.data?.length ?? 0) > 0 ? "destructive" : "outline"}>
+            <Badge variant={(uncertainDispatches.data?.length ?? 0) > 0 ? "destructive" : "outline-solid"}>
               {uncertainDispatches.data?.length ?? 0}
             </Badge>
           </div>
@@ -264,7 +264,7 @@ export default function Admin() {
             <DialogFooter>
               <Button variant="outline" onClick={() => setResolution(null)}>Cancel</Button>
               <Button
-                variant={resolution?.outcome === "not_delivered" ? "outline" : "default"}
+                variant={resolution?.outcome === "not_delivered" ? "outline-solid" : "default"}
                 disabled={!providerVerified || resolutionNote.trim().length < 10 || resolveDispatch.isPending}
                 onClick={() => resolution && resolveDispatch.mutate({
                   outreachId: resolution.outreachId,

@@ -6,7 +6,7 @@ import { join } from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const ROOT = join(__dirname, '..', '..');
-const packageVersion = '1.3.0';
+const packageVersion = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version as string;
 const temporaryDirectories: string[] = [];
 const providerRequirements = {
   google: [

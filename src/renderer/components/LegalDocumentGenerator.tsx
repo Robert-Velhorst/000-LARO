@@ -416,7 +416,7 @@ export function LegalDocumentGenerator({ caseId }: LegalDocumentGeneratorProps) 
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-medium">{draft.documentType.replaceAll("_", " ")} · v{draft.version}</p>
-                    <Badge variant={draft.status === "reviewed" ? "secondary" : "outline"}>{draft.status.replaceAll("_", " ")}</Badge>
+                    <Badge variant={draft.status === "reviewed" ? "secondary" : "outline-solid"}>{draft.status.replaceAll("_", " ")}</Badge>
                     {!draft.isCurrentInputs && <Badge variant="outline">Historical inputs</Badge>}
                   </div>
                   <p className="mt-1 truncate font-mono text-xs text-muted-foreground">SHA-256 {draft.contentHash}</p>

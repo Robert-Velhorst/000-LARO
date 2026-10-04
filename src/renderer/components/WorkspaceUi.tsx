@@ -13,7 +13,7 @@ export function QueryNotice({ error, retry }: { error: { message: string }; retr
   const { t, locale } = useI18n();
   return <div role="alert" className="flex flex-wrap items-start gap-3 border-l-2 border-destructive bg-destructive/5 p-4 text-sm">
     <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-    <div className="min-w-0 flex-1"><p className="font-medium">{locale === "nl" ? "Gegevens konden niet worden geladen" : "Could not load data"}</p><p className="mt-1 break-words text-muted-foreground">{error.message}</p></div>
+    <div className="min-w-0 flex-1"><p className="font-medium">{locale === "nl" ? "Gegevens konden niet worden geladen" : "Could not load data"}</p><p className="mt-1 wrap-break-word text-muted-foreground">{error.message}</p></div>
     {retry && <Button variant="outline" size="sm" onClick={() => void retry()}><RefreshCw className="h-4 w-4" />{t("common.retry")}</Button>}
   </div>;
 }
@@ -70,7 +70,7 @@ export function CasePicker({ value, onChange, disabled = false, requireSelection
       {query.error && <QueryNotice error={query.error} retry={query.refetch} />}
       <div className="max-h-64 overflow-y-auto">
         {availableCases?.map(row => <Button key={row.id} variant="ghost" className="w-full justify-start text-left" onClick={() => choose(row.id)}>
-          <span className="min-w-0 flex-1 break-words">{row.clientName || row.caseType || row.id}</span>{row.id === value && <Check className="h-4 w-4" />}
+          <span className="min-w-0 flex-1 wrap-break-word">{row.clientName || row.caseType || row.id}</span>{row.id === value && <Check className="h-4 w-4" />}
         </Button>)}
         {availableCases?.length === 0 && <p className="py-4 text-sm text-muted-foreground">{nl ? "Geen dossiers gevonden" : "No cases found"}</p>}
       </div>

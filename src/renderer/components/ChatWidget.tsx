@@ -213,7 +213,7 @@ export default function ChatWidget({ embedded = false, session, ownerId = null }
         <Button
           onClick={() => setIsOpen(true)}
           aria-label="Open LARO assistant"
-          className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-2xl bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 z-50 transition-all duration-300 hover:scale-110"
+          className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-2xl bg-linear-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 z-50 transition-all duration-300 hover:scale-110"
           size="icon"
         >
           <MessageSquare className="h-6 w-6" />
@@ -232,7 +232,7 @@ export default function ChatWidget({ embedded = false, session, ownerId = null }
         <Card 
           className={
             embedded
-              ? "flex h-[min(600px,calc(100dvh_-_4rem))] min-h-0 flex-col rounded-none border-0 bg-background"
+              ? "flex h-[min(600px,calc(100dvh-4rem))] min-h-0 flex-col rounded-none border-0 bg-background"
               : `fixed bottom-3 left-3 right-3 z-50 shadow-2xl border-border/50 bg-card/95 backdrop-blur-lg transition-all duration-300 sm:bottom-6 sm:left-auto sm:right-6 ${
                   isMinimized ? "h-14 sm:w-80" : "h-[calc(100dvh-1.5rem)] sm:h-[600px] sm:w-96"
                 }`
@@ -358,7 +358,7 @@ export default function ChatWidget({ embedded = false, session, ownerId = null }
                       {msg.role === 'assistant' && msg.caseId && (
                         <p className="mb-2 text-xs font-medium" aria-label="Answer case identity">Case: {msg.caseLabel || msg.caseId}</p>
                       )}
-                      <p className="whitespace-pre-wrap break-words text-sm">{msg.content}</p>
+                      <p className="whitespace-pre-wrap wrap-break-word text-sm">{msg.content}</p>
                       {msg.notice ? (
                         <p className="mt-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
                           {msg.notice}

@@ -735,7 +735,7 @@ export function CaseReconstruction({ caseId }: { caseId: string }) {
                   <button key={edge.id} type="button" className="flex items-start gap-3 border border-border/70 p-3 text-left hover:bg-muted/40" onClick={() => setSelectedId(other?.id ?? null)}>
                     {incoming ? <ArrowDownToLine className="mt-0.5 h-4 w-4 shrink-0" /> : <ArrowUpFromLine className="mt-0.5 h-4 w-4 shrink-0" />}
                     <span className="min-w-0 flex-1"><span className="block text-sm font-medium">{t(RELATIONSHIP_KEYS[edge.relationship])} {other?.title}</span><span className="mt-1 block text-xs text-muted-foreground">{edge.basis.join(" ")}</span></span>
-                    <Badge variant={edge.evidence === "explicit" ? "default" : "outline"}>{formatNumber(Math.round(edge.confidence * 100))}%</Badge>
+                    <Badge variant={edge.evidence === "explicit" ? "default" : "outline-solid"}>{formatNumber(Math.round(edge.confidence * 100))}%</Badge>
                   </button>
                 );
               })}

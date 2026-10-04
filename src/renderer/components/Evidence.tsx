@@ -53,8 +53,8 @@ function EvidenceFiles({ caseId }: { caseId: string | null }) {
       <div className="divide-y divide-border">
         {files.data?.slice(0, limit).map(item => <article key={item.id} className="flex items-center gap-3 py-4">
           <FileText className="h-5 w-5 shrink-0 text-muted-foreground" /><div className="min-w-0 flex-1">
-            <h2 className="break-words text-sm font-medium">{item.fileName || item.title || (nl ? "Naamloos document" : "Untitled document")}</h2>
-            <p className="mt-1 break-words text-xs text-muted-foreground">{item.uploadSource}{item.uploadedAt && Number.isFinite(new Date(item.uploadedAt).getTime()) ? ` / ${formatDate(item.uploadedAt)}` : ""}</p>
+            <h2 className="wrap-break-word text-sm font-medium">{item.fileName || item.title || (nl ? "Naamloos document" : "Untitled document")}</h2>
+            <p className="mt-1 wrap-break-word text-xs text-muted-foreground">{item.uploadSource}{item.uploadedAt && Number.isFinite(new Date(item.uploadedAt).getTime()) ? ` / ${formatDate(item.uploadedAt)}` : ""}</p>
           </div>
           <Button variant="outline" size="icon" title={nl ? "Bron openen" : "Open source"} aria-label={`${nl ? "Bron openen" : "Open source"}: ${item.fileName || item.title || item.id}`} disabled={source.isPending} onClick={() => void openFile(item.id)}><FolderOpen className="h-4 w-4" /></Button>
         </article>)}

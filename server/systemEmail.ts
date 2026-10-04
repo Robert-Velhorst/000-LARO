@@ -97,11 +97,7 @@ async function sendViaSmtp(email: SystemEmail): Promise<string | undefined> {
       text: email.text,
       html: email.html,
     });
-    const accepted = (result.accepted || []).map((entry) => (
-      typeof entry === "string"
-        ? entry.toLowerCase()
-        : entry.address.toLowerCase()
-    ));
+    const accepted = (result.accepted || []).map((entry) => entry.toLowerCase());
     if (!accepted.some((entry) => entry.includes(email.to.trim().toLowerCase()))) {
       throw new Error("SMTP provider did not accept the intended recipient");
     }

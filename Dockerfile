@@ -21,7 +21,7 @@ COPY assets ./assets
 COPY scripts ./scripts
 COPY src/renderer ./src/renderer
 COPY public ./public
-COPY index.html vite.config.mts tailwind.config.js postcss.config.cjs ./
+COPY index.html vite.config.mts postcss.config.cjs ./
 RUN npm run build:server && npm run build:renderer && npm prune --omit=dev --ignore-scripts
 
 # The runtime intentionally omits npm, a shell, and the OS package manager.

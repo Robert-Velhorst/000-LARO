@@ -90,11 +90,11 @@ export default function Help() {
             {faqs.map((faq, index) => (
               <Card
                 key={faq.question}
-                className="overflow-hidden border-border/50 bg-card/50 backdrop-blur-sm transition-all hover:border-orange-500/30"
+                className="overflow-hidden border-border/50 bg-card/50 backdrop-blur-xs transition-all hover:border-orange-500/30"
               >
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between gap-4 p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+                  className="flex w-full items-center justify-between gap-4 p-4 text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-orange-500"
                   aria-expanded={expandedFaq === index}
                   aria-controls={`faq-answer-${index}`}
                   onClick={() => setExpandedFaq(expandedFaq === index ? null : index)}
@@ -118,7 +118,7 @@ export default function Help() {
             <Mail className="w-6 h-6 text-orange-500" />
             Contact Support
           </h2>
-          <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+          <Card className="border-border/50 bg-card/50 backdrop-blur-xs">
             <CardHeader>
               <CardTitle className="text-lg">Open a Support Ticket</CardTitle>
               <CardDescription>Tickets are stored in this LARO installation for operator follow-up. Response time depends on the support process configured for your installation.</CardDescription>

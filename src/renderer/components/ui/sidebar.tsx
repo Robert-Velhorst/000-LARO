@@ -89,7 +89,7 @@ function SidebarProvider({
 }
 
 const sidebarMenuButtonVariants = cva(
-  "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-none transition-[width,height,padding] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
+  "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-hidden transition-[width,height,padding] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
   {
     variants: {
       variant: {
@@ -253,8 +253,8 @@ function Sidebar({
 
   const widthClass =
     state === "collapsed" && collapsible === "icon"
-      ? "w-[var(--sidebar-width-icon)]"
-      : "w-[var(--sidebar-width)]";
+      ? "w-(--sidebar-width-icon)"
+      : "w-(--sidebar-width)";
 
   const transitionClass = disableTransition ? "" : "transition-[width] duration-200 ease-linear";
 
@@ -312,7 +312,7 @@ function Sidebar({
         "group/sidebar sticky top-0 z-30 hidden h-svh shrink-0 flex-col border-r border-sidebar-accent/25 md:flex",
         widthClass,
         transitionClass,
-        variant === "floating" && "m-2 rounded-lg border shadow-sm",
+        variant === "floating" && "m-2 rounded-lg border shadow-xs",
         className
       )}
       {...props}

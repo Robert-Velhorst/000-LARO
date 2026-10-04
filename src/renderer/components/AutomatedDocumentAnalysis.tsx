@@ -334,7 +334,7 @@ export function AutomatedDocumentAnalysis({ caseId, onAnalysisComplete }: Automa
                   <Badge variant="outline">OCR {analysisResult.extraction_confidence.toFixed(0)}%</Badge>
                 ) : null}
                 <Badge variant="outline">{analysisResult.provider_status.replace(/_/g, " ")}</Badge>
-                <Badge variant={analysisResult.coverage.complete ? "outline" : "destructive"}>
+                <Badge variant={analysisResult.coverage.complete ? "outline-solid" : "destructive"}>
                   {analysisResult.coverage.complete
                     ? `Full source · ${analysisResult.coverage.analyzedChunks}/${analysisResult.coverage.sourceChunks} chunks`
                     : `Partial source · ${analysisResult.coverage.analyzedChunks}/${analysisResult.coverage.sourceChunks} chunks`}

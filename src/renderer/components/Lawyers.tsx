@@ -117,7 +117,7 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
                 Official NOvA only
               </label>
               <Button
-                variant={comparisonMode ? "default" : "outline"}
+                variant={comparisonMode ? "default" : "outline-solid"}
                 className={comparisonMode ? "bg-purple-600 hover:bg-purple-700" : "border-purple-500/30 hover:bg-purple-500/10 hover:border-purple-500/50"}
                 onClick={() => {
                   const next = !comparisonMode;
@@ -174,7 +174,7 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
               return (
                 <Card 
                   key={lawyer.id} 
-                  className={`border-border/50 bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-all duration-300 hover:scale-105 hover:shadow-xl hover:shadow-purple-500/10 group ${
+                  className={`border-border/50 bg-card/50 backdrop-blur-xs hover:bg-card/80 transition-all duration-300 hover:scale-105 hover:shadow-xl hover:shadow-purple-500/10 group ${
                     comparisonMode && selectedLawyerIds.includes(lawyer.id)
                       ? 'ring-2 ring-purple-500' 
                       : ''
@@ -184,7 +184,7 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
                 >
                   <CardHeader>
                     <div className="flex items-start gap-4">
-                      <div className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-purple-700 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/20">
+                      <div className="w-14 h-14 rounded-full bg-linear-to-br from-purple-500 to-purple-700 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/20">
                         <span className="text-white font-semibold text-lg">
                           {lawyer.name?.split(' ').map((n: string) => n[0]).join('').slice(0, 2)}
                         </span>
@@ -282,7 +282,7 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
 
                     {comparisonMode ? (
                       <Button 
-                        variant={selectedLawyerIds.includes(lawyer.id) ? "default" : "outline"}
+                        variant={selectedLawyerIds.includes(lawyer.id) ? "default" : "outline-solid"}
                         className={`w-full mt-4 transition-all ${
                           selectedLawyerIds.includes(lawyer.id)
                             ? 'bg-purple-600 hover:bg-purple-700'

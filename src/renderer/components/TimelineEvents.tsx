@@ -26,10 +26,10 @@ function HistoryEntry({ item }: { item: Correction }) {
   const before = record(item.before);
   const after = record(item.after);
   return <details className="border-b border-border py-3 text-sm">
-    <summary className="cursor-pointer break-words font-medium">{String(after.title || before.title || "Timeline correction")} <span className="font-normal text-muted-foreground">{item.createdAt ? new Date(item.createdAt).toLocaleString("nl-NL") : ""}</span></summary>
-    <p className="mt-2 break-words">{String(item.reason || item.instruction || "")}</p>
+    <summary className="cursor-pointer wrap-break-word font-medium">{String(after.title || before.title || "Timeline correction")} <span className="font-normal text-muted-foreground">{item.createdAt ? new Date(item.createdAt).toLocaleString("nl-NL") : ""}</span></summary>
+    <p className="mt-2 wrap-break-word">{String(item.reason || item.instruction || "")}</p>
     <div className="mt-3 grid gap-4 sm:grid-cols-2">
-      {[{ label: "Before", value: before }, { label: "After", value: after }].map(({ label, value }) => <div key={label} className="min-w-0 space-y-1 break-words">
+      {[{ label: "Before", value: before }, { label: "After", value: after }].map(({ label, value }) => <div key={label} className="min-w-0 space-y-1 wrap-break-word">
         <h4 className="font-medium">{label}</h4>
         <p>{String(value.date || "No event")} {String(value.actor || "")}</p>
         <p>{String(value.title || "")}</p><p className="text-muted-foreground">{String(value.description || "")}</p>
@@ -72,11 +72,11 @@ export function TimelineEvents({ caseId, data, documentIds, onOpenSource, onUpda
     <ol className="divide-y divide-border border-y border-border">
       {events.slice(0, limit).map((event) => <li key={event.eventKey} className="grid min-w-0 gap-3 py-5 sm:grid-cols-[10rem_minmax(0,1fr)_auto]">
         <div><time className="text-sm font-semibold" dateTime={event.date}>{dateLabel(event.date)}</time><p className="mt-1 text-xs text-muted-foreground">{correctedKeys.has(event.eventKey) ? "Owner corrected" : "Source-linked"}</p></div>
-        <div className="min-w-0 break-words">
+        <div className="min-w-0 wrap-break-word">
           {event.actor ? <p className="mb-1 text-xs font-medium text-muted-foreground">{event.actor}</p> : null}
           <h4 className="text-sm font-semibold">{event.title}</h4>
           {event.description.trim() !== event.title.trim() ? <p className="mt-1 line-clamp-3 whitespace-pre-line text-sm leading-6 text-muted-foreground">{event.description}</p> : null}
-          <details className="mt-2 text-xs text-muted-foreground"><summary className="cursor-pointer break-words">Details and source: {event.source.title}</summary>
+          <details className="mt-2 text-xs text-muted-foreground"><summary className="cursor-pointer wrap-break-word">Details and source: {event.source.title}</summary>
             <p className="mt-2 whitespace-pre-line text-sm leading-6">{event.description}</p>
             {event.source.citation ? <blockquote className="mt-2 border-l-2 border-border pl-3 whitespace-pre-line">{event.source.citation.quote}</blockquote> : null}
           </details>
@@ -106,7 +106,7 @@ export function TimelineEvents({ caseId, data, documentIds, onOpenSource, onUpda
             await onUpdated();
           }
         }}>
-          <div className="min-w-0 border-y border-border py-3 text-sm"><p className="break-words font-medium">{editing.event.title}</p><p className="text-muted-foreground">Current date: {dateLabel(editing.event.date)}</p><Button type="button" variant="link" className="h-auto max-w-full justify-start whitespace-normal p-0 text-left" onClick={() => onOpenSource(editing.event.source.evidenceId)}><CircleHelp className="mr-2 h-4 w-4 shrink-0" /><span className="min-w-0 break-all">{editing.event.source.title}</span></Button></div>
+          <div className="min-w-0 border-y border-border py-3 text-sm"><p className="wrap-break-word font-medium">{editing.event.title}</p><p className="text-muted-foreground">Current date: {dateLabel(editing.event.date)}</p><Button type="button" variant="link" className="h-auto max-w-full justify-start whitespace-normal p-0 text-left" onClick={() => onOpenSource(editing.event.source.evidenceId)}><CircleHelp className="mr-2 h-4 w-4 shrink-0" /><span className="min-w-0 break-all">{editing.event.source.title}</span></Button></div>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="min-w-0 space-y-1 text-sm">Event date<Input type="date" required value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></label>
             <label className="min-w-0 space-y-1 text-sm">Who<Input maxLength={500} value={draft.actor} onChange={(event) => setDraft({ ...draft, actor: event.target.value })} /></label>

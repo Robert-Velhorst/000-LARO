@@ -91,8 +91,8 @@ export default function CaseActionManager({ caseId }: { caseId: string }) {
             return (
               <li key={action.id} className="flex min-w-0 items-start justify-between gap-3 py-3">
                 <div className="min-w-0 space-y-1">
-                  <p className="break-words text-sm font-medium">{action.title}</p>
-                  {action.description && <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">{action.description}</p>}
+                  <p className="wrap-break-word text-sm font-medium">{action.title}</p>
+                  {action.description && <p className="whitespace-pre-wrap wrap-break-word text-sm text-muted-foreground">{action.description}</p>}
                   <ActionSource actionId={action.id} />
                   <ActionExecutionEvidence actionId={action.id} />
                   <p className={`text-xs ${overdue ? "text-destructive" : "text-muted-foreground"}`}>
