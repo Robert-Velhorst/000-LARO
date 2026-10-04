@@ -1,8 +1,10 @@
-@import 'tailwindcss' source(none);
+@import 'tailwindcss' theme(inline) source(none);
 @source './';
 @source '../../index.html';
 
-@theme {
+/* Inline compile-time theme aliases; the workspace's runtime HSL tokens below
+   remain configurable. This also avoids duplicate fallback rules for constants. */
+@theme inline {
   --color-brand-50: #f0f4ff;
   --color-brand-100: #e0e9ff;
   --color-brand-500: #3b5bdb;

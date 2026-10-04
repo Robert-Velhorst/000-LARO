@@ -71,7 +71,9 @@ async function smtpPeer(options: { rejectAuth?: boolean; rejectRecipient?: boole
   await once(server, "listening");
   cleanup.push(async () => {
     for (const socket of sockets) socket.destroy();
-    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
   });
   const port = (server.address() as AddressInfo).port;
   vi.stubEnv("SENDGRID_API_KEY", "");
