@@ -343,7 +343,7 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
     : "";
 
   return (
-    <Card className="border-purple-500/30 bg-gradient-to-br from-purple-500/5 to-pink-500/5">
+    <Card className="border-purple-500/30 bg-linear-to-br from-purple-500/5 to-pink-500/5">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Sparkles className="w-5 h-5 text-purple-400" />
@@ -371,7 +371,7 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
             <Button
               onClick={handlePull}
               disabled={pullMutation.isLoading || pullActive}
-              className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
+              className="bg-linear-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
             >
               {pullMutation.isLoading || pullActive ? (
                 <>
@@ -879,7 +879,7 @@ export default function EnhancedCaseDetailsDialog({
             </div>
             <div className="min-w-0">
               <DialogHeader className="p-0 space-y-0">
-                <DialogTitle className="break-words text-base font-semibold text-foreground">
+                <DialogTitle className="wrap-break-word text-base font-semibold text-foreground">
                   {caseLoading ? t("case.details.loading") : caseData?.clientName || t("case.details.title")}
                 </DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground">
@@ -978,7 +978,7 @@ export default function EnhancedCaseDetailsDialog({
                     <Suspense fallback={<CaseWorkspaceLoading />}><CaseActionManager key={caseId} caseId={caseId} /></Suspense>
 
                     {isEditing ? (
-                      <Card className="border-border/40 bg-card/60 backdrop-blur-sm">
+                      <Card className="border-border/40 bg-card/60 backdrop-blur-xs">
                         <CardContent className="pt-6 space-y-4">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="space-y-1.5">
@@ -1374,7 +1374,7 @@ export default function EnhancedCaseDetailsDialog({
                       )}
                     </div>
 
-                    {matchingError ? <p role="alert" className="break-words text-sm text-destructive">{matchingError.message}</p> : searchedCaseId !== caseId ? (
+                    {matchingError ? <p role="alert" className="wrap-break-word text-sm text-destructive">{matchingError.message}</p> : searchedCaseId !== caseId ? (
                       <p className="text-sm text-muted-foreground">{t("case.match.notStarted")}</p>
                     ) : matchingLoading ? (
                       <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-32 w-full rounded-xl" />)}</div>
@@ -1385,7 +1385,7 @@ export default function EnhancedCaseDetailsDialog({
                             <div className="flex items-start justify-between gap-4">
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-3 mb-2.5">
-                                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                                  <div className="w-8 h-8 rounded-lg bg-linear-to-br from-orange-500 to-amber-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
                                     {index + 1}
                                   </div>
                                   <div className="min-w-0">
@@ -1426,7 +1426,7 @@ export default function EnhancedCaseDetailsDialog({
                               </div>
                               {/* score */}
                               <div className="text-right shrink-0 min-w-[90px]">
-                                <div className="text-2xl font-bold bg-gradient-to-r from-orange-400 to-amber-400 bg-clip-text text-transparent">
+                                <div className="text-2xl font-bold bg-linear-to-r from-orange-400 to-amber-400 bg-clip-text text-transparent">
                                   {lawyer.matchScore}
                                 </div>
                                 <p className="text-[10px] text-muted-foreground mb-2">{t("case.match.score", { max: MATCH_SCORE_MAX })}</p>
@@ -1558,11 +1558,11 @@ export default function EnhancedCaseDetailsDialog({
                 <span className="font-medium text-muted-foreground">{t("case.outreach.recipient")}</span>
                 <span className="break-all">{entry.message.to}</span>
                 <span className="font-medium text-muted-foreground">{t("case.outreach.subject")}</span>
-                <span className="break-words">{entry.message.subject}</span>
+                <span className="wrap-break-word">{entry.message.subject}</span>
               </div>
               <div>
                 <p className="mb-2 text-sm font-medium text-muted-foreground">{t("case.outreach.message")}</p>
-                <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/50 bg-muted/30 p-3 font-sans text-sm leading-6">
+                <pre className="max-h-72 overflow-auto whitespace-pre-wrap wrap-break-word rounded-md border border-border/50 bg-muted/30 p-3 font-sans text-sm leading-6">
                   {entry.message.text}
                 </pre>
               </div>

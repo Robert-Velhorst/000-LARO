@@ -56,7 +56,7 @@ export default function CommunicationHub({ caseId }: { caseId?: string }) {
     {query.error ? <QueryNotice error={query.error} retry={query.refetch} /> : query.isLoading ? <p role="status" className="py-8 text-sm">{t("common.loading")}</p> : <div className="divide-y divide-border border-y border-border">
       {visible.map(item => <article key={item.id} className="space-y-3 py-4">
         <header className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-sm font-medium">{nl ? "Dossiernotitie" : "Case note"}</h2><span className="text-xs text-muted-foreground">{item.createdAt ? formatDate(item.createdAt, { dateStyle: "medium", timeStyle: "short" }) : nl ? "Datum onbekend" : "Date not recorded"}</span></header>
-        <p className={`whitespace-pre-wrap break-words text-sm leading-6 ${expanded === item.id ? "" : "line-clamp-3"}`}>{item.content}</p>
+        <p className={`whitespace-pre-wrap wrap-break-word text-sm leading-6 ${expanded === item.id ? "" : "line-clamp-3"}`}>{item.content}</p>
         <Button variant="ghost" size="sm" aria-expanded={expanded === item.id} onClick={() => setExpanded(expanded === item.id ? null : item.id)}>{expanded === item.id ? (nl ? "Inklappen" : "Collapse note") : (nl ? "Volledige notitie" : "Read full note")}</Button>
       </article>)}
       {!visible.length && <div className="flex min-h-48 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><FileText className="h-8 w-8" />{nl ? "Geen notities gevonden." : "No case notes found"}</div>}

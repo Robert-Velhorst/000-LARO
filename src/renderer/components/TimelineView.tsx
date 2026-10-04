@@ -104,12 +104,12 @@ export default function TimelineView({ events, compact = false }: TimelineViewPr
             {/* Event Card */}
             <div className="flex gap-4">
               {/* Icon */}
-              <div className={`flex-shrink-0 w-12 h-12 rounded-full ${bg} flex items-center justify-center z-10`}>
+              <div className={`shrink-0 w-12 h-12 rounded-full ${bg} flex items-center justify-center z-10`}>
                 <Icon className={`w-6 h-6 ${color}`} />
               </div>
 
               {/* Content */}
-              <Card className={`flex-1 border-border/50 bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-all ${compact ? "p-3" : "p-4"}`}>
+              <Card className={`flex-1 border-border/50 bg-card/50 backdrop-blur-xs hover:bg-card/80 transition-all ${compact ? "p-3" : "p-4"}`}>
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">

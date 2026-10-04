@@ -64,7 +64,7 @@ export default function ActionExecutionEvidence({ actionId }: { actionId: string
     <summary className="cursor-pointer py-1">Execution evidence</summary>
     {expanded && <section aria-label="Execution evidence links" className="min-w-0 space-y-3 py-2">
       <Button size="sm" variant="outline" aria-expanded={adding} onClick={() => { setAdding(!adding); setError(""); }}><Link2 className="mr-2 h-4 w-4" />Link evidence</Button>
-      {failure && <p role="alert" className="break-words text-destructive">{failure}</p>}
+      {failure && <p role="alert" className="wrap-break-word text-destructive">{failure}</p>}
       {adding && <form onSubmit={(event) => void submit(event)} className="min-w-0 space-y-3 border-y py-3">
         <div className="space-y-1"><Label htmlFor={`${id}-source`}>Evidence document</Label>
           <select id={`${id}-source`} className={selectClass} value={evidenceId} disabled={sources.isFetching || link.isPending}
@@ -89,7 +89,7 @@ export default function ActionExecutionEvidence({ actionId }: { actionId: string
                 if (!ids.length) setVersion(null);
                 else if (!version) setVersion({ analysisId: passages.data.analysisId, contentHash: passages.data.contentHash, analysisFingerprint: passages.data.analysisFingerprint });
               }} />
-            <span className="min-w-0 whitespace-pre-wrap break-words"><span className="text-xs text-muted-foreground">Lines {quote.lineStart}-{quote.lineEnd}: </span>{quote.quote}</span>
+            <span className="min-w-0 whitespace-pre-wrap wrap-break-word"><span className="text-xs text-muted-foreground">Lines {quote.lineStart}-{quote.lineEnd}: </span>{quote.quote}</span>
           </label>)}
           <Pages label="passages" offset={passageOffset} step={30} more={passages.data?.hasMore} disabled={passages.isFetching || link.isPending}
             change={(next) => { setPassageOffset(next); clearSelection(); }} />
@@ -108,7 +108,7 @@ export default function ActionExecutionEvidence({ actionId }: { actionId: string
       <ul className="min-w-0 divide-y">{links.data?.items.map((item) => <li key={item.id} className="min-w-0 space-y-2 py-3">
         <div className="flex items-start justify-between gap-2"><div className="min-w-0">
           <p className="font-medium">{item.relation === "supports" ? "Supports execution" : "Contradicts execution"}</p>
-          <p className="break-words">{item.snapshot.title}</p>
+          <p className="wrap-break-word">{item.snapshot.title}</p>
         </div><div className="flex shrink-0 gap-1">
           <Button size="icon" variant="ghost" title="Open linked document" aria-label="Open execution source" disabled={!item.sourceAvailable || download.isPending} onClick={() => void openSource(item.snapshot.evidenceId)}><CircleHelp className="h-4 w-4" /></Button>
           <Button size="icon" variant="ghost" title={item.state === "active" ? "Withdraw evidence link" : "Restore evidence link"}
@@ -119,9 +119,9 @@ export default function ActionExecutionEvidence({ actionId }: { actionId: string
         </div></div>
         {item.state === "withdrawn" && <p className="font-medium">Withdrawn</p>}
         <p className="text-xs text-muted-foreground">User assessment; not independently verified</p>
-        <p className="whitespace-pre-wrap break-words">{item.note}</p>
+        <p className="whitespace-pre-wrap wrap-break-word">{item.note}</p>
         <details><summary className="cursor-pointer">Source passages</summary>
-          {item.snapshot.quotes.map((quote) => <blockquote key={quote.id} className="my-2 whitespace-pre-wrap break-words border-l-2 pl-3"><span className="text-xs text-muted-foreground">Lines {quote.lineStart}-{quote.lineEnd}: </span>{quote.quote}</blockquote>)}
+          {item.snapshot.quotes.map((quote) => <blockquote key={quote.id} className="my-2 whitespace-pre-wrap wrap-break-word border-l-2 pl-3"><span className="text-xs text-muted-foreground">Lines {quote.lineStart}-{quote.lineEnd}: </span>{quote.quote}</blockquote>)}
           <p className="break-all font-mono text-xs">SHA-256: {item.snapshot.contentHash}</p>
         </details>
         {!item.sourceAvailable && <p role="status">Original document is no longer available in this case.</p>}

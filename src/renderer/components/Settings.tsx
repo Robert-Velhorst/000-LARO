@@ -427,7 +427,7 @@ export default function Settings() {
                   <label className="space-y-2 text-sm">
                     <span className="font-medium">{t("settings.workflow.provider")}</span>
                     <select
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                       value={workflowPreferences.data?.analysisProvider ?? "local"}
                       disabled={preferencesUnavailable || !analysisCapabilities.data}
                       onChange={(event) => void updateWorkflow({ analysisProvider: event.target.value as "local" | "ollama" | "forge" | "openai" | "anthropic" | "google" | "deepseek" | "groq" | "together" })}
@@ -560,7 +560,7 @@ export default function Settings() {
                 <label className="space-y-2 text-sm">
                   <span className="font-medium">{t("settings.workflow.shortlistReview")}</span>
                   <select
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                     value={workflowPreferences.data?.outreachReviewMode ?? "each"}
                     disabled={preferencesUnavailable}
                     onChange={(event) => void updateWorkflow({ outreachReviewMode: event.target.value as "each" | "batch" | "automatic" })}
@@ -573,7 +573,7 @@ export default function Settings() {
                 <label className="space-y-2 text-sm">
                   <span className="font-medium">{t("settings.workflow.messageApproval")}</span>
                   <select
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                     value={workflowPreferences.data?.messageApprovalMode ?? "each"}
                     disabled={preferencesUnavailable}
                     onChange={(event) => void updateWorkflow({ messageApprovalMode: event.target.value as "each" | "batch" | "automatic" })}
@@ -801,7 +801,7 @@ export default function Settings() {
                           id="hai-token-expiry"
                           value={haiTokenDays}
                           onChange={(event) => setHaiTokenDays(event.target.value)}
-                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           <option value="30">{t("settings.hai.days", { count: 30 })}</option>
                           <option value="90">{t("settings.hai.days", { count: 90 })}</option>

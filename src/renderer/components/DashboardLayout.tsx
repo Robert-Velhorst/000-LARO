@@ -166,7 +166,7 @@ function WorkspaceFrame({ children, width, setWidth }: { children: ReactNode; wi
           <nav aria-label={t("nav.preferences")}><SidebarMenu>{secondaryItems.map(menuItem)}</SidebarMenu></nav>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button type="button" aria-label={t("nav.accountMenu")} className="flex min-h-12 w-full min-w-0 items-center gap-3 rounded-md p-2 text-left hover:bg-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
+              <button type="button" aria-label={t("nav.accountMenu")} className="flex min-h-12 w-full min-w-0 items-center gap-3 rounded-md p-2 text-left hover:bg-accent focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring">
                 <Avatar className="h-8 w-8 shrink-0"><AvatarFallback>{user?.name?.charAt(0).toUpperCase() || "?"}</AvatarFallback></Avatar>
                 {!collapsed && <><span className="min-w-0 flex-1 truncate text-sm font-medium">{user?.name || t("nav.account")}</span><ChevronDown className="h-4 w-4 shrink-0" /></>}
               </button>
@@ -188,7 +188,7 @@ function WorkspaceFrame({ children, width, setWidth }: { children: ReactNode; wi
           event.preventDefault();
           setWidth(event.key === "Home" ? 200 : event.key === "End" ? 300 : Math.min(300, Math.max(200, width + (event.key === "ArrowRight" ? 10 : -10))));
         }}
-        className="absolute inset-y-0 right-0 z-40 w-1 cursor-col-resize hover:bg-primary/40 focus-visible:bg-primary focus-visible:outline-none" />}
+        className="absolute inset-y-0 right-0 z-40 w-1 cursor-col-resize hover:bg-primary/40 focus-visible:bg-primary focus-visible:outline-hidden" />}
     </div>
     <SidebarInset>
       <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between gap-2 border-b border-border bg-background px-3 sm:px-6">
@@ -205,7 +205,7 @@ function WorkspaceFrame({ children, width, setWidth }: { children: ReactNode; wi
           <NotificationCenter />
         </div>
       </header>
-      <main id="main-content" tabIndex={-1} className="workspace-main min-w-0 flex-1 p-4 outline-none sm:p-6 lg:px-8">
+      <main id="main-content" tabIndex={-1} className="workspace-main min-w-0 flex-1 p-4 outline-hidden sm:p-6 lg:px-8">
         <div className="mx-auto w-full min-w-0 max-w-[1440px]">{children}</div>
       </main>
       <footer className="mx-auto w-full max-w-[1504px] px-4 pb-4 sm:px-6 lg:px-8"><LegalAdviceNotice /></footer>

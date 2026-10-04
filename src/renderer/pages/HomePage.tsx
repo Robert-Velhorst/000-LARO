@@ -182,7 +182,7 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
 
       <div className="flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-4xl space-y-6">
-          <div className="rounded-lg bg-white p-6 shadow">
+          <div className="rounded-lg bg-white p-6 shadow-sm">
             <div className="mb-4 flex items-center justify-between gap-2">
               <h2 className="text-lg font-semibold text-gray-900">{t("scanner.selectCase")}</h2>
               <button
@@ -255,7 +255,7 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
             )}
           </div>
 
-          <div className="rounded-lg bg-white p-6 shadow">
+          <div className="rounded-lg bg-white p-6 shadow-sm">
             <h2 className="mb-1 text-lg font-semibold text-gray-900">{t("scanner.folders")}</h2>
             <p className="mb-4 text-sm text-gray-600">
               {t("scanner.folderSafety")}

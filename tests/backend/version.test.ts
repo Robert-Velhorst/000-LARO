@@ -1,8 +1,10 @@
 import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { resolveAppVersion } from '../../server/_core/version';
 
 const manifestPath = resolve(process.cwd(), 'package.json');
+const packageVersion = JSON.parse(readFileSync(manifestPath, 'utf8')).version as string;
 
 describe('resolveAppVersion', () => {
   it('prefers a meaningful runtime version', () => {
@@ -10,7 +12,7 @@ describe('resolveAppVersion', () => {
   });
 
   it('falls back to the packaged manifest when compose supplies unknown', () => {
-    expect(resolveAppVersion({ LARO_APP_VERSION: 'unknown' }, manifestPath)).toBe('1.3.0');
+    expect(resolveAppVersion({ LARO_APP_VERSION: 'unknown' }, manifestPath)).toBe(packageVersion);
   });
 
   it('fails closed when neither runtime nor manifest metadata is available', () => {

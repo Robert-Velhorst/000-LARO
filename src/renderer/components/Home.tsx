@@ -95,7 +95,7 @@ export default function Home() {
               {item.type === "exception" ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" /> : item.type === "clarification" ? <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-primary" /> : <ListChecks className="mt-0.5 h-4 w-4 shrink-0 text-primary" />}
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-center gap-2"><Badge variant="outline" className="text-[10px]">{ACTION_LABELS[item.type]}</Badge><span className="font-medium">{item.title}</span></span>
-                <span className="mt-1 block break-words text-muted-foreground">{item.caseTitle}: {item.detail}</span>
+                <span className="mt-1 block wrap-break-word text-muted-foreground">{item.caseTitle}: {item.detail}</span>
               </span><ArrowRight className="mt-0.5 h-4 w-4 shrink-0" />
             </button>)}
             {dashboard.actions.length > 6 ? <Button variant="ghost" onClick={() => navigate("/cases")}>{nl ? "Alle acties via dossiers" : "All actions through cases"} ({dashboard.actionCounts.total})<ArrowRight className="h-4 w-4" /></Button> : null}
@@ -120,7 +120,7 @@ export default function Home() {
       <div className="workspace-heading"><h2 id="home-cases">{nl ? "Recent bijgewerkte dossiers" : "Recently updated cases"}</h2><Button variant="ghost" onClick={() => navigate("/cases")}>{nl ? "Alle dossiers" : "All cases"}<ArrowRight className="h-4 w-4" /></Button></div>
       {cases.error ? <QueryNotice error={cases.error} retry={cases.refetch} /> : cases.isLoading ? <Skeleton className="h-40 w-full" /> : cases.data?.cases.length ? <div className="divide-y divide-border">
         {cases.data.cases.map(item => <button type="button" key={item.id} onClick={() => navigate(`/cases?case=${encodeURIComponent(item.id)}`)} className="flex w-full flex-wrap items-center gap-3 py-4 text-left hover:text-primary">
-          <Briefcase className="h-5 w-5 shrink-0 text-muted-foreground" /><span className="min-w-0 flex-1"><span className="block break-words font-medium">{item.clientName || item.caseType || item.id}</span><span className="mt-1 block text-sm text-muted-foreground">{item.caseType}</span></span>
+          <Briefcase className="h-5 w-5 shrink-0 text-muted-foreground" /><span className="min-w-0 flex-1"><span className="block wrap-break-word font-medium">{item.clientName || item.caseType || item.id}</span><span className="mt-1 block text-sm text-muted-foreground">{item.caseType}</span></span>
           <span className="text-xs text-muted-foreground">{item.updatedAt ? formatDate(item.updatedAt) : ""}</span><ArrowRight className="h-4 w-4 shrink-0" />
         </button>)}
       </div> : <div className="flex min-h-40 flex-col items-center justify-center gap-4 text-center">

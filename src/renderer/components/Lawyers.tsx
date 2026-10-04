@@ -174,7 +174,7 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
               return (
                 <Card 
                   key={lawyer.id} 
-                  className={`border-border/50 bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-all duration-300 hover:scale-105 hover:shadow-xl hover:shadow-purple-500/10 group ${
+                  className={`border-border/50 bg-card/50 backdrop-blur-xs hover:bg-card/80 transition-all duration-300 hover:scale-105 hover:shadow-xl hover:shadow-purple-500/10 group ${
                     comparisonMode && selectedLawyerIds.includes(lawyer.id)
                       ? 'ring-2 ring-purple-500' 
                       : ''
@@ -184,7 +184,7 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
                 >
                   <CardHeader>
                     <div className="flex items-start gap-4">
-                      <div className="w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-purple-700 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/20">
+                      <div className="w-14 h-14 rounded-full bg-linear-to-br from-purple-500 to-purple-700 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/20">
                         <span className="text-white font-semibold text-lg">
                           {lawyer.name?.split(' ').map((n: string) => n[0]).join('').slice(0, 2)}
                         </span>

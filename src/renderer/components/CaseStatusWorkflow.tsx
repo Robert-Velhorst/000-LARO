@@ -118,7 +118,7 @@ export default function CaseStatusWorkflow({
   const previousStatus = getPreviousStatus();
 
   return (
-    <Card className="border-border/50 bg-card/50 backdrop-blur-sm">
+    <Card className="border-border/50 bg-card/50 backdrop-blur-xs">
       <CardHeader>
         <CardTitle className="text-lg">Case Status Workflow</CardTitle>
       </CardHeader>

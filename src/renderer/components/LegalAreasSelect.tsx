@@ -95,7 +95,7 @@ export function LegalAreasSelect({ value, onChange, disabled }: LegalAreasSelect
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-2" align="start">
+        <PopoverContent className="w-(--radix-popover-trigger-width) p-2" align="start">
           <Input
             placeholder="Search legal areas..."
             value={query}

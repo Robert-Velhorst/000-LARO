@@ -26,7 +26,7 @@ export default function InboxAssignmentControls({ id, assignment, refresh }: {
   };
   return <section aria-label="Dossier assignment" className="space-y-3">
     {assignment && <>
-      <p className="break-words font-medium">Current dossier: {assignment.title || assignment.caseId}</p>
+      <p className="wrap-break-word font-medium">Current dossier: {assignment.title || assignment.caseId}</p>
       <Button size="sm" variant="outline" aria-expanded={open} onClick={() => setOpen(!open)}><ArrowRightLeft className="mr-2 h-4 w-4" />Correct dossier</Button>
       {open && <div className="space-y-3 border-l-2 pl-3">
         <label className="block">Find target dossier<input value={search} className="mt-1 w-full rounded border bg-background p-2"
@@ -58,8 +58,8 @@ export default function InboxAssignmentControls({ id, assignment, refresh }: {
         {history.error && <p role="alert">{history.error.message}</p>}
         {history.data?.items.length === 0 && <p>No recorded corrections.</p>}
         <ol className="space-y-3">{history.data?.items.map((item) => <li key={item.id} className="space-y-1 border-l-2 pl-3">
-          <p className="break-words">{item.from?.title || item.from?.caseId || "Unknown dossier"} to {item.to?.title || item.to?.caseId || "Unknown dossier"}</p>
-          <p className="whitespace-pre-wrap break-words">{item.reason}</p>
+          <p className="wrap-break-word">{item.from?.title || item.from?.caseId || "Unknown dossier"} to {item.to?.title || item.to?.caseId || "Unknown dossier"}</p>
+          <p className="whitespace-pre-wrap wrap-break-word">{item.reason}</p>
           <p className="text-xs text-muted-foreground">{item.recordedAt ? new Date(item.recordedAt).toLocaleString() : "Unknown date"} | Owner correction</p>
         </li>)}</ol>
         <div className="flex items-center gap-2">

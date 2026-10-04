@@ -1,6 +1,101 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss' theme(inline) source(none);
+@source './';
+@source '../../index.html';
+
+/* Inline compile-time theme aliases; the workspace's runtime HSL tokens below
+   remain configurable. This also avoids duplicate fallback rules for constants. */
+@theme inline {
+  --color-brand-50: #f0f4ff;
+  --color-brand-100: #e0e9ff;
+  --color-brand-500: #3b5bdb;
+  --color-brand-600: #2f4ac7;
+  --color-brand-700: #2540b3;
+
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+@utility workspace-nav-item {
+  justify-content: flex-start;
+  color: hsl(var(--muted-foreground));
+  &[data-active='true'] {
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+    box-shadow: inset 3px 0 hsl(var(--primary));
+  }
+  &:hover {
+    color: hsl(var(--foreground));
+  }
+}
+
+@utility workspace-main {
+  & h1 {
+    @apply text-2xl font-semibold;
+    letter-spacing: 0;
+  }
+}
+
+@utility workspace-section {
+  @apply border-t border-border pt-5;
+}
+
+@utility workspace-heading {
+  @apply mb-4 flex flex-wrap items-center justify-between gap-3;
+  & h2 {
+    @apply text-base font-semibold;
+  }
+}
 
 /* Shared workspace tokens: neutral surfaces and distinct action/status colors. */
 @layer base {
@@ -40,30 +135,22 @@
   }
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
-}
+@layer utilities {
+  code {
+    font-family:
+      source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+  }
 
-#root {
-  width: 100%;
-  height: 100vh;
+  #root {
+    width: 100%;
+    height: 100vh;
+  }
 }
 
 @layer base {
   :focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 3px; }
   h1, h2, h3, h4, button, input, select, textarea { letter-spacing: 0; }
   h1, h2, h3, h4 { overflow-wrap: anywhere; }
-}
-
-@layer components {
-  .workspace-nav-item { justify-content: flex-start; color: hsl(var(--muted-foreground)); }
-  .workspace-nav-item[data-active="true"] { background: hsl(var(--primary) / 0.12); color: hsl(var(--primary)); box-shadow: inset 3px 0 hsl(var(--primary)); }
-  .workspace-nav-item:hover { color: hsl(var(--foreground)); }
-  .workspace-main h1 { @apply text-2xl font-semibold; letter-spacing: 0; }
-  .workspace-section { @apply border-t border-border pt-5; }
-  .workspace-heading { @apply mb-4 flex flex-wrap items-center justify-between gap-3; }
-  .workspace-heading h2 { @apply text-base font-semibold; }
 }
 
 @media (prefers-reduced-motion: reduce) {

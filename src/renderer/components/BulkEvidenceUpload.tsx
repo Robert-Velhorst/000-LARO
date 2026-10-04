@@ -275,7 +275,7 @@ export default function BulkEvidenceUpload({
                   <CardContent className="p-4">
                     <div className="flex items-center gap-4">
                       {/* File Icon/Preview */}
-                      <div className="flex-shrink-0">
+                      <div className="shrink-0">
                         {fileWithPreview.preview ? (
                           <img
                             src={fileWithPreview.preview}
@@ -301,7 +301,7 @@ export default function BulkEvidenceUpload({
                       </div>
 
                       {/* Status Icon */}
-                      <div className="flex-shrink-0">
+                      <div className="shrink-0">
                         {fileWithPreview.status === "pending" && (
                           <Button
                             variant="ghost"

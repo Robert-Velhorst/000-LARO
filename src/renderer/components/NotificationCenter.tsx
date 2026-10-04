@@ -206,7 +206,7 @@ export default function NotificationCenter() {
                       <div
                         role="img"
                         aria-label={`${notification.type.replaceAll("_", " ")} notification`}
-                        className={`flex-shrink-0 w-10 h-10 rounded-full ${bg} flex items-center justify-center`}
+                        className={`shrink-0 w-10 h-10 rounded-full ${bg} flex items-center justify-center`}
                       >
                         <Icon aria-hidden="true" className={`w-5 h-5 ${color}`} />
                       </div>
@@ -218,7 +218,7 @@ export default function NotificationCenter() {
                             {notification.title}
                           </h4>
                           {!notification.isRead && (
-                            <div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0 mt-1" />
+                            <div className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1" />
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground mt-1 line-clamp-2">

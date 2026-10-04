@@ -50,8 +50,8 @@ export default function SearchResultSelection({ type, id, onDismiss }: {
       <Icon className="mt-1 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2"><Badge variant="secondary" className="capitalize">{result.type}</Badge>{result.category && <span className="text-xs text-muted-foreground">{result.category}</span>}</div>
-        <h2 className="mt-2 break-words text-lg font-semibold">{result.title}</h2>
-        <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-muted-foreground">{result.description}</p>
+        <h2 className="mt-2 wrap-break-word text-lg font-semibold">{result.title}</h2>
+        <p className="mt-1 whitespace-pre-wrap wrap-break-word text-sm leading-6 text-muted-foreground">{result.description}</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {result.occurredAt && <span className="text-xs text-muted-foreground">{formatDate(result.occurredAt, { dateStyle: "medium", timeStyle: "short" })}</span>}
           {result.caseId && <Button type="button" variant="ghost" size="sm" onClick={() => {

@@ -154,7 +154,7 @@ function SourceJob({ id }: { id: string }) {
         </div>;
       })}
     </section>}
-    {(pause.error || resume.error || rescan.error || recheck.error) && <p role="alert" className="break-words text-sm">{(pause.error || resume.error || rescan.error || recheck.error)?.message}</p>}
+    {(pause.error || resume.error || rescan.error || recheck.error) && <p role="alert" className="wrap-break-word text-sm">{(pause.error || resume.error || rescan.error || recheck.error)?.message}</p>}
     {recheck.data && <p role="status" className="text-xs">{t(recheck.data.paused ? "sources.checkQueuedPaused" : "sources.checkQueued")}</p>}
     {expanded && <div className="min-w-0 space-y-3 text-sm">
       <dl className="space-y-1"><dt className="font-medium">{t("sources.scope.title")}</dt><dd className="whitespace-pre-wrap break-all text-sm">{sourceScope(job.config, t)}</dd></dl>
@@ -165,7 +165,7 @@ function SourceJob({ id }: { id: string }) {
       <ul className="space-y-3">{items.map((item) => <li key={item.id} className="min-w-0 border-l-2 pl-3">
         <p className="break-all font-medium">{item.label}</p><p className="text-xs text-muted-foreground">{translatedLabel(item.status, WORK_STATUS_KEYS, t)}</p>
         {item.failure ? <div className="space-y-1"><p>{t((FAILURE_KEYS[item.failure.code] ?? FAILURE_KEYS.unknown).cause)}</p><p className="text-xs text-muted-foreground">{t((FAILURE_KEYS[item.failure.code] ?? FAILURE_KEYS.unknown).step)}</p><p className="text-xs text-muted-foreground">{t("sources.failureCode", { code: item.failure.code })}</p></div>
-          : item.error && <p className="break-words">{item.error}</p>}
+          : item.error && <p className="wrap-break-word">{item.error}</p>}
         {item.screening && <details className="mt-1 text-xs"><summary className="cursor-pointer">{t("sources.quick.item", { tier: translatedLabel(item.screening.tier, TIER_KEYS, t) })}</summary>
           <p>{item.screening.reasons.map(reason => translatedLabel(reason, SCREEN_REASON_KEYS, t)).join(". ")}</p><p>{t("sources.quick.itemMetrics", {
             sampled: formatNumber(item.screening.sampledBytes), total: formatNumber(item.screening.fileBytes),
@@ -251,7 +251,7 @@ export default function DocumentSources() {
         </Button>
         <Button size="sm" variant="ghost" onClick={() => setLocation("/settings?section=sources")}><Settings className="mr-2 h-4 w-4" />{t("sources.googleConnection")}</Button>
       </div>
-      {checkedSelection && checkConnection.data && <p role={checkConnection.data.accessible ? "status" : "alert"} className="break-words text-sm">
+      {checkedSelection && checkConnection.data && <p role={checkConnection.data.accessible ? "status" : "alert"} className="wrap-break-word text-sm">
         {checkConnection.data.accessible ? t("sources.accessVerified", { kind: t(KIND_KEYS[kind]), time: formatDate(checkConnection.data.checkedAt, { timeStyle: "medium" }) }) : checkConnection.data.message}
       </p>}
       {checkedSelection && checkConnection.error && <p role="alert" className="text-sm">{checkConnection.error.message}</p>}
@@ -260,9 +260,9 @@ export default function DocumentSources() {
           <label className="flex items-center gap-2"><input type="checkbox" checked={includeSpamTrash} onChange={(event) => setIncludeSpamTrash(event.target.checked)} />{t("sources.includeSpam")}</label></>
           : <label className="block">{t("sources.driveFolder")}<input aria-label={t("sources.driveFolderInput")} className="mt-1 w-full rounded border bg-background p-2" value={folderId} onChange={(event) => setFolderId(event.target.value)} /></label>}
       </div></details>
-      <p className="break-words text-sm text-muted-foreground">{sourceScope(JSON.stringify({ kind, query, folderId: folderId.trim(), includeSpamTrash }), t)}</p>
+      <p className="wrap-break-word text-sm text-muted-foreground">{sourceScope(JSON.stringify({ kind, query, folderId: folderId.trim(), includeSpamTrash }), t)}</p>
       <Button size="sm" disabled={start.isPending || !connected.some((account) => account.id === selectedAccount)} onClick={() => void startGoogle()}>{start.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}{t("sources.start")}</Button>
-      {(accounts.error || start.error || nativeError) && <p role="alert" className="break-words text-sm">{nativeError || accounts.error?.message || start.error?.message}</p>}
+      {(accounts.error || start.error || nativeError) && <p role="alert" className="wrap-break-word text-sm">{nativeError || accounts.error?.message || start.error?.message}</p>}
     </div>}
     {sources.error && <p role="alert">{sources.error.message}</p>}
     {sources.isLoading && <p role="status">{t("sources.loading")}</p>}

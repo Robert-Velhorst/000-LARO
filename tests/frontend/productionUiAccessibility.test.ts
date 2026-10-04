@@ -1,12 +1,14 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
+import postcss from 'postcss';
+import tailwindcss from '@tailwindcss/postcss';
 
 const ROOT = join(__dirname, '..', '..');
 const read = (relativePath: string) => readFileSync(join(ROOT, relativePath), 'utf8');
 
 describe('production renderer usability regressions', () => {
-  it('keeps the cases header and primary actions usable on narrow screens', () => {
+  it('keeps the cases header and primary actions usable on narrow screens', async () => {
     const cases = read('src/renderer/components/Cases.tsx');
     const workspace = read('src/renderer/components/WorkspaceUi.tsx');
     const styles = read('src/renderer/index.css');
@@ -14,7 +16,20 @@ describe('production renderer usability regressions', () => {
     expect(cases).toContain('<PageHeading');
     expect(workspace).toContain('className="workspace-heading"');
     expect(workspace).toContain('flex min-w-0 flex-wrap items-center gap-2');
-    expect(styles).toContain('.workspace-heading');
+    const compiled = await postcss([tailwindcss({ optimize: false })]).process(styles, {
+      from: join(ROOT, 'src/renderer/index.css'),
+    });
+    const headingDeclarations: Record<string, string> = {};
+    compiled.root.walkRules('.workspace-heading', (rule) => {
+      rule.each((node) => {
+        if (node.type === 'decl') headingDeclarations[node.prop] = node.value;
+      });
+    });
+    expect(headingDeclarations).toMatchObject({
+      display: 'flex',
+      'flex-wrap': 'wrap',
+      'justify-content': 'space-between',
+    });
     expect(cases).toContain('t("case.list.open")');
     expect(cases).toContain('t("case.list.new")');
     expect(cases).not.toContain('<div className="p-6 space-y-6">');

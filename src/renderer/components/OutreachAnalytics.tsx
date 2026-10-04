@@ -73,7 +73,7 @@ export default function OutreachAnalytics() {
         </div>}
 
         <Tabs value={view} onValueChange={selectView} className="space-y-4">
-          <TabsList className="grid !h-auto w-full grid-cols-2 lg:w-fit lg:grid-cols-4">
+          <TabsList className="grid h-auto! w-full grid-cols-2 lg:w-fit lg:grid-cols-4">
             <TabsTrigger className="min-h-8" value="overview">{nl ? "Resultaten" : "Overview"}</TabsTrigger>
             <TabsTrigger className="min-h-8" value="lawyers"><Scale className="mr-2 h-4 w-4" />{nl ? "Advocaten" : "Lawyers"}</TabsTrigger>
             <TabsTrigger className="min-h-8" value="media"><Newspaper className="mr-2 h-4 w-4" />Media</TabsTrigger>

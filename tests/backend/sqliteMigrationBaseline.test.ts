@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import Database from "better-sqlite3";
@@ -65,6 +65,122 @@ afterEach(() => {
 });
 
 describe("non-destructive SQLite migration baseline", () => {
+  it("upgrades an installed desktop with legacy billing triggers without losing owner data", async () => {
+    const legacy = temporaryDatabase("installed-desktop");
+    // The September desktop ran these relationship triggers at every boot.
+    // Applying only the SQL journal does not reproduce an installed profile.
+    applyLegacySnapshot(legacy.sqlite, 18);
+    legacy.sqlite.exec(`
+      ALTER TABLE users ADD COLUMN resetCodeHash text;
+      ALTER TABLE users ADD COLUMN resetCodeExpiresAt text;
+      INSERT INTO users (id, email, role, stripeCustomerId, resetCodeHash)
+      VALUES ('installed-user', 'installed@example.test', 'user', 'cus_preserved', 'reset-preserved');
+      INSERT INTO cases (id, userId, clientName)
+      VALUES ('installed-case', 'installed-user', 'Preserved case');
+      INSERT INTO evidence (id, caseId, userId, type, title)
+      VALUES ('installed-evidence', 'installed-case', 'installed-user', 'document', 'Preserved evidence');
+      INSERT INTO billing_periods (id, userId, stripeSubscriptionId, totalCost)
+      VALUES ('installed-billing', 'installed-user', 'sub_preserved', '12.50');
+      CREATE TRIGGER laro_ri_billing_periods_userId_delete
+      BEFORE DELETE ON users BEGIN
+        DELETE FROM billing_periods WHERE userId = OLD.id;
+      END;
+      CREATE TRIGGER laro_ri_usage_limits_userId_delete
+      BEFORE DELETE ON users BEGIN
+        DELETE FROM usage_limits WHERE userId = OLD.id;
+      END;
+    `);
+
+    try {
+      const result = await migrateFixture(legacy);
+      expect(result.backupPath).toBeTruthy();
+      expect(result.migrationsApplied).toBe(MIGRATION_COUNT - 19);
+      expect(validateDeclaredSqliteSchema(legacy.sqlite).ok).toBe(true);
+      expect(relationshipIntegrityReport(legacy.sqlite).ok).toBe(true);
+      expect(legacy.sqlite.prepare('SELECT resetCodeHash FROM users WHERE id = ?').get('installed-user'))
+        .toEqual({ resetCodeHash: 'reset-preserved' });
+      expect(legacy.sqlite.prepare('SELECT clientName FROM cases WHERE id = ?').get('installed-case'))
+        .toEqual({ clientName: 'Preserved case' });
+      expect(legacy.sqlite.prepare('SELECT title FROM evidence WHERE id = ?').get('installed-evidence'))
+        .toEqual({ title: 'Preserved evidence' });
+      const archived = legacy.sqlite.prepare(
+        'SELECT payload FROM legacy_billing_archive WHERE sourceId = ?',
+      ).get('installed-billing') as { payload: string };
+      expect(JSON.parse(archived.payload)).toMatchObject({ stripeSubscriptionId: 'sub_preserved', totalCost: '12.50' });
+      expect(legacy.sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name GLOB 'laro_ri_*'").all())
+        .toEqual([]);
+      const backup = new Database(result.backupPath!, { readonly: true });
+      try {
+        expect(backup.prepare('SELECT totalCost FROM billing_periods WHERE id = ?').get('installed-billing'))
+          .toEqual({ totalCost: '12.50' });
+        expect(backup.prepare("SELECT name FROM sqlite_master WHERE name = 'laro_ri_billing_periods_userId_delete'").get())
+          .toBeTruthy();
+      } finally {
+        backup.close();
+      }
+      expect(await migrateFixture(legacy)).toMatchObject({ backupPath: null, migrationsApplied: 0 });
+    } finally {
+      legacy.sqlite.close();
+    }
+  });
+
+  it("rolls back the legacy triggers, data, and journal together when an upgrade fails", async () => {
+    const legacy = temporaryDatabase('installed-rollback');
+    applyLegacySnapshot(legacy.sqlite, 18);
+    legacy.sqlite.exec(`
+      INSERT INTO users (id, email, role) VALUES ('rollback-owner', 'rollback@example.test', 'user');
+      INSERT INTO billing_periods (id, userId, totalCost) VALUES ('rollback-billing', 'rollback-owner', '12.50');
+      CREATE TRIGGER laro_ri_billing_periods_userId_delete
+      BEFORE DELETE ON users BEGIN
+        DELETE FROM billing_periods WHERE userId = OLD.id;
+      END;
+    `);
+    const schemaBefore = legacy.sqlite.prepare('SELECT type, name, sql FROM sqlite_master ORDER BY type, name').all();
+    const historyBefore = legacy.sqlite.prepare('SELECT * FROM __drizzle_migrations ORDER BY created_at').all();
+    const folder = join(legacy.directory, 'migrations');
+    cpSync(MIGRATIONS_FOLDER, folder, { recursive: true });
+    const journalPath = join(folder, 'meta', '_journal.json');
+    const journal = JSON.parse(readFileSync(journalPath, 'utf8'));
+    journal.entries.push({
+      idx: journal.entries.length, version: '6',
+      when: journal.entries.at(-1).when + 1,
+      tag: '9999_forced_failure', breakpoints: true,
+    });
+    writeFileSync(journalPath, JSON.stringify(journal));
+    writeFileSync(join(folder, '9999_forced_failure.sql'), 'SELECT * FROM deliberately_missing_upgrade_table;');
+
+    try {
+      await expect(runSqliteMigrations({
+        sqlite: legacy.sqlite, drizzleDb: drizzle(legacy.sqlite),
+        migrationsFolder: folder, databasePath: legacy.databasePath,
+      })).rejects.toThrow(/SQLite migration failed/);
+      expect(legacy.sqlite.prepare('SELECT type, name, sql FROM sqlite_master ORDER BY type, name').all())
+        .toEqual(schemaBefore);
+      expect(legacy.sqlite.prepare('SELECT * FROM __drizzle_migrations ORDER BY created_at').all())
+        .toEqual(historyBefore);
+      expect(legacy.sqlite.prepare('SELECT totalCost FROM billing_periods WHERE id = ?').get('rollback-billing'))
+        .toEqual({ totalCost: '12.50' });
+      expect(readdirSync(join(legacy.directory, 'db-backups'))).toHaveLength(1);
+      // A subsequent boot can retry the real, unchanged journal successfully.
+      await expect(migrateFixture(legacy)).resolves.toMatchObject({ migrationsApplied: MIGRATION_COUNT - 19 });
+    } finally {
+      legacy.sqlite.close();
+    }
+  });
+
+  it("does not remove unrelated triggers whose names only resemble the legacy prefix", async () => {
+    const legacy = temporaryDatabase('trigger-prefix');
+    applyLegacySnapshot(legacy.sqlite, 18);
+    legacy.sqlite.exec('CREATE TRIGGER laroXri_custom AFTER INSERT ON users BEGIN SELECT 1; END;');
+    try {
+      await migrateFixture(legacy);
+      expect(legacy.sqlite.prepare("SELECT name FROM sqlite_master WHERE name = 'laroXri_custom'").get())
+        .toEqual({ name: 'laroXri_custom' });
+    } finally {
+      legacy.sqlite.close();
+    }
+  });
+
   it("converges a clean database and representative legacy snapshots to one declared schema", async () => {
     const clean = temporaryDatabase("clean");
     const cleanResult = await migrateFixture(clean);

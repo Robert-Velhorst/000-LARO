@@ -85,7 +85,7 @@ export function EvidenceCollection({ caseId, onEvidenceUpdated }: EvidenceCollec
       {/* Evidence List */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {evidenceList?.length === 0 ? (
-          <Card className="col-span-full border-border/50 bg-card/50 backdrop-blur-sm">
+          <Card className="col-span-full border-border/50 bg-card/50 backdrop-blur-xs">
             <CardContent className="flex flex-col items-center justify-center py-16 text-center">
               <div className="p-4 rounded-full bg-orange-500/10 mb-4">
                 <Upload className="w-12 h-12 text-orange-500" />
@@ -98,7 +98,7 @@ export function EvidenceCollection({ caseId, onEvidenceUpdated }: EvidenceCollec
           </Card>
         ) : (
           evidenceList?.map((item) => (
-            <Card key={item.id} className="border-border/50 bg-card/50 backdrop-blur-sm hover:bg-card/80 transition-all duration-300 hover:shadow-lg">
+            <Card key={item.id} className="border-border/50 bg-card/50 backdrop-blur-xs hover:bg-card/80 transition-all duration-300 hover:shadow-lg">
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2">

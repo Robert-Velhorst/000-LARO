@@ -116,7 +116,7 @@ export default function EvidenceConnectionsCard() {
             </div>
           </div>
           {removing === account.id && <Alert><AlertDescription className="space-y-3">
-            <div className="space-y-2 break-words">
+            <div className="space-y-2 wrap-break-word">
               <p className="font-medium">Review shared Google disconnect</p>
               <p>Account: {account.email}</p>
               {disconnectImpact.isLoading ? <p role="status">Loading disconnect impact...</p>

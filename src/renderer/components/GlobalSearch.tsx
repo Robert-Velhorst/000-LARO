@@ -105,15 +105,15 @@ export default function GlobalSearch() {
             {results.data.results.map(result => {
               const Icon = RESULT_ICONS[result.type];
               return <button type="button" key={`${result.type}-${result.id}`} onClick={() => activate(result)}
-                className={cn("w-full rounded-md border border-border p-4 text-left transition-colors hover:bg-muted/50", "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring")}>
+                className={cn("w-full rounded-md border border-border p-4 text-left transition-colors hover:bg-muted/50", "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring")}>
                 <span className="flex items-start gap-3">
                   <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                   <span className="min-w-0 flex-1">
                     <span className="flex flex-wrap items-center gap-2">
-                      <span className="break-words font-medium">{result.title}</span>
+                      <span className="wrap-break-word font-medium">{result.title}</span>
                       <span className="rounded-full bg-muted px-2 py-0.5 text-xs capitalize text-muted-foreground">{result.type}</span>
                     </span>
-                    <span className="mt-1 line-clamp-2 block break-words text-sm text-muted-foreground">{result.description}</span>
+                    <span className="mt-1 line-clamp-2 block wrap-break-word text-sm text-muted-foreground">{result.description}</span>
                   </span>
                 </span>
               </button>;

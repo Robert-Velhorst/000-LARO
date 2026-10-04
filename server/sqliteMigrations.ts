@@ -2,7 +2,8 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import Database from "better-sqlite3";
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import type { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import { sql } from "drizzle-orm";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { getTableConfig } from "drizzle-orm/sqlite-core";
 import * as schema from "./schema";
@@ -10,6 +11,7 @@ import {
   assertNativeRelationshipReconciliationReady,
   nativeRelationshipsNeedReconciliation,
   reconcileNativeRelationships,
+  removeLegacyRelationshipTriggers,
 } from "./nativeRelationshipMigration";
 import {
   assertNumericNormalizationReady,
@@ -358,6 +360,39 @@ async function createVerifiedMigrationBackup(
   return backupPath;
 }
 
+function applyPendingMigrations(
+  sqlite: SqliteClient,
+  drizzleDb: Parameters<typeof migrate>[0],
+  migrations: ReturnType<typeof readMigrationFiles>,
+  lastAppliedIndex: number,
+): void {
+  // The old desktop installed parent-side deletion triggers outside its SQL
+  // journal. Retiring a child table leaves those triggers referencing a missing
+  // table, which makes SQLite reject subsequent ALTER TABLE statements. Remove
+  // the old guards in the SAME transaction as the pending journal, after the
+  // caller has validated the schema/orphans and made a verified backup. A failed
+  // migration must restore both the old schema and its guards automatically.
+  // Use Drizzle's public transaction API because migrate() owns its own BEGIN
+  // and cannot be wrapped in this preparation transaction.
+  drizzleDb.transaction((transaction) => {
+    transaction.run(sql`CREATE TABLE IF NOT EXISTS __drizzle_migrations (
+      id SERIAL PRIMARY KEY,
+      hash text NOT NULL,
+      created_at numeric
+    )`);
+    removeLegacyRelationshipTriggers(sqlite);
+    for (const migration of migrations.slice(lastAppliedIndex + 1)) {
+      for (const statement of migration.sql) {
+        if (statement.trim()) transaction.run(sql.raw(statement));
+      }
+      // Keep the exact original journal timestamps and checksums. Do not edit
+      // shipped SQL files or rewrite history to hide an incompatible upgrade.
+      transaction.run(sql`INSERT INTO __drizzle_migrations (hash, created_at)
+        VALUES (${migration.hash}, ${migration.folderMillis})`);
+    }
+  }, { behavior: 'immediate' });
+}
+
 export async function runSqliteMigrations(options: {
   sqlite: SqliteClient;
   drizzleDb: Parameters<typeof migrate>[0];
@@ -404,7 +439,7 @@ export async function runSqliteMigrations(options: {
       assertNativeRelationshipReconciliationReady(sqlite);
     }
     if (hasExistingApplicationSchema && numericPending) assertNumericNormalizationReady(sqlite);
-    migrate(drizzleDb, { migrationsFolder });
+    applyPendingMigrations(sqlite, drizzleDb, migrations, lastAppliedIndex);
     reconcileBaseline(sqlite);
     const relationshipMigration = nativeRelationshipsNeedReconciliation(sqlite)
       ? reconcileNativeRelationships(sqlite)
@@ -428,6 +463,6 @@ export async function runSqliteMigrations(options: {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const recovery = backupPath ? ` Verified recovery backup: ${backupPath}.` : "";
-    throw new Error(`SQLite migration failed: ${message}.${recovery}`);
+    throw new Error(`SQLite migration failed: ${message}.${recovery}`, { cause: error });
   }
 }

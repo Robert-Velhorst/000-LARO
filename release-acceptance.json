@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.3.0",
+  "version": "1.3.1",
   "gates": {
     "publicBrand": {
       "status": "approved",
@@ -25,9 +25,11 @@
       ]
     },
     "liveProviders": {
-      "status": "approved",
-      "approvedBy": "LARO product owner",
-      "approvedAt": "2026-08-14T08:52:49.4660609Z",
+      "status": "pending",
+      "approvedBy": null,
+      "approvedAt": null,
+      "historicalEvidenceVersion": "1.3.0",
+      "notes": "The provider evidence below is historical. Target-account revalidation is pending after the 1.3.1 dependency upgrades.",
       "evidence": [
         "codex-task:019f0b03-ca19-7f62-8f85-61a772f45256:owner-selected-google-plus-outbound-email",
         "runtime-acceptance:google:2026-08-14T08:51:14.710Z",

@@ -172,7 +172,7 @@ function ScannerStatus({
     <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
       <section className="w-full max-w-md space-y-3">
         <h1 className="text-lg font-semibold">{title}</h1>
-        <p role="status" className="mt-2 break-words text-sm leading-6 text-muted-foreground">{detail}</p>
+        <p role="status" className="mt-2 wrap-break-word text-sm leading-6 text-muted-foreground">{detail}</p>
         <div className="mt-5 flex gap-3">
           {actionLabel && onAction ? (
             <Button type="button" onClick={onAction}>

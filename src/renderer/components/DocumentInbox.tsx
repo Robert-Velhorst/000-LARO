@@ -48,7 +48,7 @@ function InboxDetails({ id, refresh }: { id: string; refresh: () => Promise<void
     try { await assign.mutateAsync({ id, caseId }); await refresh(); } catch { /* Mutation error remains visible. */ }
   };
   return <div className="space-y-4 border-t pt-4 text-sm">
-    <p className="break-words">{item.reason || t("inbox.notAnalyzed")}</p>
+    <p className="wrap-break-word">{item.reason || t("inbox.notAnalyzed")}</p>
     {!item.evidenceId && <Button variant="outline" onClick={() => setLocation("/settings")}>
       <Settings className="mr-2 h-4 w-4" />{t("inbox.analysisSettings")}
     </Button>}
@@ -59,14 +59,14 @@ function InboxDetails({ id, refresh }: { id: string; refresh: () => Promise<void
         {item.discovery.basis.map((basis, index) => <li key={index} className="space-y-2 border-l-2 border-emerald-600 pl-3">
           <p className="font-medium">{t(basis.kind === "participant" ? "inbox.basis.participant" : basis.kind === "situation" ? "inbox.basis.situation" : "inbox.basis.continuity")}</p>
           <p className="text-xs text-muted-foreground">{t("inbox.documentPassage")}</p>
-          <blockquote className="whitespace-pre-wrap break-words">{basis.quote}</blockquote>
+          <blockquote className="whitespace-pre-wrap wrap-break-word">{basis.quote}</blockquote>
           {basis.caseQuote && <><p className="text-xs text-muted-foreground">{t("inbox.caseContext")}</p>
-            <blockquote className="whitespace-pre-wrap break-words">{basis.caseQuote}</blockquote></>}
+            <blockquote className="whitespace-pre-wrap wrap-break-word">{basis.caseQuote}</blockquote></>}
         </li>)}
       </ol>
     </details>}
     {item.analysis && <>
-      <p className="break-words">{item.analysis.summary}</p>
+      <p className="wrap-break-word">{item.analysis.summary}</p>
       <p className="text-xs text-muted-foreground">{t("inbox.analysisMeta", {
         provider: item.analysis.analysisProvider || t("inbox.provider.local"),
         status: PROVIDER_STATUS_KEYS[item.analysis.providerStatus] ? t(PROVIDER_STATUS_KEYS[item.analysis.providerStatus]) : item.analysis.providerStatus.replaceAll("_", " "),
@@ -78,7 +78,7 @@ function InboxDetails({ id, refresh }: { id: string; refresh: () => Promise<void
         <ol className="space-y-3">
           {item.analysis.citations.slice(0, passages).map((citation) => <li key={citation.id} className="border-l-2 border-emerald-600 pl-3">
             <p className="text-xs text-muted-foreground">{t("inbox.lines", { start: formatNumber(citation.lineStart), end: formatNumber(citation.lineEnd) })}</p>
-            <blockquote className="whitespace-pre-wrap break-words">{citation.quote}</blockquote>
+            <blockquote className="whitespace-pre-wrap wrap-break-word">{citation.quote}</blockquote>
           </li>)}
         </ol>
         {item.analysis.citations.length > passages && <Button variant="ghost" onClick={() => setPassages((n) => n + 10)}><ChevronDown className="mr-2 h-4 w-4" />{t("inbox.morePassages")}</Button>}
@@ -86,7 +86,7 @@ function InboxDetails({ id, refresh }: { id: string; refresh: () => Promise<void
     </>}
     {!item.evidenceId && <div className="space-y-3">
       {item.suggestions.map((suggestion) => <div key={suggestion.caseId} className="flex flex-wrap items-start justify-between gap-2 border-b pb-2">
-        <div className="min-w-0 flex-1"><p className="break-words font-medium">{suggestion.title}</p><p className="break-words text-xs text-muted-foreground">{suggestion.reasons.join("; ")}</p></div>
+        <div className="min-w-0 flex-1"><p className="wrap-break-word font-medium">{suggestion.title}</p><p className="wrap-break-word text-xs text-muted-foreground">{suggestion.reasons.join("; ")}</p></div>
         <Button size="sm" disabled={assign.isPending} onClick={() => void accept(suggestion.caseId)}><FolderOpen className="mr-2 h-4 w-4" />{t("inbox.assign")}</Button>
       </div>)}
       <label className="block">{t("inbox.findCase")}<input className="mt-1 w-full rounded border bg-background p-2" value={search}
@@ -220,9 +220,9 @@ export default function DocumentInbox({ onOpenCase }: { onOpenCase: (caseId: str
       <div className="flex items-center justify-between gap-2"><span>{t("inbox.progress", { done: formatNumber(progress.done), total: formatNumber(progress.total) })}</span>
         {busy && <Button size="icon" variant="ghost" aria-label={t("inbox.stopAfterCurrent")} title={t("inbox.stopAfterCurrent")} onClick={() => { stop.current = true; }}><X className="h-4 w-4" /></Button>}</div>
       <Progress value={100 * progress.done / progress.total} aria-label={t("inbox.processingProgress")} />
-      <p className="break-words text-sm">{current}</p>
+      <p className="wrap-break-word text-sm">{current}</p>
     </div>}
-    {errors.length > 0 && <div role="alert" className="space-y-1 border-l-2 border-destructive pl-3 text-sm">{errors.map((error, index) => <p className="break-words" key={index}>{error}</p>)}</div>}
+    {errors.length > 0 && <div role="alert" className="space-y-1 border-l-2 border-destructive pl-3 text-sm">{errors.map((error, index) => <p className="wrap-break-word" key={index}>{error}</p>)}</div>}
     {query.isLoading && <p role="status">{t("inbox.loadingDocuments")}</p>}
     {query.error && <p role="alert">{query.error.message}</p>}
     {query.data?.items.length === 0 && <p className="py-8 text-muted-foreground">{t("inbox.empty")}</p>}
@@ -230,7 +230,7 @@ export default function DocumentInbox({ onOpenCase }: { onOpenCase: (caseId: str
       {query.data?.items.map((item) => <article key={item.id} className="space-y-3 py-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1"><h3 className="break-all font-medium">{item.fileName}</h3>
-            <p className="mt-1 break-words text-sm text-muted-foreground">{item.evidenceId ? item.caseTitle : t(item.error ? "inbox.status.analysisFailed" : item.analyzed ? "inbox.status.needsAttention" : "inbox.status.awaiting")}</p>
+            <p className="mt-1 wrap-break-word text-sm text-muted-foreground">{item.evidenceId ? item.caseTitle : t(item.error ? "inbox.status.analysisFailed" : item.analyzed ? "inbox.status.needsAttention" : "inbox.status.awaiting")}</p>
           </div>
           <div className="flex shrink-0 gap-1">
             <Button size="icon" variant="ghost" title={t("inbox.downloadOriginal")} aria-label={t("inbox.downloadNamed", { name: item.fileName })} disabled={download.isPending} onClick={() => void saveOriginal(item.id)}><Download className="h-4 w-4" /></Button>
@@ -239,7 +239,7 @@ export default function DocumentInbox({ onOpenCase }: { onOpenCase: (caseId: str
             {item.caseId && <Button size="icon" variant="ghost" title={t("inbox.openTimeline")} aria-label={t("inbox.openCaseNamed", { name: item.fileName })} onClick={() => onOpenCase(item.caseId!)}><FolderOpen className="h-4 w-4" /></Button>}
           </div>
         </div>
-        {item.error && <p className="break-words text-sm" role="alert">{item.error}</p>}
+        {item.error && <p className="wrap-break-word text-sm" role="alert">{item.error}</p>}
         {expanded === item.id && <InboxDetails id={item.id} refresh={refresh} />}
       </article>)}
     </div>

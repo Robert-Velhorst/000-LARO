@@ -20,7 +20,7 @@ function durationLabel(hours: number | null): string {
 function Metric({ label, value }: { label: string; value: string }) {
   return <div className="min-w-0 border-t border-border/50 pt-3">
     <dt className="text-xs text-muted-foreground">{label}</dt>
-    <dd className="mt-1 break-words text-sm font-medium">{value}</dd>
+    <dd className="mt-1 wrap-break-word text-sm font-medium">{value}</dd>
   </div>;
 }
 
@@ -56,8 +56,8 @@ export default function LawyerComparison({ lawyerIds, caseId, onClose }: {
           <CardHeader className="space-y-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex-1 basis-48">
-                <CardTitle className="break-words text-lg">{lawyer.name}</CardTitle>
-                <p className="mt-1 break-words text-sm text-muted-foreground">{lawyer.firm || "Practice not recorded"}</p>
+                <CardTitle className="wrap-break-word text-lg">{lawyer.name}</CardTitle>
+                <p className="mt-1 wrap-break-word text-sm text-muted-foreground">{lawyer.firm || "Practice not recorded"}</p>
               </div>
               {lawyer.caseMatch && <Badge className="shrink-0 whitespace-nowrap" title={`${lawyer.caseMatch.score} of ${lawyer.caseMatch.maxScore} canonical points`}>
                 {lawyer.caseMatch.percent}% case match
