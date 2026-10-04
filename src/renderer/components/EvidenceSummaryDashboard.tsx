@@ -445,7 +445,7 @@ export default function EvidenceSummaryDashboard({ caseId }: EvidenceSummaryDash
                 <CardContent className="space-y-3">
                   <div className="flex flex-wrap gap-2">
                     <Badge
-                      variant={selectedSource === null ? "default" : "outline-solid"}
+                      variant={selectedSource === null ? "default" : "outline"}
                       className="cursor-pointer"
                       onClick={() => setSelectedSource(null)}
                     >
@@ -454,7 +454,7 @@ export default function EvidenceSummaryDashboard({ caseId }: EvidenceSummaryDash
                     {Object.entries(stats.sourceStats).map(([source, count]) => (
                       <Badge
                         key={source}
-                        variant={selectedSource === source ? "default" : "outline-solid"}
+                        variant={selectedSource === source ? "default" : "outline"}
                         className="cursor-pointer"
                         onClick={() => setSelectedSource(source)}
                       >

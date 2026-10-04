@@ -87,11 +87,11 @@ function StatusIcon({ status }: { status: Completeness }) {
   return <AlertCircle className="h-4 w-4 text-amber-500" />;
 }
 
-function statusVariant(status: Completeness): "default" | "secondary" | "destructive" | "outline-solid" {
+function statusVariant(status: Completeness): "default" | "secondary" | "destructive" | "outline" {
   if (status === "failed" || status === "interrupted") return "destructive";
   if (status === "complete") return "default";
   if (status === "running" || status === "queued") return "secondary";
-  return "outline-solid";
+  return "outline";
 }
 
 export function CollectionMonitoringDashboard({ caseId }: CollectionMonitoringDashboardProps) {

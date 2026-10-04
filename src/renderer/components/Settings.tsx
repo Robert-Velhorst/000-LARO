@@ -986,7 +986,7 @@ export default function Settings() {
                           )}
                         </div>
                         <div className="flex items-center gap-2 sm:justify-end">
-                          <Badge variant={credential.status === "active" ? "default" : "outline-solid"}>{haiStatusLabel(credential.status)}</Badge>
+                          <Badge variant={credential.status === "active" ? "default" : "outline"}>{haiStatusLabel(credential.status)}</Badge>
                           {credential.status === "active" ? (
                             <>
                               <Button
@@ -1083,7 +1083,7 @@ export default function Settings() {
                           </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-                          <Badge variant={run.missingFiles > 0 ? "destructive" : "outline-solid"}>
+                          <Badge variant={run.missingFiles > 0 ? "destructive" : "outline"}>
                             {run.missingFiles > 0
                               ? t("settings.security.unavailableFiles", { count: formatNumber(run.missingFiles) })
                               : t("settings.security.filesVerified")}

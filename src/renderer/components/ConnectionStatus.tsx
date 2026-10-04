@@ -16,7 +16,7 @@ export function ConnectionStatus() {
     <Tooltip>
       <TooltipTrigger asChild>
         <Badge
-          variant={isConnected ? "outline-solid" : "destructive"}
+          variant={isConnected ? "outline" : "destructive"}
           role="status"
         >
           {isConnected ? (
@@ -42,4 +42,3 @@ export function ConnectionStatus() {
     </Tooltip>
   );
 }
-

@@ -114,7 +114,7 @@ export default function EvidenceExportUI({ caseId }: EvidenceExportUIProps) {
                   <Button
                     className="mt-4 w-full"
                     size="sm"
-                    variant={format.available ? "default" : "outline-solid"}
+                    variant={format.available ? "default" : "outline"}
                     disabled={!format.available || exporting}
                     onClick={() => startExport(format.id)}
                   >

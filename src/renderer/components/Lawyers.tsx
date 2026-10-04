@@ -117,7 +117,7 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
                 Official NOvA only
               </label>
               <Button
-                variant={comparisonMode ? "default" : "outline-solid"}
+                variant={comparisonMode ? "default" : "outline"}
                 className={comparisonMode ? "bg-purple-600 hover:bg-purple-700" : "border-purple-500/30 hover:bg-purple-500/10 hover:border-purple-500/50"}
                 onClick={() => {
                   const next = !comparisonMode;
@@ -282,7 +282,7 @@ export function LawyersDirectoryContent({ embedded = false }: { embedded?: boole
 
                     {comparisonMode ? (
                       <Button 
-                        variant={selectedLawyerIds.includes(lawyer.id) ? "default" : "outline-solid"}
+                        variant={selectedLawyerIds.includes(lawyer.id) ? "default" : "outline"}
                         className={`w-full mt-4 transition-all ${
                           selectedLawyerIds.includes(lawyer.id)
                             ? 'bg-purple-600 hover:bg-purple-700'
