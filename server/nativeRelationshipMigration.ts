@@ -35,8 +35,15 @@ function tableExists(sqlite: SqliteClient, table: string): boolean {
 
 function legacyRelationshipTriggers(sqlite: SqliteClient): string[] {
   return (sqlite.prepare(
-    "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'laro_ri_%' ORDER BY name",
+    "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name GLOB 'laro_ri_*' ORDER BY name",
   ).all() as Array<{ name: string }>).map((row) => row.name);
+}
+
+/** Call inside the transaction that replaces these legacy relationship guards. */
+export function removeLegacyRelationshipTriggers(sqlite: SqliteClient): void {
+  for (const trigger of legacyRelationshipTriggers(sqlite)) {
+    sqlite.exec(`DROP TRIGGER ${quoteIdentifier(trigger)}`);
+  }
 }
 
 export function relationshipOrphanReport(sqlite: SqliteClient): RelationshipOrphan[] {
@@ -170,9 +177,7 @@ export function reconcileNativeRelationships(sqlite: SqliteClient): NativeRelati
   sqlite.pragma("foreign_keys = OFF");
   try {
     sqlite.exec("BEGIN IMMEDIATE");
-    for (const trigger of legacyRelationshipTriggers(sqlite)) {
-      sqlite.exec(`DROP TRIGGER ${quoteIdentifier(trigger)}`);
-    }
+    removeLegacyRelationshipTriggers(sqlite);
     for (const [table, relationships] of [...byTable.entries()].sort(([left], [right]) => left.localeCompare(right))) {
       rebuildTableWithRelationships(sqlite, table, relationships);
     }

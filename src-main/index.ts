@@ -498,8 +498,19 @@ if (ownsDesktopProfile) app.whenReady().then(async () => {
     if (!process.env.OAUTH_REDIRECT_BASE_URL) process.env.OAUTH_REDIRECT_BASE_URL = laroUrl;
     console.log('[Electron] Integrated server started on port', actualPort);
   } catch (err) {
-    console.error('[Electron] Failed to start integrated server:', err);
-    dialog.showErrorBox('Server Error', 'Failed to start the integrated backend server.');
+    log.error(`[Electron] LARO ${app.getVersion()} failed to start the integrated server:`, err);
+    let diagnosticLocation = '';
+    try {
+      diagnosticLocation = `\n\nDiagnostic log: ${log.transports.file.getFile().path}`;
+    } catch {
+      // Logging must not hide the original startup failure if the disk is full
+      // or the profile's log directory is unavailable.
+    }
+    dialog.showErrorBox(
+      'Server Error',
+      'LARO could not start its built-in server. Do not delete your workspace or encryption keys. ' +
+        'Please share the diagnostic log with support.' + diagnosticLocation,
+    );
     app.quit();
     return;
   }
