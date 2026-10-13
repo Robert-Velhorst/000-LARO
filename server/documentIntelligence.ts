@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import mammoth from "mammoth";
+import { DOMParser } from "@xmldom/xmldom";
 import { PDFParse } from "pdf-parse";
 import { getDocument, type PDFDocumentLoadingTask, type PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { Open } from "unzipper";
@@ -327,9 +327,8 @@ export async function extractDocumentTextInAcquiredSlot(bytes: Buffer, mimeType:
   }
   if (normalizedMime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
     const deadlineAt = Date.now() + DOCUMENT_EXTRACTION_TIMEOUT_MS;
-    await validateDocxArchive(bytes, deadlineAt);
-    const result = await beforeExtractionDeadline(() => mammoth.extractRawText({ buffer: bytes }), deadlineAt);
-    const text = normalizeText(result.value);
+    const documentXml = await validateDocxArchive(bytes, deadlineAt);
+    const text = extractDocxRawText(documentXml);
     if (text.length > MAX_ANALYSIS_CHARS) {
       throw new Error("DOCX extracted text exceeds the 8 MB analysis limit");
     }
@@ -577,7 +576,7 @@ async function loadPdfWithinDeadline(bytes: Buffer, deadlineAt: number): Promise
   }
 }
 
-async function validateDocxArchive(bytes: Buffer, deadlineAt: number): Promise<void> {
+async function validateDocxArchive(bytes: Buffer, deadlineAt: number): Promise<Buffer> {
   const directory = await beforeExtractionDeadline(() => Open.buffer(bytes), deadlineAt);
   if (directory.files.length > MAX_DOCX_ARCHIVE_ENTRIES) {
     throw new Error(`DOCX archive exceeds the ${MAX_DOCX_ARCHIVE_ENTRIES} entry processing limit`);
@@ -599,14 +598,18 @@ async function validateDocxArchive(bytes: Buffer, deadlineAt: number): Promise<v
   }
 
   let actualTotal = 0;
+  let documentXml: Buffer | undefined;
   for (const file of directory.files) {
     if (file.type !== "File") continue;
     const stream = file.stream();
     let entryBytes = 0;
+    const isDocumentXml = file.path.replace(/\\/g, "/") === "word/document.xml";
+    const documentChunks: Buffer[] = [];
     try {
       await beforeExtractionDeadline(async () => {
         for await (const chunk of stream) {
-          const chunkBytes = Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk));
+          const chunkBuffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          const chunkBytes = chunkBuffer.length;
           entryBytes += chunkBytes;
           actualTotal += chunkBytes;
           if (entryBytes > MAX_DOCX_ENTRY_BYTES) {
@@ -615,12 +618,46 @@ async function validateDocxArchive(bytes: Buffer, deadlineAt: number): Promise<v
           if (actualTotal > MAX_DOCX_EXPANDED_BYTES) {
             throw new Error("DOCX expanded content exceeds the 32 MB processing limit");
           }
+          if (isDocumentXml) documentChunks.push(chunkBuffer);
         }
       }, deadlineAt);
+      if (isDocumentXml) documentXml = Buffer.concat(documentChunks, entryBytes);
     } finally {
       stream.destroy();
     }
   }
+  if (!documentXml) throw new Error("DOCX archive is missing word/document.xml");
+  return documentXml;
+}
+
+function extractDocxRawText(documentXml: Buffer): string {
+  const xml = documentXml.toString("utf8");
+  if (/<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error("DOCX document XML cannot declare a document type or entities");
+  const document = new DOMParser({
+    onError: (level, message) => {
+      if (level !== "warning") throw new Error(`DOCX document XML is invalid: ${message}`);
+    },
+  }).parseFromString(xml, "application/xml");
+  const paragraphs = document.getElementsByTagNameNS("*", "p");
+  if (!paragraphs.length) throw new Error("DOCX document XML does not contain any paragraphs");
+
+  const collectText = (node: Node): string => {
+    if (node.nodeType === 1) {
+      const element = node as Element;
+      if (element.localName === "t") return element.textContent ?? "";
+      if (element.localName === "tab") return "\t";
+      if (element.localName === "br" || element.localName === "cr") return "\n";
+      if (element.localName === "del" || element.localName === "moveFrom") return "";
+    }
+    let text = "";
+    for (let index = 0; index < node.childNodes.length; index += 1) {
+      text += collectText(node.childNodes.item(index)!);
+    }
+    return text;
+  };
+
+  const text = Array.from({ length: paragraphs.length }, (_, index) => collectText(paragraphs.item(index)!)).join("\n\n");
+  return normalizeText(text);
 }
 
 type AiFinding = { text: string; citations: string[]; evidenceQuotes: string[] };
