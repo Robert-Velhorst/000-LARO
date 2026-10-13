@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { DOMParser } from "@xmldom/xmldom";
+import { DOMParser, type Element as XmlElement, type Node as XmlNode } from "@xmldom/xmldom";
 import { PDFParse } from "pdf-parse";
 import { getDocument, type PDFDocumentLoadingTask, type PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { Open } from "unzipper";
@@ -639,7 +639,8 @@ function extractDocxRawText(documentXml: Buffer): string {
     },
   }).parseFromString(xml, "application/xml");
   const wordNamespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-  if (document.documentElement.localName !== "document" || document.documentElement.namespaceURI !== wordNamespace) {
+  const root = document.documentElement;
+  if (!root || root.localName !== "document" || root.namespaceURI !== wordNamespace) {
     throw new Error("DOCX document XML does not have a valid WordprocessingML root");
   }
   const body = document.getElementsByTagNameNS(wordNamespace, "body").item(0);
@@ -647,13 +648,13 @@ function extractDocxRawText(documentXml: Buffer): string {
   const paragraphs = body.getElementsByTagNameNS(wordNamespace, "p");
   if (!paragraphs.length) throw new Error("DOCX document XML does not contain any paragraphs");
 
-  const collectText = (node: Node): string => {
+  const collectText = (node: XmlNode): string => {
     let text = "";
     const pending = [node];
     while (pending.length) {
       const current = pending.pop()!;
       if (current.nodeType === 1) {
-        const element = current as Element;
+        const element = current as XmlElement;
         if (element.namespaceURI === wordNamespace && element.localName === "t") {
           text += element.textContent ?? "";
           continue;
