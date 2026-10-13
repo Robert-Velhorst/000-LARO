@@ -31,7 +31,7 @@ SQLite/hosted migration artifacts.
 | Boundary | Current implementation | Authority |
 | --- | --- | --- |
 | Desktop product | Electron, React, Vite, tRPC client | Primary operator surface |
-| API | Express + tRPC, also deployable as a Node 22 container | Primary application API |
+| API | Express + tRPC, also deployable as a Node 24 LTS container | Primary application API |
 | Data | SQLite through Drizzle/better-sqlite3 | Electron/Node database is authoritative |
 | Legacy import | Flask ledger and recovery tooling | Offline migration source only |
 | Evidence | Managed local or S3 bytes, hashes, extracted text, structured analysis, source links | Owner-scoped records and storage |

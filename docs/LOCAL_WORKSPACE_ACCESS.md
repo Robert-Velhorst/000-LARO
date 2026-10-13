@@ -6,7 +6,7 @@ register a second account there to recover access to their real records.
 
 ## Open An Existing Local Workspace
 
-Use Node 22 and build the renderer and server. Build the renderer with
+Use Node 24 and build the renderer and server. Build the renderer with
 `VITE_LARO_IGNORE_DOTENV=true` and without `VITE_API_URL`, so it uses its own origin.
 Keep the following configuration outside Git, next to the private database:
 

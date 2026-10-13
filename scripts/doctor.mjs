@@ -9,8 +9,8 @@ const results = [];
 const record = (level, message) => results.push([level, message]);
 
 const [major, minor] = process.versions.node.split('.').map(Number);
-record(major === 22 && minor >= 12 ? 'ok' : 'fail',
-  `Node ${process.versions.node}${major === 22 && minor >= 12 ? '' : ' (need Node 22.12+ in the Node 22 LTS line)'}`);
+record(major === 24 && minor >= 21 ? 'ok' : 'fail',
+  `Node ${process.versions.node}${major === 24 && minor >= 21 ? '' : ' (need Node 24.21+ in the Node 24 LTS line)'}`);
 
 for (const [key, placeholder] of [['JWT_SECRET', 'change-this-secret'], ['COOKIE_SECRET', 'change-this-cookie-secret']]) {
   const value = process.env[key] || '';

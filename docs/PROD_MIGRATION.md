@@ -15,7 +15,7 @@ deployment for real cases (not the dev/demo environment).
 - The current `package.json` version has a `CHANGELOG.md` entry (warn).
 
 ## Migration steps
-1. Use Node 22.12+ and run `npm ci --ignore-scripts`.
+1. Use Node 24.21+ and run `npm ci --ignore-scripts`.
 2. Run `npm run rebuild:node` for server validation or `npm run rebuild:electron` immediately before desktop packaging.
 3. Provide production credentials via the **environment**, never a bundled file
    (account safety — Phase 100).
