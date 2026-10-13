@@ -912,7 +912,15 @@ npm run acceptance:google-drive-evidence-live
 These use real external accounts and are consequential. Run them only with the
 intended owner account and recipient. Automated tests do not replace them.
 
-## API-only and ngrok Deployment
+## Production deployment target: Hetzner
+
+Hetzner is the production target for new deployments. Do not use Vercel or
+ngrok for production hosting. Follow [the Hetzner deployment guide](docs/HETZNER_DEPLOYMENT.md)
+and [the deployment target directive](DEPLOYMENT_TARGET.md). The ngrok commands
+below are retained only for local development, testing, and validating an
+existing setup during migration; they are not production deployment steps.
+
+## Local API and existing ngrok migration tooling
 
 ### Local Docker
 

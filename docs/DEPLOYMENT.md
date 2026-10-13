@@ -2,6 +2,14 @@
 
 Updated: 2026-09-23 · Candidate branch `milestone3/remediate-roadmap`
 
+## Production target
+
+Hetzner is the target for new production deployments. Do not use Vercel or
+ngrok for production hosting. See [the deployment target directive](../DEPLOYMENT_TARGET.md)
+and [the Hetzner deployment guide](HETZNER_DEPLOYMENT.md) before preparing a
+production release. The ngrok procedures in this guide are retained only for
+local development, testing, and migration validation of an existing setup.
+
 The final account/lifecycle release matrix for implementation commit `ec94985`
 is recorded in
 [`FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md`](FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md).
@@ -39,10 +47,11 @@ docker compose up --build          # http://localhost:3000
 npm run docker:build && npm run docker:run
 ```
 
-This plain Compose start is for a local provider-free server. Once a public
-ngrok deployment has been verified, restart it through
-`scripts/start-ngrok-api.ps1`; that launcher decrypts the protected provider
-configuration and enforces the persisted public route. Direct Compose starts
+This plain Compose start is for a local provider-free server. The legacy ngrok
+launcher may re-verify an existing setup for testing or migration validation; it
+does not establish production hosting. Production deployment instructions are
+in [the Hetzner guide](HETZNER_DEPLOYMENT.md). The launcher decrypts protected
+provider configuration and enforces the persisted route. Direct Compose starts
 then fail closed if required Google or outbound-mail credentials are absent.
 
 - Healthcheck: the container polls `/api/ready`.
@@ -83,13 +92,16 @@ administrator-only. tRPC `health.check` is a public basic check (Phase 036).
 migrations, integration config) and **exits non-zero** on production-critical
 problems, so it can gate a deploy.
 
-## Desktop plus API through ngrok
+## Legacy ngrok workflow for local testing and migration validation
 
-The API can remain on the operator workstation while ngrok provides the public
-HTTPS endpoint. The Docker port is bound to `127.0.0.1`, so it is not exposed
-directly to the local network. When the account's free dev domain already hosts
-another application, LARO uses a private `laro.internal` endpoint and an exact
-`/laro/*` gateway rule. Unmatched traffic continues to the existing upstream.
+This workflow supports local testing and migration validation of an existing
+setup. It is not for new or continued production hosting. For production use
+Hetzner. The API may remain on an operator workstation while ngrok provides a
+temporary HTTPS endpoint. The Docker port is bound to `127.0.0.1`, so it is not
+exposed directly to the local network. When an account's free dev domain
+already hosts another application, LARO can use a private `laro.internal`
+endpoint and an exact `/laro/*` gateway rule. Unmatched traffic continues to
+the existing upstream.
 
 ```powershell
 # First run builds the image. A configured ngrok account is required.
@@ -142,7 +154,7 @@ https://<ngrok-domain>/laro/api/oauth/gmail/callback
 The assigned free dev domain remains stable. No additional paid domain is
 required for this path-routed configuration.
 
-### Direct ngrok fallback
+### Direct ngrok fallback for local testing and migration validation
 
 If the existing gateway policy cannot be edited, LARO can use a separate ngrok
 HTTPS tunnel without changing or replacing the application already hosted on

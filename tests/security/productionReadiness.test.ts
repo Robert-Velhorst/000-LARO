@@ -142,7 +142,8 @@ describe('production readiness regressions', () => {
     const main = readFileSync(join(ROOT, 'src-main/index.ts'), 'utf8');
 
     expect(pkg.dependencies['pdf-parse']).toBeTruthy();
-    expect(pkg.dependencies.mammoth).toBeTruthy();
+    expect(pkg.dependencies['@xmldom/xmldom']).toBeTruthy();
+    expect(pkg.dependencies.mammoth).toBeUndefined();
     expect(pkg.dependencies['tesseract.js']).toBe('7.0.0');
     expect(pkg.dependencies['@tesseract.js-data/nld']).toBe('1.0.0');
     expect(pkg.dependencies['@tesseract.js-data/eng']).toBe('1.0.0');
