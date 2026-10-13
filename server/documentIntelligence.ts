@@ -635,23 +635,42 @@ function extractDocxRawText(documentXml: Buffer): string {
   if (/<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error("DOCX document XML cannot declare a document type or entities");
   const document = new DOMParser({
     onError: (level, message) => {
-      if (level !== "warning") throw new Error(`DOCX document XML is invalid: ${message}`);
+      throw new Error(`DOCX document XML is invalid (${level}): ${message}`);
     },
   }).parseFromString(xml, "application/xml");
-  const paragraphs = document.getElementsByTagNameNS("*", "p");
+  const wordNamespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  if (document.documentElement.localName !== "document" || document.documentElement.namespaceURI !== wordNamespace) {
+    throw new Error("DOCX document XML does not have a valid WordprocessingML root");
+  }
+  const body = document.getElementsByTagNameNS(wordNamespace, "body").item(0);
+  if (!body) throw new Error("DOCX document XML does not contain a WordprocessingML body");
+  const paragraphs = body.getElementsByTagNameNS(wordNamespace, "p");
   if (!paragraphs.length) throw new Error("DOCX document XML does not contain any paragraphs");
 
   const collectText = (node: Node): string => {
-    if (node.nodeType === 1) {
-      const element = node as Element;
-      if (element.localName === "t") return element.textContent ?? "";
-      if (element.localName === "tab") return "\t";
-      if (element.localName === "br" || element.localName === "cr") return "\n";
-      if (element.localName === "del" || element.localName === "moveFrom") return "";
-    }
     let text = "";
-    for (let index = 0; index < node.childNodes.length; index += 1) {
-      text += collectText(node.childNodes.item(index)!);
+    const pending = [node];
+    while (pending.length) {
+      const current = pending.pop()!;
+      if (current.nodeType === 1) {
+        const element = current as Element;
+        if (element.namespaceURI === wordNamespace && element.localName === "t") {
+          text += element.textContent ?? "";
+          continue;
+        }
+        if (element.namespaceURI === wordNamespace && element.localName === "tab") {
+          text += "\t";
+          continue;
+        }
+        if (element.namespaceURI === wordNamespace && (element.localName === "br" || element.localName === "cr")) {
+          text += "\n";
+          continue;
+        }
+        if (element.namespaceURI === wordNamespace && (element.localName === "del" || element.localName === "moveFrom")) continue;
+      }
+      for (let index = current.childNodes.length - 1; index >= 0; index -= 1) {
+        pending.push(current.childNodes.item(index)!);
+      }
     }
     return text;
   };
