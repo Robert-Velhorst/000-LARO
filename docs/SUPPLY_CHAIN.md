@@ -19,7 +19,7 @@ transitive `js-yaml` 4.3.0 to 4.3.1. Both the complete dependency graph and
 `--omit=dev` runtime graph then reported zero known vulnerabilities. No major
 version or application API change was required.
 
-The remediation upgraded the supported runtime to Node 22.12+, Electron 43, Vite 8, Vitest 4, electron-builder 26, better-sqlite3 13, Drizzle ORM 0.45, Nodemailer 9, and UUID 11. Unused `xlsx`, Stripe SDK, PDFKit, Tesseract, and their unused type packages were removed. `drizzle-kit` was also removed because its current dependency chain retained the final four advisories; checked-in SQL migrations remain the production migration source.
+The remediation upgraded the supported runtime to Node 24.21+, Electron 43, Vite 8, Vitest 4, electron-builder 26, better-sqlite3 13, Drizzle ORM 0.45, Nodemailer 9, and UUID 11. Unused `xlsx`, Stripe SDK, PDFKit, Tesseract, and their unused type packages were removed. `drizzle-kit` was also removed because its current dependency chain retained the final four advisories; checked-in SQL migrations remain the production migration source.
 
 ## Native module lifecycle
 

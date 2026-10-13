@@ -11,7 +11,7 @@ LARO changes follow one evidence-backed lifecycle:
 
 ## Required validation
 
-Use Node.js 22 as declared in `package.json`.
+Use Node.js 24 LTS as declared in `package.json`.
 
 ```text
 npm ci

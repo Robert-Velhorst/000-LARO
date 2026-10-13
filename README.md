@@ -95,7 +95,7 @@ there is no checkout or claim that unattended dossier discovery is accepted.
 The page is marked `noindex` while it remains a development preview.
 
 For an isolated **developer** preview, after installing dependencies with the
-supported Node 22 runtime:
+supported Node 24 LTS runtime:
 
 ```powershell
 npm.cmd run build:server
@@ -712,7 +712,7 @@ with `--local`.
 ### Requirements
 
 - Windows 10/11 for the primary desktop and packaging workflow.
-- Node.js `>=22.12 <23` and npm.
+- Node.js `>=24.21 <25` and npm.
 - Python 3.11+ only for legacy Flask review, migration, and Python tests.
 - C++ build tools only if npm cannot obtain a native SQLite binary.
 - Optional Docker Desktop and provider credentials.
@@ -920,7 +920,7 @@ intended owner account and recipient. Automated tests do not replace them.
 docker compose up --build
 ```
 
-The image runs Express/tRPC on Node 22. SQLite and local evidence persist in the
+The image runs Express/tRPC on Node 24. SQLite and local evidence persist in the
 named `laro-data` volume. Keep `LARO_COMPOSE_PROJECT_NAME` stable across checkout
 moves.
 

@@ -3,7 +3,7 @@
 # This image serves the standalone API and optionally its browser interface
 # (LARO_SERVE_WEB=true). Electron itself is not installed in the runtime image.
 # SQLite is compiled for Node, with durable data kept outside the container.
-FROM node:22-bookworm-slim AS build
+FROM node:24-bookworm-slim AS build
 WORKDIR /app
 
 # Build toolchain for the better-sqlite3 native module.

@@ -15,7 +15,7 @@ const log = (m) => console.log(`[setup] ${m}`);
 // 1. Node version check.
 const [major, minor] = process.versions.node.split('.').map(Number);
 if (major !== 22 || minor < 12) {
-  console.error(`[setup] Node 22.12+ in the Node 22 LTS line is required; found ${process.versions.node}.`);
+  console.error(`[setup] Node 24.21+ in the Node 24 LTS line is required; found ${process.versions.node}.`);
   process.exit(1);
 }
 log(`Node ${process.versions.node} OK.`);
