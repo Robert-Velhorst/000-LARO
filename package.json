@@ -111,7 +111,7 @@
     "googleapis": "^171.4.0",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.363.0",
-    "mammoth": "^1.12.0",
+    "mammoth": "^1.13.0",
     "mime-types": "^2.1.35",
     "nanoid": "^3.3.7",
     "node-cron": "^4.2.1",
@@ -221,5 +221,11 @@
       ],
       "artifactName": "LARO-Desktop-${version}-Store-${arch}.${ext}"
     }
+  },
+  "overrides": {
+    "mammoth": {
+      "argparse": "2.0.1"
+    },
+    "@xmldom/xmldom": "0.8.15"
   }
 }
