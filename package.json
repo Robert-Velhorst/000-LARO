@@ -5,7 +5,7 @@
   "author": "Noodzakelijk Online",
   "main": "dist/main/src-main/index.js",
   "engines": {
-    "node": ">=22.12 <23"
+    "node": ">=26.11.1"
   },
   "overrides": {
     "qs": "6.16.0",

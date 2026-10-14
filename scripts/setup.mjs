@@ -13,9 +13,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const log = (m) => console.log(`[setup] ${m}`);
 
 // 1. Node version check.
-const [major, minor] = process.versions.node.split('.').map(Number);
-if (major !== 22 || minor < 12) {
-  console.error(`[setup] Node 22.12+ in the Node 22 LTS line is required; found ${process.versions.node}.`);
+const [major, minor, patch] = process.versions.node.split('.').map(Number);
+const supportedNode = major > 26 || (major === 26 && (minor > 11 || (minor === 11 && patch >= 1)));
+if (!supportedNode) {
+  console.error(`[setup] Node 26.11.1 or newer is required; found ${process.versions.node}.`);
   process.exit(1);
 }
 log(`Node ${process.versions.node} OK.`);

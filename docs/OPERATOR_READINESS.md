@@ -33,7 +33,7 @@ prefers the current TypeScript source and first restores the Node ABI for
 
 ## Release Checklist
 
-- [ ] `npm ci` succeeds on supported Node 22.
+- [ ] `npm ci` succeeds on supported Node 26.11.1 or newer.
 - [ ] `npm run gate` and the Python test suite pass.
 - [ ] `npm audit --omit=dev` reports no unresolved runtime vulnerability.
 - [ ] `npm run readiness` passes, including both runtime recovery drills.
