@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: '22'
+          node-version: '26.12.0'
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
@@ -28,7 +28,7 @@ jobs:
           LARO_BROWSER_CHANNEL: chromium
       - name: Upload verification evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: LARO-Shared-Verification
           path: out/shared-verification/
@@ -43,7 +43,7 @@ jobs:
           sha256sum laro-shared-image.tar.gz > laro-shared-image.tar.gz.sha256
       - name: Upload deployment image
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: LARO-Shared-Image
           path: out/deployment/
