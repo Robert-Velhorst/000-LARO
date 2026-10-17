@@ -151,7 +151,9 @@ router.get('/user/profile', authenticateToken, csrfProtection, (req, res) => {
 // Form submission with CSRF protection and input sanitization
 router.post('/submit-form', csrfProtection, (req, res) => {
   // Sanitize all input fields
-  const sanitizedData = {};
+  // Request keys are untrusted; a null-prototype object prevents special keys
+  // such as __proto__ from mutating the sanitization result's prototype.
+  const sanitizedData = Object.create(null);
   
   Object.keys(req.body).forEach(key => {
     // Skip CSRF token
