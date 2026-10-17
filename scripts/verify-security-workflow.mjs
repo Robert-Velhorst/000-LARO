@@ -102,7 +102,7 @@ if (!(container.indexOf('Build the runtime image') < container.indexOf('Generate
 }
 requirePattern(
   dockerfile,
-  /FROM gcr\.io\/distroless\/nodejs22-debian13:latest@sha256:[0-9a-f]{64} AS runtime/,
+  /FROM gcr\.io\/distroless\/nodejs24-debian13:latest@sha256:[0-9a-f]{64} AS runtime/,
   'the scanned production runtime must retain its immutable minimal base image',
 );
 requireText(dockerfile, 'CMD ["/nodejs/bin/node", "-e"', 'the distroless healthcheck must invoke its absolute Node runtime');
