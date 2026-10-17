@@ -124,7 +124,7 @@
     "google-auth-library": "^10.6.2",
     "googleapis": "^171.4.0",
     "jsonwebtoken": "^9.0.3",
-    "lucide-react": "^0.363.0",
+    "lucide-react": "^1.56.0",
     "mime-types": "^2.1.35",
     "nanoid": "^3.3.7",
     "node-cron": "^4.2.1",
