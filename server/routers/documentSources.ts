@@ -46,7 +46,7 @@ export const documentSourcesRouter = router({
     } else await requireSourceGoogleAccount(ctx.user.id, config.accountId);
     return startDocumentSource(ctx.user.id, config);
   }),
-  list: protectedProcedure.input(z.object({ offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(30).default(10) }).default({})).query(async ({ ctx, input }) => {
+  list: protectedProcedure.input(z.object({ offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(30).default(10) }).prefault({})).query(async ({ ctx, input }) => {
     const db = await getDb();
     const where = eq(jobs.userId, ctx.user.id);
     return { items: db.select().from(jobs).where(where).orderBy(desc(jobs.createdAt), desc(jobs.id)).limit(input.limit).offset(input.offset).all(),

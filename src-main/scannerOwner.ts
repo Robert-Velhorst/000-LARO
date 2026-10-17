@@ -32,9 +32,9 @@ export async function resolveScannerOwner(options: {
       });
   const initialAuth = await resolveAuth();
   const client = createTRPCProxyClient<AppRouter>({
-    transformer: superjson,
     links: [httpBatchLink({
       url: `${options.apiUrl.replace(/\/$/, '')}/api/trpc`,
+      transformer: superjson,
       headers: () => ({ Cookie: initialAuth.sessionCookie }),
     })],
   });
