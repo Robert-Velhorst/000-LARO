@@ -80,6 +80,15 @@ function setupSecurity(app) {
 
 // Authentication routes with CSRF protection
 router.post('/auth/login', csrfProtection, (req, res) => {
+  // This credential-accepting demo route exists only for the legacy test
+  // harness. Never expose it from a production server.
+  if (process.env.NODE_ENV === 'production' || process.env.LEGACY_DEMO_AUTH_ENABLED !== 'true') {
+    return res.status(503).json({
+      success: false,
+      message: 'Legacy demo authentication is disabled'
+    });
+  }
+
   const { email, password } = req.body;
   
   // Input validation
