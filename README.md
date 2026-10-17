@@ -95,7 +95,7 @@ there is no checkout or claim that unattended dossier discovery is accepted.
 The page is marked `noindex` while it remains a development preview.
 
 For an isolated **developer** preview, after installing dependencies with the
-supported Node 22 runtime:
+supported Node 26.11.1 runtime:
 
 ```powershell
 npm.cmd run build:server
@@ -928,9 +928,9 @@ existing setup during migration; they are not production deployment steps.
 docker compose up --build
 ```
 
-The image runs Express/tRPC on Node 22. SQLite and local evidence persist in the
-named `laro-data` volume. Keep `LARO_COMPOSE_PROJECT_NAME` stable across checkout
-moves.
+The image runs Express/tRPC on Node 26.11.1. SQLite and local evidence persist
+in the named `laro-data` volume. Keep `LARO_COMPOSE_PROJECT_NAME` stable across
+checkout moves.
 
 ```text
 /api/live    process liveness

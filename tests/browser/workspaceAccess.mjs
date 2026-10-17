@@ -1,4 +1,4 @@
-// Run with Node 22 after the renderer and server builds. Only disposable data.
+// Run with Node 26.11.1 or newer after the renderer and server builds. Only disposable data.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
