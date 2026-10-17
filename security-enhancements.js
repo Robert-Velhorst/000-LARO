@@ -80,6 +80,15 @@ function setupSecurity(app) {
 
 // Authentication routes with CSRF protection
 router.post('/auth/login', csrfProtection, (req, res) => {
+  // This credential-accepting demo route exists only for the legacy test
+  // harness. Never expose it from a production server.
+  if (process.env.NODE_ENV === 'production' || process.env.LEGACY_DEMO_AUTH_ENABLED !== 'true') {
+    return res.status(503).json({
+      success: false,
+      message: 'Legacy demo authentication is disabled'
+    });
+  }
+
   const { email, password } = req.body;
   
   // Input validation
@@ -123,7 +132,7 @@ router.post('/auth/login', csrfProtection, (req, res) => {
     success: true,
     user: {
       email,
-      role: email.includes('investor') ? 'investor' : 'user'
+      role: 'user'
     }
   });
 });
@@ -151,7 +160,9 @@ router.get('/user/profile', authenticateToken, csrfProtection, (req, res) => {
 // Form submission with CSRF protection and input sanitization
 router.post('/submit-form', csrfProtection, (req, res) => {
   // Sanitize all input fields
-  const sanitizedData = {};
+  // Request keys are untrusted; a null-prototype object prevents special keys
+  // such as __proto__ from mutating the sanitization result's prototype.
+  const sanitizedData = Object.create(null);
   
   Object.keys(req.body).forEach(key => {
     // Skip CSRF token
@@ -203,32 +214,39 @@ router.post('/submit-case', csrfProtection, (req, res) => {
 
 // Helper functions
 
+function getJwtSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (typeof secret !== 'string' || Buffer.byteLength(secret, 'utf8') < 32) {
+    throw new Error('JWT_SECRET must contain at least 32 bytes');
+  }
+  return secret;
+}
+
 // Generate JWT token
 function generateToken(email) {
-  // In a real app, we would use a proper JWT library
-  // For this demo, we'll create a simple token
+  if (typeof email !== 'string' || !validator.isEmail(email)) {
+    throw new TypeError('A valid email address is required to create a token');
+  }
+
   const header = {
     alg: 'HS256',
     typ: 'JWT'
   };
   
   const payload = {
-    sub: email,
-    role: email.includes('investor') ? 'investor' : 'user',
+    sub: email.trim().toLowerCase(),
+    role: 'user',
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours
   };
   
-  const base64Header = Buffer.from(JSON.stringify(header)).toString('base64').replace(/=/g, '');
-  const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64').replace(/=/g, '');
-  
-  const secret = process.env.JWT_SECRET || 'your-secret-key';
+  const base64Header = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64url');
   
   const signature = crypto
-    .createHmac('sha256', secret)
+    .createHmac('sha256', getJwtSecret())
     .update(`${base64Header}.${base64Payload}`)
-    .digest('base64')
-    .replace(/=/g, '');
+    .digest('base64url');
   
   return `${base64Header}.${base64Payload}.${signature}`;
 }
@@ -245,24 +263,44 @@ function authenticateToken(req, res, next) {
   }
   
   try {
-    // In a real app, we would verify the token with a JWT library
-    // For this demo, we'll parse it manually
+    if (typeof token !== 'string') {
+      throw new Error('Invalid token format');
+    }
+
     const parts = token.split('.');
     if (parts.length !== 3) {
       throw new Error('Invalid token format');
     }
+
+    const [encodedHeader, encodedPayload, encodedSignature] = parts;
+    const secret = getJwtSecret();
+    const expectedSignature = crypto
+      .createHmac('sha256', secret)
+      .update(`${encodedHeader}.${encodedPayload}`)
+      .digest();
+    const providedSignature = Buffer.from(encodedSignature, 'base64url');
+
+    if (providedSignature.length !== expectedSignature.length ||
+        !crypto.timingSafeEqual(providedSignature, expectedSignature)) {
+      throw new Error('Invalid token signature');
+    }
+
+    const header = JSON.parse(Buffer.from(encodedHeader, 'base64url').toString('utf8'));
+    if (header.alg !== 'HS256' || header.typ !== 'JWT') {
+      throw new Error('Unsupported token algorithm');
+    }
     
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+    const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
     
-    // Check if token is expired
-    if (payload.exp < Math.floor(Date.now() / 1000)) {
+    if (typeof payload.sub !== 'string' || !validator.isEmail(payload.sub) ||
+        !Number.isFinite(payload.exp) || payload.exp <= Math.floor(Date.now() / 1000)) {
       throw new Error('Token expired');
     }
     
     // Set user info in request
     req.user = {
-      email: payload.sub,
-      role: payload.role
+      email: payload.sub.trim().toLowerCase(),
+      role: payload.role === 'investor' ? 'investor' : 'user'
     };
     
     next();

@@ -77,6 +77,9 @@ async function teardownTestDatabase() {
 }
 
 function setupTestServer() {
+  // Explicitly enable the legacy demo login only for this non-production test
+  // harness. The middleware rejects it whenever NODE_ENV is production.
+  process.env.LEGACY_DEMO_AUTH_ENABLED = 'true';
   testApp = express();
   securityModule.setupSecurity(testApp);
   testApp.use('/api', apiRouter);
