@@ -17,8 +17,8 @@ interface GoogleDriveSourceSelectorProps {
 }
 
 interface DriveFolder {
-  id: string | null | undefined;
-  name: string | null | undefined;
+  id?: string | null;
+  name?: string | null;
 }
 
 export function GoogleDriveSourceSelector({
@@ -58,8 +58,8 @@ export function GoogleDriveSourceSelector({
     { enabled: connectedAccounts.length > 0 && Boolean(selectedAccountId) },
   );
 
-  const folders = (foldersData?.folders ?? []).filter(
-    (folder): folder is DriveFolder & { id: string; name: string } => Boolean(folder.id && folder.name),
+  const folders: Array<DriveFolder & { id: string; name: string }> = (foldersData?.folders ?? []).filter(
+    (folder: DriveFolder): folder is DriveFolder & { id: string; name: string } => Boolean(folder.id && folder.name),
   );
   const filteredFolders = searchQuery
     ? folders.filter((folder) => folder.name.toLowerCase().includes(searchQuery.toLowerCase()))

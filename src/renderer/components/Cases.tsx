@@ -193,7 +193,7 @@ export default function Cases() {
       <Dialog
         open={!!caseToDelete}
         onOpenChange={(open: boolean) => {
-          if (!open && !deleteCase.isLoading) setCaseToDelete(null);
+          if (!open && !deleteCase.isPending) setCaseToDelete(null);
         }}
       >
         <DialogContent className="max-w-md">
@@ -211,13 +211,13 @@ export default function Cases() {
             <Button
               variant="outline"
               onClick={() => setCaseToDelete(null)}
-              disabled={deleteCase.isLoading}
+              disabled={deleteCase.isPending}
             >
               {t("common.cancel")}
             </Button>
             <Button
               className="bg-red-500 hover:bg-red-600"
-              disabled={deleteCase.isLoading}
+              disabled={deleteCase.isPending}
               onClick={async () => {
                 if (!caseToDelete) return;
                 try {
@@ -228,7 +228,7 @@ export default function Cases() {
                 }
               }}
             >
-              {deleteCase.isLoading ? t("case.list.deleting") : t("case.list.erase")}
+              {deleteCase.isPending ? t("case.list.deleting") : t("case.list.erase")}
             </Button>
           </div>
         </DialogContent>

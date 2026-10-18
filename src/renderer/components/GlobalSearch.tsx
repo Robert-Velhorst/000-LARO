@@ -26,7 +26,7 @@ export default function GlobalSearch() {
   const normalizedQuery = query.trim();
   const results = trpc.search.global.useQuery(
     { query: normalizedQuery, limit: 20 },
-    { enabled: open && normalizedQuery.length >= 2, keepPreviousData: false },
+    { enabled: open && normalizedQuery.length >= 2 },
   );
   const completeness = results.data?.completeness;
   const incomplete = completeness && completeness.status !== "complete";
