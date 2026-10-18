@@ -4,8 +4,7 @@ Updated: 2026-09-23 · Candidate branch `milestone3/remediate-roadmap`
 
 ## Production target
 
-Hetzner is the target for new production deployments. Do not use Vercel or
-ngrok for production hosting. See [the deployment target directive](../DEPLOYMENT_TARGET.md)
+Hetzner is the target for new production deployments. Do not use ngrok for production hosting. See [the deployment target directive](../DEPLOYMENT_TARGET.md)
 and [the Hetzner deployment guide](HETZNER_DEPLOYMENT.md) before preparing a
 production release. The ngrok procedures in this guide are retained only for
 local development, testing, and migration validation of an existing setup.
