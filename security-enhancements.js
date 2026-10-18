@@ -296,11 +296,18 @@ function authenticateToken(req, res, next) {
         !Number.isFinite(payload.exp) || payload.exp <= Math.floor(Date.now() / 1000)) {
       throw new Error('Token expired');
     }
+
+    // Earlier demo logins granted investor access from the email address.
+    // Reject those still-signed tokens immediately instead of retaining their
+    // elevated claim until expiry. This router only issues ordinary user tokens.
+    if (payload.role !== 'user') {
+      throw new Error('Legacy privileged tokens are no longer accepted');
+    }
     
     // Set user info in request
     req.user = {
       email: payload.sub.trim().toLowerCase(),
-      role: payload.role === 'investor' ? 'investor' : 'user'
+      role: 'user'
     };
     
     next();
