@@ -1,6 +1,6 @@
 # Dependency and Package Audit
 
-Current as of 2026-08-01.
+Audit snapshot: 2026-08-01. Packaging and document-processing source checked 2026-10-14.
 
 The repository has one active Node workspace at the root. The obsolete duplicate
 manifest and lockfile formerly stored under `assets/` were removed; `assets/`
@@ -36,12 +36,13 @@ databases, uploads, and token stores are not packaged.
 
 ## Document-processing surface
 
-The desktop runtime intentionally retains `pdf-parse`, `mammoth`, `tesseract.js`,
-and the Dutch and English Tesseract datasets because shipped document analysis
-uses them for PDF, DOCX, and image evidence. Electron packaging unpacks the OCR
-worker runtime and language data required by the packaged application. The Flask
-document-intelligence runtime has its own Python dependencies in
-`requirements.txt`.
+The desktop runtime retains `pdf-parse`, `tesseract.js`, and the Dutch and English
+Tesseract datasets for PDF and image evidence. DOCX extraction uses `unzipper`
+with archive-size and entry limits, then parses validated WordprocessingML with
+`@xmldom/xmldom`; `mammoth` is not a runtime dependency. Electron packaging
+unpacks the OCR worker runtime and language data required by the packaged
+application. The Flask document-intelligence runtime has its own Python
+dependencies in `requirements.txt`.
 
 ## Release checks
 
