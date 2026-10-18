@@ -71,7 +71,7 @@ export function validateAndNormalizeLegalAreas(
     return { valid: true, data: JSON.stringify(validated) };
   } catch (error) {
     if (error instanceof z.ZodError) {
-      const firstError = error.errors?.[0];
+      const firstError = error.issues?.[0];
       return { valid: false, error: firstError?.message || 'Invalid legal areas' };
     }
     return { valid: false, error: 'Failed to validate legal areas' };

@@ -27,6 +27,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           style: {
             fontSize: "14px",
             fontWeight: 500,
+            color: "hsl(var(--foreground))",
           },
           classNames: {
             toast:

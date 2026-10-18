@@ -3,7 +3,7 @@
 # This image serves the standalone API and optionally its browser interface
 # (LARO_SERVE_WEB=true). Electron itself is not installed in the runtime image.
 # SQLite is compiled for Node, with durable data kept outside the container.
-FROM node:26.11.1-bookworm-slim AS build
+FROM node:26.12.0-bookworm-slim@sha256:298992629d69bbd5b2b03ad57094d8e4fcb3a8eeb7c4e25d29de656519568913 AS build
 WORKDIR /app
 
 # Build toolchain for the better-sqlite3 native module.
@@ -27,7 +27,7 @@ RUN npm run build:server && npm run build:renderer && npm prune --omit=dev --ign
 # The runtime intentionally omits npm, a shell, and the OS package manager.
 # Keep the root-compatible variant while existing installations still have
 # root-owned data and backup volumes; changing that ownership is a migration.
-FROM gcr.io/distroless/nodejs22-debian13:latest@sha256:55e7cd155c86d8956af63fec0a9d0790dd6d0ba98c7d38e63c0866557ee7aff8 AS runtime
+FROM gcr.io/distroless/nodejs26-debian13:latest@sha256:746f728c8b61c9beb5d0350f054b4049c4cef0ae71d5b3f8f33bc57904bbc37e AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV SERVER_ONLY=true
