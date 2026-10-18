@@ -39,7 +39,7 @@ export async function reassignInboxDocument(userId: string, input: {
     if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Case not found" });
     if (current.caseId === target.id) return { caseId: current.caseId, evidenceId: current.id, changed: false };
     let metadata: Record<string, unknown>;
-    try { metadata = z.record(z.unknown()).parse(JSON.parse(current.metadata || "{}")); }
+    try { metadata = z.record(z.string(), z.unknown()).parse(JSON.parse(current.metadata || "{}")); }
     catch { throw new TRPCError({ code: "CONFLICT", message: "Source metadata is unreadable; correction was not applied" }); }
     const now = new Date();
     // Keep the evidence identity and every analysis version. Case-specific actions
