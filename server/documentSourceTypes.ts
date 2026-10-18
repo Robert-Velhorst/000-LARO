@@ -17,7 +17,7 @@ export const sourceCheckSchema = z.object({
   code: z.string(),
   basis: z.enum(["path_policy", "filesystem", "provider_metadata", "downloaded_bytes", "unverified"]),
   contentAssessed: z.literal(false),
-  facts: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])),
+  facts: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
 });
 export type SourceCheck = z.infer<typeof sourceCheckSchema>;
 export class SourceSkip extends Error {
