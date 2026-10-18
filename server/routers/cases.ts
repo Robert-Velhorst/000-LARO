@@ -273,7 +273,7 @@ export const casesRouter = router({
   // Phase 021 — case intake autosave. The in-progress form is persisted
   // per-user (keyed in system_config) so a refresh/crash does not lose input.
   saveDraft: protectedProcedure
-    .input(z.object({ draft: z.record(z.any()) }))
+    .input(z.object({ draft: z.record(z.string(), z.any()) }))
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");

@@ -98,7 +98,7 @@ export const savedSearchesRouter = router({
       z.object({
         name: z.string().min(1).max(256),
         query: z.string().max(512).optional(),
-        filters: z.record(z.any()),
+        filters: z.record(z.string(), z.any()),
         searchType: z.enum(["cases", "lawyers", "evidence"]),
       })
     )
@@ -130,7 +130,7 @@ export const savedSearchesRouter = router({
         id: z.string(),
         name: z.string().min(1).max(256).optional(),
         query: z.string().max(512).optional(),
-        filters: z.record(z.any()).optional(),
+        filters: z.record(z.string(), z.any()).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
