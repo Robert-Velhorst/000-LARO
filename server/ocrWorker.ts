@@ -115,7 +115,7 @@ export function startOcrWorkerSession(
     if (message.type === "error") request.reject(new Error(message.error || "OCR recognition failed"));
     else request.resolve({ data: { text: message.text || "", confidence: message.confidence || 0 } });
   });
-  worker.on("error", (error) => rejectPending(error));
+  worker.on("error", (error) => rejectPending(error instanceof Error ? error : new Error(String(error))));
   worker.on("exit", (code) => {
     if (!terminated && code !== 0) rejectPending(new Error(`OCR worker exited with code ${code}`));
   });
