@@ -559,7 +559,6 @@ async function loadPdfWithinDeadline(bytes: Buffer, deadlineAt: number): Promise
     maxImageSize: MAX_PDF_PAGE_PIXELS,
     canvasMaxAreaInBytes: MAX_PDF_RENDERED_BYTES,
     stopAtErrors: true,
-    isEvalSupported: false,
   });
   try {
     return await beforeExtractionDeadline(() => loadingTask.promise, deadlineAt);
