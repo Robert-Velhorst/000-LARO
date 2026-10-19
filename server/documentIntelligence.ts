@@ -200,8 +200,11 @@ export async function extractDocumentTextInAcquiredSlot(bytes: Buffer, mimeType:
   if (normalizedMime === "application/pdf") {
     const parser = new PDFParse({ data: new Uint8Array(bytes) });
     const deadlineAt = Date.now() + DOCUMENT_EXTRACTION_TIMEOUT_MS;
+    let pdfLoadingTask: PDFDocumentLoadingTask | undefined;
     try {
-      const document = await loadPdfWithinDeadline(bytes, deadlineAt);
+      const loadedPdf = await loadPdfWithinDeadline(bytes, deadlineAt);
+      const document = loadedPdf.document;
+      pdfLoadingTask = loadedPdf.loadingTask;
       (parser as unknown as { doc: PDFDocumentProxy }).doc = document;
       const info = await beforeExtractionDeadline(() => parser.getInfo(), deadlineAt);
       if (!Number.isInteger(info.total) || info.total < 1) {
@@ -322,7 +325,9 @@ export async function extractDocumentTextInAcquiredSlot(bytes: Buffer, mimeType:
         confidence: confidences.length ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length : null,
       };
     } finally {
-      await parser.destroy();
+      if (pdfLoadingTask) {
+        await pdfLoadingTask.destroy();
+      }
     }
   }
   if (normalizedMime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
@@ -553,7 +558,10 @@ function deterministicAnalysis(extraction: ExtractionResult): DocumentAnalysisRe
   };
 }
 
-async function loadPdfWithinDeadline(bytes: Buffer, deadlineAt: number): Promise<PDFDocumentProxy> {
+async function loadPdfWithinDeadline(bytes: Buffer, deadlineAt: number): Promise<{
+  document: PDFDocumentProxy;
+  loadingTask: PDFDocumentLoadingTask;
+}> {
   const loadingTask: PDFDocumentLoadingTask = getDocument({
     data: new Uint8Array(bytes),
     maxImageSize: MAX_PDF_PAGE_PIXELS,
@@ -561,7 +569,8 @@ async function loadPdfWithinDeadline(bytes: Buffer, deadlineAt: number): Promise
     stopAtErrors: true,
   });
   try {
-    return await beforeExtractionDeadline(() => loadingTask.promise, deadlineAt);
+    const document = await beforeExtractionDeadline(() => loadingTask.promise, deadlineAt);
+    return { document, loadingTask };
   } catch (error) {
     try {
       await loadingTask.destroy();
