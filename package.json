@@ -144,7 +144,7 @@
     "superjson": "^2.2.6",
     "tailwind-merge": "^3.7.0",
     "tesseract.js": "7.0.0",
-    "undici": "7.30.0",
+    "undici": "8.12.2",
     "unzipper": "0.12.5",
     "uuid": "^14.0.3",
     "wouter": "^3.13.0",
