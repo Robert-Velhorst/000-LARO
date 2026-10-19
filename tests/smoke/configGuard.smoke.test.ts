@@ -90,9 +90,9 @@ describe('Phase 006 — assertSecurityConfig', () => {
     process.env.SMTP_PASS = 'smtp-secret';
     process.env.SMTP_FROM = 'owner@example.test';
     process.env.LARO_PUBLIC_DEPLOYMENT_REQUIRED = 'true';
-    process.env.LARO_PUBLIC_BASE_URL = 'https://example.ngrok.app/laro';
-    process.env.OAUTH_REDIRECT_BASE_URL = 'https://example.ngrok.app/laro';
-    process.env.ALLOWED_ORIGINS = 'https://example.ngrok.app';
+    process.env.LARO_PUBLIC_BASE_URL = 'https://example.test/laro';
+    process.env.OAUTH_REDIRECT_BASE_URL = 'https://example.test/laro';
+    process.env.ALLOWED_ORIGINS = 'https://example.test';
     process.env.PUBLIC_PATH_PREFIX = '/laro';
     const { assertSecurityConfig } = await loadEnv();
 
@@ -105,9 +105,9 @@ describe('Phase 006 — assertSecurityConfig', () => {
     process.env.JWT_SECRET = 'j'.repeat(48);
     process.env.COOKIE_SECRET = 'c'.repeat(48);
     process.env.LARO_PUBLIC_DEPLOYMENT_REQUIRED = 'true';
-    process.env.LARO_PUBLIC_BASE_URL = 'https://example.ngrok.app/laro';
-    process.env.OAUTH_REDIRECT_BASE_URL = 'https://example.ngrok.app';
-    process.env.ALLOWED_ORIGINS = 'https://example.ngrok.app';
+    process.env.LARO_PUBLIC_BASE_URL = 'https://example.test/laro';
+    process.env.OAUTH_REDIRECT_BASE_URL = 'https://example.test';
+    process.env.ALLOWED_ORIGINS = 'https://example.test';
     process.env.PUBLIC_PATH_PREFIX = '/laro';
     const { assertSecurityConfig } = await loadEnv();
 

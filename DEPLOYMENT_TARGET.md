@@ -1,6 +1,6 @@
 # Production deployment target
 
-Hetzner is the target for production deployment. New production deployments must be prepared for Hetzner. Do not use ngrok for production.
+Hetzner is the target for production deployment. New production deployments must be prepared for Hetzner. Ngrok is retired and must not be used or reintroduced for local public access or production hosting.
 
 Before deploying or retiring any existing service, verify the running application, database and persistent data, secrets, security controls, backups and restore procedure, rollback path, DNS, TLS, scheduled work, and external integrations. Do not claim migration or cutover until those checks pass.
 

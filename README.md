@@ -35,7 +35,7 @@ loopback-only entry path using your existing account and encryption keys.
 - [Configuration](#configuration)
 - [Google and outbound email](#google-and-outbound-email)
 - [Measured analysis throughput and quality limits](docs/ANALYSIS_THROUGHPUT_AUDIT.md)
-- [API-only and ngrok deployment](#api-only-and-ngrok-deployment)
+- [Local API and hosted deployment](#local-api-and-hosted-deployment)
 - [Browser and connected desktop deployment](docs/HETZNER_DEPLOYMENT.md)
 - [Security, privacy, and recovery](#security-privacy-and-recovery)
 - [Developer guide](#developer-guide)
@@ -683,8 +683,8 @@ Express/tRPC server
 | API-only Docker | Express/tRPC, SQLite/evidence volumes, operations | Controlled remote/API integration |
 | Legacy Flask | Old command center and ledger | Offline review and one-way migration |
 
-Docker does not include Electron or Flask. The API-only ngrok deployment does
-not publish the Electron interface.
+Docker does not include Electron or Flask. The local API-only mode does not
+publish the Electron interface.
 
 For a persistent server shared by the browser and desktop, use the
 [Hetzner deployment guide](docs/HETZNER_DEPLOYMENT.md). `LARO_SERVE_WEB=true`
@@ -914,12 +914,11 @@ intended owner account and recipient. Automated tests do not replace them.
 
 ## Production deployment target: Hetzner
 
-Hetzner is the production target for new deployments. Do not use ngrok for production hosting. Follow [the Hetzner deployment guide](docs/HETZNER_DEPLOYMENT.md)
-and [the deployment target directive](DEPLOYMENT_TARGET.md). The ngrok commands
-below are retained only for local development, testing, and validating an
-existing setup during migration; they are not production deployment steps.
+Hetzner is the target for production deployment. Ngrok has been retired and must
+not be used or reintroduced for public access. Follow [the Hetzner deployment
+guide](docs/HETZNER_DEPLOYMENT.md) and [deployment target directive](DEPLOYMENT_TARGET.md).
 
-## Local API and existing ngrok migration tooling
+## Local API and hosted deployment
 
 ### Local Docker
 
@@ -941,30 +940,12 @@ Backup posture, worker history, request/error/latency metrics, and integration
 configuration are available only to operator/admin sessions through
 `/api/operator/diagnostics` or the matching tRPC diagnostics.
 
-### Existing ngrok Gateway
+### Hosted service
 
-```powershell
-.\scripts\start-ngrok-api.ps1 `
-  -ComposeProjectName laro `
-  -GatewayUrl https://example.ngrok-free.dev `
-  -PathPrefix /laro
-
-.\scripts\start-ngrok-api.ps1 -SkipBuild
-.\scripts\stop-ngrok-api.ps1
-```
-
-This publishes the API below `/laro`, not the Electron UI. The launcher validates
-the route, loads protected providers, and persists non-secret deployment markers.
-A plain Compose restart fails closed after an accepted provider contract rather
-than silently losing providers or changing the callback.
-
-Direct tunnel fallback:
-
-```powershell
-.\scripts\start-ngrok-api.ps1 -ComposeProjectName laro -DirectPublicTunnel
-```
-
-Assigned free domains can change. A stable gateway path is recommended.
+Deploy hosted services only through the reviewed Hetzner configuration. Keep
+local API development loopback-only; do not expose a workstation through a
+public tunnel. Configure provider callbacks against the permanent hosted HTTPS
+origin. See [Hetzner deployment](docs/HETZNER_DEPLOYMENT.md).
 
 ### HAI Read-only Source
 
@@ -1220,10 +1201,10 @@ Check ownership, Approved state, unchanged approval hash, feature flag, emergenc
 stop, provider configuration, and dispatch state. `Dispatching` after a provider
 exception requires operator verification, not a blind retry.
 
-### ngrok Routes the Wrong Service
+### Hosted service is unavailable
 
-Use the verified launcher, stable Compose identity, expected path, and exact
-public callback. The stop script verifies a process before stopping it.
+Check the Hetzner operator runbook for deployment, TLS, health, provider
+callbacks, and rollback. Local development remains loopback-only.
 
 ### Evidence Cannot Be Analyzed
 

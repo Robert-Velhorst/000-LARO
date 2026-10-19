@@ -101,13 +101,12 @@ insolvency-status field. KOOP reports a complete result only when the response
 declares a provider total and every declared row is represented in the bounded
 result; otherwise its successful result is partial.
 
-For the Windows ngrok API deployment, `scripts/configure-live-providers.ps1`
-stores Google and authenticated SMTP secrets with DPAPI `CurrentUser`
-protection in an ignored local file. `scripts/start-ngrok-api.ps1` injects those
-values into Docker at startup without copying them into `.env`. Configuration
-presence is only a prerequisite: it does not satisfy the live acceptance checks
-in `release-acceptance.json`.
-
+On Windows, `scripts/configure-live-providers.ps1` stores Google and
+authenticated SMTP secrets with DPAPI `CurrentUser` protection in an ignored
+local file. That file is bound to the local Windows account and must never be
+copied to Hetzner. For hosted use, re-enter provider credentials directly into
+the approved server-side secret store, configure permanent HTTPS callbacks,
+and complete the live acceptance checks in `release-acceptance.json`.
 The final provider-route and account-erasure lifecycle audit for implementation
 commit `ec94985` is recorded in
 [`FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md`](FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md).

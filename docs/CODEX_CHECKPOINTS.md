@@ -4,6 +4,9 @@ Resumable checkpoints for context-loss safety (Phase 088). Each checkpoint state
 where work stopped and what the next safe action is, so work can resume without
 re-deriving state.
 
+Historical note: older checkpoints document a previous ngrok route. Ngrok is
+retired and must not be restarted; hosted services now target Hetzner.
+
 ---
 
 ## Checkpoint 1 — 2026-07-06 — Foundation phases 000–004 complete
@@ -377,9 +380,9 @@ Playwright 4/4, production build, portable Windows packaging, and Electron
 SQLite ABI verification.
 
 **Next safe action:** protected pull requests and CI, merge to `main`, rebuild
-the retained API data volume, verify the ngrok route, and complete one explicit
-HAI synchronization. Google consent and approved outbound delivery remain
-owner/provider acceptance gates.
+the retained API data volume on the approved Hetzner target, and complete one
+explicit HAI synchronization. Google consent and approved outbound delivery
+remain owner/provider acceptance gates.
 
 ---
 
