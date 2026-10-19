@@ -100,7 +100,7 @@
     "@tanstack/react-query": "^4.18.0",
     "@tesseract.js-data/eng": "1.0.0",
     "@tesseract.js-data/nld": "1.0.0",
-    "@trpc/client": "^10.45.2",
+    "@trpc/client": "^11.19.0",
     "@trpc/react-query": "^10.45.2",
     "@trpc/server": "^10.45.2",
     "@types/archiver": "^7.0.0",
