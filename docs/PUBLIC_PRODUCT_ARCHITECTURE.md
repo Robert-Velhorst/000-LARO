@@ -20,7 +20,7 @@ analysis and review-gated outreach retain their current safety boundaries.
 The public product must not:
 
 - expose an unsigned portable executable as trusted public software;
-- depend on an operator workstation, ngrok tunnel, local filesystem, or
+- depend on an operator workstation, public tunnel, local filesystem, or
   in-memory process state for normal availability;
 - send outreach or contact providers without the existing explicit controls;
 - invent analysis findings, timelines, provider connection, or delivery;
@@ -89,8 +89,7 @@ opt-in public-account setting after the public base is live.
 
 Google Gmail/Drive and approved SMTP/SendGrid remain the initially supported
 public providers because they have source-linked and delivery acceptance
-evidence. Their OAuth callbacks must use the permanent public HTTPS origin,
-not ngrok.
+evidence. Their OAuth callbacks must use the permanent Hetzner HTTPS origin.
 
 Microsoft, Slack, Trello, Telegram, Calendar, Contacts, and any other integration remain
 visible only as unavailable until all of the following are implemented:

@@ -4,11 +4,10 @@ Updated: 2026-09-23 · Candidate branch `milestone3/remediate-roadmap`
 
 ## Production target
 
-Hetzner is the target for new production deployments. Do not use ngrok for production hosting. See [the deployment target directive](../DEPLOYMENT_TARGET.md)
-and [the Hetzner deployment guide](HETZNER_DEPLOYMENT.md) before preparing a
-production release. The ngrok procedures in this guide are retained only for
-local development, testing, and migration validation of an existing setup.
-
+Hetzner is the target for production deployment. Ngrok is retired and no public
+tunnel workflow is supported. See the [deployment target directive](../DEPLOYMENT_TARGET.md)
+and the [Hetzner deployment guide](HETZNER_DEPLOYMENT.md) before preparing a
+production release. Local development remains loopback-only.
 The final account/lifecycle release matrix for implementation commit `ec94985`
 is recorded in
 [`FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md`](FINAL_ACCOUNT_LIFECYCLE_VERIFICATION.md).
@@ -46,13 +45,9 @@ docker compose up --build          # http://localhost:3000
 npm run docker:build && npm run docker:run
 ```
 
-This plain Compose start is for a local provider-free server. The legacy ngrok
-launcher may re-verify an existing setup for testing or migration validation; it
-does not establish production hosting. Production deployment instructions are
-in [the Hetzner guide](HETZNER_DEPLOYMENT.md). The launcher decrypts protected
-provider configuration and enforces the persisted route. Direct Compose starts
-then fail closed if required Google or outbound-mail credentials are absent.
-
+This plain Compose start is for a local provider-free server and remains
+loopback-only. Use the Hetzner deployment guide for hosted services; do not
+expose a workstation through a public tunnel.
 - Healthcheck: the container polls `/api/ready`.
 - Runtime readiness: `npm run readiness:runtime` verifies production secrets,
   SQLite integrity and migrations, evidence-volume read/write, API health and
@@ -91,103 +86,19 @@ administrator-only. tRPC `health.check` is a public basic check (Phase 036).
 migrations, integration config) and **exits non-zero** on production-critical
 problems, so it can gate a deploy.
 
-## Legacy ngrok workflow for local testing and migration validation
+## Hosted deployment
 
-This workflow supports local testing and migration validation of an existing
-setup. It is not for new or continued production hosting. For production use
-Hetzner. The API may remain on an operator workstation while ngrok provides a
-temporary HTTPS endpoint. The Docker port is bound to `127.0.0.1`, so it is not
-exposed directly to the local network. When an account's free dev domain
-already hosts another application, LARO can use a private `laro.internal`
-endpoint and an exact `/laro/*` gateway rule. Unmatched traffic continues to
-the existing upstream.
+Use the reviewed Hetzner deployment configuration and the permanent HTTPS
+origin recorded for this service. Register OAuth and webhook callbacks against
+that exact origin. Do not expose a workstation through a public tunnel.
 
-```powershell
-# First run builds the image. A configured ngrok account is required.
-.\scripts\start-ngrok-api.ps1 `
-  -ComposeProjectName laro `
-  -GatewayUrl https://example.ngrok-free.dev `
-  -PathPrefix /laro
-```
-
-The command creates strong standalone `JWT_SECRET` and `COOKIE_SECRET` values
-in the ignored local `.env` when they are absent. It never commits or prints
-them. Provider credentials remain owner-supplied secrets in that ignored file.
-It also persists `LARO_COMPOSE_PROJECT_NAME`; keep that value unchanged when
-moving or refreshing the checkout so Docker Compose reuses the intended named
-database volume.
-
-Before creating the first account on a new API-only database, set a random
-`STANDALONE_SIGNUP_TOKEN` of 32-256 characters in the ignored `.env` and
-include it as `bootstrapToken` in the first `auth.signup` mutation. That first
-account is created as the administrator. Standalone enrollment then closes and
-rejects every later signup, even if the token is still present. Remove the token
-from `.env` after bootstrap. Electron desktop signup does not use this token.
-Runtime URL/PID metadata is written to ignored `.laro-ngrok.json`. Install
-`ngrok/laro-path-policy.yml` on the existing public Agent Endpoint once; the
-launcher then verifies `https://<dev-domain>/laro/api/health` on every start.
-Opening `https://<dev-domain>/laro` returns a small JSON service-status document;
-the API-only deployment intentionally does not serve the desktop renderer.
-The validated gateway settings are retained in the ignored `.env`, so later
-starts need no arguments. The launcher also reuses a healthy LARO tunnel.
-
-```powershell
-# Restart or re-verify the existing deployment.
-.\scripts\start-ngrok-api.ps1 -SkipBuild
-
-# Stop only LARO's verified ngrok process and API container.
-.\scripts\stop-ngrok-api.ps1
-```
-
-The stop command validates both the recorded PID and the `laro-api` command
-line before terminating ngrok. It does not operate on Dockerized ngrok agents,
-so a separately hosted service on the same gateway remains untouched.
-
-For Google OAuth through the public API, register this redirect URI on the LARO
-web OAuth client after the ngrok URL is known:
-
-```text
-https://<ngrok-domain>/laro/api/oauth/gmail/callback
-```
-
-The assigned free dev domain remains stable. No additional paid domain is
-required for this path-routed configuration.
-
-### Direct ngrok fallback for local testing and migration validation
-
-If the existing gateway policy cannot be edited, LARO can use a separate ngrok
-HTTPS tunnel without changing or replacing the application already hosted on
-the gateway domain:
-
-```powershell
-.\scripts\start-ngrok-api.ps1 `
-  -ComposeProjectName laro `
-  -DirectPublicTunnel
-```
-
-The launcher selects the assigned HTTPS origin only after ngrok registers the
-tunnel, injects that exact origin into Docker, verifies both local and public
-health, and records `mode: direct` in `.laro-ngrok.json`. Direct mode is saved
-in the ignored `.env`, so `-SkipBuild` reuses it. To return to gateway mode,
-invoke the launcher with `-GatewayUrl`, `-PathPrefix`, and optionally
-`-InternalUrl`.
-
-The assigned direct URL may change after the ngrok process stops. Treat it as
-an operational fallback, not as a stable production hostname. The account must
-have an available assigned domain; if its only dev domain is already online,
-ngrok rejects the direct tunnel rather than replacing or pooling with that
-endpoint. In that case, install the gateway path rule or assign another domain.
-Before Google OAuth acceptance, register the current callback exactly as:
-
-```text
-https://<assigned-domain>/api/oauth/gmail/callback
-```
-
-Remote Socket.IO clients must use the same prefix, for example
-`path: "/laro/socket.io"`. Direct desktop operation continues to use the
-default `/socket.io` path because it has no public prefix.
-
-### Protected live-provider configuration on Windows
+The Hetzner deployment is not accepted as production until the current revision,
+private database and evidence storage, provider configuration, TLS, account
+isolation, backups and restore, monitoring, and rollback have passed the gates in
+[Production Acceptance](PRODUCTION_ACCEPTANCE.md). See
+[Hetzner deployment](HETZNER_DEPLOYMENT.md) and the
+[deployment target directive](../DEPLOYMENT_TARGET.md).
+## Protected live-provider configuration on Windows
 
 Do not put Google client secrets or SMTP passwords in chat, scripts, or the
 project `.env`. Configure them at the operator workstation through hidden
@@ -200,31 +111,25 @@ prompts:
 # Show configuration booleans only; no secret is decrypted or displayed.
 .\scripts\configure-live-providers.ps1 -Status
 
-# Import the protected settings and restart the API.
-.\scripts\start-ngrok-api.ps1 -SkipBuild
+# Keep the DPAPI-protected configuration local to this Windows account.
+# Enter hosted credentials in the approved server-side secret store on Hetzner.
 ```
 
 The command stores provider secrets in
 `%APPDATA%\LARO Desktop\provider-config.json` using Windows DPAPI `CurrentUser`
 protection, restricts that file to the current Windows account and `SYSTEM`, and
 prints only configured/not-configured status. It migrates an existing ignored
-worktree-local `.laro-provider-config.json` into that canonical location. Both
-the standalone Electron app and ngrok launcher decrypt values only in memory;
-the launcher passes them to the container without copying provider secrets into
-`.env` or runtime metadata. The protected file is bound to the Windows user
+worktree-local `.laro-provider-config.json` into that canonical location. The standalone Electron app decrypts values only in memory. The DPAPI-protected file is local-only and must not be copied to hosted services; enter hosted provider credentials into the approved server-side secret store.
+The protected file is bound to the Windows user
 profile and is intentionally excluded from backups and source control. Re-enter
 and rotate the credentials after moving to another machine or Windows account.
-The protected Google record also pins the desktop callback origin to
-`http://127.0.0.1:8768`; authorize
-`http://127.0.0.1:8768/api/oauth/gmail/callback` in Google Cloud. The ngrok
-launcher intentionally replaces that origin with the public `/laro` callback
-inside the API container.
+The protected Google record pins the local desktop callback origin to `http://127.0.0.1:8768`; authorize `http://127.0.0.1:8768/api/oauth/gmail/callback` in Google Cloud. For hosted use, configure the permanent Hetzner HTTPS callback explicitly in Google Cloud; the local DPAPI-protected configuration is not portable to the server.
 
 The Docker image includes compiled backup and live-provider acceptance entry
 points plus the small runtime dispatcher used by the normal npm commands. This
 keeps `npm run db:backup`, `npm run db:validate`, and
 `npm run acceptance:providers` operational after development dependencies are
-pruned from the image. `scripts/start-ngrok-api.ps1` also runs the lean
+pruned from the image. Hetzner release acceptance runs the lean
 `npm run readiness:runtime` contract inside the newly started container before
 it accepts the deployment as healthy.
 

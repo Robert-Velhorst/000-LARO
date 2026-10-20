@@ -42,6 +42,12 @@ services:
     ports:
       # An existing host proxy can route the LARO domain here.
       - "127.0.0.1:${LARO_BIND_PORT:-3187}:3000"
+    healthcheck:
+      test: ["CMD", "/nodejs/bin/node", "scripts/runtime-readiness.mjs"]
+      interval: 5m
+      timeout: 20s
+      start_period: 60s
+      retries: 3
     stop_grace_period: 45s
     logging:
       driver: json-file

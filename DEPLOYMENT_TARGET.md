@@ -1,6 +1,6 @@
 # Production deployment target
 
-Hetzner is the target for production deployment. New production deployments must be prepared for Hetzner. Do not add Vercel or ngrok production deployments. Existing services must be migrated and verified before retirement.
+Hetzner is the target for production deployment. New production deployments must be prepared for Hetzner. Do not add Vercel production deployments. Ngrok is retired and must not be reintroduced for local public access or production hosting. Existing services must be migrated and verified before retirement.
 
 Before deploying or retiring any existing service, verify the running application, database and persistent data, secrets, security controls, backups and restore procedure, rollback path, DNS, TLS, scheduled work, and external integrations. Do not claim migration or cutover until those checks pass.
 
