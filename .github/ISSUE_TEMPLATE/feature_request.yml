@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose a change with a clear problem and measurable acceptance criteria.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, personal data, private evidence, or production records. Use the project roadmap's Problem, Fix, and Acceptance Criteria structure where applicable.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or operational problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the smallest useful behavior or capability.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable results that would show the change is complete.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and trade-offs
+      description: Note alternatives considered and relevant privacy or security effects.
+    validations:
+      required: false

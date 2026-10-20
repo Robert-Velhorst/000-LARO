@@ -36,7 +36,6 @@ docker/mysql/data/
 docker/redis/data/
 
 *.log
-.laro-ngrok.json
 .laro-provider-config.json
 npm-debug.log*
 yarn-debug.log*

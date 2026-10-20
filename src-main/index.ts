@@ -655,8 +655,9 @@ function setupIPC(): void {
       },
       start: async (input) => {
         await owner.assertCurrent();
-        const client = createTRPCProxyClient<AppRouter>({ transformer: superjson, links: [httpBatchLink({
+        const client = createTRPCProxyClient<AppRouter>({ links: [httpBatchLink({
           url: `${apiUrl.replace(/\/$/, '')}/api/trpc`,
+          transformer: superjson,
           headers: createDesktopScannerHeaders(owner.getAuth),
         })] });
         const result = await client.documentSources.start.mutate(input);

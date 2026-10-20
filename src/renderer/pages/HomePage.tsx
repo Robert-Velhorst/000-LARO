@@ -35,9 +35,9 @@ export default function HomePage({ onNavigate, onScanStarted, config }: HomePage
     if (!base) return null;
 
     return createTRPCProxyClient<AppRouter>({
-      transformer: superjson,
       links: [
         httpBatchLink({
+          transformer: superjson,
           url: `${base}/api/trpc`,
           fetch(url, options) {
             return fetch(url, {

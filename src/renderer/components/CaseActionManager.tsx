@@ -77,8 +77,8 @@ export default function CaseActionManager({ caseId }: { caseId: string }) {
             <Textarea id={`${id}-description`} maxLength={10000} value={description} onChange={(event) => setDescription(event.target.value)} />
           </div>
           <div className="flex gap-2">
-            <Button type="submit" size="sm" disabled={add.isLoading || !title.trim()}>{add.isLoading ? "Saving..." : "Save action"}</Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setAdding(false)} disabled={add.isLoading}>Cancel</Button>
+            <Button type="submit" size="sm" disabled={add.isPending || !title.trim()}>{add.isPending ? "Saving..." : "Save action"}</Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setAdding(false)} disabled={add.isPending}>Cancel</Button>
           </div>
         </form>
       )}
@@ -100,7 +100,7 @@ export default function CaseActionManager({ caseId }: { caseId: string }) {
                     {completed && action.updatedAt ? ` | Completed: ${new Date(action.updatedAt).toLocaleDateString()}` : ""}
                   </p>
                 </div>
-                <Button size="icon" variant="outline" className="shrink-0" disabled={update.isLoading}
+                <Button size="icon" variant="outline" className="shrink-0" disabled={update.isPending}
                   title={completed ? "Reopen action" : "Mark complete"} aria-label={`${completed ? "Reopen" : "Complete"}: ${action.title}`}
                   onClick={() => { setError(null); update.mutate({ id: action.id, completed: !completed }); }}>
                   {completed ? <RotateCcw className="h-4 w-4" /> : <Check className="h-4 w-4" />}

@@ -4,6 +4,7 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const { getJwtSecret, authenticateToken } = require('./legacy-token-verifier.cjs');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const xss = require('xss-clean');
@@ -80,6 +81,15 @@ function setupSecurity(app) {
 
 // Authentication routes with CSRF protection
 router.post('/auth/login', csrfProtection, (req, res) => {
+  // This credential-accepting demo route exists only for the legacy test
+  // harness. Never expose it from a production server.
+  if (process.env.NODE_ENV === 'production' || process.env.LEGACY_DEMO_AUTH_ENABLED !== 'true') {
+    return res.status(503).json({
+      success: false,
+      message: 'Legacy demo authentication is disabled'
+    });
+  }
+
   const { email, password } = req.body;
   
   // Input validation
@@ -123,7 +133,7 @@ router.post('/auth/login', csrfProtection, (req, res) => {
     success: true,
     user: {
       email,
-      role: email.includes('investor') ? 'investor' : 'user'
+      role: 'user'
     }
   });
 });
@@ -151,7 +161,9 @@ router.get('/user/profile', authenticateToken, csrfProtection, (req, res) => {
 // Form submission with CSRF protection and input sanitization
 router.post('/submit-form', csrfProtection, (req, res) => {
   // Sanitize all input fields
-  const sanitizedData = {};
+  // Request keys are untrusted; a null-prototype object prevents special keys
+  // such as __proto__ from mutating the sanitization result's prototype.
+  const sanitizedData = Object.create(null);
   
   Object.keys(req.body).forEach(key => {
     // Skip CSRF token
@@ -205,75 +217,34 @@ router.post('/submit-case', csrfProtection, (req, res) => {
 
 // Generate JWT token
 function generateToken(email) {
-  // In a real app, we would use a proper JWT library
-  // For this demo, we'll create a simple token
+  if (typeof email !== 'string' || !validator.isEmail(email)) {
+    throw new TypeError('A valid email address is required to create a token');
+  }
+
   const header = {
     alg: 'HS256',
     typ: 'JWT'
   };
   
   const payload = {
-    sub: email,
-    role: email.includes('investor') ? 'investor' : 'user',
+    sub: email.trim().toLowerCase(),
+    role: 'user',
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours
   };
   
-  const base64Header = Buffer.from(JSON.stringify(header)).toString('base64').replace(/=/g, '');
-  const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64').replace(/=/g, '');
-  
-  const secret = process.env.JWT_SECRET || 'your-secret-key';
+  const base64Header = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64url');
   
   const signature = crypto
-    .createHmac('sha256', secret)
+    .createHmac('sha256', getJwtSecret())
     .update(`${base64Header}.${base64Payload}`)
-    .digest('base64')
-    .replace(/=/g, '');
+    .digest('base64url');
   
   return `${base64Header}.${base64Payload}.${signature}`;
 }
 
 // Authenticate JWT token middleware
-function authenticateToken(req, res, next) {
-  const token = req.cookies.authToken;
-  
-  if (!token) {
-    return res.status(401).json({ 
-      success: false, 
-      message: 'Authentication required' 
-    });
-  }
-  
-  try {
-    // In a real app, we would verify the token with a JWT library
-    // For this demo, we'll parse it manually
-    const parts = token.split('.');
-    if (parts.length !== 3) {
-      throw new Error('Invalid token format');
-    }
-    
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-    
-    // Check if token is expired
-    if (payload.exp < Math.floor(Date.now() / 1000)) {
-      throw new Error('Token expired');
-    }
-    
-    // Set user info in request
-    req.user = {
-      email: payload.sub,
-      role: payload.role
-    };
-    
-    next();
-  } catch (error) {
-    return res.status(403).json({ 
-      success: false, 
-      message: 'Invalid or expired token' 
-    });
-  }
-}
-
 // Check if password is strong
 function isStrongPassword(password) {
   // At least 8 characters

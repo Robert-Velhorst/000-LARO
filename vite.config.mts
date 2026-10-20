@@ -27,7 +27,9 @@ export default defineConfig({
       output: {
         codeSplitting: {
           groups: [
-            { name: 'react-runtime', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/, priority: 20 },
+            { name: 'react-runtime', test: /node_modules[\\/](react|scheduler)[\\/]/, priority: 30 },
+            { name: 'react-dom-client', test: /node_modules[\\/]react-dom[\\/](client\.js|cjs[\\/]react-dom-client[^\\/]*\.js)$/, priority: 25, includeDependenciesRecursively: false },
+            { name: 'react-dom', test: /node_modules[\\/]react-dom[\\/]/, priority: 20 },
             { name: 'i18n-catalog', test: /[\\/]shared[\\/]i18n\.ts$/, priority: 15 },
             { name: 'ui-primitives', test: /node_modules[\\/](@radix-ui|@floating-ui)[\\/]/, entriesAware: true, priority: 10 },
             { name: 'realtime', test: /node_modules[\\/](socket.io-client|engine.io-client|socket.io-parser|engine.io-parser)[\\/]/, priority: 10 },

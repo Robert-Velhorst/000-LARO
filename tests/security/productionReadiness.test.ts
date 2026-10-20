@@ -529,10 +529,9 @@ describe('production readiness regressions', () => {
     const database = readFileSync(join(ROOT, 'server/db.ts'), 'utf8');
     const sqliteMigrations = readFileSync(join(ROOT, 'server/sqliteMigrations.ts'), 'utf8');
     const compose = readFileSync(join(ROOT, 'docker-compose.yml'), 'utf8');
-    const ngrokLauncher = readFileSync(join(ROOT, 'scripts/start-ngrok-api.ps1'), 'utf8');
-    const ngrokStopper = readFileSync(join(ROOT, 'scripts/stop-ngrok-api.ps1'), 'utf8');
     const providerSetup = readFileSync(join(ROOT, 'scripts/configure-live-providers.ps1'), 'utf8');
     const gitignore = readFileSync(join(ROOT, '.gitignore'), 'utf8');
+    const deploymentTarget = readFileSync(join(ROOT, 'DEPLOYMENT_TARGET.md'), 'utf8');
     const emailConfig = readFileSync(join(ROOT, 'server/emailConfig.ts'), 'utf8');
     const emailRouter = readFileSync(join(ROOT, 'server/routers/email.ts'), 'utf8');
     const adminRouter = readFileSync(join(ROOT, 'server/routers/admin.ts'), 'utf8');
@@ -554,43 +553,11 @@ describe('production readiness regressions', () => {
     expect(compose).toContain('LARO_REQUIRED_LIVE_PROVIDERS: ${LARO_REQUIRED_LIVE_PROVIDERS:-}');
     expect(compose).toContain('GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}');
     expect(compose).toContain('SMTP_PASS: ${SMTP_PASS:-}');
-    expect(ngrokLauncher).toContain('http://127.0.0.1:4040/api/tunnels');
-    expect(ngrokLauncher).toContain('Wait-ForHttpsTunnel `');
-    expect(ngrokLauncher).toContain('-ExpectedUrl $(if ($useDirectTunnel) { "" } else { $InternalUrl })');
-    expect(ngrokLauncher).toContain('Copy-Item -LiteralPath $examplePath -Destination $envPath');
-    expect(ngrokLauncher).not.toContain('npm.cmd run setup');
-    expect(ngrokLauncher).toContain('$env:LARO_PUBLIC_ORIGIN = $publicOrigin');
-    expect(ngrokLauncher).toContain('$env:LARO_PUBLIC_BASE_URL = $publicBaseUrl');
-    expect(ngrokLauncher).toContain('$env:LARO_PUBLIC_DEPLOYMENT_REQUIRED = "true"');
-    expect(ngrokLauncher).toContain('-Name "LARO_REQUIRED_LIVE_PROVIDERS"');
-    expect(ngrokLauncher).toContain('$env:LARO_APP_VERSION = $packageMetadata.version');
-    expect(ngrokLauncher).toContain('[switch]$DirectPublicTunnel');
-    expect(ngrokLauncher).toContain('LARO_NGROK_MODE');
-    expect(ngrokLauncher).toContain('DirectPublicTunnel cannot be combined');
-    expect(ngrokLauncher).toContain('Get-NgrokFailureMessage');
-    expect(ngrokLauncher).toContain('ngrok exited before registering an HTTPS tunnel: $failureMessage');
-    expect(ngrokLauncher.lastIndexOf('-Name "LARO_NGROK_MODE"')).toBeGreaterThan(
-      ngrokLauncher.indexOf('Wait-ForJsonEndpoint -Uri "$publicBaseUrl/api/health"'),
-    );
-    expect(ngrokLauncher).toContain('$publicBaseUrl = $publicOrigin');
-    expect(ngrokLauncher).toContain('mode = if ($useDirectTunnel) { "direct" } else { "gateway" }');
-    expect(ngrokLauncher).toContain('LARO_NGROK_GATEWAY_URL');
-    expect(ngrokLauncher).toContain('if (-not $httpsTunnel)');
-    expect(ngrokLauncher).toContain('Wait-ForJsonEndpoint -Uri "$publicBaseUrl/api/health"');
-    expect(ngrokLauncher).toContain('Import-ProtectedProviderConfig');
-    expect(ngrokLauncher).toContain('Unprotect-Secret -ProtectedValue');
-    expect(ngrokStopper).toContain('$process.ProcessName -ne "ngrok"');
-    expect(ngrokStopper).toContain('$processDetails.CommandLine -notmatch "laro-api"');
-    expect(ngrokStopper).not.toContain('docker compose stop laro-server');
+    expect(deploymentTarget).toContain('Hetzner is the target for production deployment');
+    expect(deploymentTarget).toContain('Ngrok is retired');
     expect(providerSetup).toContain('Read-Host "Google web OAuth client secret" -AsSecureString');
     expect(providerSetup).toContain('Assert-GoogleClientSecret -Value $GoogleClientSecret');
     expect(providerSetup).toContain('not a URL, path, or placeholder');
-    expect(ngrokLauncher).toContain('Assert-GoogleProviderConfig');
-    expect(ngrokLauncher).toContain('Reconfigure Google before deployment');
-    expect(ngrokLauncher).toContain('@("compose", "-p", $ComposeProjectName, "up", "-d")');
-    expect(ngrokLauncher).toContain('composeProjectName = $ComposeProjectName');
-    expect(ngrokLauncher).toContain('Remove-Item -LiteralPath $runtimePath -Force -ErrorAction SilentlyContinue');
-    expect(ngrokStopper).toContain('docker compose -p $ComposeProjectName stop laro-server');
     expect(providerSetup).toContain('Read-Host "SMTP password or Gmail app password" -AsSecureString');
     expect(providerSetup).toContain('ConvertFrom-SecureString -SecureString $Value');
     expect(providerSetup).toContain('/inheritance:r');
@@ -750,7 +717,6 @@ describe('production readiness regressions', () => {
     const drill = readFileSync(join(ROOT, 'scripts/flask_recovery_drill.py'), 'utf8');
     const gate = readFileSync(join(ROOT, 'scripts/stabilization-gate.mjs'), 'utf8');
     const gitignore = readFileSync(join(ROOT, '.gitignore'), 'utf8');
-
     expect(recovery).toContain('PRAGMA data_version');
     expect(recovery).toContain('upload_references');
     expect(recovery).toContain('bundled-vault-key');

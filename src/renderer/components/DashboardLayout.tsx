@@ -166,7 +166,8 @@ function WorkspaceFrame({ children, width, setWidth }: { children: ReactNode; wi
           <nav aria-label={t("nav.preferences")}><SidebarMenu>{secondaryItems.map(menuItem)}</SidebarMenu></nav>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button type="button" aria-label={t("nav.accountMenu")} className="flex min-h-12 w-full min-w-0 items-center gap-3 rounded-md p-2 text-left hover:bg-accent focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring">
+              <button type="button" className="flex min-h-12 w-full min-w-0 items-center gap-3 rounded-md p-2 text-left hover:bg-accent focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring">
+                <span className="sr-only">{t("nav.accountMenu")}</span>
                 <Avatar className="h-8 w-8 shrink-0"><AvatarFallback>{user?.name?.charAt(0).toUpperCase() || "?"}</AvatarFallback></Avatar>
                 {!collapsed && <><span className="min-w-0 flex-1 truncate text-sm font-medium">{user?.name || t("nav.account")}</span><ChevronDown className="h-4 w-4 shrink-0" /></>}
               </button>

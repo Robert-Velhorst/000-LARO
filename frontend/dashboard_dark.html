@@ -4007,7 +4007,6 @@
             if (!googleState) return false;
 
             if (googleState === "connected") {
-                setGoogleConnected(true, "Google connected. Pulling can start without refreshing.");
                 stopGoogleOAuthPolling();
                 closeGoogleModal();
             } else if (googleState === "oauth_unconfigured") {
@@ -4024,7 +4023,9 @@
             const nextQuery = params.toString();
             const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
             window.history.replaceState({}, document.title, nextUrl);
-            return googleState === "connected";
+            // URL state is untrusted; let the authenticated status endpoint
+            // decide whether the Google connection is actually established.
+            return false;
         }
 
         async function refreshGoogleConnectionStatus(retry = true) {
@@ -4078,11 +4079,14 @@
             const data = event.data || {};
             if (data.type !== "laro-google-oauth") return;
             if (data.status === "connected") {
-                setGoogleConnected(true, "Google connected. Pulling can start without refreshing.");
+                const status = await refreshGoogleConnectionStatus();
+                if (!status.connected) {
+                    showDashboardToast("Google connection could not be verified yet.");
+                    return;
+                }
                 showDashboardToast("Google connected. Evidence pulling is ready.");
                 stopGoogleOAuthPolling();
                 closeGoogleModal();
-                refreshGoogleConnectionStatus();
                 return;
             }
             stopGoogleOAuthPolling();

@@ -1,0 +1,53 @@
+name: Bug report
+description: Report a reproducible defect without including secrets or private data.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use the project roadmap's Problem, Fix, and Acceptance Criteria structure where applicable. Do not include credentials, personal data, private evidence, or production records.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is wrong, and who or what is affected?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest safe sequence that reproduces the issue.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+      description: State what you expected and what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What observable result would show that the issue is fixed?
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Runtime, operating system, app version, or relevant configuration. Omit secrets and identifiers.
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized diagnostics
+      description: Include only redacted logs or screenshots that contain no private or sensitive information.
+    validations:
+      required: false

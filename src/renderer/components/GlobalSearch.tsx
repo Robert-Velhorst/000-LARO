@@ -26,7 +26,7 @@ export default function GlobalSearch() {
   const normalizedQuery = query.trim();
   const results = trpc.search.global.useQuery(
     { query: normalizedQuery, limit: 20 },
-    { enabled: open && normalizedQuery.length >= 2, keepPreviousData: false },
+    { enabled: open && normalizedQuery.length >= 2 },
   );
   const completeness = results.data?.completeness;
   const incomplete = completeness && completeness.status !== "complete";
@@ -55,9 +55,10 @@ export default function GlobalSearch() {
 
   return <>
     <Button type="button" variant="outline" onClick={() => setOpen(true)}
-      aria-label={nl ? "Zoeken in LARO" : "Search LARO"} title={nl ? "Zoeken in LARO (Ctrl+K)" : "Search LARO (Ctrl+K)"}
+      title={nl ? "Zoeken in LARO (Ctrl+K)" : "Search LARO (Ctrl+K)"}
       className="h-9 min-w-9 gap-2 px-2 sm:px-3">
       <Search className="h-4 w-4" aria-hidden="true" />
+      <span className="sr-only">{nl ? "Zoeken in LARO" : "Search LARO"}</span>
       <span className="hidden lg:inline">{nl ? "Zoeken" : "Search"}</span>
       <kbd className="hidden rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground xl:inline">Ctrl K</kbd>
     </Button>

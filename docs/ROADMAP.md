@@ -52,7 +52,7 @@ The next delivery gates are deliberately separate:
 - Target database integrity, invariant, reconciliation, foreign-key, and
   demo-marker readiness checks.
 - Production Google Gmail/Drive and authenticated SMTP acceptance through the
-  public ngrok route, including source-linked evidence persistence and duplicate
+  permanent Hetzner HTTPS route, including source-linked evidence persistence and duplicate
   outbound-send blocking.
 - Active HAI connector acceptance through the authenticated public LARO feed.
 - Route-level renderer splitting with release-blocking bundle budgets.

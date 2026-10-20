@@ -143,13 +143,13 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
     trpc.autoCollection.getLocalFolders.useQuery({ caseId });
 
   const activePullJob = trpc.autoCollection.activePullJob.useQuery({ caseId }, {
-    refetchInterval: (data) => data?.status === "queued" || data?.status === "running" ? 1_000 : false,
+    refetchInterval: (query) => query.state.data?.status === "queued" || query.state.data?.status === "running" ? 1_000 : false,
   });
   const pullJob = trpc.autoCollection.pullJobStatus.useQuery(
     { jobId: pullJobId || "00000000-0000-0000-0000-000000000000" },
     {
       enabled: Boolean(pullJobId),
-      refetchInterval: (data) => !data || data.status === "queued" || data.status === "running" ? 1_000 : false,
+      refetchInterval: (query) => !query.state.data || query.state.data.status === "queued" || query.state.data.status === "running" ? 1_000 : false,
     },
   );
   const currentJob = pullJob.data ?? activePullJob.data ?? null;
@@ -363,17 +363,17 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
               value={keywordsRaw}
               onChange={(e) => setKeywordsRaw(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !pullMutation.isLoading && !pullActive) handlePull();
+                if (e.key === "Enter" && !pullMutation.isPending && !pullActive) handlePull();
               }}
               className="bg-background"
               disabled={pullActive}
             />
             <Button
               onClick={handlePull}
-              disabled={pullMutation.isLoading || pullActive}
+              disabled={pullMutation.isPending || pullActive}
               className="bg-linear-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
             >
-              {pullMutation.isLoading || pullActive ? (
+              {pullMutation.isPending || pullActive ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   {t("case.pull.pulling")}
@@ -398,7 +398,7 @@ function KeywordEvidencePull({ caseId }: { caseId: string }) {
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={cancelPullMutation.isLoading}
+                    disabled={cancelPullMutation.isPending}
                     onClick={() => cancelPullMutation.mutate({ jobId: currentJob.id })}
                   >
                     <X className="mr-1 h-3.5 w-3.5" /> {t("common.cancel")}

@@ -70,7 +70,7 @@ describe('production renderer usability regressions', () => {
     const notes = read('src/renderer/components/CommunicationHub.tsx');
 
     expect(layout).toContain('aria-label={t(collapsed ? "nav.expandSidebar" : "nav.collapseSidebar")}');
-    expect(layout).toContain('aria-label={t("nav.accountMenu")}');
+    expect(layout).toContain('<span className="sr-only">{t("nav.accountMenu")}</span>');
     expect(translations).toContain('"nav.expandSidebar"');
     expect(translations).toContain('"nav.collapseSidebar"');
     expect(translations).toContain('"nav.accountMenu"');

@@ -399,7 +399,7 @@ export default function SmartSearchFilters({
             <Button
               variant="outline"
               onClick={handleSaveFilter}
-              disabled={createSavedSearchMutation.isLoading}
+              disabled={createSavedSearchMutation.isPending}
               aria-label={t("search.saveCurrent")}
             >
               <Save className="h-4 w-4" />
