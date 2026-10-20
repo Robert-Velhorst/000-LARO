@@ -1,4 +1,4 @@
-import archiver from "archiver";
+import { ZipArchive, type Archiver } from "archiver";
 import { and, eq, sql } from "drizzle-orm";
 import { PassThrough, Readable, Transform } from "stream";
 import { pipeline } from "stream/promises";
@@ -357,7 +357,7 @@ function releaseExportSlot(): void {
 }
 
 function appendStreamEntry(
-  archive: archiver.Archiver,
+  archive: Archiver,
   source: Readable,
   name: string,
 ): Promise<void> {
@@ -385,7 +385,7 @@ function appendStreamEntry(
 }
 
 async function appendGeneratedEntry(
-  archive: archiver.Archiver,
+  archive: Archiver,
   name: string,
   value: string | Buffer,
   budget: { bytes: number },
@@ -439,7 +439,7 @@ export async function createCaseZipStream(
     });
     const analysisByEvidence = new Map(analysisRefs.map((analysis) => [analysis.evidenceId, analysis]));
     const output = new PassThrough({ highWaterMark: 64 * 1024 });
-    const archive = archiver("zip", { zlib: { level: 9 } });
+    const archive = new ZipArchive({ zlib: { level: 9 } });
     let archiveBytes = 0;
     let currentSource: Readable | null = null;
     const archiveLimiter = new Transform({
