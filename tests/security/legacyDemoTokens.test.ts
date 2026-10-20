@@ -1,23 +1,12 @@
 import { createHmac } from 'node:crypto';
-import * as crypto from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { runInNewContext } from 'node:vm';
-import { describe, expect, it } from 'vitest';
+import { createRequire } from 'node:module';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-// The legacy router's middleware dependencies are deliberately not shipped.
-// Exercise its actual verifier in isolation using real HMAC signatures.
-const source = readFileSync(resolve(process.cwd(), 'security-enhancements.js'), 'utf8');
-const helperStart = source.indexOf('function getJwtSecret()');
-const secretHelper = source.slice(helperStart, source.indexOf('// Generate JWT token', helperStart));
-const verifier = source.slice(source.indexOf('function authenticateToken('), source.indexOf('// Check if password is strong'));
+// The legacy router and this regression share the same statically imported verifier.
+const { authenticateToken } = createRequire(import.meta.url)('../../legacy-token-verifier.cjs');
 const secret = 'legacy-demo-test-secret-with-at-least-32-bytes';
-const authenticateToken = runInNewContext(`${secretHelper}\n${verifier}\nauthenticateToken`, {
-  crypto,
-  Buffer,
-  process: { env: { JWT_SECRET: secret } },
-  validator: { isEmail: (value: unknown) => value === 'user@example.com' },
-});
+beforeAll(() => vi.stubEnv('JWT_SECRET', secret));
+afterAll(() => vi.unstubAllEnvs());
 
 function signedToken(role: string) {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
