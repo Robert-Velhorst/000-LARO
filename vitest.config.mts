@@ -12,6 +12,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: true,
+    // Vitest 5 enables this by default; preserve Vitest 4 mock-history behavior for this migration.
+    clearMocks: false,
     // Database-backed suites use isolated temporary SQLite files. Browser
     // accessibility coverage has its own Playwright configuration.
     include: [
