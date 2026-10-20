@@ -41,7 +41,8 @@ async function checkedPath(root: string, target: string) {
     outcome: "excluded", code: "symbolic_link", basis: "filesystem", facts: { path: full, isSymbolicLink: true } });
   return { full, info };
 }
-const version = (info: Awaited<ReturnType<typeof fs.stat>>) => `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+type FileStat = NonNullable<Awaited<ReturnType<typeof fs.stat>>>;
+const version = (info: FileStat) => `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
 const payloadSchema = z.object({ path: z.string().min(1), after: z.string().optional(), directoryVersion: z.string().optional(),
   screening: sourceScreenSchema.optional(), allowLowPriority: z.boolean().optional() });
 
