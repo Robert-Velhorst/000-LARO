@@ -20,7 +20,12 @@ export async function getHostedRedisScriptClient(): Promise<RedisScriptClient> {
   }
   if (client?.isOpen) return client;
   if (!connecting) {
-    const next = createClient({ url: ENV.REDIS_URL }) as unknown as HostedRedisClient;
+    const next = createClient({
+      url: ENV.REDIS_URL,
+      RESP: 2,
+      socket: { keepAliveInitialDelay: 5000 },
+      commandOptions: { timeout: undefined },
+    }) as unknown as HostedRedisClient;
     next.on('error', (error) => {
       console.error('[HostedRedis] Connection error', error instanceof Error ? error.message : error);
     });
