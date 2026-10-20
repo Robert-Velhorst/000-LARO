@@ -187,7 +187,7 @@
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
     "vite": "^8.3.4",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.5"
   },
   "build": {
     "appId": "com.laro.desktop",
