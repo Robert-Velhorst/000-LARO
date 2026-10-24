@@ -10,7 +10,9 @@
   },
   "overrides": {
     "qs": "6.16.1",
-    "@electron/get": "5.1.0"
+    "@electron/get": "5.1.0",
+    "fast-uri": "4.2.3",
+    "node-gyp": "13.1.0"
   },
   "scripts": {
     "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:main\"",
