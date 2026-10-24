@@ -41,7 +41,14 @@ async function github(path, init = {}) {
   if (path.trim() !== path || !/^\/issues(?:\?state=open&per_page=100|\/[1-9][0-9]*)?$/.test(path)) {
     throw new Error('Unexpected automation issue API path');
   }
-  const response = await fetch(`https://api.github.com/repos/${repository}${path}`, {
+  const endpoint = new URL('https://api.github.com');
+  const [owner, repositoryName] = repository.split('/');
+  endpoint.pathname = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repositoryName)}${path.split('?')[0]}`;
+  if (path.includes('?')) {
+    endpoint.searchParams.set('state', 'open');
+    endpoint.searchParams.set('per_page', '100');
+  }
+  const response = await fetch(endpoint, {
     ...init,
     redirect: 'error',
     headers: { ...headers, ...init.headers },
