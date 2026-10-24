@@ -8,6 +8,15 @@ export interface ManagedEvidenceSource {
   storageKey: string;
 }
 
+function encodeQueryComponent(value: string): string {
+  // SigV4 uses RFC 3986 encoding, including the characters left unescaped by
+  // encodeURIComponent. Keep signed values intact while preventing delimiters
+  // from becoming URL structure at the request boundary.
+  return encodeURIComponent(value).replace(/[!'()*]/g, (character) =>
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
 function parseSourceUrl(value: string): URL {
   if (typeof value !== "string" || value.length > 16_384 || /[\s\u0000-\u001f\u007f\\]/u.test(value)) {
     throw new Error("Invalid managed evidence source URL");
@@ -35,10 +44,15 @@ export async function fetchManagedEvidenceSource(url: string, source: ManagedEvi
   if (requested.origin !== expected.origin || requested.pathname !== expected.pathname) {
     throw new Error("Evidence source does not match the selected managed object");
   }
-  // Keep the original signed query: reissuing a URL may rotate its timestamp or
-  // signature. Origin/path are bound above; redirects cannot change either.
+  // Retain signed query values: reissuing a URL may rotate its timestamp or
+  // signature. Build the network location only from the owned storage result,
+  // with each untrusted query key/value encoded separately at the final sink.
+  const query = [...requested.searchParams].map(([key, value]) =>
+    `${encodeQueryComponent(key)}=${encodeQueryComponent(value)}`,
+  ).join("&");
+  const requestUrl = `${expected.origin}${expected.pathname}${query ? `?${query}` : ""}`;
   return withBoundedHttpResponse(
-    () => fetch(requested.toString(), { redirect: "error", signal: AbortSignal.timeout(30_000) }),
+    () => fetch(requestUrl, { redirect: "error", signal: AbortSignal.timeout(30_000) }),
     async (response) => {
       if (!response.ok) throw new Error(`Signed evidence URL returned HTTP ${response.status}`);
       return readBoundedResponseBytes(response, {
