@@ -22,8 +22,7 @@ import {
 } from "./schema";
 import { hashBuffer, storageDelete, storageRead } from "./storage";
 import { assertNotEmergencyStopped } from "./systemState";
-import { readBoundedResponseBytes, withBoundedHttpResponse } from "./boundedHttpResponse";
-import { MAX_EVIDENCE_FILE_BYTES } from "../shared/evidenceFiles";
+import { fetchManagedEvidenceSource, type ManagedEvidenceSource } from "./managedEvidenceSource";
 
 interface GoogleDriveEvidenceAcceptanceOptions {
   userId: string;
@@ -38,7 +37,7 @@ interface GoogleDriveEvidenceAcceptanceOptions {
 interface GoogleDriveEvidenceAcceptanceDependencies {
   pullEvidence: typeof pullEvidenceByKeywords;
   getDownloadUrl: typeof getEvidenceDownloadUrl;
-  fetchSource: (url: string) => Promise<Buffer>;
+  fetchSource: (url: string, source: ManagedEvidenceSource) => Promise<Buffer>;
   analyzeEvidence: typeof analyzeStoredEvidence;
   recordSourceOpened: typeof recordEvidenceSourceOpened;
   recordReceipt: typeof recordGoogleDriveEvidenceAcceptanceReceipt;
@@ -47,16 +46,7 @@ interface GoogleDriveEvidenceAcceptanceDependencies {
 const DEFAULT_DEPENDENCIES: GoogleDriveEvidenceAcceptanceDependencies = {
   pullEvidence: pullEvidenceByKeywords,
   getDownloadUrl: getEvidenceDownloadUrl,
-  fetchSource: (url) => withBoundedHttpResponse(
-    () => fetch(url, { signal: AbortSignal.timeout(30_000) }),
-    async (response) => {
-      if (!response.ok) throw new Error(`Signed evidence URL returned HTTP ${response.status}`);
-      return readBoundedResponseBytes(response, {
-        maxBytes: MAX_EVIDENCE_FILE_BYTES,
-        label: "Signed evidence response",
-      });
-    },
-  ),
+  fetchSource: fetchManagedEvidenceSource,
   analyzeEvidence: analyzeStoredEvidence,
   recordSourceOpened: recordEvidenceSourceOpened,
   recordReceipt: recordGoogleDriveEvidenceAcceptanceReceipt,
@@ -267,7 +257,9 @@ export async function runLiveGoogleDriveEvidenceAcceptance(
   if (!downloadUrl || !/^https?:\/\//i.test(downloadUrl)) {
     throw new Error("Imported Drive evidence did not resolve to an HTTP source link");
   }
-  const fetchedBytes = await dependencies.fetchSource(downloadUrl);
+  const fetchedBytes = await dependencies.fetchSource(downloadUrl, {
+    userId: options.userId, evidenceId: item.id, storageKey,
+  });
   if (hashBuffer(fetchedBytes) !== expectedHash || !fetchedBytes.equals(storedBytes)) {
     throw new Error("Signed evidence source did not return the imported Drive bytes");
   }
