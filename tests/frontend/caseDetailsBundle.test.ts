@@ -7,13 +7,9 @@ import { describe, expect, test } from "vitest";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ASSETS = join(ROOT, "dist", "renderer", "assets");
 function buildRenderer(): void {
-  const command = process.platform === "win32"
-    ? process.env.ComSpec || "cmd.exe"
-    : "npm";
-  const args = process.platform === "win32"
-    ? ["/d", "/s", "/c", "npm.cmd run build:renderer"]
-    : ["run", "build:renderer"];
-  execFileSync(command, args, {
+  // Match build:renderer directly without a shell or an environment-selected
+  // command interpreter. Keep the same Node executable as the test runner.
+  execFileSync(process.execPath, [join(ROOT, "scripts", "build-renderer.mjs")], {
     cwd: ROOT,
     stdio: "pipe",
     windowsHide: true,

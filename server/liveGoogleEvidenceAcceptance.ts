@@ -24,8 +24,7 @@ import { managedStorageKeyFromMetadata } from "./managedStorage";
 import { AUDIT_ACTIONS } from "./audit";
 import { assertNotEmergencyStopped } from "./systemState";
 import { analyzeStoredEvidence } from "./documentAnalysisService";
-import { readBoundedResponseBytes, withBoundedHttpResponse } from "./boundedHttpResponse";
-import { MAX_EVIDENCE_FILE_BYTES } from "../shared/evidenceFiles";
+import { fetchManagedEvidenceSource, type ManagedEvidenceSource } from "./managedEvidenceSource";
 
 interface GoogleEvidenceAcceptanceOptions {
   userId: string;
@@ -39,7 +38,7 @@ interface GoogleEvidenceAcceptanceOptions {
 interface GoogleEvidenceAcceptanceDependencies {
   pullEvidence: typeof pullEvidenceByKeywords;
   getDownloadUrl: typeof getEvidenceDownloadUrl;
-  fetchSource: (url: string) => Promise<Buffer>;
+  fetchSource: (url: string, source: ManagedEvidenceSource) => Promise<Buffer>;
   analyzeEvidence: typeof analyzeStoredEvidence;
   recordSourceOpened: typeof recordEvidenceSourceOpened;
   recordReceipt: typeof recordGoogleEvidenceAcceptanceReceipt;
@@ -48,16 +47,7 @@ interface GoogleEvidenceAcceptanceDependencies {
 const DEFAULT_DEPENDENCIES: GoogleEvidenceAcceptanceDependencies = {
   pullEvidence: pullEvidenceByKeywords,
   getDownloadUrl: getEvidenceDownloadUrl,
-  fetchSource: (url) => withBoundedHttpResponse(
-    () => fetch(url, { signal: AbortSignal.timeout(30_000) }),
-    async (response) => {
-      if (!response.ok) throw new Error(`Signed evidence URL returned HTTP ${response.status}`);
-      return readBoundedResponseBytes(response, {
-        maxBytes: MAX_EVIDENCE_FILE_BYTES,
-        label: "Signed evidence response",
-      });
-    },
-  ),
+  fetchSource: fetchManagedEvidenceSource,
   analyzeEvidence: analyzeStoredEvidence,
   recordSourceOpened: recordEvidenceSourceOpened,
   recordReceipt: recordGoogleEvidenceAcceptanceReceipt,
@@ -276,7 +266,9 @@ export async function runLiveGoogleEvidenceAcceptance(
   if (!downloadUrl || !/^https?:\/\//i.test(downloadUrl)) {
     throw new Error("Imported Gmail evidence did not resolve to an HTTP source link");
   }
-  const fetchedBytes = await dependencies.fetchSource(downloadUrl);
+  const fetchedBytes = await dependencies.fetchSource(downloadUrl, {
+    userId: options.userId, evidenceId: item.id, storageKey,
+  });
   if (hashBuffer(fetchedBytes) !== expectedHash || !fetchedBytes.equals(storedBytes)) {
     throw new Error("Signed evidence source did not return the imported Gmail bytes");
   }
