@@ -69,6 +69,30 @@ function signedLocalDownloadUrl(evidenceId: string, now: Date, baseUrl?: string)
   return url.toString();
 }
 
+async function managedDownloadUrl(storageKey: string, evidenceId: string, now: Date, baseUrl?: string): Promise<string> {
+  const storageUrl = await storageGet(storageKey);
+  return storageUrl.startsWith("file://")
+    ? signedLocalDownloadUrl(evidenceId, now, baseUrl)
+    : storageUrl;
+}
+
+// Acceptance downloads require an owned managed object, never a legacy fileUrl.
+// Resolve from current storage configuration so callers do not construct or guess
+// S3 endpoints, and reject a metadata/key change since provenance was checked.
+export async function getManagedEvidenceDownloadUrl(
+  userId: string,
+  evidenceId: string,
+  expectedStorageKey: string,
+): Promise<string> {
+  const file = await getEvidenceFile(userId, evidenceId);
+  if (!file) throw new EvidenceAccessError("File not found", 404);
+  const storageKey = managedStorageKeyFromMetadata(file.metadata);
+  if (!storageKey || storageKey !== expectedStorageKey) {
+    throw new EvidenceAccessError("Managed evidence source changed after provenance validation", 409);
+  }
+  return managedDownloadUrl(storageKey, file.id, new Date());
+}
+
 export async function getEvidenceDownloadUrl(
   userId: string,
   evidenceId: string,
@@ -80,10 +104,7 @@ export async function getEvidenceDownloadUrl(
 
   const storageKey = managedStorageKeyFromMetadata(file.metadata);
   if (storageKey) {
-    const storageUrl = await storageGet(storageKey);
-    return storageUrl.startsWith("file://")
-      ? signedLocalDownloadUrl(file.id, now, baseUrl)
-      : storageUrl;
+    return managedDownloadUrl(storageKey, file.id, now, baseUrl);
   }
   return file.fileUrl || null;
 }
