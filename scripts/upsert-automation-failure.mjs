@@ -4,7 +4,6 @@ const [title = '[maintenance] Automated checks require attention', category = 's
 const token = process.env.GITHUB_TOKEN;
 const repository = process.env.GITHUB_REPOSITORY;
 const runId = process.env.GITHUB_RUN_ID;
-const serverUrl = process.env.GITHUB_SERVER_URL || 'https://github.com';
 const workflow = process.env.GITHUB_WORKFLOW || 'automation';
 
 if (!token || !repository || !runId) {
@@ -12,8 +11,25 @@ if (!token || !repository || !runId) {
   process.exit(1);
 }
 
-const apiBase = process.env.GITHUB_API_URL || 'https://api.github.com';
-const runUrl = `${serverUrl}/${repository}/actions/runs/${runId}`;
+// This repository's workflows run on public GitHub. Validate runner metadata
+// before attaching credentials; a custom API origin must never receive them.
+function requireGithubOrigin(value, expected, name) {
+  let url;
+  try { url = new URL(value); }
+  catch { throw new Error(`${name} must identify the public GitHub origin`); }
+  if (url.origin !== expected || url.username || url.password
+      || url.pathname !== '/' || url.search || url.hash) {
+    throw new Error(`${name} must identify the public GitHub origin`);
+  }
+}
+requireGithubOrigin(process.env.GITHUB_API_URL || 'https://api.github.com', 'https://api.github.com', 'GITHUB_API_URL');
+requireGithubOrigin(process.env.GITHUB_SERVER_URL || 'https://github.com', 'https://github.com', 'GITHUB_SERVER_URL');
+if (repository.trim() !== repository || runId.trim() !== runId
+    || !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/.test(repository)
+    || ['.', '..'].includes(repository.split('/')[1]) || !/^[1-9][0-9]*$/.test(runId)) {
+  throw new Error('Invalid GitHub repository or workflow run identity');
+}
+const runUrl = `https://github.com/${repository}/actions/runs/${runId}`;
 const headers = {
   Accept: 'application/vnd.github+json',
   Authorization: `Bearer ${token}`,
@@ -22,8 +38,12 @@ const headers = {
 };
 
 async function github(path, init = {}) {
-  const response = await fetch(`${apiBase}/repos/${repository}${path}`, {
+  if (path.trim() !== path || !/^\/issues(?:\?state=open&per_page=100|\/[1-9][0-9]*)?$/.test(path)) {
+    throw new Error('Unexpected automation issue API path');
+  }
+  const response = await fetch(`https://api.github.com/repos/${repository}${path}`, {
     ...init,
+    redirect: 'error',
     headers: { ...headers, ...init.headers },
   });
   if (!response.ok) {
