@@ -27,7 +27,7 @@ RUN npm run build:server && npm run build:renderer && npm prune --omit=dev --ign
 # The runtime intentionally omits npm, a shell, and the OS package manager.
 # Keep the root-compatible variant while existing installations still have
 # root-owned data and backup volumes; changing that ownership is a migration.
-FROM gcr.io/distroless/nodejs26-debian13:latest@sha256:746f728c8b61c9beb5d0350f054b4049c4cef0ae71d5b3f8f33bc57904bbc37e AS runtime
+FROM gcr.io/distroless/nodejs26-debian13:latest@sha256:e6ffd0e0ddbbcad0231684befb2c421591c2be46baa71da7d9065294c17efc0d AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV SERVER_ONLY=true
