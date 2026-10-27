@@ -74,7 +74,7 @@ class LocalSemanticAnalysisProvider:
             minimum=1000,
             maximum=120000,
         )
-        self._request_post = request_post or requests.post
+        self._request_post = request_post or self._post_local_model
 
     def analyze(self, text: str, document_name: str = "") -> Dict[str, Any]:
         source_text = self._clean(text)
@@ -848,7 +848,7 @@ class LocalSemanticAnalysisProvider:
 
     def _request_model(self, prompt: str) -> Dict[str, Any]:
         response = self._request_post(
-            f"{self.base_url}/api/generate",
+            self._local_generate_url(self.base_url),
             json={
                 "model": self.model,
                 "stream": False,
@@ -859,6 +859,8 @@ class LocalSemanticAnalysisProvider:
             timeout=self.timeout_seconds,
         )
         response.raise_for_status()
+        if 300 <= getattr(response, "status_code", 200) < 400:
+            raise requests.RequestException("The local model must not redirect source text")
         return self._parse_payload(response.json())
 
     @staticmethod
@@ -1056,9 +1058,43 @@ Every item must include one or more literal source quotes and exact document IDs
 ---"""
 
     @staticmethod
-    def _is_loopback_url(value: str) -> bool:
+    def _post_local_model(url: str, **kwargs: Any) -> requests.Response:
+        # A local-only operation must not inherit proxies or .netrc credentials.
+        # Keep ordinary TLS verification enabled and never follow a redirect.
+        with requests.Session() as session:
+            session.trust_env = False
+            return session.post(url, allow_redirects=False, **kwargs)
+
+    @staticmethod
+    def _local_generate_url(value: str) -> str:
+        if not LocalSemanticAnalysisProvider._is_loopback_url(value):
+            raise ValueError("The semantic provider must use a literal loopback origin")
         parsed = urlparse(value)
-        return parsed.scheme in {"http", "https"} and (parsed.hostname or "").lower() in {"127.0.0.1", "::1"}
+        if parsed.scheme == "https":
+            origin = "https://127.0.0.1" if parsed.hostname == "127.0.0.1" else "https://[::1]"
+        else:
+            origin = "http://127.0.0.1" if parsed.hostname == "127.0.0.1" else "http://[::1]"
+        port = parsed.port
+        suffix = ":" + str(int(port)) if port is not None else ""
+        return origin + suffix + "/api/generate"
+
+    @staticmethod
+    def _is_loopback_url(value: str) -> bool:
+        try:
+            if any(ord(char) <= 32 or ord(char) == 127 for char in value):
+                return False
+            parsed = urlparse(value)
+            port = parsed.port
+            return (
+                parsed.scheme in {"http", "https"}
+                and parsed.hostname in {"127.0.0.1", "::1"}
+                and parsed.username is None and parsed.password is None
+                and parsed.path in {"", "/"}
+                and not parsed.params and not parsed.query and not parsed.fragment
+                and (port is None or 1 <= port <= 65535)
+            )
+        except (TypeError, ValueError):
+            return False
 
     @staticmethod
     def _clean(value: Any) -> str:
