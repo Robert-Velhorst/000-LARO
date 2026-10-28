@@ -433,9 +433,48 @@ class DocumentIntelligenceEngine:
             return ""
 
     def _strip_html(self, value: str) -> str:
-        without_tags = re.sub(r"<(script|style).*?</\1>", " ", value, flags=re.IGNORECASE | re.DOTALL)
-        without_tags = re.sub(r"<[^>]+>", " ", without_tags)
-        return html.unescape(without_tags)
+        # Fixed-length tokens and monotonic cursors avoid retrying an unbounded
+        # suffix for each malformed opening tag. Preserve the legacy extraction
+        # semantics, including incomplete tags and Unicode IGNORECASE spelling.
+        folded_letters = str.maketrans({"İ": "i", "ı": "i", "ſ": "s"})
+
+        def token_kind(match):
+            return match.group(1).translate(folded_letters).lower()
+
+        closings = {"script": [], "style": []}
+        for match in re.finditer(r"</(script|style)>", value, re.IGNORECASE):
+            closings[token_kind(match)].append((match.start(), match.end()))
+        positions = {"script": 0, "style": 0}
+        chunks = []
+        cursor = 0
+        for match in re.finditer(r"<(script|style)", value, re.IGNORECASE):
+            if match.start() < cursor:
+                continue
+            kind = token_kind(match)
+            ends = closings[kind]
+            index = positions[kind]
+            while index < len(ends) and ends[index][0] < match.end():
+                index += 1
+            positions[kind] = index
+            if index < len(ends):
+                chunks.extend((value[cursor:match.start()], " "))
+                cursor = ends[index][1]
+        chunks.append(value[cursor:])
+        without_blocks = "".join(chunks)
+
+        chunks = []
+        cursor = 0
+        opening = None
+        for index, character in enumerate(without_blocks):
+            if character == "<" and opening is None:
+                opening = index
+            elif character == ">":
+                if opening is not None and index > opening + 1:
+                    chunks.extend((without_blocks[cursor:opening], " "))
+                    cursor = index + 1
+                opening = None
+        chunks.append(without_blocks[cursor:])
+        return html.unescape("".join(chunks))
 
     def _clean_text(self, value: str) -> str:
         return re.sub(r"\s+", " ", value or "").strip()
