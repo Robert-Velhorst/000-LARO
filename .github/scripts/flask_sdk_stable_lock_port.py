@@ -26,8 +26,8 @@ candidate=None;success=False
 inventory_code="import hashlib,importlib.metadata,importlib.util,json,pathlib,platform,ssl,sqlite3,sys; spec=importlib.util.find_spec('flask'); base=pathlib.Path(next(iter(spec.submodule_search_locations))) if spec and spec.submodule_search_locations else None; print(json.dumps({'python':platform.python_version(),'executable':sys.executable,'OpenSSL':ssl.OPENSSL_VERSION,'SQLite':sqlite3.sqlite_version,'distributions':sorted([{'name':d.metadata['Name'],'version':d.version} for d in importlib.metadata.distributions()],key=lambda d:d['name'].lower()),'SDK_module_directory':str(base) if base else None,'SDK_source_sha256':{p.relative_to(base).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(base.rglob('*.py'))} if base else {}}))"
 try:
     log=out/'normal-stable-lock-refresh.log'
-    with log.open('wb') as stream:refreshed=subprocess.run(['uv','lock','--upgrade','--prerelease=disallow'],cwd=sdk,stdout=stream,stderr=subprocess.STDOUT)
-    record['steps'].append({'argv':['uv','lock','--upgrade','--prerelease=disallow'],'returncode':refreshed.returncode,'log':log.name,'sha256':hashlib.sha256(log.read_bytes()).hexdigest()})
+    with log.open('wb') as stream:refreshed=subprocess.run(['uv','lock','--upgrade'],cwd=sdk,stdout=stream,stderr=subprocess.STDOUT)
+    record['steps'].append({'argv':['uv','lock','--upgrade'],'returncode':refreshed.returncode,'log':log.name,'sha256':hashlib.sha256(log.read_bytes()).hexdigest()})
     assert refreshed.returncode==0,'Normal stable dependency resolution failed; no override or fallback permitted'
     candidate=snapshot(allow_lock=True);changed=[name for name in before if before[name]!=candidate[name]];assert changed==['uv.lock']
     current_lock=(sdk/'uv.lock').read_bytes();(out/'updated-uv.lock').write_bytes(current_lock)
