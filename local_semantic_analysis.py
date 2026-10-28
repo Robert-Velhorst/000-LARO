@@ -526,7 +526,9 @@ class LocalSemanticAnalysisProvider:
         if isinstance(value, str):
             value = value.strip()
             if value.startswith("```"):
-                value = re.sub(r"^```(?:json)?\s*|\s*```$", "", value, flags=re.IGNORECASE)
+                value = re.sub(r"^```(?:json)?\s*", "", value, count=1, flags=re.IGNORECASE)
+                if value.endswith("```"):
+                    value = value[:-3].rstrip()
             value = json.loads(value)
         if not isinstance(value, dict):
             raise ValueError("Local model response must be a JSON object")

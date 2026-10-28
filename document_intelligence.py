@@ -448,12 +448,22 @@ class DocumentIntelligenceEngine:
     def _build_source_passages(self, text: str) -> List[Dict[str, Any]]:
         """Return stable sentence locators without storing a second full copy of a document."""
         passages = []
-        for match in re.finditer(r"[^.!?]+(?:[.!?]+|$)", text or ""):
-            raw = match.group(0)
+        value = text or ""
+        cursor = 0
+        while cursor < len(value):
+            if value[cursor] in ".!?":
+                cursor += 1
+                continue
+            raw_start = cursor
+            while cursor < len(value) and value[cursor] not in ".!?":
+                cursor += 1
+            while cursor < len(value) and value[cursor] in ".!?":
+                cursor += 1
+            raw = value[raw_start:cursor]
             leading = len(raw) - len(raw.lstrip())
             trailing = len(raw) - len(raw.rstrip())
-            start = match.start() + leading
-            end = match.end() - trailing
+            start = raw_start + leading
+            end = cursor - trailing
             sentence = text[start:end].strip()
             if not sentence:
                 continue
@@ -586,9 +596,32 @@ class DocumentIntelligenceEngine:
 
     def _extract_money(self, text: str) -> List[Dict[str, str]]:
         amounts = []
-        pattern = re.compile(r"(?:EUR|euro|eur\.?)\s?\d[\d.,]*|\d[\d.,]*\s?(?:EUR|euro)", re.IGNORECASE)
-        for match in pattern.finditer(text):
-            amounts.append({"raw": match.group(0), "context": text[max(0, match.start() - 80) : match.end() + 80]})
+        # Currency probes are fixed-size. Scan each maximal numeric run once,
+        # rather than retrying its suffix at every digit when currency is absent.
+        prefix = re.compile(r"(?:EUR|euro|eur\.?)\s?(?=\d)", re.IGNORECASE)
+        suffix = re.compile(r"(?:EUR|euro)", re.IGNORECASE)
+        cursor = 0
+        while cursor < len(text):
+            start = cursor
+            leading_currency = prefix.match(text, cursor)
+            if leading_currency:
+                cursor = leading_currency.end()
+            elif not text[cursor].isdecimal():
+                cursor += 1
+                continue
+            while cursor < len(text) and (text[cursor].isdecimal() or text[cursor] in ".,"):
+                cursor += 1
+            end = cursor
+            if not leading_currency:
+                after_number = cursor
+                if after_number < len(text) and text[after_number].isspace():
+                    after_number += 1
+                trailing_currency = suffix.match(text, after_number)
+                if not trailing_currency:
+                    continue
+                end = trailing_currency.end()
+                cursor = end
+            amounts.append({"raw": text[start:end], "context": text[max(0, start - 80) : end + 80]})
         return amounts[:20]
 
     def _extract_legal_references(self, text: str) -> List[Dict[str, str]]:
