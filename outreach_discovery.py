@@ -93,7 +93,7 @@ class OutreachTargetDiscovery:
             )
             response.raise_for_status()
         except requests.RequestException as exc:
-            raise OutreachDiscoveryError(f"Public web search could not be reached: {exc}") from exc
+            raise OutreachDiscoveryError("Public web search could not be reached; retry later") from exc
 
         response_text = getattr(response, "text", "") or ""
         response_lower = response_text.casefold()
