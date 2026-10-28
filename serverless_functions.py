@@ -92,7 +92,7 @@ def process_new_case(payload, context):
         }
     
     except Exception as e:
-        logger.error(f"Error processing case {case_id}: {e}")
+        logger.error("Case processing failed (%s)", type(e).__name__)
         
         # Record error
         timeseries_manager.record_system_metric(
@@ -101,13 +101,13 @@ def process_new_case(payload, context):
             component='process_new_case',
             details={
                 'case_id': case_id,
-                'error': str(e)
+                'error': type(e).__name__
             }
         )
         
         return {
             'statusCode': 500,
-            'body': {'error': f"Error processing case: {str(e)}"}
+            'body': {'error': 'Error processing case'}
         }
 
 def analyze_case_complexity(description):
@@ -237,7 +237,7 @@ def process_document(payload, context):
         }
     
     except Exception as e:
-        logger.error(f"Error processing document {document_id}: {e}")
+        logger.error("Document processing failed (%s)", type(e).__name__)
         
         # Record error
         timeseries_manager.record_system_metric(
@@ -246,13 +246,13 @@ def process_document(payload, context):
             component='process_document',
             details={
                 'document_id': document_id,
-                'error': str(e)
+                'error': type(e).__name__
             }
         )
         
         return {
             'statusCode': 500,
-            'body': {'error': f"Error processing document: {str(e)}"}
+            'body': {'error': 'Error processing document'}
         }
 
 def extract_document_text(document_data):
@@ -324,7 +324,7 @@ def handle_user_login(event_data):
         }
     
     except Exception as e:
-        logger.error(f"Error handling user login for user {user_id}: {e}")
+        logger.error("User login event failed (%s)", type(e).__name__)
         
         # Record error
         timeseries_manager.record_system_metric(
@@ -333,11 +333,11 @@ def handle_user_login(event_data):
             component='handle_user_login',
             details={
                 'user_id': user_id,
-                'error': str(e)
+                'error': type(e).__name__
             }
         )
         
-        return {'error': str(e)}
+        return {'error': 'User login event failed'}
 
 @event_handler('user.search')
 def handle_user_search(event_data):
@@ -378,7 +378,7 @@ def handle_user_search(event_data):
         }
     
     except Exception as e:
-        logger.error(f"Error handling user search for user {user_id}: {e}")
+        logger.error("User search event failed (%s)", type(e).__name__)
         
         # Record error
         timeseries_manager.record_system_metric(
@@ -388,11 +388,11 @@ def handle_user_search(event_data):
             details={
                 'user_id': user_id,
                 'query': query,
-                'error': str(e)
+                'error': type(e).__name__
             }
         )
         
-        return {'error': str(e)}
+        return {'error': 'User search event failed'}
 
 # Lawyer Matching Functions
 @serverless_function(options={
@@ -471,7 +471,7 @@ def match_lawyers(payload, context):
         }
     
     except Exception as e:
-        logger.error(f"Error matching lawyers for case {case_id}: {e}")
+        logger.error("Lawyer matching failed (%s)", type(e).__name__)
         
         # Record error
         timeseries_manager.record_system_metric(
@@ -480,13 +480,13 @@ def match_lawyers(payload, context):
             component='match_lawyers',
             details={
                 'case_id': case_id,
-                'error': str(e)
+                'error': type(e).__name__
             }
         )
         
         return {
             'statusCode': 500,
-            'body': {'error': f"Error matching lawyers: {str(e)}"}
+            'body': {'error': 'Error matching lawyers'}
         }
 
 def find_matching_lawyers(legal_fields):
@@ -561,20 +561,20 @@ def match_outreach_targets(payload, context):
         }
 
     except Exception as e:
-        logger.error(f"Error matching outreach targets for case {case_id}: {e}")
+        logger.error("Outreach matching failed (%s)", type(e).__name__)
         timeseries_manager.record_system_metric(
             metric_type='error',
             value=1.0,
             component='match_outreach_targets',
             details={
                 'case_id': case_id,
-                'error': str(e)
+                'error': type(e).__name__
             }
         )
 
         return {
             'statusCode': 500,
-            'body': {'error': f"Error matching outreach targets: {str(e)}"}
+            'body': {'error': 'Error matching outreach targets'}
         }
 
 # Initialize serverless functions

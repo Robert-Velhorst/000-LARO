@@ -58,7 +58,7 @@ def start_graphql_server():
         else:
             stdout, stderr = graphql_server_process.communicate()
             graphql_startup_error = stderr.decode('utf-8') or stdout.decode('utf-8')
-            current_app.logger.error(f"Failed to start GraphQL server: {graphql_startup_error}")
+            current_app.logger.error("GraphQL process exited before startup completed (exit %s)", graphql_server_process.returncode)
             graphql_server_process = None
             return False
     return True
@@ -79,7 +79,7 @@ def graphql_endpoint():
     """GraphQL endpoint for the Flask application."""
     # Ensure GraphQL server is running
     if start_graphql_server() is False:
-        return jsonify({'errors': [{'message': 'GraphQL server is unavailable', 'detail': graphql_startup_error}]}), 503
+        return jsonify({'errors': [{'message': 'GraphQL server is unavailable'}]}), 503
     
     # Get the GraphQL query from the request
     data = request.json
@@ -98,15 +98,15 @@ def graphql_endpoint():
         return jsonify(response.json()), response.status_code
     
     except requests.RequestException as e:
-        current_app.logger.error(f"Error forwarding request to GraphQL server: {str(e)}")
-        return jsonify({'errors': [{'message': f'GraphQL server error: {str(e)}'}]}), 500
+        current_app.logger.error("GraphQL forwarding failed (%s)", type(e).__name__)
+        return jsonify({'errors': [{'message': 'GraphQL server error'}]}), 500
 
 @graphql_bp.route('/graphql/persisted', methods=['POST'])
 def graphql_persisted_endpoint():
     """Endpoint for persisted GraphQL queries."""
     # Ensure GraphQL server is running
     if start_graphql_server() is False:
-        return jsonify({'errors': [{'message': 'GraphQL server is unavailable', 'detail': graphql_startup_error}]}), 503
+        return jsonify({'errors': [{'message': 'GraphQL server is unavailable'}]}), 503
     
     # Get the persisted query ID and variables from the request
     data = request.json
@@ -125,8 +125,8 @@ def graphql_persisted_endpoint():
         return jsonify(response.json()), response.status_code
     
     except requests.RequestException as e:
-        current_app.logger.error(f"Error forwarding request to GraphQL server: {str(e)}")
-        return jsonify({'errors': [{'message': f'GraphQL server error: {str(e)}'}]}), 500
+        current_app.logger.error("GraphQL forwarding failed (%s)", type(e).__name__)
+        return jsonify({'errors': [{'message': 'GraphQL server error'}]}), 500
 
 def init_app(app):
     """Initialize the GraphQL bridge with the Flask application."""
