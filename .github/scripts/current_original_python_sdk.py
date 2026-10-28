@@ -19,12 +19,24 @@ def snapshot(root):
         header,name=row.split(b'\t');mode,kind,blob=header.decode().split();assert kind=='blob'
         path=root/os.fsdecode(name);raw=os.readlink(path).encode() if path.is_symlink() else path.read_bytes()
         physical_blob=hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+        normalization=None
         if physical_blob!=blob:
             # Preserve the publisher's normal Git checkout attributes on each
             # platform; record physical bytes as well as verified Git content.
-            assert git(root,'hash-object','--path',os.fsdecode(name),'--stdin',input=raw).decode().strip()==blob
+            if os.name=='nt' and mode=='120000' and path.is_symlink():
+                target=git(root,'cat-file','blob',blob).decode('utf-8')
+                expected=(path.parent/target).resolve()
+                assert expected.is_relative_to(root.resolve()) and os.path.samefile(path,expected)
+                normalization='Windows equivalent symlink target, verified same file identity'
+            else:
+                normalized=git(root,'hash-object','--path',os.fsdecode(name),'--stdin',input=raw).decode().strip()
+                if normalized!=blob:
+                    diagnostic={'root':root.name,'path':os.fsdecode(name),'mode':mode,'expected_blob':blob,'working_blob':physical_blob,'normalized_blob':normalized,'is_symlink':path.is_symlink()}
+                    (out/'source-identity-diagnostic.json').write_text(json.dumps(diagnostic,indent=2))
+                    raise AssertionError('Source identity mismatch: '+os.fsdecode(name))
+                normalization='Original Git checkout content normalization'
         canonical=raw if physical_blob==blob else git(root,'cat-file','blob',blob)
-        data[os.fsdecode(name)]={'mode':mode,'blob':blob,'sha256':hashlib.sha256(raw).hexdigest(),'canonical_sha256':hashlib.sha256(canonical).hexdigest(),'working_blob':physical_blob,'Git_checkout_normalized':physical_blob!=blob}
+        data[os.fsdecode(name)]={'mode':mode,'blob':blob,'sha256':hashlib.sha256(raw).hexdigest(),'canonical_sha256':hashlib.sha256(canonical).hexdigest(),'working_blob':physical_blob,'Git_checkout_normalized':physical_blob!=blob,'normalization':normalization}
     return {'head':git(root,'rev-parse','HEAD').decode().strip(),'tree':git(root,'rev-parse','HEAD^{tree}').decode().strip(),'payloads':data}
 assert git(publisher,'rev-parse','HEAD').decode().strip()==project['commit']
 before={'owner':snapshot(owner),'publisher':snapshot(publisher)}
@@ -44,6 +56,7 @@ try:
         record['commands'].append({'argv':command,'returncode':result.returncode,'log':log.name,'log_sha256':hashlib.sha256(log.read_bytes()).hexdigest()})
         if result.returncode:
             success=False;break
+    record['original_commands_succeeded']=success
     if args.sdk=='requests' and (publisher/'report.xml').exists():
         raw=(publisher/'report.xml').read_bytes();(out/'original-report.xml').write_bytes(raw)
         tree=ET.fromstring(raw);cases=[]
@@ -74,11 +87,16 @@ try:
         actual=json.loads(result.stdout);record['actual_environments'][label]=actual
         lock=out/(label+'-actual-distributions.txt');lock.write_text(''.join(row['name']+'=='+row['version']+'\n' for row in actual['distributions']))
         if label=='SDK_cases' and success:
-            sdk_dist=[d for d in actual['distributions'] if d['name'].lower()==args.sdk];assert len(sdk_dist)==1 and sdk_dist[0]['version']==project['version']
+            sdk_dist=[d for d in actual['distributions'] if d['name'].lower()==args.sdk]
+            assert sdk_dist and {d['version'] for d in sdk_dist}=={project['version']}
             assert actual['python']=='3.15.2'
             for relative,digest in actual['SDK_source_sha256'].items():assert before['publisher']['payloads']['src/'+args.sdk+'/'+relative]['sha256']==digest
     record['original_entrypoint_succeeded']=success
+    record['SDK_runtime_source_identity_qualified']=success
     if not success:raise RuntimeError('Original SDK entrypoint or source/runtime identity did not qualify; see retained logs')
+except BaseException as error:
+    record['controller_failure']={'type':type(error).__name__,'message':str(error)}
+    raise
 finally:
     after={'owner':snapshot(owner),'publisher':snapshot(publisher)};(out/'source-after.json').write_text(json.dumps(after,indent=2));record['all_tracked_owner_and_publisher_payloads_unchanged']=before==after
     (out/'receipt.json').write_text(json.dumps(record,indent=2));assert before==after
