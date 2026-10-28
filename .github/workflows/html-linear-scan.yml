@@ -1,0 +1,51 @@
+name: Linear HTML extraction boundary
+on:
+  pull_request:
+    paths:
+      - local_semantic_analysis.py
+      - document_intelligence.py
+      - test_local_semantic_analysis.py
+      - test_html_extraction_linear_scan.py
+      - .github/scripts/html_linear_scan_proof.py
+      - .github/workflows/html-linear-scan.yml
+permissions:
+  contents: read
+jobs:
+  html-linear-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      UV_PYTHON_DOWNLOADS: never
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 3
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.15.2'
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          version: '0.13.6'
+          enable-cache: false
+      - name: Resolve and install the current stable Requests graph with hashes
+        run: |
+          mkdir -p HTML_LINEAR_SCAN_EVIDENCE
+          printf 'requests==2.34.2\n' > HTML_LINEAR_SCAN_EVIDENCE/sdk.in
+          uv venv --python 3.15.2 .venv
+          uv pip compile --python-version 3.15.2 --prerelease=disallow --generate-hashes HTML_LINEAR_SCAN_EVIDENCE/sdk.in -o HTML_LINEAR_SCAN_EVIDENCE/sdk.lock
+          uv pip install --python .venv/bin/python --require-hashes -r HTML_LINEAR_SCAN_EVIDENCE/sdk.lock
+          uv pip check --python .venv/bin/python
+      - name: Compare extraction output and adversarial input timing without changing original cases
+        run: .venv/bin/python -B -I .github/scripts/html_linear_scan_proof.py
+      - name: Audit the complete frozen Requests dependency graph without exclusions
+        run: uvx --from pip-audit==2.10.1 pip-audit -r HTML_LINEAR_SCAN_EVIDENCE/sdk.lock --no-deps --disable-pip --strict --format json --output HTML_LINEAR_SCAN_EVIDENCE/sdk-audit.json
+      - name: Retain all source identities, cases, lock and raw audit results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: html-linear-scan-proof
+          path: HTML_LINEAR_SCAN_EVIDENCE
+          if-no-files-found: error
+          retention-days: 14
