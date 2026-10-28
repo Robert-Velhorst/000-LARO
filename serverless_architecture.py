@@ -233,7 +233,7 @@ class ServerlessFunctionManager:
         
         try:
             logger.info(f"Invoking serverless function: {name}")
-            logger.debug(f"Payload: {payload}")
+            logger.debug("Invoking registered function handler")
             
             # Create context object similar to AWS Lambda
             context = {
@@ -292,12 +292,12 @@ class ServerlessFunctionManager:
                     component=name,
                     details={
                         'status': 'error',
-                        'error': str(e),
+                        'error': type(e).__name__,
                         'duration': duration
                     }
                 )
             
-            logger.error(f"Error executing function {name}: {e}")
+            logger.error("Serverless function failed (%s)", type(e).__name__)
             
             # Retry if configured
             retries = options.get('retries', function_config['options']['retries']) if options else function_config['options']['retries']
@@ -309,7 +309,7 @@ class ServerlessFunctionManager:
             
             return {
                 'statusCode': 500,
-                'body': {'error': str(e)}
+                'body': {'error': 'Serverless function failed'}
             }
     
     def get_function(self, name: str) -> Optional[Dict[str, Any]]:
