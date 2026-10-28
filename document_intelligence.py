@@ -436,23 +436,23 @@ class DocumentIntelligenceEngine:
         # Fixed-length tokens and monotonic cursors avoid retrying an unbounded
         # suffix for each malformed opening tag. Preserve the legacy extraction
         # semantics, including incomplete tags and Unicode IGNORECASE spelling.
-        folded_letters = str.maketrans({"İ": "i", "ı": "i", "ſ": "s"})
+        folded_letters = str.maketrans({"Ä°": "i", "Ä±": "i", "Å¿": "s"})
 
         def token_kind(match):
             return match.group(1).translate(folded_letters).lower()
 
-        closings = {"script": [], "style": []}
+        closings = {}
         for match in re.finditer(r"</(script|style)>", value, re.IGNORECASE):
-            closings[token_kind(match)].append((match.start(), match.end()))
-        positions = {"script": 0, "style": 0}
+            closings.setdefault(token_kind(match), []).append((match.start(), match.end()))
+        positions = {}
         chunks = []
         cursor = 0
         for match in re.finditer(r"<(script|style)", value, re.IGNORECASE):
             if match.start() < cursor:
                 continue
             kind = token_kind(match)
-            ends = closings[kind]
-            index = positions[kind]
+            ends = closings.get(kind, [])
+            index = positions.get(kind, 0)
             while index < len(ends) and ends[index][0] < match.end():
                 index += 1
             positions[kind] = index
