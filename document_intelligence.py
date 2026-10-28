@@ -448,22 +448,12 @@ class DocumentIntelligenceEngine:
     def _build_source_passages(self, text: str) -> List[Dict[str, Any]]:
         """Return stable sentence locators without storing a second full copy of a document."""
         passages = []
-        value = text or ""
-        cursor = 0
-        while cursor < len(value):
-            if value[cursor] in ".!?":
-                cursor += 1
-                continue
-            raw_start = cursor
-            while cursor < len(value) and value[cursor] not in ".!?":
-                cursor += 1
-            while cursor < len(value) and value[cursor] in ".!?":
-                cursor += 1
-            raw = value[raw_start:cursor]
+        for match in re.finditer(r"[^.!?]+(?:[.!?]+|$)", text or ""):
+            raw = match.group(0)
             leading = len(raw) - len(raw.lstrip())
             trailing = len(raw) - len(raw.rstrip())
-            start = raw_start + leading
-            end = cursor - trailing
+            start = match.start() + leading
+            end = match.end() - trailing
             sentence = text[start:end].strip()
             if not sentence:
                 continue
