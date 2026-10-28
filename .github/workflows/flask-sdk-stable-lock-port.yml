@@ -1,0 +1,60 @@
+name: Flask SDK stable dependency lock port
+on:
+  pull_request:
+    paths:
+      - .github/scripts/flask_sdk_stable_lock_port.py
+      - .github/workflows/flask-sdk-stable-lock-port.yml
+permissions:
+  contents: read
+jobs:
+  refreshed-original-cases:
+    name: Flask original cases with stable refreshed lock on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    env:
+      UV_PYTHON_DOWNLOADS: never
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: owner
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: pallets/flask
+          ref: 22d924701a6ae2e4cd01e9a15bbaf3946094af65
+          path: flask-publisher
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.15.2'
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          version: '0.13.6'
+          enable-cache: false
+      - name: Generate normal stable lock and execute unchanged complete publisher case command
+        run: python -B -I owner/.github/scripts/flask_sdk_stable_lock_port.py
+      - name: Strict unfiltered audit of actual SDK case dependencies
+        if: always()
+        working-directory: owner
+        shell: bash
+        run: |
+          if [ -f FLASK_STABLE_LOCK_PORT_EVIDENCE/SDK_cases-actual-distributions.txt ]; then
+            uvx --from pip-audit==2.10.1 pip-audit -r FLASK_STABLE_LOCK_PORT_EVIDENCE/SDK_cases-actual-distributions.txt --no-deps --disable-pip --strict --format json --output FLASK_STABLE_LOCK_PORT_EVIDENCE/SDK-cases-audit.json
+          else
+            echo 'SDK case environment unavailable; qualification remains failed.'
+            exit 1
+          fi
+      - name: Retain source lock diff original cases actual environments and raw audit
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: flask-stable-lock-port-${{ matrix.os }}
+          path: owner/FLASK_STABLE_LOCK_PORT_EVIDENCE
+          if-no-files-found: error
+          retention-days: 14

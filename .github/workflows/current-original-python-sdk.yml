@@ -1,0 +1,69 @@
+name: Current Python original Flask and Requests cases
+on:
+  pull_request:
+    paths:
+      - .github/qualification/flask-requests-current-original-sdk.json
+      - .github/scripts/current_original_python_sdk.py
+      - .github/workflows/current-original-python-sdk.yml
+permissions:
+  contents: read
+jobs:
+  original-cases:
+    name: ${{ matrix.sdk }} original cases Python 3.15.2 on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.sdk == 'requests' && 10 || 360 }}
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        sdk: [flask, requests]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - sdk: flask
+            repository: pallets/flask
+            commit: 22d924701a6ae2e4cd01e9a15bbaf3946094af65
+          - sdk: requests
+            repository: psf/requests
+            commit: 6e83187b8feb273ed4c6cdab5efd8d54901dfab3
+    env:
+      UV_PYTHON_DOWNLOADS: never
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: owner
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.commit }}
+          path: publisher
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.15.2'
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+        with:
+          version: '0.13.6'
+          enable-cache: false
+      - name: Run complete untouched publisher test command and retain source/runtime evidence
+        run: python -B -I owner/.github/scripts/current_original_python_sdk.py --sdk ${{ matrix.sdk }}
+      - name: Audit the complete actual SDK test graph without exclusions
+        if: always()
+        working-directory: owner
+        shell: bash
+        run: |
+          if [ -f CURRENT_ORIGINAL_SDK_EVIDENCE/SDK_cases-actual-distributions.txt ]; then
+            uvx --from pip-audit==2.10.1 pip-audit -r CURRENT_ORIGINAL_SDK_EVIDENCE/SDK_cases-actual-distributions.txt --no-deps --disable-pip --strict --format json --output CURRENT_ORIGINAL_SDK_EVIDENCE/SDK-cases-audit.json
+          else
+            echo 'SDK test environment did not initialize; no acceptance is claimed.'
+            exit 1
+          fi
+      - name: Retain original logs case identities full tracked source hashes and actual graphs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ${{ matrix.sdk }}-original-Python3152-${{ matrix.os }}
+          path: owner/CURRENT_ORIGINAL_SDK_EVIDENCE
+          if-no-files-found: error
+          retention-days: 14
