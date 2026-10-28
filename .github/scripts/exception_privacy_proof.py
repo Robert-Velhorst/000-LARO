@@ -15,7 +15,7 @@ try:
     originals=out/'original-sources';originals.mkdir(exist_ok=True)
     for name in ['graphql_bridge.py','serverless_architecture.py','serverless_functions.py']:(originals/name).write_bytes(git('show',base+':'+name))
     for label,source in [('original',originals),('patched',root)]:
-        report=out/(label+'-cases.json');result=subprocess.run([sys.executable,'-B',str(root/'test_exception_privacy_boundary.py'),'--source-root',str(source),'--report',str(report)],cwd=root,capture_output=True,text=True,timeout=180)
+        report=out/(label+'-cases.json');result=subprocess.run([sys.executable,'-B',str(root/'test_exception_privacy_boundary.py'),'--source-root',str(source),'--label',label],cwd=root,capture_output=True,text=True,timeout=180)
         (out/(label+'-cases.log')).write_text(result.stdout+result.stderr);actual=json.loads(report.read_text());record[label]=actual
         assert actual['cases']==26 and actual['skipped']==0
         if label=='original':assert result.returncode!=0 and actual['failed']==15 and actual['passed']==11

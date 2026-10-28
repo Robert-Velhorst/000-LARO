@@ -136,7 +136,7 @@ def function_validation(source,name):
     assert not any(row.get('metric_type')=='error' for row in metrics.rows)
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--source-root',required=True);parser.add_argument('--report',required=True);args=parser.parse_args();source=pathlib.Path(args.source_root)
+    parser=argparse.ArgumentParser();parser.add_argument('--source-root',required=True);parser.add_argument('--label',choices=['original','patched'],required=True);args=parser.parse_args();source=pathlib.Path(args.source_root)
     cases=[('startup_private_log',lambda:startup_log(source))]
     for route in ['/graphql','/graphql/persisted']:
         cases.extend([(route+'_unavailable',lambda route=route:unavailable(source,route)),(route+'_transport_failure',lambda route=route:forwarding_failure(source,route)),(route+'_real_loopback_positive',lambda route=route:forwarding_success(source,route)),(route+'_validation',lambda route=route:invalid_query(source,route))])
@@ -147,4 +147,7 @@ if __name__=='__main__':
     for name,case in cases:
         try:case();results.append({'name':name,'passed':True})
         except Exception as error:results.append({'name':name,'passed':False,'error_type':type(error).__name__,'message':str(error)})
-    report={'cases':len(results),'passed':sum(row['passed'] for row in results),'failed':sum(not row['passed'] for row in results),'skipped':0,'results':results,'uses_only_synthetic_data':True,'full_Node_Apollo_vendor_SDK_or_operator_acceptance':False};pathlib.Path(args.report).write_text(json.dumps(report,indent=2));print(json.dumps({k:report[k] for k in ['cases','passed','failed','skipped']}));sys.exit(bool(report['failed']))
+    report={'cases':len(results),'passed':sum(row['passed'] for row in results),'failed':sum(not row['passed'] for row in results),'skipped':0,'results':results,'uses_only_synthetic_data':True,'full_Node_Apollo_vendor_SDK_or_operator_acceptance':False}
+    filename='original-cases.json' if args.label=='original' else 'patched-cases.json'
+    destination=pathlib.Path(__file__).resolve().parent/'EXCEPTION_PRIVACY_EVIDENCE'/filename
+    destination.write_text(json.dumps(report,indent=2));print(json.dumps({k:report[k] for k in ['cases','passed','failed','skipped']}));sys.exit(bool(report['failed']))
