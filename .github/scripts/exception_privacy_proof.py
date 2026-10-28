@@ -1,5 +1,5 @@
 """Owned hosted source/counterfactual proof; all original cases stay unchanged."""
-import hashlib,json,os,pathlib,platform,subprocess,sys
+import hashlib,importlib.metadata,json,os,pathlib,platform,subprocess,sys
 assert os.environ.get('GITHUB_ACTIONS')=='true' and os.environ.get('RUNNER_ENVIRONMENT')=='github-hosted'
 assert os.environ.get('GITHUB_REPOSITORY')=='Robert-Velhorst/000-LARO' and platform.python_version()=='3.15.2'
 root=pathlib.Path(__file__).resolve().parents[2];out=root/'EXCEPTION_PRIVACY_EVIDENCE';out.mkdir(exist_ok=True);base='556d9ae1c6d8b58446ab705b677e76fda1f87649'
@@ -10,7 +10,7 @@ def snapshot():
         if not row:continue
         header,name=row.split(b'\t');mode,kind,blob=header.decode().split();assert kind=='blob';path=root/os.fsdecode(name);raw=os.readlink(path).encode() if mode=='120000' else path.read_bytes();assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==blob;rows[os.fsdecode(name)]={'blob':blob,'sha256':hashlib.sha256(raw).hexdigest()}
     return rows
-before=snapshot();(out/'source-before.json').write_text(json.dumps(before,indent=2));record={'python':platform.python_version(),'full_application_Node_Apollo_vendor_SDK_native_database_operator_acceptance':False}
+before=snapshot();(out/'source-before.json').write_text(json.dumps(before,indent=2));record={'python':platform.python_version(),'installed_distributions':sorted([{'name':d.metadata['Name'],'version':d.version} for d in importlib.metadata.distributions()],key=lambda d:d['name'].lower()),'full_application_Node_Apollo_vendor_SDK_native_database_operator_acceptance':False}
 try:
     originals=out/'original-sources';originals.mkdir(exist_ok=True)
     for name in ['graphql_bridge.py','serverless_architecture.py','serverless_functions.py']:(originals/name).write_bytes(git('show',base+':'+name))
