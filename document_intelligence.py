@@ -436,7 +436,7 @@ class DocumentIntelligenceEngine:
         # Fixed-length tokens and monotonic cursors avoid retrying an unbounded
         # suffix for each malformed opening tag. Preserve the legacy extraction
         # semantics, including incomplete tags and Unicode IGNORECASE spelling.
-        folded_letters = str.maketrans({"Ä°": "i", "Ä±": "i", "Å¿": "s"})
+        folded_letters = str.maketrans({"İ": "i"})
 
         def token_kind(match):
             return match.group(1).translate(folded_letters).lower()
