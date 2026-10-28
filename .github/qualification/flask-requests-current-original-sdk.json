@@ -1,0 +1,115 @@
+{
+  "python": "3.15.2",
+  "repository": "Robert-Velhorst/000-LARO",
+  "full_upstream_job_matrix_qualified": false,
+  "projects": {
+    "flask": {
+      "name": "flask",
+      "repository": "pallets/flask",
+      "commit": "22d924701a6ae2e4cd01e9a15bbaf3946094af65",
+      "tracked_payloads": 235,
+      "test_payloads": 61,
+      "AGENTS_paths": [],
+      "selected_files": [
+        {
+          "path": "pyproject.toml",
+          "blob": "697d20779c1503ad276be4d3fc92e5120b24ac54",
+          "sha256": "ea0777ce44101efe5edd8c152aceef898acf9a98c8bd840ad98473611a573948",
+          "bytes": 6617
+        },
+        {
+          "path": ".github/workflows/tests.yaml",
+          "blob": "da744a67f7b5b60fe6f906b0fb428b588db38701",
+          "sha256": "cae1b293079578869d5b7d731fef709794411a10d4b43a0454d3d439a3bb7199",
+          "bytes": 2024
+        },
+        {
+          "path": "uv.lock",
+          "blob": "6d5e07e27dbb39294575e21ccd51573e32cccbeb",
+          "sha256": "c128574494b076f109bc6ccf9f4ef0450374768fc61db836821c2759d9b3429e",
+          "bytes": 396956
+        },
+        {
+          "path": "tests/conftest.py",
+          "blob": "214f52033856473522e6f9c51aa67203737a54ca",
+          "sha256": "ea0734fd65cf1fd22670f2d525bbdf9936bc2a2c6bd67a9b40a3a2edcc87d8d3",
+          "bytes": 3285
+        }
+      ],
+      "version": "3.1.3",
+      "commands": [
+        [
+          "uv",
+          "run",
+          "--locked",
+          "tox",
+          "run",
+          "-e",
+          "py3.15"
+        ]
+      ],
+      "original_entrypoint": "uv run --locked tox run -e ${{ matrix.tox || format('py{0}', matrix.python) }}",
+      "case_corpus_paths": "tests/ as selected by the unchanged upstream pytest/tox/Makefile configuration"
+    },
+    "requests": {
+      "name": "requests",
+      "repository": "psf/requests",
+      "commit": "6e83187b8feb273ed4c6cdab5efd8d54901dfab3",
+      "tracked_payloads": 129,
+      "test_payloads": 42,
+      "AGENTS_paths": [],
+      "selected_files": [
+        {
+          "path": "pyproject.toml",
+          "blob": "a964f9b59338bfcd4468a96803e1dd9648b558b4",
+          "sha256": "249147c8688043884fd91b951a013c5bf0aef445894527ad75124a12a41225e1",
+          "bytes": 3153
+        },
+        {
+          "path": "tox.ini",
+          "blob": "b316359aae1228f15341bd6f4aaca053b014e18d",
+          "sha256": "65aeb46c94fc5723a9764bb029fdb448539658fe47d3a39550a829b2383804fd",
+          "bytes": 285
+        },
+        {
+          "path": ".github/workflows/run-tests.yml",
+          "blob": "97ad2402c2790345be9da46dae24afffe0291bc8",
+          "sha256": "c35aaaf6121bf10e3cc5a2f232aeab3ea48b286100b59437c89bd85c8ae135e1",
+          "bytes": 2305
+        },
+        {
+          "path": "tests/conftest.py",
+          "blob": "bfb44b9d60bd8d7171cff797ad41efda1d80c54a",
+          "sha256": "6d65ffb582519f80a66c5d1ef571e3c33395a199f9e67fcb500c6ad2d7800e0a",
+          "bytes": 1934
+        },
+        {
+          "path": "requirements-dev.txt",
+          "blob": "fbe791587e09cc255686fb0ed09d9b9f33c245f6",
+          "sha256": "aed8622c9a3d9361a9cdbe71a4643831387aff5f622ebdd68de598a8b258c841",
+          "bytes": 93
+        },
+        {
+          "path": "src/requests/__version__.py",
+          "blob": "fea814e58271ecb7a1088ce9ac636791a2cc1289",
+          "sha256": "abba90670b0370a3dc40d97c2dea46a35d4bec941ff10d7c3cf3098ef04a17f9",
+          "bytes": 435
+        }
+      ],
+      "version": "2.34.2",
+      "commands": [
+        [
+          "make"
+        ],
+        [
+          "make",
+          "ci"
+        ]
+      ],
+      "original_entrypoint": "make\nmake ci",
+      "case_corpus_paths": "tests/ as selected by the unchanged upstream pytest/tox/Makefile configuration"
+    }
+  },
+  "remaining_upstream_profiles": "Original stable/older-runtime matrices, Flask typing/minimum/development profiles, Requests no-character-detection/urllib3-1.x/prerelease row are not replaced or qualified by these additional current-runtime jobs. Mutable development/prerelease/ABI-override rows are not executed here.",
+  "original_test_commands_helpers_assertions_fixtures_or_case_timeouts_changed": false
+}
